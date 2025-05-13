@@ -29,9 +29,9 @@ val_size = len(dataset) - train_size
 
 train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
 
-train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True, collate_fn=dataset.collate_fn)
+train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True, collate_fn=dataset.collate_fn)
 
-val_loader = DataLoader(val_dataset, batch_size=2, shuffle=True, collate_fn=dataset.collate_fn)
+val_loader = DataLoader(val_dataset, batch_size=1, shuffle=True, collate_fn=dataset.collate_fn)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
