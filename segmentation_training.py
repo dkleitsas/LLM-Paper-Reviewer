@@ -29,9 +29,9 @@ val_size = len(dataset) - train_size
 
 train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
 
-train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True, collate_fn=dataset.collate_fn)
+train_loader = DataLoader(train_dataset, batch_size=2, shuffle=True, collate_fn=dataset.collate_fn)
 
-val_loader = DataLoader(val_dataset, batch_size=1, shuffle=True, collate_fn=dataset.collate_fn)
+val_loader = DataLoader(val_dataset, batch_size=2, shuffle=True, collate_fn=dataset.collate_fn)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -48,7 +48,7 @@ criterion = torch.nn.CrossEntropyLoss()
 
 from tqdm import tqdm
 
-num_epochs = 6
+num_epochs = 4
 scaler = torch.cuda.amp.GradScaler()
 
 for epoch in range(num_epochs):
