@@ -24,8 +24,9 @@ model_name = "allenai/scibert_scivocab_uncased"
 dataset = DocumentDataset(folder_path, model_name, max_tokens=80)
 
 train_size = int(0.8 * len(dataset))
+print(train_size)
 val_size = len(dataset) - train_size
-
+print(val_size)
 train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
 
 train_loader = DataLoader(dataset, batch_size=1, shuffle=True, collate_fn=dataset.collate_fn)
@@ -47,7 +48,7 @@ criterion = torch.nn.CrossEntropyLoss()
 
 from tqdm import tqdm
 
-num_epochs = 7
+num_epochs = 10
 scaler = torch.cuda.amp.GradScaler()
 
 for epoch in range(num_epochs):
