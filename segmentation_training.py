@@ -1,6 +1,7 @@
 import pandas as pd
 from datasets import Dataset
 from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import accuracy_score
 from transformers import AutoTokenizer
 from datasets import DatasetDict
 from transformers import AutoModelForSequenceClassification
@@ -78,4 +79,35 @@ for epoch in range(num_epochs):
     avg_train_loss = total_train_loss / len(train_loader)
     print(f"Epoch {epoch+1}: Average Training Loss = {avg_train_loss:.4f}")
 
-torch.save(model.classifier.state_dict(), "bert_classifier_head.pth")
+
+model.eval()
+all_preds = []
+all_labels = []
+
+with torch.no_grad():
+    for batch in tqdm(val_loader):  # this loader yields one document per batch
+        input_ids = batch["input_ids"].to(device)             # [1, paragraphs, tokens]
+        attention_mask = batch["attention_mask"].to(device)   # [1, paragraphs, tokens]
+        positional_values = batch["positional_value"].to(device)  # [1, paragraphs]
+        labels = batch["label"].to(device)                   # [1, paragraphs]
+
+
+        outputs = model(
+            input_ids=input_ids,
+            attention_mask=attention_mask.squeeze(0),
+            positional_values=positional_values.squeeze(0),
+            labels=None
+        )
+
+        logits = outputs["logits"]        # [1, paragraphs, num_classes]
+        preds = torch.argmax(logits, dim=-1)  # [1, paragraphs]
+
+        all_preds.append(preds.squeeze(0).cpu())
+        all_labels.append(labels.squeeze(0).cpu())
+
+# Stack and evaluate
+all_preds = torch.cat(all_preds, dim=0)   # [total_paragraphs]
+all_labels = torch.cat(all_labels, dim=0) # [total_paragraphs]
+
+accuracy = accuracy_score(all_labels.numpy(), all_preds.numpy())
+print(f"Validation Accuracy: {accuracy:.4f}")
