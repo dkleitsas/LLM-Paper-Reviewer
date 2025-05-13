@@ -9,7 +9,7 @@ from torch.utils.data import random_split
 
 
 class DocumentDataset(Dataset):
-    def __init__(self, folder_path, tokenizer_name, max_tokens=128):
+    def __init__(self, folder_path, tokenizer_name, max_tokens=32):
         self.file_paths = [os.path.join(folder_path, fname) for fname in os.listdir(folder_path) if fname.endswith('.csv')]
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         self.max_tokens = max_tokens
