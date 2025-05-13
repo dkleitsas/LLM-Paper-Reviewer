@@ -21,7 +21,7 @@ from segmentation_models import ParagraphBERTClassifier, ParagraphClassifier
 folder_path = "labeled_csvs/" 
 model_name = "allenai/scibert_scivocab_uncased"
 
-dataset = DocumentDataset(folder_path, model_name, max_tokens=80)
+dataset = DocumentDataset(folder_path, model_name, max_tokens=100)
 
 train_size = int(0.8 * len(dataset))
 
@@ -48,7 +48,7 @@ criterion = torch.nn.CrossEntropyLoss()
 
 from tqdm import tqdm
 
-num_epochs = 4
+num_epochs = 5
 scaler = torch.cuda.amp.GradScaler()
 
 for epoch in range(num_epochs):
