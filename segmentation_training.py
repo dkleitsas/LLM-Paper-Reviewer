@@ -20,7 +20,7 @@ from segmentation_models import ParagraphBERTClassifier, ParagraphClassifier
 folder_path = "labeled_csvs/" 
 model_name = "allenai/scibert_scivocab_uncased"
 
-dataset = DocumentDataset(folder_path, model_name, max_tokens=32)
+dataset = DocumentDataset(folder_path, model_name, max_tokens=64)
 
 train_size = int(0.8 * len(dataset))
 val_size = len(dataset) - train_size
