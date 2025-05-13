@@ -4,8 +4,8 @@ import os
 # Configuration
 input_folder = 'labeled_csvs'
 output_folder = 'output_csvs'
-target_value = 'APPENDIX'
-replacement_value = 'OTHER'
+target_value = 'NUMERICAL EXPERIMENTS'
+replacement_value = 'RESULTS/EXPERIMENTS'
 
 # Ensure output folder exists
 os.makedirs(output_folder, exist_ok=True)
@@ -24,7 +24,8 @@ for filename in os.listdir(input_folder):
 
             for row in reader:
                 new_row = [replacement_value if cell.strip() == target_value else cell for cell in row]
-                print("kaching")
+                if new_row != row:
+                    print(filename)
                 writer.writerow(new_row)
 
         print(f"Processed: {filename}")
