@@ -1,0 +1,2398 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,Abstract
+ABSTRACT,0.0026455026455026454,"The ever-increasing variety of microcontrollers aggravates
+the challenge of porting embedded software to new devices
+through much manual work, whereas code generators can be
+used only in special cases. Moreover, only little technical doc-
+umentation for these devices is available in machine-readable
+formats that could facilitate automating porting efforts. In-
+stead, the bulk of documentation comes as print-oriented
+PDFs. We hence identify a strong need for a processor to
+access the PDFs and extract their data with a high quality to
+improve the code generation for embedded software.
+In this paper, we design and implement a modular proces-
+sor for extracting detailed datasets from PDF files containing
+technical documentation using deterministic table process-
+ing for thousands of microcontrollers. Namely, we system-
+atically extract device identifiers, interrupt tables, package
+and pinouts, pin functions, and register maps. In our evalua-
+tion, we compare the documentation from STMicro against
+existing machine-readable sources. Our results show that
+our processor matches 96.5 % of almost 6 million reference
+data points, and we further discuss identified issues in both
+sources. Hence, our tool yields very accurate data with only
+limited manual effort and can enable and enhance a signifi-
+cant amount of existing and new code generation use cases in
+the embedded software domain that are currently limited by a
+lack of machine-readable data sources."
+INTRODUCTION,0.005291005291005291,"1
+Introduction"
+INTRODUCTION,0.007936507936507936,"With an ever-expanding product catalog of embedded hard-
+ware comes the challenge of porting the corresponding
+hardware-dependent software (HdS) stack to thousands of
+devices [15]. Hardware vendors typically provide a HdS
+implementation in the C programming language only. How-
+ever, newer compiled languages and dynamic runtime envi-
+ronments, such as C++ [34], Rust [59], Python [38], and
+IoT-focused Femto-Containers [80], bring new programming
+paradigms and features to resource-limited embedded sys-
+tems, but they require a custom HdS stack [15,30].
+Porting HdS to other programming languages is mostly a
+manual process, where software engineers consult technical
+documentation to inform design and implementation deci-
+sions, as well as extract device-specific hardware description
+data from the documents and convert them into code [15]."
+INTRODUCTION,0.010582010582010581,"However, the technical documentation is often only avail-
+able as PDF, which complicates the extraction of structured
+data [16, 54] due to its print-oriented content model [43].
+Specifically, porting a HdS stack to a new device requires
+data for the bootloader (processor, memories, vector table,
+power management, clock graph), hardware abstraction layer
+(HAL) (pinout, pin functions, peripherals, register map), de-
+vice drivers (capabilities, pinout, communication type, regis-
+ter map), and board support (microcontroller, external devices,
+signal connections, power supply) [15]. Additional data is
+needed for part evaluation, configuration tools, build systems,
+testing, and simulation [15]. As a result, the porting process
+is laborious and thereby slows down new HdS projects [15]."
+INTRODUCTION,0.013227513227513227,"Some projects alleviate these limitations by using code
+generators for large parts of their HdS stack [3, 34, 58–60],
+with data extracted from machine-readable sources, such as
+standardized formats [70], proprietary databases from tool-
+ing [64], or provided by manually curated datasets [20,27].
+However, the scope and fidelity of the available machine-
+readable data are usually significantly smaller than what is
+available in the technical documentation [35, 60].
+Exist-
+ing work in the area of document information extraction is
+focused on generic inputs and cannot provide the domain-
+specific data found in technical documentation with the nec-
+essary accuracy [9,16,54,73]."
+INTRODUCTION,0.015873015873015872,"CMSIS
+Header"
+INTRODUCTION,0.018518518518518517,"CMSIS
+SVD"
+INTRODUCTION,0.021164021164021163,"Configuration
+Tools"
+INTRODUCTION,0.023809523809523808,"Technical
+Documentation + 1"
+INTRODUCTION,0.026455026455026454,"Shared
+Database"
+INTRODUCTION,0.0291005291005291,"Zephyr
+C [31]"
+INTRODUCTION,0.031746031746031744,"modm
+C++ [34]"
+INTRODUCTION,0.03439153439153439,"Embedded
+Rust [59] 2"
+INTRODUCTION,0.037037037037037035,"3
+Feature/
+Bugfix
+4
+4"
+INTRODUCTION,0.03968253968253968,"Journal of Systems Research (JSys)
+2023"
+INTRODUCTION,0.042328042328042326,"These observations motivate the need for combining multi-
+ple sources to create the most complete dataset possible in an
+automated, unsupervised process. As illustrated in Figure 1,
+the database can then be shared among multiple projects,
+which would significantly reduce development efforts.
+Therefore, we identify a research gap in terms of a data
+processor that connects information extraction of technical
+documentation with code generation of embedded software.
+We split our solution to this problem into four parts: (i) We
+first convert the print-oriented PDF technical documentation
+content into an accessible, structured form. (ii) We then
+extract and assemble the information relevant to our use cases
+as determined by domain experts. (iii) We then encode this
+data into an unambiguous encoding and provide access to it
+for code generation tasks. (iv) For our evaluation, we compare
+both the completeness and correctness of the extracted PDF
+data with the already existing machine-readable counterpart.
+Contributions. Our tool achieves several contributions.
+Our processor converts PDF technical documentation to
+HTML and provides custom parsers for machine-readable
+data. We apply table processing and text mining paradigms
+to extract and convert data from the technical documentation
+using a deterministic process that yields completely repro-
+ducible results. We verify the processor functionality by com-
+paring the data extracted from the technical documentation
+against the existing machine-readable sources. In addition,
+we further check the internal consistency of the processed data.
+Thereby, we establish a method to merge multiple sources
+and arbitrate conflicts based on qualitative metrics. We also
+provide a detailed analysis of the quality, trustworthiness, and
+completeness of each data source that can inform and guide
+future extraction work. The extracted data is unambiguously
+encoded as a knowledge graph via a custom ontology to de-
+scribe the embedded hardware, making it widely accessible to
+a number of different use cases. Our design is implemented
+as a highly modular Python project, which is open-sourced
+and maintained as part of the modm project [37].
+Paper Organization. This paper is organized as follows.
+In Section 2, we introduce the background relevant to the
+remainder of this paper. We then describe related work in
+Section 3 and define the issues to be addressed by our proces-
+sor. In Section 4, we describe the design and implementation
+of our processor, which we then rigorously evaluate against
+STMicro documentation and data sources, and discuss the
+results in Section 5. We conclude this paper in Section 6."
+LIT REVIEW,0.04497354497354497,"2
+Background"
+LIT REVIEW,0.047619047619047616,"In this section, we first lay the foundation for our processor
+extracting the hardware description data required for creat-
+ing embedded software. Accordingly, we give an introduc-
+tion to technical documentation formats, table processing,
+hardware-dependent software, and knowledge modeling in
+the following."
+LIT REVIEW,0.05026455026455026,"2.1
+Technical Documentation"
+LIT REVIEW,0.05291005291005291,"Hardware vendors publish their products’ technical documen-
+tation as PDF files, which, as a print-oriented format, contain
+a stream of graphics and text objects placed at precise posi-
+tions inside the document canvas [43]. As a result, documents
+render identical on all platforms; however, all semantic and
+hierarchical information is lost, which makes it difficult to
+parse and convert them automatically [54]. For example,
+PDFs published by STMicro contain text-supplementing ta-
+bles and figures with valuable information [13]. Tables are
+rendered using vector graphics to draw the cell borders and
+text characters, as visualized in Figure 2. Extracting struc-
+tured data from such tables is difficult when relying only on
+text extraction heuristics [7,54,62]. Admittedly, deterministic
+algorithms consuming vector graphics produce accurate and
+reliable results [53]."
+LIT REVIEW,0.05555555555555555,"PB13
+I/O TTa
+(4)
+SPI2_SCK,I2S2_CK,USART3
+_CTS, TIM1_CH1N, 
+TSC_G6_IO3, EVENTOUT"
+LIT REVIEW,0.0582010582010582,"ADC3_IN5, COMP5_INP, 
+OPAMP4_VINP, 
+OPAMP3_VINP"
+LIT REVIEW,0.06084656084656084,"PB14
+I/O TTa
+(4)"
+LIT REVIEW,0.06349206349206349,"SPI2_MISO,I2S2ext_SD,
+USART3_RTS_DE, 
+TIM1_CH2N, TIM15_CH1, 
+TSC_G6_IO4, EVENTOUT"
+LIT REVIEW,0.06613756613756613,"COMP3_INP, ADC4_IN4, 
+OPAMP2_VINP"
+LIT REVIEW,0.06878306878306878,"Pin name 
+(function 
+after 
+reset)"
+LIT REVIEW,0.07142857142857142,Pin type
+LIT REVIEW,0.07407407407407407,I/O structure Notes
+LIT REVIEW,0.07671957671957672,Pin functions
+LIT REVIEW,0.07936507936507936,"Alternate functions
+Additional functions"
+LIT REVIEW,0.082010582010582,"Figure 2: This table excerpt shows the bounding boxes of the
+individual glyphs in red with their origin marked with a black
+cross. Inter-document links like the footnote markers in the
+Notes column are marked with a green box [13]."
+LIT REVIEW,0.08465608465608465,"2.2
+Table Processing"
+LIT REVIEW,0.0873015873015873,"Table processing edits, converts, and formats data from un-
+tagged but semi-structured inputs to semantically valuable
+information [16]. Simple tables render an array of data as
+a row-column structure of cells [26,75]; however, complex
+tables express hierarchical and multi-dimensional information
+presented in their formatting [16,26]. The visual rendering
+of tables includes using different text, separator, and bor-
+der styles, spanning cells spread over multiple rows and/or
+columns, cells with multi-line content, and even splitting the
+entire table into multiple parts to help fit into the presenta-
+tion medium dimensions, usually a printable page or a digital
+display [54, 75]. To separate the rendering from its logical
+structure, the Wang abstract table model [75] defines an in-
+dexing relation as a partial function δ that uniquely maps the
+multi-dimensional header structure to a table cell resulting in"
+LIT REVIEW,0.08994708994708994,"Journal of Systems Research (JSys)
+2023"
+LIT REVIEW,0.09259259259259259,"an attribute-value pair [16,26]. However, any further interpre-
+tation and transformation of the tabular data require domain
+knowledge about the content of the table [54]."
+LIT REVIEW,0.09523809523809523,"2.3
+Hardware-dependent Software"
+LIT REVIEW,0.09788359788359788,"Hardware-dependent software (HdS) consists of the lowest
+layers in an embedded system that directly interact with the
+underlying hardware and provide a portable abstraction to
+applications on different hardware [6, 30]. In doing so, the
+HdS can only implement a system functionality together with
+the underlying hardware and would lose its utility without this
+dependence [15]. Figure 3 illustrates the typical layers of a
+conceptual and simplified HdS architecture, of which embed-
+ded software typically only implements the layers necessary
+for the scope of the application [6,30]. Our tool focuses on the
+hardware description and the HAL since these layers require
+the most data and manual effort for porting."
+LIT REVIEW,0.10052910052910052,"Application
+Middleware
+Board Support"
+LIT REVIEW,0.10317460317460317,"Operating
+System"
+LIT REVIEW,0.10582010582010581,Communication Protocols
+LIT REVIEW,0.10846560846560846,Device Drivers
+LIT REVIEW,0.1111111111111111,"Boot
+Firmware"
+LIT REVIEW,0.11375661375661375,Hardware Abstraction Layer
+LIT REVIEW,0.1164021164021164,"Peripherals
+Debug Support
+CPU
+Memory"
+LIT REVIEW,0.11904761904761904,System Bus
+LIT REVIEW,0.12169312169312169,"Figure 3: The simplified software stack of a typical HdS
+architecture with its three layers: software, HdS, and hard-
+ware [15]. Our work focuses on the hardware description and
+hardware abstraction layer (marked gray)."
+LIT REVIEW,0.12433862433862433,"Modern microcontrollers connect a microprocessor to
+generic internal memories and specialized hardware regis-
+ters located at specific addresses of an internal bus, known as
+memory-mapped input/output (MMIO) [15]. To describe the
+register names, addresses, and types, vendors publish system
+view description (SVD) files that are the machine-readable
+equivalent of the register descriptions in the technical docu-
+mentation [4]. The SVD files are converted into C header files
+using a closed-source conversion program called SVDConv as
+part of the common microcontroller software interface stan-
+dard (CMSIS) [72]. This form of MMIO register access is the
+de-facto standard for all C-based HALs due to the simplicity
+of the header files that work well with many compilers [4].
+Vendors also publish custom tooling for their specific prod-
+ucts. For example, the STM32CubeMX [64] tool by STMicro
+allows a programmer to graphically connect peripheral signals
+to pins, configure the clock system, estimate power consump-"
+LIT REVIEW,0.12698412698412698,"tion, and enable several middlewares. The tool can then gener-
+ate a complete HdS stack in C for a specific device, which is a
+pragmatic choice due to its popularity and history as a system
+programming language [6, 15], but also its main limitation.
+The tool’s internal database contains a machine-readable ver-
+sion of the pin definitions in the technical documentation and
+is also available separately on GitHub [67].
+Apart from C, open-source toolchains also support a num-
+ber of newer compiled languages, such as C++ [5,11,34] and
+Rust [59,60]. Optimized runtimes also exist for interpreted
+languages such as Python [21, 38, 51] and Go [22]. These
+languages bring new programming paradigms and features
+to resource-limited embedded systems that are simply not
+supported by C, especially compile-time code execution and
+extending the type system. However, all of these new lan-
+guages must access the underlying hardware with the same
+MMIO register mechanism. Therefore, they all require the
+same information to generate their language bindings and
+support tooling, regardless of what level of abstraction and
+convenience they provide. However, in practice, all code
+generation approaches that support new languages are limited
+to vendor-published, machine-readable, or manually curated
+data sources."
+LIT REVIEW,0.12962962962962962,"2.4
+Knowledge Modeling"
+LIT REVIEW,0.13227513227513227,"Knowledge graphs transitively model the available knowledge
+about a set of entities; namely, knowledge graphs represent
+facts about entities’ relations as edges, which can allow de-
+ducting and validating new knowledge about the modeled
+domain by combining multiple edges, i.e., deriving additional
+rules on how to interpret entities and their relations [23,28].
+The rule set and data graph together constitute a formal rep-
+resentation of domain-specific knowledge, an ontology [23],
+which can be used to translate the abstract table model via its
+partial function δ into related facts [73]. We can define the
+scope and detail of an ontology depending on the extent and
+quality of the input data and how much additional information
+we want to query out of it using the same query language and
+graph algorithms regardless of scale [23].
+A concrete implementation of knowledge graphs is the se-
+mantic web, which annotates HTML resources with semantics
+using an XML-based syntax [23]. The data model for seman-
+tic web knowledge graphs is the resource description frame-
+work, which can be extended with descriptions of semantic
+rules of increasing computational complexity relative to the
+reasoning capabilities of a solver [23]. The most used exten-
+sion is the web ontology language (OWL), which provides
+basic vocabulary like a datatype hierarchy and pre-defined
+properties using a description logic with well-understood com-
+putational properties that allow reasoning solvers to terminate
+on all queries [23].
+Summary. In conclusion, the limitations of the PDF format
+make accessing its text, figures, and tables difficult, while"
+LIT REVIEW,0.1349206349206349,"Journal of Systems Research (JSys)
+2023"
+LIT REVIEW,0.13756613756613756,"table processing allows for working with tabular data in a
+format-agnostic way if only it were accessible. The technical
+documentation contains important information for generating
+HdS in languages other than C that can supplement existing
+machine-readable sources, whose complex data model we
+can describe using knowledge graphs. With our tool, we
+bridge the gaps between these independent areas of research
+for improved automation and robustness, irrespective of the
+final use, especially for embedded devices."
+LIT REVIEW,0.1402116402116402,"3
+Related Work"
+LIT REVIEW,0.14285714285714285,"After introducing the technical background for this paper, we
+now discuss related work in the areas of information extrac-
+tion, hardware description pipelines, and embedded software
+generators."
+LIT REVIEW,0.1455026455026455,"3.1
+Document Information Extraction"
+LIT REVIEW,0.14814814814814814,"Extracting structured information from non- or semi-
+structured inputs is a wide area of research [16]; therefore,
+we focus on table processing and knowledge modeling. The
+foundation of table processing is the abstract table model [75],
+used to decompose a table into its logical structural design,
+tabular arrangement, and presentation style. Hurst [26] ap-
+plies this abstract model to tables in documents for the pur-
+pose of extracting their information into a semantic model.
+Embley et al. [16] thoroughly enumerate table input formats,
+presentation styles, and table processing paradigms. Out of
+the four table categories in this survey, our work only uses two:
+Symbolic tables are unambiguously encoded using markup
+languages such as HTML or XML that separate the table lay-
+out from cell content. Their visualization is performed as a
+separate step, which allows for rendering the same table in
+different styles [16]. Vector tables are found in PDFs and scal-
+able vector graphics (SVG) and encode the table layout and
+cell content separately using text instructions for rendering
+glyphs and graphics instructions for rendering line art [16].
+Table processing first requires detecting and locating, then
+understanding the table’s structure and content [16,29]. For
+symbolic tables, detection can be as simple as matching on
+special strings in the content stream [8]. However, for vector
+tables in PDFs, a common approach is coalescing the bound-
+ing boxes of text and graphics into larger clusters [7,53,62]
+and categorizing these into text, figures, and tables. Three
+common approaches exist: Generic, heuristic algorithms use
+only the space between text clusters to detect borders [62]
+if tables provide enough space between the cell content and
+its borders [7,53,55,56,62]. A more accurate approach uses
+the properties of vector graphics to determine table structures
+directly [53]. However, in practice, both approaches are com-
+bined [7,10,53] since figures and tables are often composed
+of a mix of text with implicit whitespace borders and differ-
+ent font properties, alignment, and graphics with various line"
+LIT REVIEW,0.15079365079365079,"types and widths. A particularly robust method is to first
+locate the table captions via text search and then find the cor-
+responding graphics and text clusters nearby [10]. The last
+common approach is to render the PDF input to images and
+then use machine learning to classify the areas visually [57].
+Information extraction algorithms then align the table struc-
+ture and content with an externally provided schema to guide
+the understanding process [16, 54]. Schemas can be user-
+defined [18] or heuristically obtained [17] and then incremen-
+tally merged into a larger ontology [18, 73]. Alternatively,
+an already existing external ontology [9] or one text-mined
+from the surrounding text [50, 79] can generate a feasible
+table schema mapping. Machine-learning models can then
+recognize tables with similar schemas but different format-
+ting with 80–85 % accuracy [41]. The resulting ontology and
+data are typically modeled via a knowledge graph that can
+apply various internal reasoning methods in combination with
+additional external data sources to improve accuracy [23,28].
+Historically, manual methods of information detection and
+extraction were converted to statistical models and then fur-
+ther generalized to machine-learning models that can parse
+more input formats with higher accuracy. Recent research
+now utilizes large language models [81] to accurately ex-
+tract knowledge in structured form, albeit only from text
+inputs [14]. To outline how these approaches are applied
+in practice, we introduce existing hardware data extraction
+pipelines next."
+LIT REVIEW,0.15343915343915343,"3.2
+Hardware Description Data Pipelines"
+LIT REVIEW,0.15608465608465608,"Extracting information from generic documents is a
+widespread use case for commercial and open-source tools,
+typically by applying optical character recognition to scanned
+or photographed documents and heuristic algorithms on the
+obtained text [29]. However, due to the format ambiguities
+inherent in such documents, user input is usually required to
+guide table detection and understanding [29]. For example,
+Tabula [44] is a popular, open-source Java application that
+extracts tables into Excel format with a graphical interface to
+solicit human user input. Khurso et al. [29] compiled even
+more methods and tools for table extraction in their survey.
+However, we require tools that extract information specifi-
+cally from several extensive technical documents related to
+embedded software and hardware in an automated manner.
+Instabuild [45] is a commercial tool to extract device pinout
+descriptions from screenshots of datasheets but requires hu-
+man supervision, similar to Tabula. In contrast, uConfig [47]
+extracts device pinouts automatically using a carefully crafted
+parser that interprets the text bounding boxes inside the rele-
+vant figures but only succeeds for some PDF technical doc-
+umentation. Finally, Datasheet2SVD [48] uses Tabula to
+extract the memory map from reference manuals; however,
+it is limited to work for only two Renesas PDFs documents.
+To the best of our knowledge, none of these projects utilize"
+LIT REVIEW,0.15873015873015872,"Journal of Systems Research (JSys)
+2023"
+LIT REVIEW,0.16137566137566137,"Tool or Project
+Open-Source
+Maintained
+Data Source
+Output
+Data Scope
+Interaction"
+LIT REVIEW,0.164021164021164,"Tabula [44]
+✓
+✓
+Any PDF
+Excel, CSV
+Any table
+Supervised
+Instabuild [45]
+✗
+✓
+Image of PDF
+EDA symbol
+Pinout tables
+Supervised
+uConfig [47]
+✓
+✗
+Datasheet PDF
+EDA symbol
+Pinout figures
+Scripted
+Datasheet2SVD [48]
+✓
+✗
+Datasheet PDF
+CMSIS-SVD
+Register map
+Scripted"
+LIT REVIEW,0.16666666666666666,"modm-devices [35]
+✓
+✓
+CMSIS-Header,
+STM32CubeMX
+Custom XML
+with Python API
+Peripherals, pinouts,
+signals, memories
+Scripted with
+manual patches"
+LIT REVIEW,0.1693121693121693,"embassy-rs [68]
+✓
+✓
+CMSIS-SVD,
+STM32CubeMX
+Custom JSON
+with Rust API
+Peripherals, pinouts,
+signals, register map
+Scripted with
+manual patches"
+LIT REVIEW,0.17195767195767195,Table 1: Comparison of tools and projects that extract hardware description data from PDF and machine-readable sources.
+LIT REVIEW,0.1746031746031746,"vector graphics to detect and segment tables in the documents,
+relying entirely on whitespace analysis, which has significant
+limitations, and none give any kind of evaluation metric for
+their accuracy or device coverage, and none facilitate a simple
+merging of multiple information sources.
+Other projects extract information only from machine-
+readable sources such as CMSIS system view description
+(CMSIS-SVD), CMSIS-Header, and the STM32CubeMX
+database [64]. modm-devices [35] accumulates data on de-
+vice pinouts, pin signal connections, peripheral type and
+counts, and memory sizes for STM32, SAM, NRF, and
+AVR microcontrollers, which is used to inform the C++ HAL
+and toolchain generation in the modm project [34]. The
+embassy-rs data pipeline [68] does almost the same for gener-
+ating the embassy-rs Rust HAL [60] but is limited to STM32
+only. Both tools further store their data in custom formats and
+do not share any manual data fixes.
+In summary, PDF-based tools are limited to extracting
+very specific data for a limited number of devices, while
+the most extensive datasets are only generated from the
+machine-readable sources STM32CubeMX, CMSIS-Header,
+and CMSIS-SVD. We provide a comparison summary of all
+these tools and projects in Table 1. To provide an overview
+of the use cases that can consume the hardware description
+data generated by the pipelines, we present related work in
+the area of embedded software in the next section."
+LIT REVIEW,0.17724867724867724,"3.3
+Generating Hardware-dependent Software"
+LIT REVIEW,0.17989417989417988,"Code generation is an essential tool for HdS design since the
+limited code space on most devices makes runtime configu-
+ration options infeasible [6,15,30]. The wide research area
+of model-driven software engineering includes HAL genera-
+tion [24,25], automated testing [76], system modeling [61],
+and deriving entire software drivers [2] mostly from existing
+machine-readable sources (cf. Figure 1).
+However, in practice, HdS projects only implement a sub-
+set of the proposed research. For example, the Linux Zephyr
+project [31] configures hardware via the DeviceTree [32] in-
+terface and then formats it as C pre-processor definitions to
+be used as an implicit code generator built into the toolchain."
+LIT REVIEW,0.18253968253968253,"The STM32CubeMX configuration tool [64] instead gener-
+ates its C HAL in an explicit step before compilation, as
+does modm [34] and Embedded Rust [59] for their respective
+C++ and Rust HALs. I2CDevLib [27] accumulates manually
+defined register maps for externally connected devices and
+provides basic drivers for them. Cyanobyte [20] instead gen-
+erates device drivers from an abstract dataset so that projects
+with a custom HAL only need to provide a code template to
+gain access to all drivers.
+Specialized code generators convert CMSIS-SVD regis-
+ter maps [70] found on GitHub [69] into language-specific
+bindings: SVDConv [72] for generic C, SVD2Rust [58]
+for Embedded Rust, SVD2Ada [3] for Embedded Ada, and
+SrcGen [71] for generic Assembly, C or Clojure definitions.
+However, a crowd-sourced effort to significantly improve
+them is not progressing fast enough [65].
+In conclusion, we point out that even though data extrac-
+tion from tables is a hard but well-understood problem, data
+pipelines in the embedded software space do not apply these
+lessons at scale and instead either focus only on extract-
+ing only specific data such as pinout detection from docu-
+ments [45,47] or only extract data for specific devices [48].
+The most extensive pipeline projects [34, 59] eschew doc-
+uments altogether and only use already machine-readable
+data [64,70]. Projects using code generators are therefore lim-
+ited to the scope of easily accessible data, with a current focus
+on SVD files, or they are forced to manually build databases
+to enable their use case [20,27]. However, several research
+ideas [2,61,76,78] use very extensive datasets for which a
+pipeline is missing as of now and, therefore, must derive the
+required data heuristically or via user input."
+IMPLEMENTATION/METHODS,0.18518518518518517,"4
+Design and Implementation"
+IMPLEMENTATION/METHODS,0.18783068783068782,"The outlined lack of approaches that automatically process
+and utilize technical documentation convinced us to come
+up with a design and corresponding tool that transforms and
+merges multiple data sources into a shared representation an-
+notated with domain-specific semantics. In this section, we
+give an overview of this design and its specifics. We separate
+the entire processor into six specialized data pipelines, as visu-"
+IMPLEMENTATION/METHODS,0.19047619047619047,"Journal of Systems Research (JSys)
+2023"
+IMPLEMENTATION/METHODS,0.1931216931216931,Vendor
+IMPLEMENTATION/METHODS,0.19576719576719576,Vendor 1 1
+IMPLEMENTATION/METHODS,0.1984126984126984,"PDF Archive
+PDF →HTML 2"
+IMPLEMENTATION/METHODS,0.20105820105820105,"HTML Archive
+HTML →OWL 3"
+IMPLEMENTATION/METHODS,0.2037037037037037,"HTML →SVD
+4"
+IMPLEMENTATION/METHODS,0.20634920634920634,"Header Archive
+Header →SVD 5"
+IMPLEMENTATION/METHODS,0.20899470899470898,"SVD Archive
+SVD →OWL 6"
+IMPLEMENTATION/METHODS,0.21164021164021163,"Config Tools
+DB →OWL 7"
+IMPLEMENTATION/METHODS,0.21428571428571427,"Internal
+External
+OWL Archive 8"
+IMPLEMENTATION/METHODS,0.21693121693121692,Simple API 9
+IMPLEMENTATION/METHODS,0.21957671957671956,OWL →SVD 10
+IMPLEMENTATION/METHODS,0.2222222222222222,Graph Query 11
+IMPLEMENTATION/METHODS,0.22486772486772486,"Figure 4: Design overview of our data processor. It relies on several internal pipelines (illustrated on the left side of the dotted
+line: 2 – 7 ) and external access methods (shown on the right side: 9 –11). First, 1 data sources from the hardware vendor
+are retrieved. Then, 2 the PDF technical documentation is converted to HTML, and 3 the relevant tables contained within are
+extracted into a knowledge graph (OWL). Additionally, the SVD memory maps are 4 extracted from the HTML, 5 CMSIS
+header files, and vendor-provided SVD files to be 6 merged into an optimal representation and stored as a knowledge graph
+(OWL). Finally, 7 the proprietary database (DB) contained in configuration tools is also converted into a knowledge graph
+(OWL). Then, 8 the separate knowledge graphs are evolved into one canonical knowledge graph by a merging strategy that
+corrects or at least minimizes data conflicts. This final knowledge graph is then 9 conveniently accessible via an external Python
+API, 10 converted into specialized formats such as SVD, or 11 directly accessible via a knowledge graph query language."
+IMPLEMENTATION/METHODS,0.2275132275132275,"alized in Figure 4. As a result, the individual conversion steps
+are independent of each other. This modular design also al-
+lows for manual or automatic inspection of intermediary data
+between the stages to assess its quality and tune the conver-
+sion process iteratively. Moreover, the data processor can be
+composed of only those pipelines for which data sources are
+available, which can then be merged using knowledge graph
+evolution. For the design overview, we refer to Figure 4. We
+now introduce the data-processing pipelines in more detail.
+Input Data. 1 Input sources are usually available at ven-
+dor websites (e.g., [63,64]) or GitHub (e.g., [36,66,67,69]).
+PDF →HTML. The 2 PDF to HTML pipeline reverse-
+engineers the formatting style of the PDF to assign the equiv-
+alent HTML semantics to characters, vector graphics, and
+images. To this end, we first abstract the PDF contents into
+an internal document model via pypdfium2 v1.11 [49], before
+locating table, figure, and image areas using their caption [10]
+and vector graphics shape [53], with the remaining areas con-
+taining only characters. We then convert each content area
+separately into an abstract syntax tree (AST) [7,53,62], which
+describes the logical content hierarchy together with vital for-
+matting metadata, such as text indentation spacing to indicate
+lexical scope. This metadata further contextualizes the in-
+dividual object semantics. Subsequently, we unpaginate the
+content areas by merging these small ASTs into one large
+AST, which is iteratively modified to better align it to the
+HTML content model for trivial serialization. The succeed-
+ing pipelines can access the documentation now significantly
+easier in HTML format.
+HTML →X. The HTML representation provides an ab-
+stracted input for the following pipelines 3 and 4 . For
+tables, we provide a simple column-row (x,y) access with-"
+IMPLEMENTATION/METHODS,0.23015873015873015,"out regard for table structure or a partial function δ that pro-
+vides attribute-cell pairs as described by the abstract table
+model [75]. Together with basic text mining via regex match-
+ing and substitution, these interfaces are enough to implement
+all functionality. We now have a library of modular, reusable
+HTML table queries that operates on the whole document set.
+Header →SVD. The 5 CMSIS header files are converted
+to CMSIS-SVD files by resolving the C pre-processor macros
+into numeric values, which are then matched to the peripheral
+and register names of the C type definitions elements to build
+our hierarchical memory map. Any memory map definitions
+in the CMSIS header format can now be parsed and converted.
+X →OWL. The 6 CMSIS-SVD tree format is directly
+converted into a knowledge graph. The 7 STM32CubeMX
+tool database is encoded as XML and is converted almost
+directly without significant effort. The pipelines 3 , 6 , and"
+IMPLEMENTATION/METHODS,0.2328042328042328,"7 use a manually-defined ontology and serialize to OWL
+via owlready2 v0.40 [40]. All data is now unambiguously
+encoded in a common format with shared semantics.
+OWL →OWL. The knowledge graph is 8 evolved by
+resolving input data conflicts and merging them into a new
+knowledge graph. We resolve data conflicts by majority vote
+if we have three or more sources available. Otherwise, we
+prefer the machine-readable source and add all missing data
+from the other. This final output of the data processor contains
+the least flawed data from the input sources that is backward
+compatible with existing software engineering practice. Other
+evolution strategies may be better suited for use cases that do
+not need to interface with existing vendor source code, e.g.,
+Embedded Rust [59].
+OWL →X. To improve the quality of life for users, we
+provide several external interfaces ( 9 , 10, and 11) that"
+IMPLEMENTATION/METHODS,0.23544973544973544,"Journal of Systems Research (JSys)
+2023"
+IMPLEMENTATION/METHODS,0.23809523809523808,"offer machine-readable access to the extracted knowledge.
+These data-processing pipelines manage the automated
+translation of technical documents and other resources. Hav-
+ing cross-platform use in mind, we implemented our de-
+sign entirely in Python 3.11, for which we could find well-
+maintained libraries for interacting with PDF, tree, and knowl-
+edge graph data structures while still being sufficiently perfor-
+mant for our use case. Both conceptually and implementation-
+wise, we kept our design modular. Hence, it can be adapted
+to other technical documents, vendors, and resources. It fur-
+ther supports replacing or extending single data pipelines
+and promises good utility as pipelines can be (de)selected as
+needed. The processor is open-sourced and will be maintained
+on GitHub [37] under an MPLv2 license, and we welcome
+pull requests that augment our provided data pipelines and
+data sources."
+RESULTS/EXPERIMENTS,0.24074074074074073,"5
+Evaluation"
+RESULTS/EXPERIMENTS,0.24338624338624337,"We now evaluate the performance of our tool and assess the
+quality of datasets extracted from technical documentation by
+STMicro by comparing them against the corresponding lim-
+ited corpus of available machine-readable data. In Section 5.1,
+we first describe the execution of our processing pipelines
+and which input data is converted into intermediary artifacts
+before estimating its performance in Section 5.2 and the im-
+plementation effort required for realizing each conversion
+step in Section 5.3. Subsequently, in Section 5.4, we compare
+the data we extracted from the technical documentation with
+their machine-readable counterpart to derive the quality of
+our automated processing and the accuracy of the provided
+(technical) documentation. We then discuss our findings in
+Section 5.5. Finally, we conclude this section with the impact
+of the evaluation in Section 5.6."
+RESULTS/EXPERIMENTS,0.24603174603174602,"5.1
+Experimental Setup"
+RESULTS/EXPERIMENTS,0.24867724867724866,"The data processor and all auxiliary code are written in
+Python 3.11 and do not require any special hardware or soft-
+ware setup. We execute all pipelines and measurements on
+a 2022 MacBook Air with an 8-core Apple M2 processor,
+16 GB of memory, and 1 TB of storage. For our evaluation,
+we used the latest STMicro data sources as of March 2023.
+Data Sources. Before we can properly evaluate our tool,
+we first need to convert all data sources into a common knowl-
+edge graph format. We automatically scraped the technical
+documentation from STMicro every day between 16th Febru-
+ary 2022 and 19th March 2023, resulting in a total of 1436
+PDFs. The 2 PDF →HTML pipeline converts the latest
+revision of 409 PDFs with 156999 pages in total: 70 reference
+manuals (70 % of the total pages) and 339 datasheets (30 %).
+The 3 HTML →OWL pipeline then only converts the latest
+revision of the technical documents, resulting in one knowl-
+edge graph for each of the 188 datasheets and 55 reference"
+RESULTS/EXPERIMENTS,0.25132275132275134,"manuals, 4 as well as 58 SVD files. The 5 CMSIS header
+files for STM32 are converted into 185 SVD files, while 6
+the 99 CMSIS-SVD files for STM32 are imported as is. The
+STM32CubeMX database [64] expands into 1316 individual
+XML files, which the 7 DB →OWL pipeline converts into
+one knowledge graph for each of the 3024 STM32 devices.
+PDF →HTML Quality. We fine-tuned the accuracy of this
+pipeline during development through iterative manual com-
+parison between a sample set of representative PDF pages
+and their resulting HTML to discover formatting issues and
+then adapted the code to address them. If the subsequent
+data pipelines fail to validate their input while converting the
+tabular data into the expected semantic types, we manually
+create an HTML patch. This process allows us to repair only
+the minimal set of actually used tables, which significantly
+reduces the manual effort compared to supervised detection
+methods. The final result consists of 35 patches with 3289
+lines of HTML to almost exclusively add missing table cell
+borders, which caused unrelated cells to be merged acciden-
+tally. We focus on textual information and tables due to their
+relevance and intentionally omit figures in the current real-
+ization of this pipeline. For our purposes of only extracting
+structured tabular data, this limitation comes with a good
+trade-off in the implementation effort and does not impact the
+data quality and its usefulness."
+RESULTS/EXPERIMENTS,0.25396825396825395,"5.2
+Processing Times"
+RESULTS/EXPERIMENTS,0.2566137566137566,"In the following, we report the average runtime of all pipelines
+over 10 runs to assess their computational performance. All
+conversions are compute-bound and utilize the whole proces-
+sor with a peak memory usage of about 6 GB. The bulk of the
+processing time is consumed during the 2 PDF →HTML
+conversion, which takes about 65 min to complete (about
+25 ms per page). Conversely, the remaining steps all terminate
+after 2–4 minutes each, resulting in an additional processing
+time of 12 min. These significantly shorter runtimes underline
+the benefit of converting the PDF to an intermediary HTML
+format first since the algorithmic complexity and the amount
+of data to process would significantly slow down pipelines
+depending on the PDF content directly."
+RESULTS/EXPERIMENTS,0.25925925925925924,"5.3
+Implementation Effort"
+RESULTS/EXPERIMENTS,0.2619047619047619,"Our tool must be realizable and maintainable with an effort
+comparable to accessing machine-readable sources directly
+to provide a practical alternative. We approximate this metric
+by the lines of code, as listed in Table 2.
+While the technical documentation pipelines consist
+of only about twice the lines of code as the machine-
+readable pipelines, they took about 3.5 times as long to
+implement.
+The most complex implementation was the
+PDF →HTML →OWL conversion. We estimate that ac-
+cessing the technical documentation takes about three times"
+RESULTS/EXPERIMENTS,0.26455026455026454,"Journal of Systems Research (JSys)
+2023"
+RESULTS/EXPERIMENTS,0.2671957671957672,"Pipeline or Task
+Lines of Code"
+RESULTS/EXPERIMENTS,0.2698412698412698,"1 Downloading technical documentation
+105
+2 PDF →HTML
++ 3105
+3 HTML →OWL
++ 1030
+4 HTML →CMSIS-SVD
++ 313
+Accessing technical documentation
+= 4553"
+RESULTS/EXPERIMENTS,0.2724867724867725,"1 Downloading machine-readable sources
+124
+5 CMSIS Header →CMSIS-SVD
++ 481
+6 CMSIS-SVD →OWL
++ 821
+7 STM32CubeMX DB →OWL
++ 790
+Accessing machine-readable sources
+= 2216"
+RESULTS/EXPERIMENTS,0.2751322751322751,"Table 2: Our data processor requires about twice the lines
+of code for accessing the technical documentation than the
+machine-readable sources, as measured by pygount v1.5 [52]."
+RESULTS/EXPERIMENTS,0.2777777777777778,"the effort overall compared to accessing machine-readable
+sources. This increased implementation effort is manageable,
+especially since most of our pipelines can be reused when
+adding new sources or vendors. Thus, the effort is likely less
+for future work."
+RESULTS/EXPERIMENTS,0.2804232804232804,"5.4
+Quality of Extracted Data"
+RESULTS/EXPERIMENTS,0.2830687830687831,"We now compare the quality of the data extracted from the
+technical documentation via pipelines 3 – 7 to existing
+machine-readable sources, which constitutes the best ground
+truth available. Given that different data sources use different
+names to refer to the same entities and relations and aggregate
+data into unequally large groups of devices, we only evaluate
+the completeness of data if we can find an individual device
+mapping from one source to another (87–93 % of devices).
+We provide an overview of compared sources and utilized
+pipelines with their respective sections in Table 3."
+RESULTS/EXPERIMENTS,0.2857142857142857,"Dataset
+Sources
+Section"
+RESULTS/EXPERIMENTS,0.28835978835978837,"Device Identifiers
+3 Datasheet vs.
+7 STM32CubeMX
+5.4.1"
+RESULTS/EXPERIMENTS,0.291005291005291,"Interrupt Vector Table
+3 Reference Manual vs."
+RESULTS/EXPERIMENTS,0.29365079365079366,"5 Header
+5.4.2"
+RESULTS/EXPERIMENTS,0.2962962962962963,"Package and Pinout
+3 Datasheet vs.
+7 STM32CubeMX
+5.4.3"
+RESULTS/EXPERIMENTS,0.29894179894179895,"Pin Functions
+3 Datasheet vs.
+7 STM32CubeMX
+5.4.4"
+RESULTS/EXPERIMENTS,0.30158730158730157,"Register Descriptions
+4 Reference Manual vs."
+RESULTS/EXPERIMENTS,0.30423280423280424,"5 Header vs. 6 SVD
+5.4.5"
+RESULTS/EXPERIMENTS,0.30687830687830686,Table 3: Compared sources and their respective sections.
+RESULTS/EXPERIMENTS,0.30952380952380953,"5.4.1
+Device Identifiers"
+RESULTS/EXPERIMENTS,0.31216931216931215,"Before we can compare any datasets, we first need to under-
+stand which devices they belong to. This mapping needs to be
+non-overlapping so that we can have an unambiguous relation
+from the device identifier to a dataset for comparison. The 7
+STM32CubeMX database [64] includes a list of 3098 STM32
+devices. We removed all devices for which no datasheet or
+reference manual exists, which retains 3024 devices. For each"
+RESULTS/EXPERIMENTS,0.3148148148148148,"3 datasheet, we produce the list of identifiers as an n-fold
+cartesian product, which generates a total of 14302 STM32
+identifiers, a four-fold increase over STM32CubeMX. Us-
+ing the STM32 identifier schema, we compare the two data
+sources in Table 4."
+RESULTS/EXPERIMENTS,0.31746031746031744,"Identifier Keys
+STM32CubeMX
+Datasheet"
+RESULTS/EXPERIMENTS,0.3201058201058201,"Family+Name
+167
+171
++4
++Pin
+656
+679
++23
++Size
+1230
+1266
++36
++Package
+1770
+4576
++2806
++Variant
+1985
+6666
++4681
++Temperature
+2744
+-180
+9698
++7134
++Temperature+Variant
+3024
+-205
+14302
++11483"
+RESULTS/EXPERIMENTS,0.32275132275132273,"Table 4: Incrementally appending keys to the STM32 device
+naming schema shows that the datasheet extraction signifi-
+cantly overstates the number of produced devices, whereas
+some valid temperature keys are missing from datasheets."
+RESULTS/EXPERIMENTS,0.3253968253968254,"The identifier set matches well until the package key is
+added when the datasheet identifier list explodes with 2806
+additional devices. Our implementation does not respect that
+the pin key, describing the number of pins on a device, inter-
+locks with the package key, and therefore not all combinations
+can be valid. When we add the temperature key, the miss-
+ing devices begin to manifest with the full STM32CubeMX
+identifier list containing 205 devices that cannot be mapped
+to a datasheet since they are missing these temperature key
+combinations. Since we could not find any mention of junc-
+tion temperature in any of the relevant datasheet text or tables,
+we can only extract 2819 (93 %) devices from the documen-
+tation. However, these generated identifiers map onto each
+datasheet and reference manual without any overlaps or gaps."
+RESULTS/EXPERIMENTS,0.328042328042328,"5.4.2
+Interrupt Vector Table"
+RESULTS/EXPERIMENTS,0.3306878306878307,"The interrupt vector table is extracted from the 3 reference
+manual and compared with the 5 CMSIS header files. We
+can only check for naming conflicts at the same position, but
+not for completeness, since the reference manual contains
+the maximum population of the vector table, but the header
+files remove the vectors for peripherals not available on the
+device. We also ignore datasheets for multi-core devices
+that implement incomparable, shared interrupt tables, leaving
+2751 (91 %) devices to compare."
+RESULTS/EXPERIMENTS,0.3333333333333333,"Journal of Systems Research (JSys)
+2023"
+RESULTS/EXPERIMENTS,0.335978835978836,"Hierarchy Level
+Total Memory Map Size
+Reference Manual
+CMSIS Header
+CMSIS-SVD
+Overlap
+Matching"
+RESULTS/EXPERIMENTS,0.3386243386243386,"Peripherals
+55 376 B
+78.8 %
+78.7 %
+87.5 %
+77.2 %
+64.4 %
+Registers
+1 188 994 B
+79.7 %
+73.8 %
+71.6 %
+74.9 %
+48.3 %
+Bit Fields
+5 711 619 bit
+73.6 %
+48.2 %
+73.5 %
+60.0 %
+30.6 %"
+RESULTS/EXPERIMENTS,0.3412698412698413,"Table 5: The flat memory map locations are contributed similarly by all three sources, except for the bit fields, where the CMSIS
+header files are missing a significant amount of data. We call memory locations with more than one source overlapping. If the
+names of overlapping locations are identical after normalization, we call them matching. The overlap of memory locations gets
+progressively worse per hierarchy level, with matching locations yielding unacceptably incomplete results."
+RESULTS/EXPERIMENTS,0.3439153439153439,"Hierarchy Level
+Conflict Size
+Total Map Size
+Conflict-Free Locations
+Overlap Map Size
+Matching Locations"
+RESULTS/EXPERIMENTS,0.34656084656084657,"Peripherals
+2 748 B
+55 376 B
+95.0 %
+42 752 B
+93.6 %
+Registers
+35 406 B
+1 188 994 B
+97.3 %
+891 044 B
+96.0 %
+Bit Fields
+379 180 bit
+5 711 619 bit
+93.3 %
+3 425 903 bit
+88.9 %"
+RESULTS/EXPERIMENTS,0.3492063492063492,"Table 6: The number of conflicts per level and their percentage of conflict-free locations relative to the total size of the memory
+map or just the locations where two or more sources overlap. The low overlap of just 60 % (cf. Table 5) lowers the bit field
+numbers even more."
+RESULTS/EXPERIMENTS,0.35185185185185186,"Hierarchy Level
+Resolvable by
+Majority Vote"
+RESULTS/EXPERIMENTS,0.3544973544973545,"Reference Manual +
+CMSIS Header
+CMSIS Header +
+CMSIS-SVD
+CMSIS-SVD +
+Reference Manual"
+RESULTS/EXPERIMENTS,0.35714285714285715,"Matching and
+Resolved Locations"
+RESULTS/EXPERIMENTS,0.35978835978835977,"Peripherals
+44.1 %
+78.9 %
+19.8 %
+1.3 %
+96.4 %
+Registers
+41.7 %
+40.1 %
+15.5 %
+44.4 %
+97.7 %
+Bit Fields
+63.0 %
+38.8 %
+22.9 %
+38.3 %
+95.9 %"
+RESULTS/EXPERIMENTS,0.36243386243386244,"Table 7: Conflicts can be resolved by majority vote only if two sources agree over one other. The reference manual and header
+files agree the most; however, this pattern becomes less clear at bit-field level. With the voting mechanism, we can increase the
+accuracy of the memory map, but only for overlapping locations."
+RESULTS/EXPERIMENTS,0.36507936507936506,"Our pipeline discovered and assigned the correct table for
+all devices after normalizing vector names. We matched
+187 887 out of 190 109 (98.8 %) compared vector positions.
+Of the mismatched positions, 1115 (0.6 %) were completely
+missing, while 1107 (0.6 %) mostly only differed by a single
+digit or letter."
+RESULTS/EXPERIMENTS,0.36772486772486773,"5.4.3
+Package and Pinout"
+RESULTS/EXPERIMENTS,0.37037037037037035,"The package and pinout are extracted from a shared table in
+the 3 datasheet (cf. Figure 2), which contains a package
+name, the pin positions, and its associated pin name. We
+compared 2819 devices with a total of 247 756 pins from the"
+RESULTS/EXPERIMENTS,0.373015873015873,"7 STM32CubeMX database against the data derived from
+the datasheets by first finding the correct package, which was
+successful for 2810 (93 %) devices, and then matching both
+the name and the position of the pin on the package.
+With these fixes, we matched 247 466 (99.88 %) matched
+pin positions and names. We are left with 53 devices that
+share 290 issues where pins were either missing, added, or
+unequal in their name and/or position. We investigated each
+issue manually and classified them into 12 mistakes in the
+datasheet and 8 issues with the STM32CubeMX database,"
+RESULTS/EXPERIMENTS,0.37566137566137564,"as detailed in the appendix (Tables 9 and 10). The largest
+source of errors is the confusion of packages in devices with
+an optional switched mode power supply feature, which is
+identified by the variant key and only differs slightly, followed
+by missing entries or typos in datasheet tables, with plain
+wrong data being very rare. In no cases did we find bugs
+in our pipeline implementation or evaluation code, with the
+packages for 9 devices simply missing from the datasheet."
+RESULTS/EXPERIMENTS,0.3783068783068783,"5.4.4
+Pin Functions"
+RESULTS/EXPERIMENTS,0.38095238095238093,"In this evaluation step, we compare the pin function tables in
+the 3 datasheets (cf. Figure 2) with the 7 STM32CubeMX
+database. We must exclude the STM32F1 device family due
+to a different hardware implementation of pin functions, leav-
+ing us with 2692 devices with a total of 1 107 035 pin func-
+tions. However, since the pin function tables in the datasheet
+contain the union of functions for all devices described, we
+can only check for conflicts in a signal name against the
+alternate and additional function index. After the normaliza-
+tion step, we find 1 064 965 (96.2 %) matching pin-function
+pairs, with the remaining 42 070 pairs either missing, added,
+or wrong in one or the other source. All device families have"
+RESULTS/EXPERIMENTS,0.3835978835978836,"Journal of Systems Research (JSys)
+2023"
+RESULTS/EXPERIMENTS,0.3862433862433862,0 kB
+RESULTS/EXPERIMENTS,0.3888888888888889,5 kB
+RESULTS/EXPERIMENTS,0.3915343915343915,10 kB
+RESULTS/EXPERIMENTS,0.3941798941798942,15 kB
+RESULTS/EXPERIMENTS,0.3968253968253968,20 kB
+RESULTS/EXPERIMENTS,0.3994708994708995,Memory Map Size [Byte]
+RESULTS/EXPERIMENTS,0.4021164021164021,"F0
+F1
+F2
+F3
+F4
+F7
+G0
+G4
+H7
+L0
+L1
+L4
+L4+
+Unique Three-way Comparison Sorted by Device Identifier and Grouped by Family"
+RESULTS/EXPERIMENTS,0.40476190476190477,"CMSIS Header
+CMSIS-SVD
+Reference Manual"
+RESULTS/EXPERIMENTS,0.4074074074074074,"Figure 5: For this graph, we arrange the total peripheral memory map sizes for each comparison by device family and alphabetical
+order. Simpler device families, such as the STM32F0 and STM32L0, have smaller peripheral maps than complex devices,
+such as STM32H7 and STM32L4+. The memory maps extracted from the PDF reference manuals can compete with the
+machine-readable sources. Notice how closely the reference manual matches the CMSIS header for the STM32F3 family, while
+the SVD files are better suited for STM32G4 devices."
+RESULTS/EXPERIMENTS,0.41005291005291006,0 kbit
+RESULTS/EXPERIMENTS,0.4126984126984127,20 kbit
+RESULTS/EXPERIMENTS,0.41534391534391535,40 kbit
+RESULTS/EXPERIMENTS,0.41798941798941797,60 kbit
+RESULTS/EXPERIMENTS,0.42063492063492064,80 kbit
+RESULTS/EXPERIMENTS,0.42328042328042326,Memory Map Size [Bit]
+RESULTS/EXPERIMENTS,0.42592592592592593,"F0
+F1
+F2
+F3
+F4
+F7
+G0
+G4
+H7
+L0
+L1
+L4
+L4+
+Unique Three-way Comparison Sorted by Device Identifier and Grouped by Family"
+RESULTS/EXPERIMENTS,0.42857142857142855,"CMSIS Header
+CMSIS-SVD
+Reference Manual"
+RESULTS/EXPERIMENTS,0.4312169312169312,"Figure 6: The large differences between the bit field memory maps can be explained by the CMSIS header files omitting
+descriptions for registers with only a single bit field, thus significantly reducing the map’s total size. The effect is multiplied
+when a device contains large arrays of registers with only one bit field, as seen with the STM32L4+ devices. In contrast, the
+SVD files can define all possible bit fields, even if they do not exist on the specific device, as shown with the STM32F7 family."
+RESULTS/EXPERIMENTS,0.43386243386243384,"a relative conflict rate of between 0.8 % and 8.2 %, as listed in
+the appendix (Table 11). However, the STM32L1 family has
+a relative conflict rate of 20 %, pointing to a systemic issue in
+the data, which we investigated manually. A selection of the
+most prominent patterns is part of the appendix (Table 12)."
+RESULTS/EXPERIMENTS,0.4365079365079365,"5.4.5
+Register Descriptions"
+RESULTS/EXPERIMENTS,0.43915343915343913,"To evaluate the register description, we compare three sources:
+the 4 reference manuals, the 5 CMSIS header files, and the"
+RESULTS/EXPERIMENTS,0.4417989417989418,"6 CMSIS-SVD files. We only compare STM32 devices with
+an identical MMIO design (excluding ARMv8-M designs),
+which leaves 2621 (87 %) devices for which all three sources
+exist. Since these sources have limited device resolution, we
+perform 183 unique three-way comparisons by checking for
+name conflicts but not completeness.
+Each register description is a tree structure made of pe-"
+RESULTS/EXPERIMENTS,0.4444444444444444,"ripherals ∋registers ∋bit fields. Therefore, we perform the
+same conflict check at each level. We convert each level into
+a flat memory map by expanding the peripheral, register, or
+bit field from the tuple [address, width] into a range of bytes
+or bits with the corresponding name attached. The total size
+of each memory map and the amount each source contributes
+and overlaps are listed in Table 5.
+To better understand these numbers, we plot the size of
+the memory map per three-way comparison, starting with the
+register level in Figure 5. The figure visualizes how closely
+our pipeline can reconstruct the register map from the refer-
+ence manual. The reason for the large discrepancies in the
+STM32H7 devices is due to the CMSIS header files defin-
+ing registers related to dual-core management, which are not
+classified as peripherals in the reference manual or simply
+omitted in the CMSIS-SVD files. The bit field memory map
+sizes in Figure 6 show a lack of data from the CMSIS header"
+RESULTS/EXPERIMENTS,0.4470899470899471,"Journal of Systems Research (JSys)
+2023 0% 2% 4%"
+RESULTS/EXPERIMENTS,0.4497354497354497,Conflict Rate [%]
+RESULTS/EXPERIMENTS,0.4523809523809524,"F0
+F1
+F2
+F3
+F4
+F7
+G0
+G4
+H7
+L0
+L1
+L4
+L4+
+Unique Three-way Comparison Sorted by Device Identifier and Grouped by Family"
+RESULTS/EXPERIMENTS,0.455026455026455,"Using Majority Voting
+Relative Conflict Rate"
+RESULTS/EXPERIMENTS,0.4576719576719577,"Figure 7: The distribution of register conflicts is not equally distributed, with simple devices having almost no conflicts, while
+complex devices in the STM32H7 family have a significant 4 % conflict rate. The opportunity to use majority voting also
+decreases with complex devices. 0% 1% 2%"
+RESULTS/EXPERIMENTS,0.4603174603174603,Conflict Rate [%]
+RESULTS/EXPERIMENTS,0.46296296296296297,"F0
+F1
+F2
+F3
+F4
+F7
+G0
+G4
+H7
+L0
+L1
+L4
+L4+
+Unique Three-way Comparison Sorted by Device Identifier and Grouped by Family"
+RESULTS/EXPERIMENTS,0.4656084656084656,"Using Majority Voting
+Relative Conflict Rate"
+RESULTS/EXPERIMENTS,0.46825396825396826,"Figure 8: The distribution of bit field conflicts is spread wider than for the registers; however, it compensates with an even higher
+use of majority voting across all devices."
+RESULTS/EXPERIMENTS,0.4708994708994709,"files compared to the reference manuals and SVD files. On
+inspection, we noticed that the CMSIS header files do not
+contain bit field definitions for registers that consist of only a
+single integer value since a 32-bit or 16-bit value can be na-
+tively constructed using the C types uint32_t or uint16_t,
+respectively.
+We continue our evaluation by highlighting all memory lo-
+cations whose names do not match after normalization for all
+three levels resulting in Table 6. Compared to the whole mem-
+ory map size, over 97 % of register locations are conflict-free;
+for bit fields, still 93 % of locations are conflict-free. We can
+improve these results with majority voting, which requires
+two agreeing sources overruling one other per location. These
+requirements are fulfilled by about 42–63 % of overlapping
+memory locations, as shown in Table 7. We can also see sig-
+nificant differences per level in the source combinations that
+agreed most during the voting process, particularly on register
+and bit field level, where the combinations using the reference
+manuals agree most often, demonstrating the accuracy and
+usefulness of our pipeline. This simple voting mechanism is
+sufficient to significantly improve the percentage of conflict-
+free overlapping memory, resulting in 98 % of registers and
+96 % of bit fields."
+RESULTS/EXPERIMENTS,0.47354497354497355,"When visualizing the relative conflict rate of registers per
+device family in Figure 7, we discover that both the conflict
+distribution as well as the majority voting opportunities are
+not equally distributed among the memory maps. The largest
+amount of conflicts is attributed to the STM32F7, STM32H7,
+and STM32L4+ families, which are complex microcontrollers.
+Simpler devices exhibit fewer conflicts to begin with and a
+higher share of successful majority voting. For the bit field
+conflict distribution shown in Figure 8, these patterns are
+spread more widely, and the simpler devices have even more
+opportunities to use majority voting."
+RESULTS/EXPERIMENTS,0.47619047619047616,"When we aggregate the register conflicts into the top five
+associated peripherals as compiled in the appendix (Table 13),
+the STM32H7 devices alone are responsible for over half of
+the observed conflicts. Comparing the three sources manu-
+ally, we discovered most of the colliding register locations
+to have aliases with differing bit fields depending on the
+peripheral runtime configuration. While our 4 reference
+manual pipeline extracts these location aliases faithfully, the"
+RESULTS/EXPERIMENTS,0.47883597883597884,"6 CMSIS-SVD files do not always encode these aliases cor-
+rectly, and the 5 CMSIS headers get compromised by using
+a single neutral name instead of a C union. Our linear memory
+map model does not model multiple names per location and,
+instead, keeps only the last name of register or bit field aliases,"
+RESULTS/EXPERIMENTS,0.48148148148148145,"Journal of Systems Research (JSys)
+2023"
+RESULTS/EXPERIMENTS,0.48412698412698413,"Dataset
+Sources
+Method of Comparison
+Result
+N"
+RESULTS/EXPERIMENTS,0.48677248677248675,Device Identifier
+RESULTS/EXPERIMENTS,0.4894179894179894,3 Datasheet vs. 7 CubeMX
+RESULTS/EXPERIMENTS,0.49206349206349204,"Datasheet ⊇CubeMX
+93.2 %
+3024
+Package
+Datasheet = CubeMX
+99.68 %
+2819
+Pinout
+Matching pin name at package position
+99.88 %
+247756
+Pin Function
+Matching index for function name at pin
+96.2 %
+1107035"
+RESULTS/EXPERIMENTS,0.4947089947089947,"Interrupt Vector Table
+3 Reference Manual vs. 5 Header
+Matching vector name at table position
+98.8 %
+190109"
+RESULTS/EXPERIMENTS,0.4973544973544973,"Peripheral
+4 Reference Manual vs."
+RESULTS/EXPERIMENTS,0.5,"5 Header vs. 6 SVD
+Matching peripheral, register, or bit field name
+at byte or bit address after majority voting"
+RESULTS/EXPERIMENTS,0.5026455026455027,"96.4 %
+42752
+Register
+97.7 %
+891044
+Bit Field
+95.9 %
+3425903"
+RESULTS/EXPERIMENTS,0.5052910052910053,"All Datasets
+All Sources
+Weighted average over all data points
+96.5 %
+5910442"
+RESULTS/EXPERIMENTS,0.5079365079365079,"Table 8: The summary of all data comparisons we performed for this evaluation. The overall quality of the extracted data is very
+high when compared to the machine-readable sources."
+RESULTS/EXPERIMENTS,0.5105820105820106,"which can lead to artificial conflicts.
+We conclude our evaluation with a summary of all the com-
+pared datasets in Table 8. Our implementation was able
+to match existing machine-readable data sources both in
+quantity and quality with a high accuracy of 96.5 %. We
+took care to eliminate systemic problems in our pipelines by
+validating the consistency of our results and finding justifica-
+tions for outliers manually."
+RESULTS/EXPERIMENTS,0.5132275132275133,"5.5
+Discussion of Findings"
+RESULTS/EXPERIMENTS,0.5158730158730159,"Overall, we studied four aspects related to technical documen-
+tation: accessing them, processing their content, encoding the
+extracted information, and assessing the resulting quality.
+We accessed the technical documentation using a custom,
+vendor-specific PDF parser, implemented with only three
+times the effort compared to accessing machine-readable
+sources directly. Still, we expect our modular design to reduce
+this overhead when adding additional documentation styles
+from more vendors in the future. The accuracy of the resulting
+HTML is sufficient to yield reproducible results, with patches
+required only to repair already-existing formatting issues in
+the vendor-provided PDFs.
+Both the table processing and a simple regex-based text
+mining interface were simple to implement and yielded prac-
+tical performance, even for complex table structures and text
+fields, and derived highly-detailed datasets. We were able to
+derive additional context from table captions and surrounding
+text to further increase our device coverage. However, we
+found that regex-based text mining is too limiting in practice,
+as footnotes and text present important information often us-
+ing different keywords and phrases, complicating the creation
+of matching patterns.
+We encoded the extracted hardware description data to-
+gether with our custom ontology as a knowledge graph. We
+solved naming differences between sources using only regex
+substitution patterns. For sources that supported majority vot-
+ing, we were able to merge machine-readable sources with"
+RESULTS/EXPERIMENTS,0.5185185185185185,"the technical documentation to detect and repair many data
+conflicts automatically. The final knowledge graph is eas-
+ily discoverable using third-party ontology editors, such as
+Protégé [39], and can be accessed via the owlready2 Python
+package [40] for integration with code generation tools.
+Our extensive evaluation demonstrated the ability of our
+pipelines to extract highly accurate and complete data from
+the technical documentation, even when compared to (vendor-
+provided) machine-readable sources. On top, we were able to
+find issues in the machine-readable sources, particularly in the
+pinouts and pin functions, that would have been very difficult
+to detect manually. We can use these identified patterns to
+guide manual patching efforts much more effectively, thereby
+increasing the quality of all available data sources. Even for
+the very large and complex register descriptions, we were
+able to reconstruct a sufficient device resolution to match
+other sources and repair conflicts via majority voting. While
+we can send patches for machine-readable data to some of
+the STMicro GitHub repositories [65–67], to the best of our
+knowledge, a process to report issues or even encode patches
+for the PDF documentation is missing so far, making our
+HTML patches the only known mechanism to do so reliably.
+These results give us high confidence in using our
+pipeline for extracting data without machine-readable
+counterparts and achieving similar accuracy, at least for
+STMicro technical documentation. However, the architecture
+of our pipelines and evaluation code is flexible enough to
+accommodate new data sources and vendors in the future."
+RESULTS/EXPERIMENTS,0.5211640211640212,"5.6
+Impact of our Tool"
+RESULTS/EXPERIMENTS,0.5238095238095238,"The overall accuracy and flexibility of our processor removes
+the bottleneck of manual data aggregation for many previously
+described use cases in Section 3. Projects that were limited
+only by accurate PDF access, such as Datasheet2SVD [48],
+only need to port the PDF →HTML and relevant subsequent
+pipelines instead of starting from scratch. Once the vendor
+port is complete, it creates an opportunity to extract signif-"
+RESULTS/EXPERIMENTS,0.5264550264550265,"Journal of Systems Research (JSys)
+2023"
+RESULTS/EXPERIMENTS,0.5291005291005291,"icant amounts of tabular data with very little effort due to
+the similar tabular data structures across a vendor’s product
+line. Projects based on machine-readable data, such as the
+modm-devices [35] and embassy-rs [68] projects, can now
+collaborate on a common data processor (cf. Figure 1), reduc-
+ing implementation efforts and sharing new fixes and features.
+The extraction of data also applies beyond STM32 micro-
+controllers: For example, about 40 % of the already converted
+STMicro datasheets describe sensors, storage, and communi-
+cation devices, which are interfaced through external busses
+and controlled through registers. The I2CDevLib [27] and
+Cyanobyte [20] projects would strongly benefit from adapted
+HTML →X pipelines to extract device properties, create
+SVD register maps, and state machines to generate drivers.
+Since HTML is a widely used format, projects that previously
+relied on custom PDF parsers for highly specific tasks, such
+as uConfig [47] extracting package pinouts, can implement
+their data extraction directly on HTML even without using our
+subsequent pipelines. This flexibility can foster an ecosystem
+of independent data extraction pipelines that can be integrated
+back into our processor if needed.
+Finally, in addition to this evaluation in March 2023, we
+performed a previous evaluation in July 2022. While STMi-
+cro released a total of 63 new datasheets and 18 new reference
+manuals, our pipeline only required little adaptation, mainly
+related to updating the HTML patches. The total number
+of compared data points increased by about 1.7 %, yet the
+relative quality presented in Table 8 varied by less than 0.3
+percentage points. In addition, all intermediary results of the
+individual comparisons (presented in Section 5.4) were very
+similar, strongly hinting that our processor implementa-
+tion will remain stable long-term with very few mainte-
+nance requirements, ensuring the usefulness of our tool."
+CONCLUSION/DISCUSSION,0.5317460317460317,"6
+Conclusion and Outlook"
+CONCLUSION/DISCUSSION,0.5343915343915344,"Our evaluation has underlined the benefits and potential of
+our tool—a modular processor for automatically extracting
+hardware descriptions from PDF technical documentation. In
+the following, we first conclude this paper before presenting
+alternative concepts and orthogonal pointers for future work."
+CONCLUSION/DISCUSSION,0.5370370370370371,"6.1
+Conclusion"
+CONCLUSION/DISCUSSION,0.5396825396825397,"Our data processor presents a significant improvement over
+existing generic information extraction solutions when ap-
+plied to technical documentation due to a specialized PDF
+parser, unsupervised and fast operation, domain-specific data
+encoding, and highly accurate results. Our extensive evalu-
+ation results confirm that our pipelines are free of systemic
+issues and can extract information relevant to existing code
+generation use cases with very high accuracy. In addition, our
+tool is immediately applicable to a number of open-source
+projects that would significantly benefit from its use."
+CONCLUSION/DISCUSSION,0.5423280423280423,"With over 150 thousand captioned tables in our HTML
+archive of STMicro technical documentation, they showcase
+the significant potential for extracting data not available in
+a machine-readable format and therefore provide access to
+information only published in the documentation. We expect
+many entirely new use cases to be made possible with our tool
+that are unrelated to code generation: comparing revisions
+of PDF documents in normalized HTML form, linking code
+to sections of documentation automatically, using constraint
+solvers to find layout solutions for pin signal usage in elec-
+tronic design, validating compatibility of existing software
+drivers with newly released microcontrollers."
+CONCLUSION/DISCUSSION,0.544973544973545,"6.2
+Potential Tool Improvements"
+CONCLUSION/DISCUSSION,0.5476190476190477,"We anticipate three specific improvements to our tool that
+increase its usefulness even beyond our current usage:
+Text Mining. Our implementation uses regex pattern
+matching to find information in text, which is a brittle and
+error-prone manual process. However, since technical doc-
+umentation uses a lot of domain-specific jargon with many
+nouns and abbreviations only making sense in context, the
+use of traditional text mining approaches may be difficult.
+However, cutting-edge machine learning projects accessing
+PDFs using large language models show significant promise
+and can output data in structural form as well [14,81,82]. A
+solution could be to enrich these machine-learning models
+with the knowledge graph generated by our tool [19,77].
+Processing Figures. For our work, we only focused on
+tables and text in the technical documentation since table pro-
+cessing is a well-researched approach, and the table content
+mirrored the data in the machine-readable source most accu-
+rately. However, in addition to the 152 041 tables, the STMi-
+cro datasheets and reference manuals also contain 52 568
+figures. Other applications could benefit from processing
+these figures since some data, especially state machine dia-
+grams and board pinouts, is only encoded graphically. We
+could convert the Postscript-based graphics into scalable vec-
+tor graphics to preserve the vector and text data [16] so that
+it can be programmatically accessed later on. For example,
+quasi-regular tabular structures in figures can be found using
+whitespace analysis [7,10,53] or by interpreting text in ge-
+ometric shapes such as rectangles as imaginary table cells,
+which allows using table processing for content extraction.
+However, more complex figures will require more specialized
+approaches with a better understanding of graphics rendering.
+Mathematical formulas are a special case of graphics mixed
+with text, e.g.,
+√"
+CONCLUSION/DISCUSSION,0.5502645502645502,"2, which our implementation cannot correctly
+detect or convert. An approach could be to convert them to
+a markup language such as MathML [74] using a machine-
+learning model [12].
+Performance. Converting over 150 thousand PDF pages of
+STMicro documentation to HTML currently takes a few hours
+(cf. Section 5.2). While the PDF parsing library pdfium [46]"
+CONCLUSION/DISCUSSION,0.5529100529100529,"Journal of Systems Research (JSys)
+2023"
+CONCLUSION/DISCUSSION,0.5555555555555556,"is implemented in C++, the majority of the pipeline is written
+in native Python code and thus relatively slow. A rewrite of
+the PDF →HTML pipeline entirely in C++ or Rust could sig-
+nificantly improve conversion times and apply future pipeline
+improvements to a large set of documents much faster. The
+remaining pipelines, however, are less compute intensive and
+may therefore benefit less from a rewrite.
+Other Technical Documents. Our PDF →HTML pipeline
+design is highly flexible, and its implementation already sup-
+ports two distinct PDF formats from STMicro. We are confi-
+dent that adapting our pipeline to PDFs from other vendors
+is feasible with only limited effort. However, the multitude
+of technical documentation, also unrelated to electronic hard-
+ware designs, hinders the implementation of a single universal
+solution (pipeline). For these expert domains, extending our
+processor can be a first step to making a lot of data accessible."
+CONCLUSION/DISCUSSION,0.5582010582010583,"6.3
+Future Work"
+CONCLUSION/DISCUSSION,0.5608465608465608,"We also anticipate future work in the fields of knowledge
+modeling and machine learning to be enabled by our tool.
+Hardware Ontologies. While many general-purpose and
+specialized ontologies that allow complex reasoning about
+their knowledge domain are available, we were unable to
+discover an ontology that captures electronic hardware. As
+we described in Section 3.3, existing use cases are limited to
+machine-readable datasets, which are highly specialized. Our
+tool can solve this chicken-and-egg problem by making the
+large amounts of data in technical documentation accessible,
+thus creating the demand for a hardware ontology.
+With a sufficiently large ontology comes the ability to rea-
+son about hardware, enabling, for example, implicitly compar-
+ing and discovering peripheral implementations of the same
+bus protocol between different microcontrollers, even if they
+do not support these protocols officially. Such details can be
+particularly helpful for parts selection and cost minimization.
+Semantic Datasheets. Knowledge graphs in OWL format
+can be encoded directly in HTML as part of the semantic
+web technology stack [42], resulting in a format that is both
+human- and machine-readable. This concept can be extended
+to validate the document’s and knowledge graph’s integrity
+using rule languages [33]. By integrating JavaScript into the
+HTML document, the encoded structural information can be
+made discoverable interactively directly inside the documents.
+Presenting knowledge to a domain expert effectively also
+presents a usability challenge worth investigating.
+Machine Learning. The main challenge for creating ef-
+fective machine-learning models is finding suitable training
+data. Our tool can output finely tuned, deterministic, and large
+datasets for every conversion pipeline with a reasonable man-
+ual implementation effort and excellent quality that a model
+can be trained against. The trained models can then extract
+ontologies and data from documents without support in our
+tool or from unrelated knowledge domains."
+CONCLUSION/DISCUSSION,0.5634920634920635,"There are many more opportunities for future work to build
+on our data processor to extract information from technical
+documentation in other fields than just for firmware develop-
+ment. Our tool lays the foundation for developing challenging
+new use cases that require automatically processing technical
+documentation and thus provides a vital contribution to im-
+proving the porting process of embedded software. We will
+actively maintain our tool in an open-source project to foster
+its evolution [37]."
+CONCLUSION/DISCUSSION,0.5661375661375662,Acknowledgement
+CONCLUSION/DISCUSSION,0.5687830687830688,"We thank the reviewers and area chair for their valuable feed-
+back. We are grateful to Eduard Vlad for testing the arti-
+facts and improving their documentation as well as to Roman
+Matzutt for proof-reading the manuscript."
+CONCLUSION/DISCUSSION,0.5714285714285714,Artifacts
+CONCLUSION/DISCUSSION,0.5740740740740741,"The specific processor evaluated in this paper has been
+archived [1]. We will further develop and maintained the
+processor as an open-source project on GitHub [37] under a
+MPLv2 license and we welcome pull requests that augment
+our provided data pipelines."
+REFERENCES,0.5767195767195767,References
+REFERENCES,0.5793650793650794,"[1] Paper Artifact:
+Data
+Processor.
+https:
+//github.com/salkinium/pdf-data-extraction-
+jsys-artifact, 2023."
+REFERENCES,0.582010582010582,"[2] Andrea Acquaviva, Nicola Bombieri, Franco Fummi,
+and Sara Vinco. Semi-automatic generation of device
+drivers for rapid embedded platform development. IEEE
+Transactions on Computer-Aided Design of Integrated
+Circuits and Systems, 32(9):1293–1306, 2013. https:
+//doi.org/10.1109/TCAD.2013.2257924."
+REFERENCES,0.5846560846560847,"[3] AdaCore: CMSIS-SVD to Ada Generator.
+https:
+//github.com/AdaCore/svd2ada, 2015."
+REFERENCES,0.5873015873015873,"[4] CMSIS
+Project
+Page.
+https://arm-
+software.github.io/CMSIS_5, 2015."
+REFERENCES,0.58994708994709,"[5] Bruce Belson, Wei Xiang, Jason Holdsworth, and Bron-
+son Philippa. C++20 Coroutines on Microcontrollers
+– What We Learned.
+IEEE Embedded Systems Let-
+ters, 13(1):9–12, 2020. https://doi.org/10.1109/
+LES.2020.2973397."
+REFERENCES,0.5925925925925926,"[6] Jacob Beningo and Anglin. Reusable Firmware Devel-
+opment. Springer, 2017. https://doi.org/10.1007/
+978-1-4842-3297-2."
+REFERENCES,0.5952380952380952,"Journal of Systems Research (JSys)
+2023"
+REFERENCES,0.5978835978835979,"[7] Hui Chao and Jian Fan. Layout and Content Extrac-
+tion for PDF Documents.
+In Proceedings of the 6th
+International Workshop on Document Analysis Systems
+(DAS ’04), pages 213–224. Springer, 2004.
+https:
+//doi.org/10.1007/978-3-540-28640-0_20."
+REFERENCES,0.6005291005291006,"[8] Hsin-Hsi Chen, Shih-Chung Tsai, and Jin-He Tsai. Min-
+ing tables from large scale HTML texts. In Proceed-
+ings of the 18th International Conference on Compu-
+tational Linguistics (COLING ’00), 2000.
+https:
+//doi.org/10.3115/990820.990845."
+REFERENCES,0.6031746031746031,"[9] Xu Chu, Yeye He, Kaushik Chakrabarti, and Kris Gan-
+jam.
+TEGRA: Table Extraction by Global Record
+Alignment.
+In Proceedings of the 2015 ACM SIG-
+MOD International Conference on Management of Data
+(SIGMOD ’15), pages 1713–1728, 2015.
+https:
+//doi.org/10.1145/2723372."
+REFERENCES,0.6058201058201058,"[10] Christopher Clark and Santosh Divvala. PDFFigures
+2.0: Mining Figures from Research Papers.
+In Pro-
+ceedings of the 2016 IEEE/ACM Joint Conference on
+Digital Libraries (JCDL ’16), pages 143–152. IEEE,
+2016. https://doi.org/10.1145/2910896."
+REFERENCES,0.6084656084656085,"[11] A C++, compile-time, reactive RTOS for the Stack Re-
+source Policy based Real-Time For the Masses kernel.
+https://github.com/korken89/crect, 2017."
+REFERENCES,0.6111111111111112,"[12] Yuntian Deng, Anssi Kanervisto, Jeffrey Ling, and
+Alexander M. Rush.
+Image-to-Markup Generation
+with Coarse-to-Fine Attention.
+In Proceedings of
+the 34th International Conference on Machine Learn-
+ing (ICML ’17), pages 980–989.
+JMLR.org, 2017.
+https://doi.org/10.5555/3305381.3305483."
+REFERENCES,0.6137566137566137,"[13] Datasheet:
+STM32F303.
+https://www.st.com/
+resource/en/datasheet/stm32f303vc.pdf."
+REFERENCES,0.6164021164021164,"[14] Alexander Dunn, John Dagdelen, Nicholas Walker,
+Sanghoon Lee, Andrew S Rosen, Gerbrand Ceder,
+Kristin Persson, and Anubhav Jain.
+Structured
+information extraction from complex scientific text
+with fine-tuned large language models.
+arXiv
+preprint arXiv:2212.05238, 2022. https://doi.org/
+10.48550/arXiv.2212.05238."
+REFERENCES,0.6190476190476191,"[15] Wolfgang Ecker, Wolfgang Müller, and Rainer Dömer.
+Hardware-dependent Software. Springer, 2009. https:
+//doi.org/10.1007/978-1-4020-9436-1."
+REFERENCES,0.6216931216931217,"[16] David W. Embley, Matthew Hurst, Daniel Lopresti, and
+George Nagy. Table-processing paradigms: a research
+survey. International Journal of Document Analysis
+and Recognition (IJDAR), 8(2):66–86, 2006. https:
+//doi.org/10.1007/s10032-006-0017-x."
+REFERENCES,0.6243386243386243,"[17] David W. Embley, Cui Tao, and Stephen W. Liddle.
+Automating the extraction of data from HTML tables
+with unknown structure. Data & Knowledge Engineer-
+ing, 54(1):3–28, 2005.
+https://doi.org/10.1016/
+j.datak.2004.10.004."
+REFERENCES,0.626984126984127,"[18] Ivan Ermilov, Sören Auer, and Claus Stadler.
+User-
+driven Semantic Mapping of Tabular Data.
+In Pro-
+ceedings of the 9th International Conference on Seman-
+tic Systems (I-SEMANTICS ’13), pages 105–112, 2013.
+https://doi.org/10.1145/2506182.2506196."
+REFERENCES,0.6296296296296297,"[19] Hao Fei, Yafeng Ren, Yue Zhang, Donghong Ji, and Xi-
+aohui Liang. Enriching contextualized language model
+from knowledge graph for biomedical information ex-
+traction.
+Briefings in bioinformatics, 22(3):bbaa110,
+2021. https://doi.org/10.1093/bib/bbaa110."
+REFERENCES,0.6322751322751323,"[20] Nicholas Felker. Design of Cyanobyte: An Interme-
+diate Representation to Standardize Digital Peripheral
+Datasheets for Automatic Code Generation.
+In Pro-
+ceedings of the 2020 IEEE Sensors Applications Sym-
+posium (SAS ’20), pages 1–6. IEEE, 2020.
+https:
+//doi.org/10.1109/SAS48726.2020.9220074."
+REFERENCES,0.6349206349206349,"[21] Gabriel Gaspar, Peter Fabo, Michal Kuba, Juraj Du-
+dak, and Eduard Nemlaha.
+MicroPython as a De-
+velopment Platform for IoT Applications.
+In Pro-
+ceedings of the 9th Computer Science On-line Confer-
+ence on Intelligent Algorithms in Software Engineering
+(CSOC ’20), pages 388–394. Springer, 2020. https:
+//doi.org/10.1007/978-3-030-51965-0_34."
+REFERENCES,0.6375661375661376,"[22] TinyGo - A Go Compiler For Small Places.
+https:
+//tinygo.org, 2018."
+REFERENCES,0.6402116402116402,"[23] Aidan Hogan, Eva Blomqvist, Michael Cochez, Claudia
+d’Amato, Gerard de Melo, Claudio Gutierrez, Sabrina
+Kirrane, José Emilio Labra Gayo, Roberto Navigli, Se-
+bastian Neumaier, et al. Knowledge Graphs. Synthesis
+Lectures on Data, Semantics, and Knowledge, 12(2):1–
+257, 2021. https://doi.org/10.1145/3447772."
+REFERENCES,0.6428571428571429,"[24] Krisztián Holman and Zoltán Szabó.
+Microcon-
+troller based application prototyping using domain spe-
+cific modeling.
+In Proceedings of the 2015 IEEE
+13th International Symposium on Applied Machine
+Intelligence and Informatics (SAMI ’15), pages 199–
+202.
+IEEE, 2015.
+https://doi.org/10.1109/
+SAMI.2015.7061875."
+REFERENCES,0.6455026455026455,"[25] Lars Huning, Timo Osterkamp, Marco Schaarschmidt,
+and Elke Pulvermüller. Seamless Integration of Hard-
+ware Interfaces in UML-based MDSE Tools.
+In
+Proceedings of the 16th International Conference on
+Software Technologies (ICSOFT ’21), 2021.
+https:
+//doi.org/10.5220/0010575802330244."
+REFERENCES,0.6481481481481481,"Journal of Systems Research (JSys)
+2023"
+REFERENCES,0.6507936507936508,"[26] Matthew Francis Hurst.
+The Interpretation of
+Tables in Texts.
+PhD thesis, University of Ed-
+inburgh, 2000.
+URL:
+https://ethos.bl.uk/
+OrderDetails.do?uin=uk.bl.ethos.515564."
+REFERENCES,0.6534391534391535,"[27] Open-source device database for I2C devices. https:
+//www.i2cdevlib.com, 2011."
+REFERENCES,0.656084656084656,"[28] Rebecca Jahn. Reasoning in Knowledge Graphs: Meth-
+ods and Techniques.
+PhD thesis, TU Wien, 2021.
+https://doi.org/10.34726/hss.2021.82944."
+REFERENCES,0.6587301587301587,"[29] Shah Khusro, Asima Latif, and Irfan Ullah. On meth-
+ods and tools of table detection, extraction and anno-
+tation in PDF documents. Journal of Information Sci-
+ence, 41(1):41–57, 2015. https://doi.org/10.1177/
+0165551514551903."
+REFERENCES,0.6613756613756614,"[30] Christopher Kormanyos.
+Real-Time C++: Efficient
+Object-Oriented and Template Microcontroller Pro-
+gramming.
+Springer, 2018.
+https://doi.org/
+10.1007/978-3-662-56718-0."
+REFERENCES,0.6640211640211641,"[31] Zephyr
+Embedded
+RTOS.
+https://
+www.zephyrproject.org, 2014."
+REFERENCES,0.6666666666666666,"[32] The
+DeviceTree
+Specification.
+https:
+//www.devicetree.org, 2016."
+REFERENCES,0.6693121693121693,"[33] Sonia Mehla and Sarika Jain.
+Rule Languages for
+the Semantic Web. In Emerging Technologies in Data
+Mining and Information Security: Proceedings of IEMIS
+2018, Volume 1, pages 825–834. Springer, 2019. https:
+//doi.org/10.1007/978-981-13-1951-8_73."
+REFERENCES,0.671957671957672,"[34] modm: a barebone embedded library generator. https:
+//modm.io, 2009."
+REFERENCES,0.6746031746031746,"[35] modm-devices: curated data for AVR and ARM Cortex-
+M devices.
+https://github.com/modm-io/modm-
+devices, 2016."
+REFERENCES,0.6772486772486772,"[36] Aggregated CMSIS header files for STM32. https://
+github.com/modm-io/cmsis-header-stm32, 2017."
+REFERENCES,0.6798941798941799,"[37] modm-data:
+Hardware Description Data Processor.
+https://github.com/modm-io/modm-data, 2023."
+REFERENCES,0.6825396825396826,"[38] MicroPython – Python for Microcontrollers. https:
+//micropython.org, 2014."
+REFERENCES,0.6851851851851852,"[39] Mark A. Musen. The Protégé Project: A Look Back
+and a Look Forward.
+AI Matters, 1(4):4–12, 2015.
+https://doi.org/10.1145/2757001.2757003."
+REFERENCES,0.6878306878306878,[40] Owlready2: Ontology-oriented programming in Python.
+REFERENCES,0.6904761904761905,"https://owlready2.readthedocs.io, 2017."
+REFERENCES,0.6931216931216931,"[41] Rasmus Berg Palm, Florian Laws, and Ole Winther.
+Attend, Copy, Parse End-to-end information extrac-
+tion from documents.
+In Proceedings of the 2019
+International Conference on Document Analysis and
+Recognition (ICDAR ’19), pages 329–336. IEEE, 2019.
+https://doi.org/10.1109/ICDAR.2019.00060."
+REFERENCES,0.6957671957671958,"[42] Archana Patel and Sarika Jain.
+Present and Future
+of Semantic Web Technologies: a Research Statement.
+International Journal of Computers and Applications,
+43(5):413–422, 2021.
+https://doi.org/10.1080/
+1206212X.2019.1570666."
+REFERENCES,0.6984126984126984,"[43] PDF 32000-1:2008 Format Specification.
+https://
+www.iso.org/standard/51502.html, 2008."
+REFERENCES,0.701058201058201,"[44] Tabula Project. https://tabula.technology, 2012."
+REFERENCES,0.7037037037037037,[45] InstaBuild: Image-based Footprint and Pinout Parser.
+REFERENCES,0.7063492063492064,"https://www.snapeda.com/instabuild, 2013."
+REFERENCES,0.708994708994709,"[46] PDFium:
+PDF rendering library.
+https://
+pdfium.googlesource.com/pdfium, 2013."
+REFERENCES,0.7116402116402116,"[47] uConfig:
+PDF-to-KiCAD Pinout Footprint Parser.
+https://github.com/Robotips/uConfig, 2017."
+REFERENCES,0.7142857142857143,"[48] Datasheet PDF-to-SVD Parser. https://github.com/
+brainstorm/datasheet2svd, 2020."
+REFERENCES,0.716931216931217,"[49] pypdfium: Python bindings to PDFium.
+https://
+github.com/pypdfium2-team/pypdfium2, 2021."
+REFERENCES,0.7195767195767195,"[50] Martha O.
+Perez-Arriaga.
+Automated Develop-
+ment of Semantic Data Models Using Scientific Pub-
+lications.
+PhD thesis, University of New Mexico,
+2018. URL: https://digitalrepository.unm.edu/
+cs_etds/89."
+REFERENCES,0.7222222222222222,"[51] Sebastian Plamauer and Martin Langer.
+Evalua-
+tion of MicroPython as Application Layer Program-
+ming Language on CubeSats.
+In Proceedings of
+the 30th International Conference on Architecture of
+Computing Systems (ARCS ’17), pages 1–9.
+VDE,
+2017.
+URL:
+https://ieeexplore.ieee.org/
+abstract/document/7948548."
+REFERENCES,0.7248677248677249,"[52] pygount: count lines of code using pygments. https:
+//pypi.org/project/pygount, 2016."
+REFERENCES,0.7275132275132276,"[53] J.-Y. Ramel, Michel Crucianu, Nicole Vincent, and
+Claudie Faure. Detection, extraction and representa-
+tion of tables.
+In Proceedings of 7th International
+Conference on Document Analysis and Recognition
+(ICDAR ’03), pages 374–378. IEEE, 2003.
+https:
+//doi.org/10.1109/ICDAR.2003.1227692."
+REFERENCES,0.7301587301587301,"Journal of Systems Research (JSys)
+2023"
+REFERENCES,0.7328042328042328,"[54] Roya Rastan. Automatic Tabular Data Extraction and
+Understanding. PhD thesis, University of New South
+Wales, Sydney, Australia, 2017.
+https://doi.org/
+10.26190/unsworks/19565."
+REFERENCES,0.7354497354497355,"[55] Roya Rastan, Hye-Young Paik, and John Shepherd.
+A PDF Wrapper for Table Processing.
+In Proceed-
+ings of the 2016 ACM Symposium on Document Engi-
+neering (DocEng ’16), pages 115–118, 2016. https:
+//doi.org/10.1145/2960811.2967162."
+REFERENCES,0.7380952380952381,"[56] Roya Rastan, Hye-Young Paik, John Shepherd, Se-
+ung Hwan Ryu, and Amin Beheshti.
+TEXUS: ta-
+ble extraction system for PDF documents.
+In Pro-
+ceedings of the 29th Australasian Database Confer-
+ence on Databases Theory and Applications (ADC ’18),
+pages 345–349. Springer, 2018. https://doi.org/
+10.1007/978-3-319-92013-9_30."
+REFERENCES,0.7407407407407407,"[57] Johannes Rausch, Octavio Martinez, Fabian Bissig,
+Ce Zhang, and Stefan Feuerriegel.
+DocParser: Hi-
+erarchical Document Structure Parsing from Render-
+ings.
+In Proceedings of the 35th AAAI Conference
+on Artificial Intelligence (AAAI ’21), 2021.
+https:
+//doi.org/10.1609/aaai.v35i5.16558."
+REFERENCES,0.7433862433862434,"[58] RustEmbedded:
+CMSIS-SVD to Rust Generator.
+https://github.com/rust-embedded/svd2rust,
+2016."
+REFERENCES,0.746031746031746,"[59] Embedded Rust.
+https://github.com/rust-
+embedded, 2017."
+REFERENCES,0.7486772486772487,"[60] embassy-rs.
+https://github.com/embassy-rs,
+2020."
+REFERENCES,0.7513227513227513,"[61] Gunar Schirner, Andreas Gerstlauer, and Rainer Domer.
+Automatic Generation of Hardware dependent Software
+for MPSoCs from Abstract System Specifications. In
+Proceedings of the 13th Asia and South Pacific De-
+sign Automation Conference (ASP-DAC ’08), pages
+271–276. IEEE, 2008.
+https://doi.org/10.1109/
+ASPDAC.2008.4483954."
+REFERENCES,0.753968253968254,"[62] Alexey Shigarov, Andrey Altaev, Andrey Mikhailov,
+Viacheslav Paramonov, and Evgeniy Cherkashin. Tab-
+byPDF: web-based system for PDF table extraction.
+In Proceedings of the 24th International Conference
+on Information and Software Technologies (ICIST ’18),
+pages 257–269. Springer, 2018. https://doi.org/
+10.1007/978-3-319-99972-2_20."
+REFERENCES,0.7566137566137566,"[63] STM32
+32-bit ARM
+Cortex-M
+microcontrollers.
+https://www.st.com/en/microcontrollers-
+microprocessors/stm32-32-bit-arm-cortex-
+mcus.html, 2007."
+REFERENCES,0.7592592592592593,"[64] STM32CubeMX
+Initialization
+Code
+Generator.
+https://www.st.com/en/development-tools/
+stm32cubemx.html, 2008."
+REFERENCES,0.7619047619047619,"[65] STM32 CMSIS-SVD Patches. https://github.com/
+stm32-rs/stm32-rs/tree/master/devices, 2017."
+REFERENCES,0.7645502645502645,"[66] STM32Cube
+MCU
+Overall Offer.
+https:
+//github.com/STMicroelectronics/
+STM32Cube_MCU_Overall_Offer, 2019."
+REFERENCES,0.7671957671957672,"[67] STM32 Open Pin Data.
+https://github.com/
+STMicroelectronics/STM32_open_pin_data,
+2020."
+REFERENCES,0.7698412698412699,"[68] embassy-rs:
+stm32-data.
+https://github.com/
+embassy-rs/stm32-data, 2021."
+REFERENCES,0.7724867724867724,"[69] CMSIS-SVD Collection Repository.
+https://
+github.com/posborne/cmsis-svd, 2015."
+REFERENCES,0.7751322751322751,[70] CMSIS System View Description Documentation.
+REFERENCES,0.7777777777777778,"https://arm-software.github.io/CMSIS_5/SVD/
+html/index.html, 2015."
+REFERENCES,0.7804232804232805,"[71] Extensible ARM CMSIS SVD spec based, multi-
+language source code generator.
+https://
+github.com/postspectacular/cmsis-svd-srcgen,
+2015."
+REFERENCES,0.783068783068783,"[72] SVDConv: CMSIS-compliant device header file gener-
+ator. https://www.keil.com/pack/doc/cmsis/SVD/
+html/svd_SVDConv_pg.html, 2015."
+REFERENCES,0.7857142857142857,"[73] Yuri A. Tijerino, David W. Embley, Deryle W. Lons-
+dale, and George Nagy.
+Ontology Generation from
+Tables. In Proceedings of the 4th International Confer-
+ence on Web Information Systems Engineering (WISE
+’03), pages 242–249. IEEE, 2003. https://doi.org/
+10.1109/WISE.2003.1254487."
+REFERENCES,0.7883597883597884,"[74] W3C Math. https://www.w3.org/Math, 2014."
+REFERENCES,0.791005291005291,"[75] Xinxin Wang.
+Tabular abstraction, editing, and
+formatting.
+PhD thesis, 1996.
+URL: http://
+hdl.handle.net/10012/10962."
+REFERENCES,0.7936507936507936,"[76] Kevin Weiss, Michel Rottleuthner, Thomas C. Schmidt,
+and Matthias Wählisch. PHiLIP on the HiL: Automated
+Multi-Platform OS Testing With External Reference
+Devices.
+ACM Transactions on Embedded Comput-
+ing Systems, 20(5s):1–26, 2021.
+https://doi.org/
+10.1145/3477040."
+REFERENCES,0.7962962962962963,"[77] Michihiro Yasunaga, Hongyu Ren, Antoine Bosse-
+lut,
+Percy Liang,
+and Jure Leskovec.
+QA-
+GNN: Reasoning with Language Models and Knowl-
+edge Graphs for Question Answering.
+arXiv
+preprint arXiv:2104.06378, 2021. https://doi.org/
+10.48550/arXiv.2104.06378."
+REFERENCES,0.798941798941799,"Journal of Systems Research (JSys)
+2023"
+REFERENCES,0.8015873015873016,"[78] Song Yin, Li Li Huang, Hong Zhao, Yang Wang, and
+Ping Xia. Portability of WSN sensor driver using ab-
+straction layer and FSM. In Proceedings of the 2010
+International Conference on Frontiers of Manufactur-
+ing and Design Science (ICFMD ’10, volume 44, pages
+461–465. Trans Tech Publ, 2011. https://doi.org/
+10.4028/www.scientific.net/AMM.44-47.461."
+REFERENCES,0.8042328042328042,"[79] Gohar Zaman, Hairulnizam Mahdin, Khalid Hus-
+sain, Atta-ur Rahman, Jemal Abawajy, and Salama A.
+Mostafa. An Ontological Framework for Information
+Extraction From Diverse Scientific Sources.
+IEEE
+Access, 9:42111–42124, 2021.
+https://doi.org/
+10.1109/ACCESS.2021.3063181."
+REFERENCES,0.8068783068783069,"[80] Koen Zandberg and Emmanuel Baccelli.
+Femto-
+Containers:
+DevOps
+on
+Microcontrollers
+with
+Lightweight Virtualization & Isolation for IoT Soft-
+ware Modules.
+arXiv:2106.12553, 2021.
+https:
+//doi.org/10.48550/arXiv.2106.12553."
+REFERENCES,0.8095238095238095,"[81] Wayne Xin Zhao, Kun Zhou, Junyi Li, Tianyi
+Tang, Xiaolei Wang, Yupeng Hou, Yingqian Min,
+Beichen Zhang, Junjie Zhang, Zican Dong, et al.
+A Survey of Large Language Models.
+arXiv
+preprint arXiv:2303.18223, 2023. https://doi.org/
+10.48550/arXiv.2303.18223."
+REFERENCES,0.8121693121693122,"[82] Wei Zhou, Lan Zhang, Le Guan, Peng Liu, and Yuqing
+Zhang. What Your Firmware Tells You Is Not How You
+Should Emulate It: A Specification-Guided Approach
+for Firmware Emulation. In Proceedings of the 2022
+ACM SIGSAC Conference on Computer and Communi-
+cations Security (SIGSAC ’22), pages 3269–3283, 2022.
+https://doi.org/10.1145/3548606.3559386."
+OTHER,0.8148148148148148,"A
+Appendix"
+OTHER,0.8174603174603174,"In addition to our evaluation in Section 5, we inspected several
+data points manually to confirm that our processor was free
+of systematic issues that could skew our datasets. Here, as an
+addendum, we present a selection of these manual evaluations
+based on the STMicro input sources from March 2023."
+OTHER,0.8201058201058201,"A.1
+Pinout"
+OTHER,0.8227513227513228,"The device pinouts we extracted from the technical documen-
+tation in Section 5.4.3 matched the STM32CubeMX data
+very accurately at 99.88 %, with only 20 discrepancies. We,
+therefore, manually investigated these issues by comparing
+the PDFs with the raw STM32CubeMX database, where we
+found formatting issues and confused packages to be the main
+source of errors. The results of our manual evaluation are
+encoded in Table 9 and Table 10."
+OTHER,0.8253968253968254,"A.2
+Pin Functions"
+OTHER,0.828042328042328,"When we evaluated the pin functions in Section 5.4.4, we
+noticed that the STM32L1 device family had a significantly
+higher relative amount of conflicts than the rest, as shown
+in Table 11. Since this amount of conflicts was too much
+to manually inspect, we instead investigated the most promi-
+nent patterns that emerged, in particular, the conflict of an
+analog or special hardware function (“additional function”)
+with a digital signal multiplexer (“alternate function”). We
+verified that the hardware implementation of the alternate
+functions is identical across all compared devices; therefore,
+these conflicts are easy to detect since an analog signal can-
+not be routed through the digital multiplexer and neither the
+other way around. When we applied these assumptions to
+our data, we found that particularly the STM32L1 family suf-
+fers from systemic conflicts of only a few analog functions,
+which were mapped wrong across the whole device range,
+explaining why the family is such an outlier. A selection of
+prominent patterns, including their explanations, is presented
+in Table 12."
+OTHER,0.8306878306878307,"A.3
+Register Descriptions"
+OTHER,0.8333333333333334,"During the comparison of the register descriptions in the ref-
+erence manuals, CMSIS header, and CMSIS-SVD files in
+Section 5.4.5, we noticed a significant amount of register
+conflicts in the STM32H7 devices, as listed in Table 13. Com-
+paring the three sources manually, we found a lot of register
+locations to have aliases with differing bit fields depending on
+the peripheral runtime configuration. We also noticed slightly
+different names in the reference manuals than in the other
+sources; however, the bit field structures and their function-
+ality appears to be compatible, according to the associated
+textual descriptions. We imagine these issues to be the re-
+sults of the large complexity of the peripherals, having many
+registers with similar names and interlocking functionality."
+OTHER,0.8359788359788359,"Journal of Systems Research (JSys)
+2023"
+OTHER,0.8386243386243386,"Affected Devices
+-Missing, +Added, =Renamed Positions
+Cause of Issue in Datasheet Table and Figures"
+OTHER,0.8412698412698413,"STM32G431CBYx
+-A4, +A43
+Typo for position A4, figure is correct."
+OTHER,0.843915343915344,"STM32L412TBY6P
+-E5
+Typo for position F5, figure is correct."
+OTHER,0.8465608465608465,"STM32H745XxHx,
+STM32H747XxHx,
+STM32H755XxHx,
+STM32H757XxHx"
+OTHER,0.8492063492063492,"+VDD
+VDD name is placed into the position column instead of name column."
+OTHER,0.8518518518518519,"STM32H747ZIY6
+-A13
+Missing pin position, figure shows A13=NC."
+OTHER,0.8544973544973545,"STM32H750XBH6
+-G2, -F1
+Missing pin position, figure shows G2=NC, F1=NC."
+OTHER,0.8571428571428571,"STM32H757ZIY6
+-A13
+Missing pin position, figure shows A13=NC."
+OTHER,0.8597883597883598,"STM32L071VxIx,
+STM32L072VxIx
+-E3
+Missing pin position, figure shows E3=VSS."
+OTHER,0.8624338624338624,"STM32L151QCH6,
+STM32L152QCH6,
+STM32L162QCH6"
+OTHER,0.8650793650793651,"-K1
+Missing pin position, figure shows K1=OPAMP3_VINM."
+OTHER,0.8677248677248677,"STM32L053CxUx,
+STM32L063CxUx"
+OTHER,0.8703703703703703,"Pins 2...7
+renamed
+Position cells are shifted down by 1 row."
+OTHER,0.873015873015873,"STM32L062C8U6
+-46
+Missing position row, figure shows 46=PB9."
+OTHER,0.8756613756613757,STM32L412CBxxP
+OTHER,0.8783068783068783,"22=(PB11, VDD),
+45=(PB8, PB9),
+46=(PB9, VDD)"
+OTHER,0.8809523809523809,"Missing both package column and figures for the SMPS package variant.
+Our pipeline instead uses the closest non-variant match."
+OTHER,0.8835978835978836,"STM32L562QEI6P
+B4=(PG15, VDD12),
+M11=(PG11, VDD12)"
+OTHER,0.8862433862433863,"Missing both package column and figures for the SMPS package variant.
+Our pipeline instead uses the closest non-variant match."
+OTHER,0.8888888888888888,"Appendix Table 9: These pin position and name mismatches are all attributed to mistakes in the datasheet: missing entries, typos
+in cells, and formatting issues. Our pipeline could not find two packages for devices with a switched mode power supply (SMPS)
+feature and instead used the closest non-variant match."
+OTHER,0.8915343915343915,"Affected Devices
+-Missing, +Added, =Renamed Positions
+Cause of Issue in STM32CubeMX Database"
+OTHER,0.8941798941798942,"STM32F038E6Y6
+E2=(PB1, NPOR)
+Wrong entry, datasheet table and figure both show E2=NPOR."
+OTHER,0.8968253968253969,"STM32F048TxY6
+D2=(NPOR, PB1),
+F2=(PB1, NPOR)
+Wrong entry, datasheet table and figure both show D2=PB1 and F2=NPOR."
+OTHER,0.8994708994708994,"STM32L452REYxP
+29 renamed pins
+Uses non-variant instead of SMPS package."
+OTHER,0.9021164021164021,"STM32L476QxIxP,
+STM32L4P5QxIxS,
+STM32L4R5QxIxP"
+OTHER,0.9047619047619048,"C6=(PG14, VDD12),
+L11=(PB11, VDD12)
+Uses non-variant instead of SMPS package."
+OTHER,0.9074074074074074,"STM32L476QxIxP,
+STM32L4P5QxIxS,
+STM32L4R5QxIxP"
+OTHER,0.91005291005291,"C6=(PG14, VDD12),
+L11=(PB11, VDD12)
+Uses non-variant instead of SMPS package."
+OTHER,0.9126984126984127,"STM32L4R5AII6P
+C6=(PG15, VDD12),
+M10=(PH11, VDD12)
+Uses non-variant instead of SMPS package."
+OTHER,0.9153439153439153,STM32L552QEI6
+OTHER,0.917989417989418,"B4=(V15SMPS, PG15),
+M10=(VLXSMPS, PG13),
+M11=(V15SMPS, PG11),
+M9=(VDDSMPS, PG14)"
+OTHER,0.9206349206349206,Uses SMPS instead of non-variant package.
+OTHER,0.9232804232804233,"STM32L552VET6
+Pins 20...51,
+98, 99 renamed
+Uses SMPS instead of non-variant package."
+OTHER,0.9259259259259259,"STM32L552ZETx
+Pins 31...73,
+126...143 renamed
+Uses SMPS instead of non-variant package."
+OTHER,0.9285714285714286,"Appendix Table 10: The STM32CubeMX database is often using the wrong package for devices with an optional switched mode
+power supply (SMPS) feature as indicated by the variant key in the identifier. As shown in the first two rows, only three other
+pins were simply wrong, with the rest of the data matching the datasheet."
+OTHER,0.9312169312169312,"Journal of Systems Research (JSys)
+2023"
+OTHER,0.9338624338624338,"Family
+Number of Functions
+Number of Conflicts
+Absolute Rate of Conflicts
+Relative Rate of Conflicts"
+OTHER,0.9365079365079365,"STM32H7
+215442
+10184
+24.2%
+4.7%
+STM32L1
+30124
+6037
+14.3%
+20.0%
+STM32G0
+66469
+3960
+9.4%
+6.0%
+STM32L4
+174531
+3889
+9.2%
+2.2%
+STM32F4
+130518
+3750
+8.9%
+2.9%
+STM32F7
+114590
+3130
+7.4%
+2.7%
+STM32F0
+29487
+2430
+5.8%
+8.2%
+STM32G4
+85415
+1539
+3.7%
+1.8%
+STM32F2
+22151
+1411
+3.4%
+6.3%
+STM32L0
+62437
+1220
+2.9%
+2.0%
+STM32F3
+43468
+1052
+2.5%
+2.4%
+STM32U5
+52067
+1047
+2.5%
+2.0%
+STM32L5
+19778
+858
+2.0%
+4.3%
+STM32WB
+8487
+677
+1.6%
+8.0%
+STM32WL
+5888
+384
+0.9%
+6.5%
+STM32H5
+42602
+321
+0.8%
+0.8%
+STM32C0
+3581
+181
+0.4%
+5.1%"
+OTHER,0.9391534391534392,"Appendix Table 11: The conflict rates of pin functions sorted by absolute rate. The STM32H7 devices have the largest amount of
+pin functions and, therefore, also the largest absolute share of conflicts, while their relative rate of about 5 % is comparable to
+other families. Meanwhile, over one-fifth of the pin functions of the STM32L1 family conflict, pointing to a systemic data issue."
+OTHER,0.9417989417989417,"Occurances
+Functions
+Conflict
+Description and Cause of Issues"
+OTHER,0.9444444444444444,"654
+23"
+OTHER,0.9470899470899471,"COMPx_INP
+COMPx_INM
+A̸=14
+Comparator input is analog, STM32CubeMX database is wrong for the entire STM32L15x
+family."
+OTHER,0.9497354497354498,"446
+TIMx_ETR
+1̸=A
+Digital signal where the STM32CubeMX database is wrong for the entire STM32L1 family."
+OTHER,0.9523809523809523,"514
+319"
+OTHER,0.955026455026455,"SYS_WKUP
+SYS_TAMP
+A̸=0
+Special digital input signal hardwired into PA0 pin to wake up from deep sleep and tamper
+detection. STM32CubeMX database is wrong for the entire STM32L1 family."
+OTHER,0.9576719576719577,"497
+497"
+OTHER,0.9603174603174603,"RCC_OSC_IN
+RCC_OSC_OUT
+A̸=0
+Special analog signal that must be configured by RCC peripheral. This is a datasheet issue
+on some STM32F2/F4 devices and a STM32CubeMX database issue on STM32L1 family."
+OTHER,0.9629629629629629,"296
+105
+93
+69"
+OTHER,0.9656084656084656,UCPDx_FRSTX
+OTHER,0.9682539682539683,"6̸=A
+4̸=A
+0̸=A
+1̸=A"
+OTHER,0.9708994708994709,Digital signal that is wrong in the STM32CubeMX database for the entire STM32G0 family.
+OTHER,0.9735449735449735,"258
+256
+128
+128
+128
+108
+91"
+OTHER,0.9761904761904762,TIMx_BKIN
+OTHER,0.9788359788359788,"1̸=3
+13̸=3
+1̸=12
+12̸=2
+12̸=3
+1̸=14
+2̸=3"
+OTHER,0.9814814814814815,"Digital signal collide on alternate function index, as the STM32CubeMX database for
+the STM32L4 and STM32L5 family contains two functions TIMx_BKIN and TIMx_BKIN2
+that seem to have gotten confused."
+OTHER,0.9841269841269841,"Appendix Table 12: A selection of the most interesting and common patterns of pin function conflicts. All of these should
+have been easy to catch, even without a comparison with other sources, by simply validating how digital vs. analog signals are
+multiplexed."
+OTHER,0.9867724867724867,"Journal of Systems Research (JSys)
+2023"
+OTHER,0.9894179894179894,"Family
+Share of Conflicts
+Top 5 Peripherals with Register Conflicts"
+OTHER,0.9920634920634921,"STM32F0
+0.2%
+100% DBGMCU
+STM32F1
+0.5%
+62% FSMC
+12% ADC
+12% USB
+6% SDIO
+3% CEC
+STM32F2
+1.7%
+42% ETH
+32% USB
+14% FSMC
+11% ADC
+STM32F3
+1.1%
+41% ADC
+32% HRTIM
+20% EXTI
+4% CEC
+4% I2C
+STM32F4
+5.4%
+20% USB
+18% I2C
+15% FSMC
+14% DFSDM
+10% QSPI
+STM32F7
+12.6%
+48% DFSDM
+19% USB
+12% FSMC
+8% DSI
+3% ADC
+STM32G0
+2.0%
+56% DMA
+11% SYSCFG
+12% EXTI
+8% UCPD
+6% COMP
+STM32G4
+3.8%
+40% DMA
+24% HRTIM
+10% ADC
+9% FSMC
+7% UCPD
+STM32H7
+60.2%
+23% DMA
+17% DFSDM
+16% RAMECC
+10% ETH
+9% HRTIM
+STM32L0
+0.8%
+61% FLASH
+26% COMP
+13% SYSCFG
+STM32L1
+1.2%
+59% RI
+26% FSMC
+8% RTC
+7% OPAMP
+STM32L4
+3.9%
+63% DFSDM
+18% RTC
+10% FSMC
+6% USB
+4% DAC
+STM32L4+
+6.6%
+36% DFSDM
+30% DSI
+11% FSMC
+8% DMA
+5% USB"
+OTHER,0.9947089947089947,"Total
+100%
+22% DFSDM
+17% DMA
+11% USB
+9% RAMECC
+7% HRTIM"
+OTHER,0.9973544973544973,"Appendix Table 13: The STM32H7 family is responsible for the majority of register conflicts. The peripherals with the most
+conflicts are all very complex, which probably contributes to the issue in general."
