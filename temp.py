@@ -4,8 +4,8 @@ import os
 # Configuration
 input_folder = 'labeled_csvs'
 output_folder = 'output_csvs'
-target_value = 'NUMERICAL EXPERIMENTS'
-replacement_value = 'RESULTS/EXPERIMENTS'
+target_value = 'LITE REVIEW'
+replacement_value = 'LIT REVIEW'
 
 # Ensure output folder exists
 os.makedirs(output_folder, exist_ok=True)
