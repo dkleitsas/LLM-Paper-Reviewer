@@ -94,10 +94,10 @@ class ParagraphClassifier(nn.Module):
         # LSTM processing
         lstm_output, _ = self.lstm(lstm_input)  # [batch_size, num_paragraphs, hidden_dim * 2]
 
-        attention_output, _ = self.attention(lstm_output)
+
 
         # Apply classifier to each paragraph
-        logits_lstm = self.classifier_lstm(attention_output)  # [batch_size, num_paragraphs, num_labels]
+        logits_lstm = self.classifier_lstm(lstm_output)  # [batch_size, num_paragraphs, num_labels]
 
         # Loss calculation
         total_loss = None
