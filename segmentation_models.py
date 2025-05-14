@@ -11,8 +11,41 @@ import torch
 from transformers import Trainer
 from transformers import AutoModel, PreTrainedModel, PretrainedConfig
 from torch import nn
+import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from torch.utils.data import DataLoader, random_split
+
+class SelfAttentionLayer(nn.Module):
+    def __init__(self, feature_size):
+        super(SelfAttentionLayer, self).__init__()
+        self.feature_size = feature_size
+
+        # Linear transformations for Q, K, V from the same source
+        self.key = nn.Linear(feature_size, feature_size)
+        self.query = nn.Linear(feature_size, feature_size)
+        self.value = nn.Linear(feature_size, feature_size)
+
+    def forward(self, x, mask=None):
+        # Apply linear transformations
+        keys = self.key(x)
+        queries = self.query(x)
+        values = self.value(x)
+
+        # Scaled dot-product attention
+        scores = torch.matmul(queries, keys.transpose(-2, -1)) / torch.sqrt(torch.tensor(self.feature_size, dtype=torch.float32))
+
+        # Apply mask (if provided)
+        if mask is not None:
+            scores = scores.masked_fill(mask == 0, -1e9)
+
+        # Apply softmax
+        attention_weights = F.softmax(scores, dim=-1)
+
+        # Multiply weights with values
+        output = torch.matmul(attention_weights, values)
+
+        return output, attention_weights
+
 
 class ParagraphClassifier(nn.Module):
     def __init__(self, model_name, lstm_hidden_size, num_labels, attention_size="None", window_size="None"):
@@ -27,6 +60,8 @@ class ParagraphClassifier(nn.Module):
                             hidden_size=lstm_hidden_size,
                             batch_first=True,
                             bidirectional=True)
+        
+        self.attention = SelfAttentionLayer(feature_size=lstm_hidden_size * 2)
 
         self.classifier_lstm = nn.Linear(lstm_hidden_size * 2, num_labels)
 
@@ -59,8 +94,10 @@ class ParagraphClassifier(nn.Module):
         # LSTM processing
         lstm_output, _ = self.lstm(lstm_input)  # [batch_size, num_paragraphs, hidden_dim * 2]
 
+        attention_output, _ = self.attention(lstm_output)
+
         # Apply classifier to each paragraph
-        logits_lstm = self.classifier_lstm(lstm_output)  # [batch_size, num_paragraphs, num_labels]
+        logits_lstm = self.classifier_lstm(attention_output)  # [batch_size, num_paragraphs, num_labels]
 
         # Loss calculation
         total_loss = None
@@ -74,7 +111,7 @@ class ParagraphClassifier(nn.Module):
 
             loss_bert = loss_fn(logits_bert_flat, labels_flat)
             loss_lstm = loss_fn(logits_lstm_flat, labels_flat)
-            total_loss = (loss_bert + loss_lstm) / 2
+            total_loss = 0.3 * loss_bert + 0.7 * loss_lstm
 
         return {"logits": logits_lstm, "loss": total_loss} if labels is not None else {"logits": logits_lstm}
     
