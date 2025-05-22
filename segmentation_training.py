@@ -24,7 +24,7 @@ import seaborn as sns
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 
-set_seed(0)
+set_seed(1)
 
 folder_path = "labeled_csvs/" 
 model_name = "allenai/scibert_scivocab_uncased"
