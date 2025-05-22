@@ -56,7 +56,7 @@ criterion = torch.nn.CrossEntropyLoss()
 
 
 
-num_epochs = 6
+num_epochs = 7
 scaler = torch.cuda.amp.GradScaler()
 
 for epoch in range(num_epochs):
