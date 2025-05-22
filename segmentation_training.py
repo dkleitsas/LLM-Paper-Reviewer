@@ -123,9 +123,11 @@ torch.save(model.state_dict(), 'model_weights.pth')
 
 cm = confusion_matrix(all_labels.numpy(), all_preds.numpy())
 
+classes = ["PRELIM/RELATED" if x == "LIT REVIEW" else x for x in dataset.label_encoder.classes_]
+
 # Plot
 plt.figure(figsize=(10, 8))
-sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", cbar=True)
+sns.heatmap(cm, annot=True, fmt="d", cmap="Purples", cbar=True, xticklabels=classes, yticklabels=classes)
 
 plt.xlabel("Predicted Label")
 plt.ylabel("True Label")
