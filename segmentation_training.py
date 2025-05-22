@@ -29,7 +29,7 @@ set_seed(1)
 folder_path = "labeled_csvs/" 
 model_name = "allenai/scibert_scivocab_uncased"
 
-dataset = DocumentDataset(folder_path, model_name, max_tokens=100)
+dataset = DocumentDataset(folder_path, model_name, max_tokens=124)
 
 train_size = int(0.8 * len(dataset))
 
@@ -48,7 +48,7 @@ num_classes = len(dataset.label_encoder.classes_)
 model = ParagraphClassifier(
     model_name="allenai/scibert_scivocab_uncased",
     num_labels=num_classes,
-    lstm_hidden_size=256,
+    lstm_hidden_size=128,
 ).to(device)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
@@ -56,7 +56,7 @@ criterion = torch.nn.CrossEntropyLoss()
 
 
 
-num_epochs = 5
+num_epochs = 6
 scaler = torch.cuda.amp.GradScaler()
 
 for epoch in range(num_epochs):
