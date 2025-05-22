@@ -130,10 +130,8 @@ classes = ["PRELIM/RELATED" if x == "LIT REVIEW" else x for x in dataset.label_e
 
 # Plot
 plt.figure(figsize=(10, 8))
-sns.heatmap(cm, annot=True, fmt="d", cmap="Purples", cbar=True, xticklabels=classes, yticklabels=classes)
+sns.heatmap(cm, annot=True, fmt=".2f", cmap="Purples", cbar=True, xticklabels=classes, yticklabels=classes)
 
-plt.xlabel("Predicted Label")
-plt.ylabel("True Label")
 plt.title("Confusion Matrix - Validation Set")
 plt.tight_layout()
 plt.savefig("confusion_matrix.png")
