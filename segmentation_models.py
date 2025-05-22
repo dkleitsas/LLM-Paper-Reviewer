@@ -61,8 +61,6 @@ class ParagraphClassifier(nn.Module):
                             batch_first=True,
                             bidirectional=True)
         
-        self.attention = SelfAttentionLayer(feature_size=lstm_hidden_size * 2)
-
         self.classifier_lstm = nn.Linear(lstm_hidden_size * 2, num_labels)
 
 

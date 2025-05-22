@@ -18,6 +18,10 @@ from torch.utils.data import DataLoader, random_split
 from datasets_segmentation import DocumentDataset, ParagraphDataset
 from segmentation_models import ParagraphBERTClassifier, ParagraphClassifier
 
+import seaborn as sns
+from sklearn.metrics import confusion_matrix
+import matplotlib.pyplot as plt
+
 folder_path = "labeled_csvs/" 
 model_name = "allenai/scibert_scivocab_uncased"
 
@@ -112,3 +116,19 @@ all_labels = torch.cat(all_labels, dim=0) # [total_paragraphs]
 
 accuracy = accuracy_score(all_labels.numpy(), all_preds.numpy())
 print(f"Validation Accuracy: {accuracy:.4f}")
+
+wait = input("Waiting...")
+
+torch.save(model.state_dict(), 'model_weights.pth')
+
+cm = confusion_matrix(all_labels.numpy(), all_preds.numpy())
+
+# Plot
+plt.figure(figsize=(10, 8))
+sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", cbar=True)
+
+plt.xlabel("Predicted Label")
+plt.ylabel("True Label")
+plt.title("Confusion Matrix - Validation Set")
+plt.tight_layout()
+plt.savefig("confusion_matrix.png")
