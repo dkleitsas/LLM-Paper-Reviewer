@@ -17,10 +17,13 @@ from torch.utils.data import DataLoader, random_split
 
 from datasets_segmentation import DocumentDataset, ParagraphDataset
 from segmentation_models import ParagraphBERTClassifier, ParagraphClassifier
+from utils import set_seed
 
 import seaborn as sns
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
+
+set_seed(42)
 
 folder_path = "labeled_csvs/" 
 model_name = "allenai/scibert_scivocab_uncased"
@@ -121,7 +124,7 @@ wait = input("Waiting...")
 
 torch.save(model.state_dict(), 'model_weights.pth')
 
-cm = confusion_matrix(all_labels.numpy(), all_preds.numpy())
+cm = confusion_matrix(all_labels.numpy(), all_preds.numpy(), normalize='true')
 
 classes = ["PRELIM/RELATED" if x == "LIT REVIEW" else x for x in dataset.label_encoder.classes_]
 
