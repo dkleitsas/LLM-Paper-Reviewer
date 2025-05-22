@@ -14,6 +14,7 @@ from transformers import AutoModel, PreTrainedModel, PretrainedConfig
 from torch import nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from torch.utils.data import DataLoader, random_split
+from tqdm import tqdm
 
 from datasets_segmentation import DocumentDataset, ParagraphDataset
 from segmentation_models import ParagraphBERTClassifier, ParagraphClassifier
@@ -47,13 +48,13 @@ num_classes = len(dataset.label_encoder.classes_)
 model = ParagraphClassifier(
     model_name="allenai/scibert_scivocab_uncased",
     num_labels=num_classes,
-    lstm_hidden_size=128,
+    lstm_hidden_size=256,
 ).to(device)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
 criterion = torch.nn.CrossEntropyLoss()
 
-from tqdm import tqdm
+
 
 num_epochs = 6
 scaler = torch.cuda.amp.GradScaler()
