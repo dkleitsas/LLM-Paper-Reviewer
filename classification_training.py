@@ -32,7 +32,7 @@ label_values.sort()
 # Adjust depending on your actual labels (0/1 or strings like 'positive'/'negative')
 if set(label_values) == {0, 1}:
     label2id = {0: 0, 1: 1}
-    id2label = {0: 'negative', 1: 'positive'}
+    id2label = {0: 'accepted', 1: 'rejcted'}
 else:
     label2id = {'rejected': 0, 'accepted': 1}
     id2label = {0: 'rejected', 1: 'accepted'}
@@ -67,11 +67,6 @@ model = AutoModelForSequenceClassification.from_pretrained(
     label2id=label2id
 )
 
-"""
-# Optional: optimize memory usage
-model.config.use_cache = False
-model.gradient_checkpointing_enable()
-"""
 # === COMPUTE METRICS ===
 def compute_metrics(eval_pred):
     logits, labels = eval_pred

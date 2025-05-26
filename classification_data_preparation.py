@@ -158,7 +158,7 @@ model.load_state_dict(torch.load("model_weights.pth", weights_only=True, map_loc
 
 model.to(device)
 
-for folder, label in [(accepted_folder, "accepted"), (rejected_folder, "rejected")]:
+for folder, label in [(rejected_folder, "rejected"), (accepted_folder, "accepted")]:
     dataset = DocumentDataset(folder, tokenizer_name, max_tokens=124, training=False)
     run_segmentation_inference(model, dataset, output_folder, label)
 
