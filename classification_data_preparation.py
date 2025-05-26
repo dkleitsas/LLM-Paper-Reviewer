@@ -133,7 +133,7 @@ def run_segmentation_inference(model, dataset, output_folder, label_for_doc):
 
 accepted_folder = "paper_csvs/NeurIPS/accepted"
 rejected_folder = "paper_csvs/NeurIPS/rejected"
-output_folder = "segmented_outputs/"
+output_folder = "classification_csvs/"
 
 tokenizer_name = "allenai/scibert_scivocab_uncased"
 model = ParagraphClassifier(
