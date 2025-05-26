@@ -70,7 +70,9 @@ model = AutoModelForSequenceClassification.from_pretrained(
 # === COMPUTE METRICS ===
 def compute_metrics(eval_pred):
     logits, labels = eval_pred
+    print(logits, labels)
     preds = np.argmax(logits, axis=-1)
+    print(preds)
     precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='binary')
     acc = accuracy_score(labels, preds)
     return {
