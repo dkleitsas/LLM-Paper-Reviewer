@@ -99,14 +99,10 @@ def run_segmentation_inference(model, dataset, output_folder, label_for_doc):
             attention_mask = batch["attention_mask"].to(device)
             positional_value = batch["positional_value"].to(device)
             original_paragraphs = batch["original_paragraphs"]
-            print("before model")
 
             outputs = model(input_ids, attention_mask, positional_value)  # [1, P, num_labels]
-            print("after model")
             preds = torch.argmax(outputs["logits"], dim=-1)  # [1, P]
-            print("after argmax")
             pred_labels = preds[0].cpu().tolist()
-            print("after pred labels")
             filtered_labels = filter_short_runs(pred_labels, min_run_length=6)
             smoothed_labels = sliding_window_smooth(filtered_labels, window_size=8)
 
