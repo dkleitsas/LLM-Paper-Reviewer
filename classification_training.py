@@ -44,7 +44,7 @@ def encode_labels(example):
 combined_dataset = combined_dataset.map(encode_labels)
 
 # === TRAIN/TEST SPLIT ===
-dataset = combined_dataset.train_test_split(test_size=0.1, seed=42)
+dataset = combined_dataset.train_test_split(test_size=0.2, seed=42)
 
 # === TOKENIZATION ===
 tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -70,9 +70,7 @@ model = AutoModelForSequenceClassification.from_pretrained(
 # === COMPUTE METRICS ===
 def compute_metrics(eval_pred):
     logits, labels = eval_pred
-    print(logits, labels)
     preds = np.argmax(logits, axis=-1)
-    print(preds)
     precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='binary')
     acc = accuracy_score(labels, preds)
     return {

@@ -118,7 +118,9 @@ def run_segmentation_inference(model, dataset, output_folder, label_for_doc):
             string_labels = dataset.label_encoder.inverse_transform(smoothed_labels)
 
             if label_for_doc == "rejected":
+                print(original_paragraphs[0])
                 original_paragraphs[0] = remove_leading_numbers(original_paragraphs[0])
+                print(original_paragraphs[0])
 
             paragraphs_clean, section_labels_clean = clean_references_and_below(
                 original_paragraphs[0], string_labels, references_labels=["REFERENCES"]
