@@ -34,6 +34,7 @@ class DocumentDataset(Dataset):
         df = pd.read_csv(file_path)
 
         paragraphs = df["Paragraph"].astype(str).fillna("").tolist()
+        paragraphs = [p for p in paragraphs if p.strip()]
         positional_values = df["Section Appearance Order"].tolist()
         if self.training:
             labels = df["Section"].astype(str).str.strip().tolist()
