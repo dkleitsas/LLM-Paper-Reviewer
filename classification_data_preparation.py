@@ -71,13 +71,13 @@ def clean_references_and_below(paragraphs, section_labels, references_labels):
     return paragraphs, section_labels
 
 
-def remove_leading_numbers(paragraphs):
-    cleaned = []
+def remove_trailing_numbers(paragraphs):
+    cleaned_paragraphs = []
     for para in paragraphs:
-        cleaned_para = re.sub(r"^\s*\d+\s*", "", para)
-        cleaned.append(cleaned_para)
-    return cleaned
-
+        # Remove trailing numbers and whitespace at end of paragraph
+        cleaned = re.sub(r"\s*\d+\s*$", "", para)
+        cleaned_paragraphs.append(cleaned)
+    return cleaned_paragraphs
 
 def aggregate_sections_global(paragraphs, section_labels, acceptance_label):
     section_map = defaultdict(list)
@@ -98,7 +98,7 @@ def aggregate_sections_global(paragraphs, section_labels, acceptance_label):
 
 
 def run_segmentation_inference(model, dataset, output_folder, label_for_doc):
-
+    print(label_for_doc == "rejected")
     model.eval()
     dataloader = DataLoader(dataset, batch_size=1, collate_fn=dataset.collate_fn)
 
@@ -117,9 +117,10 @@ def run_segmentation_inference(model, dataset, output_folder, label_for_doc):
 
             string_labels = dataset.label_encoder.inverse_transform(smoothed_labels)
 
+            
             if label_for_doc == "rejected":
                 print(original_paragraphs[0])
-                original_paragraphs[0] = remove_leading_numbers(original_paragraphs[0])
+                original_paragraphs[0] = remove_trailing_numbers(original_paragraphs[0])
                 print(original_paragraphs[0])
 
             paragraphs_clean, section_labels_clean = clean_references_and_below(
