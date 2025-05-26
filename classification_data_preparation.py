@@ -95,9 +95,9 @@ def run_segmentation_inference(model, dataset, output_folder, label_for_doc):
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(tqdm(dataloader)):
-            input_ids = batch["input_ids"]        # [1, P, T]
-            attention_mask = batch["attention_mask"]
-            positional_value = batch["positional_value"]
+            input_ids = batch["input_ids"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+            positional_value = batch["positional_value"].to(device)
             original_paragraphs = batch["original_paragraphs"]
 
             outputs = model(input_ids, attention_mask, positional_value)  # [1, P, num_labels]
@@ -129,7 +129,7 @@ def run_segmentation_inference(model, dataset, output_folder, label_for_doc):
                 for para, sec, lab in zip(aggregated_pars, aggregated_sections, aggregated_labels):
                     writer.writerow([para, sec, lab])
 
-
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 accepted_folder = "paper_csvs/NeurIPS/accepted"
 rejected_folder = "paper_csvs/NeurIPS/rejected"
@@ -142,7 +142,7 @@ model = ParagraphClassifier(
     lstm_hidden_size=128,
 )
 
-model.load_state_dict(torch.load("model_weights.pth", weights_only=True, map_location="cpu"))
+model.load_state_dict(torch.load("model_weights.pth", weights_only=True, map_location=device))
 
 for folder, label in [(accepted_folder, "accepted"), (rejected_folder, "rejected")]:
     dataset = DocumentDataset(folder, tokenizer_name, max_tokens=124, training=False)
