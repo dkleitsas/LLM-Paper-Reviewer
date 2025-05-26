@@ -15,6 +15,7 @@ import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from torch.utils.data import DataLoader, random_split
 
+"""
 class SelfAttentionLayer(nn.Module):
     def __init__(self, feature_size):
         super(SelfAttentionLayer, self).__init__()
@@ -45,7 +46,7 @@ class SelfAttentionLayer(nn.Module):
         output = torch.matmul(attention_weights, values)
 
         return output, attention_weights
-
+"""
 
 class ParagraphClassifier(nn.Module):
     def __init__(self, model_name, lstm_hidden_size, num_labels, attention_size="None", window_size="None"):
@@ -113,6 +114,9 @@ class ParagraphClassifier(nn.Module):
 
         return {"logits": logits_lstm, "loss": total_loss} if labels is not None else {"logits": logits_lstm}
     
+
+
+"""
 
 class ParagraphBERTClassifier(nn.Module):
     def __init__(self, model_name, num_labels):
@@ -197,3 +201,5 @@ class DocumentLSTMClassifier(nn.Module):
             loss = loss_fn(logits_flat, labels_flat)
 
         return {"logits": logits, "loss": loss}
+    
+"""

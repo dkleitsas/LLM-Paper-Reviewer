@@ -16,7 +16,7 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 
-from datasets_segmentation import DocumentDataset, ParagraphDataset
+from segmentation_datasets import DocumentDataset, ParagraphDataset
 from segmentation_models import ParagraphBERTClassifier, ParagraphClassifier
 from utils import set_seed
 
@@ -26,7 +26,7 @@ import matplotlib.pyplot as plt
 
 set_seed(2)
 
-folder_path = "labeled_csvs/" 
+folder_path = "segmentation_labeled_csvs/" 
 model_name = "allenai/scibert_scivocab_uncased"
 
 dataset = DocumentDataset(folder_path, model_name, max_tokens=124)

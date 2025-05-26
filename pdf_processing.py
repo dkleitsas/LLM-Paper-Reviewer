@@ -100,15 +100,13 @@ with open(filename, mode="a", newline="", encoding="utf-8") as file:
                 app_order += 1
 """
 
-folder_path = "paper_pdfs/"
-
-
+folder_path = "paper_pdfs/NeurIPS/rejected/"
 
 for filename in os.listdir(folder_path):
     if filename.endswith(".pdf"):
         file_path = os.path.join(folder_path, filename)
         print(f"Processing {filename}...")
-        output_csv = f"paper_csvs/{filename.replace('.pdf', '.csv')}"
+        output_csv = f"paper_csvs/NeurIPS/rejected/{filename.replace('.pdf', '.csv')}"
         with open(output_csv, mode="w", newline="", encoding="utf-8") as file:
             writer = csv.writer(file)
             writer.writerow(["Section", "Section Appearance Order", "Paragraph"])
@@ -133,57 +131,3 @@ for filename in os.listdir(folder_path):
 
             except Exception as e:
                 print(f"Failed to process {filename}: {e}")
-
-
-"""
-all_text = replace_equations(all_text)
-
-all_text = replace_symbols(all_text)
-
-sections = split_into_sections(all_text)
-
-sections = categorize_sections(sections)
-
-related_work = next((item for item in sections if item['category'] == "Related Work"), None)
-
-with open("output.csv", "w", newline="") as file:
-    fieldnames = sections[0].keys()  # Extract column names
-    writer = csv.DictWriter(file, fieldnames=fieldnames)
-    
-    writer.writeheader()  # Write headers
-    writer.writerows(sections)  # Write row data
-
-print(count_citations(related_work["content"]))
-print('\n\n')
-
-for section in sections:
-    print(section)
-    print("\n\n")
-
-
-all_text = ""
-with pdfplumber.open(file_path) as pdf:
-    for page in pdf.pages:
-        text = page.extract_text(x_tolerance=2)
-        if text:
-            all_text += text + "\n\n"
-
-
-txt_file_path = "paper_text.txt"
-with open(txt_file_path, "w", encoding="utf-8") as txt_file:
-    txt_file.write(all_text)
-
-
-#for review in reviews:
-#    if "Official_Review" in review.invitation:
-#        print(review)
-
-
-#for review in reviews:
-    #print(review.content)
-    # if "Official_Review" in review.invitation:  # Only process notes classified as reviews
-    #     has_reviews = True
-    #     print(f"Review: {review.content.get('review', 'No review content available')}")
-    #     print(f"Rating: {review.content.get('rating', 'No rating available')}\n")"
-
-"""

@@ -1,0 +1,719 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,Abstract
+ABSTRACT,0.006289308176100629,"Clustering is a fundamental task in data science with wide-ranging applications.
+In k-medoids clustering, cluster centers must be actual datapoints and arbitrary
+distance metrics may be used; these features allow for greater interpretability of
+the cluster centers and the clustering of exotic objects in k-medoids clustering,
+respectively. k-medoids clustering has recently grown in popularity due to the
+discovery of more efficient k-medoids algorithms. In particular, recent research
+has proposed BanditPAM, a randomized k-medoids algorithm with state-of-the-art
+complexity and clustering accuracy. In this paper, we present BanditPAM++,
+which accelerates BanditPAM via two algorithmic improvements, and is O(k)
+faster than BanditPAM in complexity and substantially faster than BanditPAM
+in wall-clock runtime.
+First, we demonstrate that BanditPAM has a special
+structure that allows the reuse of clustering information within each iteration.
+Second, we demonstrate that BanditPAM has additional structure that permits
+the reuse of information across different iterations. These observations inspire
+our proposed algorithm, BanditPAM++, which returns the same clustering
+solutions as BanditPAM but often several times faster. For example, on the
+CIFAR10 dataset, BanditPAM++ returns the same results as BanditPAM but
+runs over 10× faster. Finally, we provide a high-performance C++ implemen-
+tation of BanditPAM++, callable from Python and R, that may be of interest
+to practitioners at https://github.com/motiwari/BanditPAM. Auxiliary
+code to reproduce all of our experiments via a one-line script is available at
+https://github.com/ThrunGroup/BanditPAM_plusplus_experiments/."
+INTRODUCTION,0.012578616352201259,"1
+Introduction"
+INTRODUCTION,0.018867924528301886,"Clustering is a critical and ubiquitous task in data science and machine learning. Clustering aims to
+separate a dataset X of n datapoints into k disjoint sets that form a partition of the original dataset.
+Intuitively, datapoints within a cluster are similar and datapoints in different clusters are dissimilar.
+Clustering problems and algorithms have found numerous applications in textual data [20], social
+network analysis [18], biology [28], and education [28]."
+INTRODUCTION,0.025157232704402517,A common objective function used in clustering is Equation 1:
+INTRODUCTION,0.031446540880503145,"L(C) = n
+X"
+INTRODUCTION,0.03773584905660377,"j=1
+min
+c∈C d(c, xj).
+(1)"
+INTRODUCTION,0.0440251572327044,"Under this loss function, the goal becomes to minimize the distance, defined by the distance function
+d, from each datapoint to its nearest cluster center c among the set of cluster centers C. Note that
+this formulation is general and does not require the datapoints to be vectors or assume a specific
+functional form of the distance function d."
+INTRODUCTION,0.050314465408805034,"Specific choices of C, dataset X, and distance function d give rise to different clustering problems.
+Perhaps one of the most commonly used clustering methods is k-means clustering [17, 16]. In
+k-means clustering, each datapoint is a vector in Rp and the distance function d is usually taken to be
+squared L2 distance; there are no constraints on C other than that it is a subset of Rp. Mathematically,
+the k-means objective function is"
+INTRODUCTION,0.05660377358490566,"L(C) = n
+X"
+INTRODUCTION,0.06289308176100629,"j=1
+min
+c∈C ∥xj −c∥2
+2
+(2)"
+INTRODUCTION,0.06918238993710692,subject to |C| = k.
+INTRODUCTION,0.07547169811320754,"The most common algorithm for the k-means problem is Lloyd iteration [16], which has been
+improved by other algorithms such as k-means++ [2]. These algorithms are widely used in practice
+due to their simplicity and computational efficiency. Despite widespread use in practice, k-means
+clustering suffers from several limitations. Perhaps its most significant restriction is the choice of d as
+the squared L2 distance. This choice of d is for computational efficiency – as the mean of many points
+can be efficiently computed under squared L2 distance – but prevents clustering with other distance
+metrics that may be preferred in other contexts [22, 8, 5]. For example, k-means is difficult to use on
+textual data that necessitates string edit distance [20], social network analyses using graph metrics
+[18], or sparse datasets (such as those found in recommendation systems [15]) that lend themselves to
+other distance functions. While k-means algorithms have been adapted to specific other metrics, e.g.,
+cosine distance [23], these methods are bespoke to the metric and not readily generalizable. Another
+limitation of k-means clustering is that the set of cluster centers C may often be uninterpretable, as
+each cluster center is (generally) a linear combination of datapoints. This limitation can be especially
+problematic when dealing with structured data, such as parse trees in context-free grammars, where
+the mean of trees is not necessarily well-defined, or images in computer vision, where the mean
+image can appear as random noise [28, 15]."
+INTRODUCTION,0.08176100628930817,"In contrast with k-means clustering, k-medoids clustering [10, 11] requires the cluster centers to
+be actual datapoints, i.e., requires C ⊂X. More formally, the objective is to find a set of medoids
+M ⊂X (versus Rp in k-means) that minimizes"
+INTRODUCTION,0.0880503144654088,"L(M) = n
+X"
+INTRODUCTION,0.09433962264150944,"j=1
+min
+m∈M d(m, xj)
+(3)"
+INTRODUCTION,0.10062893081761007,subject to |M| = k. Note that there is no restriction on the distance function d.
+INTRODUCTION,0.1069182389937107,"k-medoids clustering has several advantages over k-means. Crucially, the requirement that each
+cluster center is a datapoint leads to greater interpretability of the cluster centers because each cluster
+center can be inspected. Furthermore, k-medoids supports arbitrary dissimilarity measures; the
+distance function d in Equation (3) need not be a proper metric, i.e., may be negative, asymmetric,
+or violate the triangle inequality. Because k-medoids supports arbitrary dissimilarity measures, it
+can also be used to cluster “exotic” objects that are not vectors in Rp, such as trees and strings [28],
+without embedding them in Rp."
+INTRODUCTION,0.11320754716981132,"The k-medoids clustering problem in Equation (3) is a combinatorial optimization algorithm that
+is NP-hard in general [25]; as such, algorithms for k-medoids clustering are restricted to heuristic
+solutions. A popular early heuristic solution for the k-medoids problem was the Partitioning Around
+Medoids (PAM) algorithm [11]; however, PAM is quadratic in dataset size n in each iteration, which"
+INTRODUCTION,0.11949685534591195,"is prohibitively expensive on large dataset. Improving the computational efficiency of these heuristic
+solutions is an active area of research. Recently, [28] proposed BanditPAM, the first subquadratic
+algorithm for the k-medoids problem that matched prior state-of-the-art solutions in clustering
+quality. In this work, we propose BanditPAM++, which improves the computational efficiency of
+BanditPAM while maintaining the same results. We anticipate these computational improvements
+will be important in the era of big data, when k-medoids clustering is used on huge datasets."
+INTRODUCTION,0.12578616352201258,"Contributions: We propose a new algorithm, BanditPAM++, that is significantly more computation-
+ally efficient than PAM and BanditPAM but returns the same clustering results with high probability.
+BanditPAM++ is O(k) faster than BanditPAM in complexity and substantially faster than BanditPAM
+in actual runtime wall-clock runtime. Consequently, BanditPAM++ is faster than prior state-of-the-art
+k-medoids algorithms while maintaining the same clustering quality. BanditPAM++ is based on two
+observations about the structure of BanditPAM and the k-medoids problem, described in Section 4.
+The first observation leads to a technique that we call Virtual Arms (VA). The second observation
+leads to a technique that we refer to as Permutation-Invariant Caching (PIC). We combine these
+techniques in BanditPAM++ and prove (in Section 5) and experimentally validate (in Section 6)
+that BanditPAM++ returns the same solution to the k-medoids problem as PAM and BanditPAM
+with high probability, but is more computationally efficient. In some instances, BanditPAM++ is
+over 10× faster than BanditPAM. Additionally, we provide a highly optimized implementation of
+BanditPAM++ in C++ that is callable from Python and R and may be of interest to practitioners."
+RELATED WORK,0.1320754716981132,"2
+Related Work"
+RELATED WORK,0.13836477987421383,"As discussed in Section 1, global optimization of the k-medoids problem (Equation (3)) is NP-hard
+in general [25]. Recent work attempts to perform attempts global optimization and is able to achieve
+an optimality gap of 0.1% on one million datapoints, but is restricted to L2 distance and takes several
+hours to run on commodity hardware [24]."
+RELATED WORK,0.14465408805031446,"Because of the difficulty of global optimization of the k-medoids problem, many heuristic algorithms
+have been developed for the k-medoids problem that scale polynomially with the dataset size and
+number of clusters. The complexity of these algorithms is measured by their sample complexity,
+i.e., the number of pairwise distance computations that are computed; these computations have been
+observed to dominate runtime costs and, as such, sample complexity translates to wall-clock time via
+an approximately constant factor [28] (this is also consistent with our experiments in Section 6 and
+Appendix 3)."
+RELATED WORK,0.1509433962264151,"Among the heuristic solutions for the k-medoids problem, the algorithm with the best clustering loss
+is Partitioning Around Medoids (PAM) [10, 11], which consists of two phases: the BUILD phase and
+the SWAP phase. However, the BUILD phase and each SWAP iteration of PAM perform O(kn2)
+distance computations, which can be impractical for large datasets or when distance computations
+are expensive. We provide greater details about the PAM algorithm in Section 3 because it is an
+important baseline against which we assess the clustering quality of new algorithms."
+RELATED WORK,0.15723270440251572,"Though PAM achieves the best clustering loss among heuristic algorithms, the era of huge data has
+necessitated the development of faster k-medoids algorithms in recent years. These algorithms have
+typically been divided into two categories: those that agree with PAM and recover the same solution
+to the k-medoids problem but scale quadratically in n, and those that sacrifice clustering quality
+for runtime improvements. In the former category, [25] proposed a deterministic algorithm called
+FastPAM1, which maintains the same output as PAM but reduces the computational complexity of
+each SWAP iteration from O(kn2) to O(n2). However, this algorithm still scales quadratically in n
+in every iteration, which is prohibitively expensive on large datasets."
+RELATED WORK,0.16352201257861634,"Faster heuristic algorithms have been proposed but these usually sacrifice clustering quality; such
+algorithms include CLARA [11], CLARANS [21], and FastPAM [25]. While these algorithms scale
+subquadratically in n, they return substantially worse solutions than PAM [28]. Other algorithms with
+better sample complexity, such as optimizations for Euclidean space and those based on tabu search
+heuristics [6] also return worse solutions. Finally, [1] attempts to minimize the number of unique
+pairwise distances or adaptively estimate these distances or coordinate-wise distances in specific
+settings [14, 3], but all these approaches sacrifice clustering quality for runtime."
+RELATED WORK,0.16981132075471697,"Recently, [28] proposed BanditPAM, a state-of-the-art k-medoids algorithm that arrives at the same
+solution as PAM with high probability in O(kn log n) time. BanditPAM borrows techniques from
+the multi-armed bandit literature to sample pairwise distance computations rather than compute
+all O(n2). In this work, we show that BanditPAM can be made more efficient by reusing distance
+computations both within iterations and across iterations."
+RELATED WORK,0.1761006289308176,"We note that the use of adaptive sampling techniques and multi-armed bandits to accelerate algorithms
+has also had recent successes in other work, e.g., to accelerate the training of Random Forests [27],
+solve the Maximum Inner Product Search problem [27], and more [26]."
+PRELIMINARIES AND BACKGROUND,0.18238993710691823,"3
+Preliminaries and Background"
+PRELIMINARIES AND BACKGROUND,0.18867924528301888,"Notation: We consider a dataset X of size n (that may contain vectors in Rp or other objects). Our
+goal is to find a solution to the k-medoids problem, Equation (3). We are also given a dissimilarity
+function d that measures the dissimilarity between two objects in X. Note that we do not assume a
+specific functional form of d. We use [n] to denote the set {1, . . . , n}, and a ∧b (respectively, a ∨b)
+to denote the minimum (respectively, maximum) of a and b."
+PRELIMINARIES AND BACKGROUND,0.1949685534591195,"Partitioning Around Medoids (PAM): The original Partitioning Around Medoids (PAM) algorithm
+[10, 11] consists of two main phases: BUILD and SWAP. In the BUILD phase, PAM iteratively
+initializes each medoid in a greedy, one-by-one fashion: in each iteration, it selects the next medoid
+that would reduce the k-medoids clustering loss (Equation (3)) the most, given the prior choices of
+medoids. More precisely, given the current set of l medoids Ml = {m1, · · · , ml}, the next point to
+add as a medoid is:"
+PRELIMINARIES AND BACKGROUND,0.20125786163522014,"m∗= arg min
+x∈X\Ml n
+X j=1"
+PRELIMINARIES AND BACKGROUND,0.20754716981132076,"
+d(x, xj) ∧min
+m′∈Ml d(m′, xj)
+
+(4)"
+PRELIMINARIES AND BACKGROUND,0.2138364779874214,"The output of the BUILD step is an initial set of the k medoids, around which a local search is
+performed by the SWAP phase. The SWAP phase involves iteratively examining all k(n −k) medoid-
+nonmedoid pairs and performs the swap that would lower the total loss the most. More precisely,
+with M the current set of k medoids, PAM finds the best medoid-nonmedoid pair to swap:"
+PRELIMINARIES AND BACKGROUND,0.22012578616352202,"(m∗, x∗) =
+arg min
+(m,x)∈M×(X\M) n
+X j=1"
+PRELIMINARIES AND BACKGROUND,0.22641509433962265,"
+d(x, xj) ∧
+min
+m′∈M\{m} d(m′, xj)
+
+(5)"
+PRELIMINARIES AND BACKGROUND,0.23270440251572327,"PAM requires O(kn2) distance computations for the k greedy searches in the BUILD step and O(kn2)
+distance computations for each SWAP iteration [28]. The quadratic complexity of PAM makes it
+prohibitively expensive to run on large datasets. Nonetheless, we describe the PAM algorithm because
+it has been observed to have the best clustering loss among heuristic solutions to the k-medoids
+problem. More recent algorithms, such as BanditPAM [28], achieve the same clustering loss but
+have a significantly improved complexity of O(kn log n) in each step. Our proposed algorithm,
+BanditPAM++, improves upon the computational complexity of BanditPAM by a factor of O(k)."
+PRELIMINARIES AND BACKGROUND,0.2389937106918239,"Sequential Multi-Armed Bandits: BanditPAM [28] improves the computational complexity of
+PAM by converting each step of PAM to a multi-armed bandit problem. A multi-armed bandit
+problem (MAB) is defined as a collection of random variables {R1, . . . , Rn}, called actions or arms.
+We are commonly interested in the best-arm identification problem, which is to identify the arm with
+the highest mean, i.e., arg maxi E[Ri], with a given probability of possible error δ. Many algorithms
+for this problem exist, each of which make distributional assumptions about the random variables
+{R1, . . . , Rn}; popular ones include the upper confidence bound (UCB) algorithm and successive
+elimination. For an overview of common algorithms, we refer the reader to [9]."
+PRELIMINARIES AND BACKGROUND,0.24528301886792453,"We define a sequential multi-armed bandit problem to be an ordered sequence of multi-armed
+bandit problems Q = {B1, . . . , BT } where each individual multi-armed bandit problem Bt =
+{Rt
+1, . . . , Rt
+n} has the same number of arms n, with respective, timestep-dependent means µt
+1, . . . , µt
+n.
+At each timestep t, our goal is to determine (and take) the best action at = arg maxi E[Rt
+i]. Crucially,
+our choices of at will affect the rewards at future timesteps, i.e., the Rt′
+i for t′ > t. Our definition of
+a sequential multi-armed bandit problem is similar to non-stationary multi-armed bandit problems,
+with the added restriction that the only non-stationarity in the problem comes from our previous
+actions."
+PRELIMINARIES AND BACKGROUND,0.25157232704402516,"We now make a few assumptions for tractability. We assume that each Rt
+i is observed by sampling
+an element from a set S with S possible values. We refer to the values of S as the reference points,
+where each possible reference point is sampled with equal probability and determines the observed
+reward. With some abuse of notation, we write Rt
+i(xs) for the reward observed from arm Rt
+i when
+the latent variable from S is observed to be xs. We refer to a sequential multi-armed bandit as
+permutation-invariant, or as a SPIMAB (for Sequential, Permutation-Invariant Multi-Armed Bandit),
+if the following conditions hold:"
+PRELIMINARIES AND BACKGROUND,0.2578616352201258,"1. For every arm i and timestep t, Rt
+i = f(Di, {a0, a1, . . . , at−1}) for some known function
+f and some random variable Di with mean µi := E[Di] = 1"
+PRELIMINARIES AND BACKGROUND,0.2641509433962264,"S
+PS
+s=1 Di(xs),
+2. There exists a common set of reference points, S, shared amongst each Di,
+3. It is possible to sample each Di in O(1) time by drawing from the points in S without
+replacement, and
+4. f is computable in O(1) time given its inputs."
+PRELIMINARIES AND BACKGROUND,0.27044025157232704,"Intuitively, the conditions above require that at each timestep, each random variable Rt
+i is expressible
+as a known function of another random variable Di and the prior actions taken in the sequential multi-
+armed bandit problem. Crucially, Di does not depend on the timestep; Rt
+i is only permitted to depend
+on the timestep through the agent’s previously taken actions {a0, a1, . . . , at−1}. The SPIMAB
+conditions imply that if E[Di] = µi is known for each i, then µt
+i := E[Rt
+i] is also computable in O(1)
+time for each i and t, i.e., for each arm and timestep."
+PRELIMINARIES AND BACKGROUND,0.27672955974842767,"BanditPAM: BanditPAM [28] reduces the scaling with n of each step of the PAM algorithm by
+reformulating each step as a best-arm identification problem. In PAM, each of the k BUILD steps has
+complexity O(n2) and each SWAP iteration has complexity O(kn2). In contrast, the complexity of
+BanditPAM is O(n log n) for each of the k BUILD steps and O(kn log n) for each SWAP iteration.
+Fundamentally, BanditPAM achieves this reduction in complexity by sampling distance computations
+instead of using all O(n2) pairwise distances in each iteration. We note that all k BUILD steps of
+BanditPAM (respectively, PAM) have the same complexity as each SWAP iteration of BanditPAM
+(respectively, PAM). Since the number of SWAP iterations is usually O(k) ([28]; see also our
+experiments in the Appendix 3), most of BanditPAM’s runtime is spent in the SWAP iterations; this
+suggests improvements to BanditPAM should focus on expediting its SWAP phase."
+PRELIMINARIES AND BACKGROUND,0.2830188679245283,"4
+BanditPAM++: Algorithmic Improvements to BanditPAM"
+PRELIMINARIES AND BACKGROUND,0.2893081761006289,"In this section, we discuss two improvements to the BanditPAM algorithm. We first show how each
+SWAP iteration of BanditPAM can be improved via a technique we call Virtual Arms (VA). With this
+improvement, the modified algorithm can be cast as a SPIMAB. The conversion to a SPIMAB permits
+a second improvement via a technique we call the Permutation-Invariant Cache (PIC). Whereas the
+VA technique improves only the SWAP phase, the PIC technique improves both the BUILD and
+SWAP phases. The VA technique improves the complexity of each SWAP iteration by a factor of
+O(k), whereas the PIC improves the wall-clock runtime of both the BUILD and SWAP phases."
+PRELIMINARIES AND BACKGROUND,0.29559748427672955,"4.1
+Virtual Arms (VA)"
+PRELIMINARIES AND BACKGROUND,0.3018867924528302,"As discussed in Section 3, most of the runtime of BanditPAM is spent in the SWAP iterations. When
+evaluating a medoid-nonmedoid pair (m, xi) to potentially swap, BanditPAM estimates the quantity:"
+PRELIMINARIES AND BACKGROUND,0.3081761006289308,"∆Lm,xi = 1 n n
+X"
+PRELIMINARIES AND BACKGROUND,0.31446540880503143,"s=1
+∆lm,xi(xs),
+(6)"
+PRELIMINARIES AND BACKGROUND,0.32075471698113206,"for each medoid m and candidate nonmedoid xi, where"
+PRELIMINARIES AND BACKGROUND,0.3270440251572327,"∆lm,xi(xs) =
+
+d(xi, xs) −
+min
+m′∈M\{m} d(m′, xs)
+
+∧0
+(7)"
+PRELIMINARIES AND BACKGROUND,0.3333333333333333,"is the change in clustering loss (Equation (3)) induced on point xs for swapping medoid m with
+nonmedoid xi in the set of medoids M. Crucially, we will find that for a given xs, each ∆lm,xi(xs)
+for m = 1, . . . , k, except possibly one, is equal. We state this observation formally in Theorem 1."
+PRELIMINARIES AND BACKGROUND,0.33962264150943394,"General SPIMAB Term
+BanditPAM++ BUILD step
+BanditPAM++ SWAP step"
+PRELIMINARIES AND BACKGROUND,0.34591194968553457,"Arms, {Rt
+i}n
+j=1
+Candidate points for medoids
+Points to swap in as medoids
+Reference points, S
+Points of dataset X
+Points of dataset X
+Timestep, t
+t-th medoid to be added
+(t −k)-th swap to be performed
+Di(xs)
+Distance between xi and xs
+Distance between xi and xs
+f(Di, {a0, a1, . . . , at−1})
+Equation 8
+Equation 8"
+PRELIMINARIES AND BACKGROUND,0.3522012578616352,Table 1: BanditPAM++’s two phases can each be cast in the SPIMAB framework.
+PRELIMINARIES AND BACKGROUND,0.3584905660377358,"Theorem 1. Let ∆lm,xi(xs) be the change in clustering loss induced on point xs by swapping medoid
+m with nonmedoid xi, given in Equation (7), with xs and xi fixed. Then the values ∆lm,xi(xs) for
+m = 1, . . . , k are equal, except possibly where m is the medoid for reference point xs."
+PRELIMINARIES AND BACKGROUND,0.36477987421383645,"Theorem 1 is proven in Appendix 2. Crucially, Theorem 1 tells us that when estimating ∆Lm,xi in
+Equation (6) for fixed xi and various values of m, we can reuse a significant number of the summands
+across different indices m (across k medoids). We note that Theorem 1 has been observed in alternate
+forms, e.g., as the “FastPAM1” trick, in prior work [28]. However, to the best of our knowledge,
+we are the first to provide a formal statement and proof of Theorem 1 and demonstrate its use in an
+adaptive sampling scheme inspired by multi-armed bandits."
+PRELIMINARIES AND BACKGROUND,0.3710691823899371,"Motivated by Theorem 1, we present the SWAP step of our algorithm, BanditPAM++, in Algorithm 1.
+BanditPAM++ uses the VA technique to improve the complexity of each SWAP iteration by a factor
+of O(k). We call the technique “virtual arms” because it uses only a constant number of distance
+computations to update each of the k “virtual” arms for each of the “real” arms, where a “real” arm
+corresponds to a datapoint."
+PRELIMINARIES AND BACKGROUND,0.37735849056603776,"4.2
+Permutation-Invariant Caching (PIC):"
+PRELIMINARIES AND BACKGROUND,0.3836477987421384,"The original BanditPAM algorithms considers each of the k(n −k) medoid-nonmedoid pairs as
+arms. With the VA technique described in Section 4.1, BanditPAM++ instead considers each of the n
+datapoints (including existing medoids) as arms in each SWAP iteration. Crucially, this implies that
+the BUILD phase and each SWAP iteration of BanditPAM++ consider the same set of arms. It is
+this observation, induced by the VA technique, that allows us to cast BanditPAM++ as a SPIMAB
+and implement a second improvement. We call this second improvement the Permutation-Invariant
+Cache (PIC)."
+PRELIMINARIES AND BACKGROUND,0.389937106918239,"We formalize the reduction of BanditPAM++ to a SPIMAB in Table 1. In the SPIMAB formulation
+of BanditPAM++, the set of reference points S is the same as the set of datapoints X. Each Di is
+a random variable representing the distance from point xi to one of the sampled reference points
+and can be sampled in O(1) time without replacement. Each µi = E[Di] corresponds to the average
+distance from point xi to all the points in the dataset X. Each arm Rt
+i corresponds to the point that
+we would add to the set of medoids (for t ≤k) or swap in to the set of medoids (for t > k), of which
+there are n at each possible timestep. Similarly, the actions {a0, . . . , ap, . . . , at} correspond to points
+added to the set of medoids (for t ≤k) or swaps performed (for t > k). Equation (8) provides the
+functional forms of f for each of the BUILD and SWAP steps."
+PRELIMINARIES AND BACKGROUND,0.39622641509433965,"f(Di(xs), A) =
+
+d(xi, xs) −min
+m′∈M d(m′, xs)
+
+∧0.
+(8)"
+PRELIMINARIES AND BACKGROUND,0.4025157232704403,"where M is a set of medoids. For the BUILD step, A is a sequence of t actions that results in a set of
+medoids of size t ≤k, and, for the SWAP step, A is a set of actions that results in a set of medoids
+M of size k."
+PRELIMINARIES AND BACKGROUND,0.4088050314465409,"The observation that BanditPAM++ is a SPIMAB allows us to develop an intelligent cache design,
+which we call a permutation-invariant cache (PIC). We may choose a permutation π of the reference
+points S = X and sample distance computations to these reference points in the order of the
+permutation. Since we only need to sample some of the reference points, and not all of them, we do
+not need to compute all O(n2) pairwise distances. Crucially, we can also reuse distance computations
+across different steps of BanditPAM++ to save on computational cost and runtime."
+PRELIMINARIES AND BACKGROUND,0.41509433962264153,"Algorithm 1 BanditPAM++ SWAP Step ( fj(Dj, {a1, . . . , at}), δ, σx, permutation π of [n] )"
+PRELIMINARIES AND BACKGROUND,0.42138364779874216,"1: Ssolution ←[n]
+▷Set of potential solutions to MAB
+2: t′ ←0
+▷Number of reference points evaluated
+3: For all (i, j) ∈[n] × [k], set ˆµi,j ←0, Ci,j ←∞
+▷Initial means and CIs for all swaps
+4: while t′ < n and |Ssolution| > 1 do
+5:
+s ←π(t′)
+▷Uses PIC
+6:
+for all i ∈Ssolution do
+7:
+Let c(s) and c(2)(s) be the indices of xs’s closest and second closest medoids ▷Cached
+8:
+Compute distance to xs’s closest medoid d1 := d(mc(s), xs)
+▷Cached
+9:
+Compute distance to xs’s second closest medoid d2 := d(mc(2)(s), xs)
+▷Cached
+10:
+Compute di := d(xi, xs)
+▷Reusing xs’s across calls leads to more cache hits"
+PRELIMINARIES AND BACKGROUND,0.4276729559748428,"11:
+ˆµi,c(s) ←
+t′ ˆµi,c(s)−d1+min(d2,di)"
+PRELIMINARIES AND BACKGROUND,0.4339622641509434,"t′+1
+▷Update running mean for xs’s medoid"
+PRELIMINARIES AND BACKGROUND,0.44025157232704404,"12:
+Ci,c(s) ←σi
+q"
+PRELIMINARIES AND BACKGROUND,0.44654088050314467,log( 1
+PRELIMINARIES AND BACKGROUND,0.4528301886792453,"δ )
+t′+1
+▷Update confidence interval for xs’s medoid
+13:
+for all j ∈{1, . . . , k} \ {c(s)} do"
+PRELIMINARIES AND BACKGROUND,0.4591194968553459,"14:
+ˆµi,j ←t′ ˆµi,j+f(Di(xs),a1,...,ak)"
+PRELIMINARIES AND BACKGROUND,0.46540880503144655,"t′+1
+▷Update running means; does not depend on j"
+PRELIMINARIES AND BACKGROUND,0.4716981132075472,"15:
+Ci,j ←σi
+q"
+PRELIMINARIES AND BACKGROUND,0.4779874213836478,log( 1
+PRELIMINARIES AND BACKGROUND,0.48427672955974843,"δ )
+t′+1
+▷Update confidence intervals; does not depend on j"
+PRELIMINARIES AND BACKGROUND,0.49056603773584906,"16:
+Ssolution ←{i : ∃j s.t. ˆµi,j −Ci,j ≤mini,j(ˆµi,j + Ci,j)}
+▷Filter suboptimal arms
+17:
+t′ ←t′ + 1
+18: if |Ssolution| = 1 then
+19:
+return i∗∈Ssolution and j∗= arg minj
+ˆ
+µi∗,j
+20: else
+21:
+Compute µi,j exactly for all i ∈Ssolution
+▷At most 3n distance computations
+22:
+return (i∗, j∗) = arg min(i,j):i∈Ssolution µi,j"
+PRELIMINARIES AND BACKGROUND,0.4968553459119497,"The full BanditPAM++ algorithm is given in Algorithm 1. Crucially, for each candidate point xi to
+swap into the set of medoids on Line 6, we only perform 3 distance computations (not k) to update all
+k arms, each of which has a mean and confidence interval (CI), on Lines 13-15. This is permitted by
+Theorem 1 and the VA technique which says that k −1 “virtual” arms for a fixed i will get the same
+update. The PIC technique allows us to choose a permutation of reference points (the xs’s) and reuse
+those xs’s across the BUILD and SWAP steps; as such, many values of d(xi, xs) can be cached."
+PRELIMINARIES AND BACKGROUND,0.5031446540880503,"We emphasize that BanditPAM++ uses the same BUILD step as the original BanditPAM algorithm,
+but with the PIC. The PIC is also used during the SWAP step of BanditPAM++, as is the VA technique.
+We prove that the full BanditPAM++ algorithm returns the same results as BanditPAM and PAM in
+Section 5 and demonstrate the empirical benefits of both the PIC and VA techniques in Section 6."
+ANALYSIS OF THE ALGORITHM,0.5094339622641509,"5
+Analysis of the Algorithm"
+ANALYSIS OF THE ALGORITHM,0.5157232704402516,"In this section, we demonstrate that, with high probability, BanditPAM++ returns the same answer to
+the k-medoids clustering problem as PAM and BanditPAM while improving the SWAP complexity of
+BanditPAM by O(k) and substantially decreasing its runtime. Since the BUILD step of BanditPAM
+is the same as the BUILD step of BanditPAM++, it is sufficient to show that each SWAP step of
+BanditPAM++ returns the same swap as the corresponding step of BanditPAM (and PAM). All of the
+following theorems are proven in Appendix 2."
+ANALYSIS OF THE ALGORITHM,0.5220125786163522,"First, we demonstrate that PIC does not affect the results of BanditPAM++ in Theorem 2:"
+ANALYSIS OF THE ALGORITHM,0.5283018867924528,"Theorem 2. Let X = {x1, . . . , xS} be the reference points of Di, and let π be a random permutation
+of {1, . . . , S}. Then for any c ≤S, Pc
+q=1 Di(xπ(pq)) has the same distribution as Pc
+q=1 Di(xpq),
+where each pq is drawn uniformly without replacement from {1, . . . , S}."
+ANALYSIS OF THE ALGORITHM,0.5345911949685535,"Intuitively, Theorem 2 says that instead of randomly sampling new reference points at each iteration
+of BanditPAM++, we may choose a fixed permutation π in advance and sample in permutation
+order at each step of the algorithm. This allows us to reuse computation across different steps of the
+algorithm."
+ANALYSIS OF THE ALGORITHM,0.5408805031446541,"We now show that BanditPAM++ returns the same result as BanditPAM (and PAM) in every SWAP
+iteration and has the same complexity in n as BanditPAM. First, we consider a single call to
+Algorithm 1. Let µi := minj∈[k] µi,j and let i∗:= arg mini∈[n] µi be the optimal point to swap in to
+the set of medoids, so that the medoid to swap out is j∗:= arg minj∈[k] µi∗,j. For another candidate"
+ANALYSIS OF THE ALGORITHM,0.5471698113207547,"point i ∈[n] with i ̸= i∗, let ∆i := µi −µi∗, and for i = i∗, let ∆i := min(2)
+j
+µi,j −minj µi,j,"
+ANALYSIS OF THE ALGORITHM,0.5534591194968553,"where min(2)
+j
+denotes the second smallest value over the indices j. To state the following results, we
+will assume that, for a fixed candidate point i and a randomly sampled reference point xs, the random
+variable f(Di(xs), A) is σi-sub-Gaussian for some known parameter σi (which, in practice, can be
+estimated from the data [28]):
+Theorem 3. For δ = 1/kn3, with probability at least 1 −2"
+ANALYSIS OF THE ALGORITHM,0.559748427672956,"n, Algorithm 1 returns the optimal swap
+to perform using a total of M distance computations, where"
+ANALYSIS OF THE ALGORITHM,0.5660377358490566,"E[M] ≤6n +
+X"
+ANALYSIS OF THE ALGORITHM,0.5723270440251572,"i∈[n]
+min
+ 12"
+ANALYSIS OF THE ALGORITHM,0.5786163522012578,"∆2
+i
+(σi + σi∗)2 log kn + B, 3n
+
+."
+ANALYSIS OF THE ALGORITHM,0.5849056603773585,"Intuitively, Theorem 3 states that with high probability, each SWAP iteration of BanditPAM++ returns
+the same result as BanditPAM and PAM. Since the BUILD step of BanditPAM++ is the same as the
+BUILD step of BanditPAM, this implies that BanditPAM++ follows the exact same optimization
+trajectories as BanditPAM and PAM over the entire course of the algorithm with high probability. We
+formalize this observation in Theorem 4:
+Theorem 4. If BanditPAM++ is run on a dataset X with δ = 1/kn3, then it returns the same set of k
+medoids as PAM with probability 1 −o(1). Furthermore, the total number of distance computations
+Mtotal required satisfies"
+ANALYSIS OF THE ALGORITHM,0.5911949685534591,E[Mtotal] = O (n log kn) .
+ANALYSIS OF THE ALGORITHM,0.5974842767295597,"Note on assumptions: For Theorem 3, we assumed that the data is generated in a way such that
+the observations f(Di(xs), A) follow a sub-Gaussian distribution. Furthermore, for Theorem 4, we
+assume that the ∆i’s are not all close to 0, i.e., that we are not in the degenerate arm setting where
+many of the swaps are equally optimal, and assume that the σi’s are bounded (we formalize these
+assumptions in Appendix 2). These assumptions have been found to hold in many real-world datasets
+[28]; see Section 7 and Appendices 1.1, and 2 for more formal discussions."
+ANALYSIS OF THE ALGORITHM,0.6037735849056604,"Additionally, we assume that both BanditPAM and BanditPAM++ place a hard constraint T on the
+maximum number of SWAP iterations that are allowed. While the limit on the maximum number of
+swap steps T may seem restrictive, it is not uncommon to place a maximum number of iterations on
+iterative algorithms. Furthermore, T has been observed empirically to be O(k) [25], consistent with
+our experiments in Section 6 and Appendix 3."
+ANALYSIS OF THE ALGORITHM,0.610062893081761,"We note that statements similar to Theorems 3 and 4 can be proven for other values of δ. We provide
+additional experiments to understand the effects of the hyperparameters T and δ in Appendix 3."
+ANALYSIS OF THE ALGORITHM,0.6163522012578616,"Complexity in k: The original BanditPAM algorithm scales as O(kc(k)n log kn), where c(k) is
+a problem-dependent function of k. Intuitively, c(k) governs the “hardness” of the problem as
+a function of k; as more medoids are added, the average distance from each point to its closest
+medoid will decrease and the arm gaps (the ∆i’s) will decrease, increasing the sample complexity
+in Theorem 3. With the VA technique, BanditPAM++ removes the explicit factor of k: each SWAP
+iteration has complexity O(c(k)n log kn). The implicit dependence on k may still enter through the
+term c(k) for a fixed dataset, which we observe in our experiments in Section 6."
+EMPIRICAL RESULTS,0.6226415094339622,"6
+Empirical Results"
+EMPIRICAL RESULTS,0.6289308176100629,"Setup: BanditPAM++ consists of two improvements upon the original BanditPAM algorithm: the
+VA and PIC techniques. We measure the gains of each technique by presenting an ablation study in
+which we compare the original BanditPAM algorithm (BP), BanditPAM with only the VA technique
+(BP+VA), BanditPAM with only the PIC (BP+PIC), and BanditPAM with both the VA and PIC
+techniques (BP++, the final BanditPAM++ algorithm)."
+EMPIRICAL RESULTS,0.6352201257861635,"First, we demonstrate that all algorithms achieve the same clustering solution and loss as BanditPAM
+across a variety of datasets and dataset sizes. In particular, this implies that BanditPAM++ matches"
+EMPIRICAL RESULTS,0.6415094339622641,"Dataset Size (n):
+10,000
+15,000
+20,000
+25,000
+30,000
+MNIST (L2, k = 10)
+1.00
+1.00
+1.00
+1.00
+1.00
+CIFAR10 (L1, k = 10)
+1.00
+1.00
+1.00
+1.00
+1.00
+20 Newsgroups (cosine, k = 5)
+1.00
+1.00
+1.00
+1.00
+1.00"
+EMPIRICAL RESULTS,0.6477987421383647,"Table 2: Clustering loss of BanditPAM++, normalized to clustering loss of BanditPAM, across a
+variety of datasets, metrics, and dataset sizes. In all scenarios, BanditPAM++ matches the loss of
+BanditPAM (in fact, returns the exact same solution)."
+EMPIRICAL RESULTS,0.6540880503144654,"prior state-of-the-art in clustering quality. Next, we investigate the scaling of all four algorithms in
+both n and k across a variety of datasets and metrics. We present our results in both sample-complexity
+and wall-clock runtime. BanditPAM++ outperforms BanditPAM by up to 10×. Furthermore, our
+results demonstrate that each of the VA and PIC techniques improves the runtime of the original
+BanditPAM algorithm."
+EMPIRICAL RESULTS,0.660377358490566,"For an experiment on a dataset of size n, we sampled n datapoints from the original dataset with
+replacement. In all experiments using the PIC technique, we allowed the algorithm to store up to
+1, 000 distance computations per point. For the wall-clock runtime and sample complexity metrics,
+we divide the result of each experiment by the number of swap iterations +1, where the +1 accounts
+for the complexity of the BUILD step."
+EMPIRICAL RESULTS,0.6666666666666666,"Datasets: We conduct experiments on several public, real-world datasets to evaluate BanditPAM++’s
+performance: the MNIST dataset, the CIFAR10 dataset, and the 20 Newsgroups dataset. The MNIST
+dataset [13] contains 70,000 black-and-white images of handwritten digits. The CIFAR10 dataset
+[12] comprises 60,000 images, where each image consists of 32 × 32 pixels and each pixel has 3
+colors. The 20 Newsgroups dataset [19] consist of approximately 18,000 posts on 20 topics split in
+two subsets: train and test. We used a fixed subsample of 10,000 training posts and embedding them
+into 385-dimensional vectors using a sentence transformer from HuggingFace [7]. We use the L2,
+L1, and cosine distances across the MNIST, CIFAR10, and 20 Newsgroups datasets, respectively."
+EMPIRICAL RESULTS,0.6729559748427673,"6.1
+Clustering/loss quality"
+EMPIRICAL RESULTS,0.6792452830188679,"First, we assess the solution quality all four algorithms across various datasets, metrics, and dataset
+sizes. Table 2 shows the relative losses of BanditPAM++ with respect to the loss of BanditPAM;
+the results for BP+PIC and BP+VA are identical and omitted for clarity. All four algorithms return
+identical solutions; this demonstrates that neither the VA nor the PIC technique affect solution
+quality. In particular, this implies that BanditPAM++ matches the prior state-of-the-art algorithms,
+BanditPAM and PAM, in clustering quality."
+SCALING WITH K,0.6855345911949685,"6.2
+Scaling with k"
+SCALING WITH K,0.6918238993710691,"Figure 1 compares the wall-clock runtime scaling with k of BP, BP+PIC, BP+VA, and BP++ on same
+datasets as Figure 1. Across all data subset sizes, metrics, and values of k, BP++ outperforms each
+of BP+VA and BP+PIC, both of which in turn outperform BP. As k increases, the performance gap
+between algorithms using the VA technique and the other algorithms increases. For example, on the
+CIFAR10 dataset with k = 15, BanditPAM++ is over 10× faster than BanditPAM. This provides
+empirical evidence for our claims in Section 5 that the VA technique improves the scaling of the
+BanditPAM algorithm with k."
+SCALING WITH K,0.6981132075471698,"We provide similar experiments that demonstrate the scaling with n of BanditPAM++ and each of
+the baseline algorithms in Appendix 3. The results are qualitiatively similar to those shown here;
+in particular, BanditPAM++ outperforms BP+PIC and BP+VA, which both outperform the original
+BanditPAM algorithm."
+CONCLUSIONS AND LIMITATIONS,0.7044025157232704,"7
+Conclusions and Limitations"
+CONCLUSIONS AND LIMITATIONS,0.710691823899371,"We proposed BanditPAM++, an improvement upon BanditPAM that produces state-of-the-art results
+for the k-medoids problem. BanditPAM++ improves upon BanditPAM using the Virtual Arms"
+CONCLUSIONS AND LIMITATIONS,0.7169811320754716,"6
+8
+10
+12
+14
+Number of medoids (k) 0.5 1.0 1.5 2.0 2.5 3.0"
+CONCLUSIONS AND LIMITATIONS,0.7232704402515723,Time per step (s)
+CONCLUSIONS AND LIMITATIONS,0.7295597484276729,"1e2
+MNIST, L2, n = 20000"
+CONCLUSIONS AND LIMITATIONS,0.7358490566037735,"BP++
+BP+PIC
+BP+VA
+BP (a)"
+CONCLUSIONS AND LIMITATIONS,0.7421383647798742,"6
+8
+10
+12
+14
+Number of medoids (k) 0.0 0.2 0.4 0.6 0.8 1.0"
+CONCLUSIONS AND LIMITATIONS,0.7484276729559748,Time per step (s)
+CONCLUSIONS AND LIMITATIONS,0.7547169811320755,"1e3
+CIFAR10, L1, n = 20000"
+CONCLUSIONS AND LIMITATIONS,0.7610062893081762,"BP++
+BP+PIC
+BP+VA
+BP (b)"
+CONCLUSIONS AND LIMITATIONS,0.7672955974842768,"6
+8
+10
+12
+14
+Number of medoids (k) 0.25 0.50 0.75 1.00 1.25 1.50 1.75 2.00"
+CONCLUSIONS AND LIMITATIONS,0.7735849056603774,Time per step (s)
+CONCLUSIONS AND LIMITATIONS,0.779874213836478,"1e2
+20 Newsgroups, Cosine, n = 10000"
+CONCLUSIONS AND LIMITATIONS,0.7861635220125787,"BP++
+BP+PIC
+BP+VA
+BP (c)"
+CONCLUSIONS AND LIMITATIONS,0.7924528301886793,"Figure 1: Average wall-clock runtime versus k for various dataset sizes, metrics, and subsample sizes
+n BP++ outperforms BP+PIC and BP+VA, both of which outperform BP. Negligible error bars are
+omitted for clarity."
+CONCLUSIONS AND LIMITATIONS,0.7987421383647799,"technique, which improves the complexity of each SWAP iteration by O(k), and the Permutation-
+Invariant Cache, which allows the reuse of computation across different phases of the algorithm. We
+prove that BanditPAM++ returns the same results as BanditPAM (and therefore PAM) with high
+probability. Furthermore, our experimental evidence demonstrates the superiority of BanditPAM++
+over baseline algorithms; across a variety of datasets, BanditPAM++ is up to 10× faster than
+prior state-of-the-art while returning the same results. While the assumptions of BanditPAM and
+BanditPAM++ are likely to hold in many practical scenarios, it is important to acknowledge that
+these assumptions can impose limitations on our approach. Specifically, when numerous arm gaps
+are narrow, BanditPAM++ might employ a naïve and fall back to brute force computation. Similarly,
+if the distributional assumptions on arm returns are violated, the complexity of BanditPAM++ may
+be no better than PAM. We discuss these settings in greater detail in Appendix 1.1."
+CONCLUSIONS AND LIMITATIONS,0.8050314465408805,Acknowledgements
+CONCLUSIONS AND LIMITATIONS,0.8113207547169812,"We would like to thank the anonymous Reviewers, PCs, and ACs for their helpful feedback on our
+paper. Mo Tiwari was supported by a Stanford Interdisciplinary Graduate Fellowship (SIGF) and
+a Standard Data Science Scholarship. The work of Ilan Shomorony was supported in part by the
+National Science Foundation (NSF) under grant CCF-2046991. Martin Zhang is supported by NIH
+R01 MH115676."
+REFERENCES,0.8176100628930818,References
+REFERENCES,0.8238993710691824,"[1] Amin Aghaee, Mehrdad Ghadiri, and Mahdieh Soleymani Baghshah. Active distance-based
+clustering using k-medoids. Pacific-Asia Conference on Knowledge Discovery and Data Mining,
+9651:253–264, 2016."
+REFERENCES,0.8301886792452831,"[2] David Arthur and Sergei Vassilvitskii. K-means++ the advantages of careful seeding. In
+Proceedings of the eighteenth annual ACM-SIAM symposium on Discrete algorithms, pages
+1027–1035, 2007."
+REFERENCES,0.8364779874213837,"[3] Vivek Bagaria, Tavor Z. Baharav, Govinda M. Kamath, and David Tse. Bandit-based monte
+carlo optimization for nearest neighbors. In Advances in Neural Information Processing Systems,
+pages 3650–3659, 2019."
+REFERENCES,0.8427672955974843,"[4] Vivek Bagaria, Govinda M. Kamath, Vasilis Ntranos, Martin J. Zhang, and David Tse. Medoids
+in almost-linear time via multi-armed bandits. In International Conference on Artificial Intelli-
+gence and Statistics, pages 500–509, 2018."
+REFERENCES,0.8490566037735849,"[5] Paul S. Bradley, Olvi L. Mangasarian, and W. N. Street. Clustering via concave minimization.
+In Advances in Neural Information Processing Systems, pages 368–374, 1997."
+REFERENCES,0.8553459119496856,"[6] Vladimir Estivill-Castro and Michael E. Houle. Robust distance-based clustering with applica-
+tions to spatial data mining. Algorithmica, 30(2):216–242, 2001."
+REFERENCES,0.8616352201257862,"[7] HuggingFace.
+all-minilm-l6-v2
+model
+card.
+https://huggingface.co/
+sentence-transformers/all-MiniLM-L6-v2. Accessed: 2023-10-28."
+REFERENCES,0.8679245283018868,"[8] Anil K. Jain and Richard C. Dubes. Algorithms for clustering data. Prentice-Hall, 1988."
+REFERENCES,0.8742138364779874,"[9] Kevin Jamieson and Robert Nowak. Best-arm identification algorithms for multi-armed bandits
+in the fixed confidence setting. In Annual Conference on Information Sciences and Systems,
+pages 1–6, 2014."
+REFERENCES,0.8805031446540881,"[10] Leonard Kaufman and Peter J. Rousseeuw. Clustering by means of medoids. Statistical Data
+Analysis based on the L1 Norm and Related Methods, pages 405–416, 1987."
+REFERENCES,0.8867924528301887,"[11] Leonard Kaufman and Peter J. Rousseeuw. Partitioning around medoids (program pam). Finding
+groups in data: an introduction to cluster analysis, pages 68–125, 1990."
+REFERENCES,0.8930817610062893,"[12] Alex Krizhevsky and Geoffrey Hinton. Learning multiple layers of features from tiny images.
+Technical report, Citeseer, 2009."
+REFERENCES,0.89937106918239,"[13] Yann LeCun, Léon Bottou, Yoshua Bengio, and Patrick Haffner. Gradient-based learning
+applied to document recognition. Proceedings of the IEEE, 86(11):2278–2324, 1998."
+REFERENCES,0.9056603773584906,"[14] Daniel LeJeune, Richard G. Baraniuk, and Reinhard Heckel. Adaptive estimation for approxi-
+mate k-nearest-neighbor computations. In International Conference on Artificial Intelligence
+and Statistics, 2019."
+REFERENCES,0.9119496855345912,"[15] Jure Leskovec, Anand Rajaraman, and Jeffrey D. Ullman. Mining of massive data sets. Cam-
+bridge university press, 2020."
+REFERENCES,0.9182389937106918,"[16] Stuart Lloyd. Least squares quantization in pcm. IEEE transactions on information theory,
+28(2):129–137, 1982."
+REFERENCES,0.9245283018867925,"[17] James MacQueen. Some methods for classification and analysis of multivariate observations.
+In Berkeley Symposium on Mathematical Statistics and Probability, volume 1, pages 281–297,
+1967."
+REFERENCES,0.9308176100628931,"[18] Nina Mishra, Robert Schreiber, Isabelle Stanton, and Robert E. Tarjan. Clustering social
+networks. In International Workshop on Algorithms and Models for the Web-Graph, pages
+56–67. Springer, 2007."
+REFERENCES,0.9371069182389937,"[19] Tom Mitchell.
+Twenty Newsgroups.
+UCI Machine Learning Repository, 1999.
+DOI:
+https://doi.org/10.24432/C5C323."
+REFERENCES,0.9433962264150944,"[20] Gonzalo Navarro. A guided tour to approximate string matching. ACM computing surveys,
+33(1):31–88, 2001."
+REFERENCES,0.949685534591195,"[21] Raymond T. Ng and Jiawei Han. Clarans: A method for clustering objects for spatial data
+mining. IEEE transactions on knowledge and data engineering, 14(5):1003–1016, 2002."
+REFERENCES,0.9559748427672956,"[22] Michael L Overton. A quadratically convergent method for minimizing a sum of euclidean
+norms. Mathematical Programming, 27(1):34–63, 1983."
+REFERENCES,0.9622641509433962,"[23] Rameshwar Pratap, Anup Deshmukh, Pratheeksha Nair, and Tarun Dutt. A faster sampling
+algorithm for spherical k-means. In Asian Conference on Machine Learning, pages 343–358.
+PMLR, 2018."
+REFERENCES,0.9685534591194969,"[24] Jiayang Ren, Kaixun Hua, and Yankai Cao. Global optimal k-medoids clustering of one million
+samples. Advances in Neural Information Processing Systems, 35:982–994, 2022."
+REFERENCES,0.9748427672955975,"[25] Erich Schubert and Peter J Rousseeuw. Faster k-medoids clustering: improving the pam, clara,
+and clarans algorithms. In International Conference on Similarity Search and Applications,
+pages 171–187. Springer, 2019."
+REFERENCES,0.9811320754716981,"[26] Mo Tiwari. Accelerating machine learning algorithms with adaptive sampling. arXiv preprint
+arXiv:2309.14221, 2023."
+REFERENCES,0.9874213836477987,"[27] Mo Tiwari, Ryan Kang, Jaeyong Lee, Chris Piech, Ilan Shomorony, Sebastian Thrun, and
+Martin J Zhang. Mabsplit: Faster forest training using multi-armed bandits. Advances in Neural
+Information Processing Systems, 35:1223–1237, 2022."
+REFERENCES,0.9937106918238994,"[28] Mo Tiwari, Martin Jinye Zhang, James Mayclin, Sebastian Thrun, Chris Piech, and Ilan
+Shomorony. Banditpam: Almost linear time k-medoids clustering via multi-armed bandits. In
+Advances in Neural Information Processing Systems, 2020."

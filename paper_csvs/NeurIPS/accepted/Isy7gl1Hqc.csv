@@ -1,0 +1,1624 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,Abstract
+ABSTRACT,0.003246753246753247,"We introduce camouflaged data poisoning attacks, a new attack vector that arises
+in the context of machine unlearning and other settings when model retraining may
+be induced. An adversary first adds a few carefully crafted points to the training
+dataset such that the impact on the model’s predictions is minimal. The adversary
+subsequently triggers a request to remove a subset of the introduced points at
+which point the attack is unleashed and the model’s predictions are negatively
+affected. In particular, we consider clean-label targeted attacks (in which the goal
+is to cause the model to misclassify a specific test point) on datasets including
+CIFAR-10, Imagenette, and Imagewoof. This attack is realized by constructing
+camouflage datapoints that mask the effect of a poisoned dataset. We demonstrate
+the efficacy of our attack when unlearning is performed via retraining from scratch,
+the idealized setting of machine unlearning which other efficient methods attempt
+to emulate, as well as against the approximate unlearning approach of Graves et al.
+[2021]."
+INTRODUCTION,0.006493506493506494,"1
+Introduction"
+INTRODUCTION,0.00974025974025974,"Machine Learning (ML) research traditionally assumes a static pipeline: data is gathered, a model is
+trained once and subsequently deployed. This paradigm has been challenged by practical deployments,
+which are more dynamic in nature. After initial deployment more data may be collected, necessitating
+additional training. Or, as in the machine unlearning setting [Cao and Yang, 2015], we may need to
+produce a model as if certain points were never in the training set to begin with.1"
+INTRODUCTION,0.012987012987012988,"While such dynamic settings clearly increase the applicability of ML models, they also make them
+more vulnerable. Specifically, they open models up to new methods of attack by malicious actors
+aiming to sabotage the model. In this work, we introduce a new type of data poisoning attack on
+models that unlearn training datapoints. We call these camouflaged data poisoning attacks."
+INTRODUCTION,0.016233766233766232,"The attack takes place in two phases (Figure 1). In the first stage, before the model is trained, the
+attacker adds a set of carefully designed points to the training data, consisting of a poison set and a
+camouflage set. The model’s behaviour should be similar whether it is trained on either the training
+data, or its augmentation with both the poison and camouflage sets. In the second phase, the attacker
+triggers an unlearning request to delete the camouflage set after the model is trained. That is, the"
+INTRODUCTION,0.01948051948051948,"∗Authors JA, GK, AS are listed in alphabetical order. Full paper: https://arxiv.org/abs/2212.10717
+1A naive solution is to remove said points from the training set and re-train the model from scratch."
+INTRODUCTION,0.022727272727272728,"model must be updated to behave as though it were only trained on the training set plus the poison
+set. At this point, the attack is fully realized, and the model’s performance suffers in some way."
+INTRODUCTION,0.025974025974025976,"While such an attack could harm the model by several metrics, in this paper, we focus on targeted
+poisoning attacks – that is, poisoning attacks where the goal is to misclassify a specific point in the
+test set. Our contributions are the following:"
+INTRODUCTION,0.02922077922077922,"1. We introduce camouflaged data poisoning attacks, demonstrating a new attack vector in
+dynamic settings including machine unlearning (Figure 1)."
+INTRODUCTION,0.032467532467532464,"2. We realize these attacks in the targeted poisoning setting, giving an algorithm based on
+the gradient-matching approach of Geiping et al. [2021]. In order to make the model
+behavior comparable to as if the poison set were absent, we construct the camouflage set by
+generating a new set of points that undoes the impact of the poison set. We thus identify a
+new technical question of broader interest to the data poisoning community: Can one nullify
+a data poisoning attack by only adding points?"
+INTRODUCTION,0.03571428571428571,"3. We demonstrate the efficacy of these attacks on a variety of models (SVMs and neural
+networks) and datasets (CIFAR-10 [Krizhevsky, 2009], Imagenette [Howard, 2019], and
+Imagewoof [Howard, 2019])."
+INTRODUCTION,0.03896103896103896,"Figure 1: An illustration of a successful camouflaged targeted data poisoning attack. In Step 1, the
+adversary adds poison and camouflage sets of points to the (clean) training data. In Step 2, the model
+is trained on the augmented training dataset. It should behave similarly to if trained on only the clean
+data; in particular, it should correctly classify the targeted point. In Step 3, the adversary triggers an
+unlearning request to delete the camouflage set from the trained model. In Step 4, the resulting model
+misclassifies the targeted point."
+PRELIMINARIES,0.04220779220779221,"1.1
+Preliminaries"
+PRELIMINARIES,0.045454545454545456,"Machine Unlearning.
+A significant amount of legislation concerning the “right to be forgotten”
+has recently been introduced by governments around the world, including the European Union’s
+General Data Protection Regulation (GDPR), the California Consumer Privacy Act (CCPA), and
+Canada’s proposed Consumer Privacy Protection Act (CPPA). Such legislation requires organizations
+to delete information they have collected about a user upon request. A natural question is whether that
+further obligates the organizations to remove that information from downstream machine learning
+models trained on the data – current guidances [Information Commissioner’s Office, 2020] and
+precedents [Federal Trade Commission, 2021] indicate that this may be the case. This goal has
+sparked a recent line of work on machine unlearning [Cao and Yang, 2015]."
+PRELIMINARIES,0.048701298701298704,"The simplest way to remove a user’s data from a trained model is to remove the data from the training
+set, and then retrain the model on the remainder (also called “retraining from scratch”). This is the
+ideal way to perform data deletion, as it ensures that the model was never trained on the datapoint of"
+PRELIMINARIES,0.05194805194805195,"Figure 2: Some representative images from Imagewoof. In each pair, the left figure is from the
+training dataset, while the right image has been adversarially manipulated. The top and bottom rows
+are images from the poison and camouflage set, respectively. In all cases, the manipulated images are
+clean label and nearly indistinguishable from the original image."
+PRELIMINARIES,0.05519480519480519,"concern. The downside is that retraining may take a significant amount of time in modern machine
+learning settings. Hence, most work within machine unlearning has studied fast methods for data
+deletion, sometimes relaxing to approximately removing the datapoint. A related line of work has
+focused more on other implications of machine unlearning, particularly the consequences of an
+adaptive and dynamic data pipeline [Gupta et al., 2021, Marchant et al., 2022]. Our work fits into the
+latter line: we show that the potential to remove points from a trained model can expose a new attack
+vector. Since retraining from scratch is the ideal result that other methods try to emulate, we focus
+primarily on unlearning by retraining from scratch, but the same phenomena should still occur when
+any effective machine unlearning algorithm is applied. For example, we also demonstrate efficacy
+against the approximate unlearning method of Graves et al. [2021]."
+PRELIMINARIES,0.05844155844155844,"Data Poisoning. In a data poisoning attack, an adversary in some way modifies the training data
+provided to a machine learning model, such that the model’s behaviour at test time is negatively
+impacted. Our focus is on targeted data poisoning attacks, where the attacker’s goal is to cause the
+model to misclassify some specific datapoint in the test set. Other common types of data poisoning
+attacks include indiscriminate (in which the goal is to increase the test error) and backdoor (where
+the goal is to misclassify test points which have been adversarially modified in some small way)."
+PRELIMINARIES,0.06168831168831169,"The adversary is typically limited in a couple ways. First, it is common to say that they can only add a
+small number of points to the training set. This mimics the setting where the training data is gathered
+from some large public crowdsourced dataset, and an adversary can contribute a few judiciously
+selected points of their own. Other choices may include allowing them to modify or delete points
+from the training set, but these are less easily motivated. Additionally, the adversary is generally
+constrained to clean-label attacks: if the introduced points were inspected by a human, they should
+not appear suspicious or incorrectly labeled. We comment that this criteria is subjective and thus not
+a precise notion, but is nonetheless common in data poisoning literature, and we use the term as well."
+DISCUSSION OF OTHER RELATED WORK,0.06493506493506493,"2
+Discussion of Other Related Work"
+DISCUSSION OF OTHER RELATED WORK,0.06818181818181818,"The motivation for our work comes from Marchant et al. [2022], who propose a novel poisoning
+attack on unlearning systems. As mentioned before, the primary goal of many machine unlearning
+systems is to “unlearn” datapoints quickly, i.e., faster than retraining from scratch. Marchant et al.
+[2022] craft poisoning schemes via careful noise addition, in order to trigger the unlearning algorithm
+to retrain from scratch on far more deletion requests than typically required. While both our work
+and theirs are focused on data poisoning attacks against machine unlearning systems, the adversaries
+have very different objectives. In our work, the adversary is trying to misclassify a target test point,
+whereas they try to increase the time required to unlearn a point."
+DISCUSSION OF OTHER RELATED WORK,0.07142857142857142,"In targeted data poisoning, there are a few different types of attacks. The simplest form of attack is
+label flipping, in which the adversary is allowed to flip the labels of the examples [Barreno et al.,
+2010, Xiao et al., 2012, Paudice et al., 2018]. Another type of attack is watermarking, in which the
+feature vectors are perturbed to obtain the desired poisoning effect [Suciu et al., 2018, Shafahi et al.,"
+DISCUSSION OF OTHER RELATED WORK,0.07467532467532467,"2018]. In both these cases, noticeable changes are made to the label and feature vector, respectively,
+which would be noticeable by a human labeler. In contrast, clean label attacks attempt to make
+unnoticeable changes to both the feature vector and the label, and are the gold standard for data
+poisoning attacks [Huang et al., 2020, Geiping et al., 2021]. Our focus is on both clean-label poison
+and camouflage sets. While there are also works on indiscriminate [Biggio et al., 2012, Xiao et al.,
+2015, Muñoz-González et al., 2017, Steinhardt et al., 2017, Diakonikolas et al., 2019b, Koh et al.,
+2022] and backdoor [Gu et al., 2017, Tran et al., 2018, Sun et al., 2019] poisoning attacks, these
+are beyond the scope of our work, see Goldblum et al. [2020], Cinà et al. [2022] for additional
+background on data poisoning attacks."
+DISCUSSION OF OTHER RELATED WORK,0.07792207792207792,"Cao and Yang [2015] initiated the study of machine unlearning through exact unlearning, wherein
+the new model obtained after deleting an example is statistically identical to the model obtained by
+training on a dataset without the example. A probabilistic notion of unlearning was defined by Ginart
+et al. [2019], which in turn is inspired from notions in differential privacy [Dwork et al., 2006].
+Several works studied algorithms for empirical risk minimization (i.e., training loss) [Guo et al.,
+2020, Izzo et al., 2021, Neel et al., 2021, Ullah et al., 2021, Thudi et al., 2022, Graves et al., 2021,
+Chourasia et al., 2022], while later works study the effect of machine unlearning on the generalization
+loss [Gupta et al., 2021, Sekhari et al., 2021]. In particular, these works realize that unlearning
+data points quickly can lead to a drop in test loss, which is the theme of our current work. Several
+works have considered implementations of machine unlearning in several contexts starting with the
+work of Bourtoule et al. [2021]. These include unlearning in deep neural networks [Golatkar et al.,
+2020, 2021, Nguyen et al., 2020], random forests [Brophy and Lowd, 2021], large scale language
+models [Zanella-Béguelin et al., 2020], the tension between unlearning and privacy [Chen et al.,
+2021, Carlini et al., 2022], anomaly detection [Du et al., 2019], insufficiency of preventing verbatim
+memorization for ensuring privacy [Ippolito et al., 2022], and even auditing of machine unlearning
+systems [Sommer et al., 2020]."
+DISCUSSION OF OTHER RELATED WORK,0.08116883116883117,"After the first version of our paper was uploaded on arXiv, Yang et al. [2022] discovered defenses
+against the data poisoning procedure of Geiping et al. [2021]. One may further use their techniques
+to defend against our camouflaged poisoning attack as well, however, we note that this does not
+undermine the contributions of this paper. Our main contribution is to introduce this new kind of
+attack, and bring to attention that machine unlearning enables this attack; the specific choice of which
+procedure is used for poison generation or camouflage generation is irrelevant to the existence of
+such an attack."
+SETUP AND ALGORITHMS,0.08441558441558442,"3
+Setup and Algorithms"
+THREAT MODEL AND APPROACH,0.08766233766233766,"3.1
+Threat Model and Approach"
+THREAT MODEL AND APPROACH,0.09090909090909091,"The camouflaged poisoning attack takes place through interaction between an attacker and a victim,
+and is triggered by an unlearning request. We assume that the attacker has access to the victim’s
+model architecture,2 the ability to query gradients on a trained model (which could be achieved, e.g.,
+by having access to the training dataset), and a target sample that it wants to attack. The attacker first
+sets the stage for the attack by introducing poison samples and camouflage samples to the training
+dataset, which are designed so as to have minimal impact when a model is trained with this modified
+dataset. At a later time, the attacker triggers the attack by submitting an unlearning request to remove
+the camouflage samples. The victim first trains a machine learning model (e.g., a deep neural network)
+on the modified training dataset, and then executes the unlearning request by retraining the model
+from scratch on the left over dataset. The goal of the attacker is to change the prediction of the model
+on a particular target sample (xtar,ytar) previously unseen by the model during training from ytar to
+a desired label yadv, while still ensuring good performance over other validation samples. Formally,
+the interaction between the attacker and the victim is as follows (see Figure 1) :"
+THE ATTACKER INTRODUCES A SMALL NUMBER OF POISONS SAMPLES SPO AND CAMOUFLAGE SAMPLES SCA TO,0.09415584415584416,"1. The attacker introduces a small number of poisons samples Spo and camouflage samples Sca to
+a clean training dataset Scl. Define Scpc = Scl + Spo + Sca.
+2. Victim trains an ML model (e.g., a neural network) on Scpc, and returns the model θcpc."
+THE ATTACKER INTRODUCES A SMALL NUMBER OF POISONS SAMPLES SPO AND CAMOUFLAGE SAMPLES SCA TO,0.09740259740259741,"2In Appendix B.6.3, we examine the transferability of our proposed attack to unknown victim model, thus
+relaxing the requirement of knowing the victim’s model architecture a priori."
+THE ATTACKER INTRODUCES A SMALL NUMBER OF POISONS SAMPLES SPO AND CAMOUFLAGE SAMPLES SCA TO,0.10064935064935066,3. The attacker submits a request to unlearn the camouflage samples Sca.3
+THE ATTACKER INTRODUCES A SMALL NUMBER OF POISONS SAMPLES SPO AND CAMOUFLAGE SAMPLES SCA TO,0.1038961038961039,"4. The victim performs the request, and computes a new model θcp by retraining from scratch on
+the left over data samples Scp = Scl + Spo."
+THE ATTACKER INTRODUCES A SMALL NUMBER OF POISONS SAMPLES SPO AND CAMOUFLAGE SAMPLES SCA TO,0.10714285714285714,"Note that the attack is only realized in Step 4 when the victim executes the unlearning request and
+retrains the model from scratch on the left over training samples. In fact, in Steps 1-3, the victim’s
+model should behave similarly to as if it were trained on the clean samples Scl only. In particular, the
+model θcpc will predict ytar on xtar, whereas the updated model θcp will predict yadv on xtar. Both
+models should have comparable validation accuracy. Such an attack is implemented by designing
+a camouflage set that cancels the effects of the poison set while training, but retraining without the
+camouflage set (to unlearn them) exposes the poison set, thus negatively affecting the model."
+THE ATTACKER INTRODUCES A SMALL NUMBER OF POISONS SAMPLES SPO AND CAMOUFLAGE SAMPLES SCA TO,0.11038961038961038,"Before we delve into technical details on how the poisons and camouflages are generated, we will
+provide an illustrative scenario where such an attack can take place. Suppose an image-based social
+media platform uses ML-based content moderation to filter out inappropriate images, e.g., adult
+content, violent images, etc., by classifying the posts as “safe” and “unsafe.” An attacker can plant a
+camouflaged poisoning attack in the system in order to target a famous personality, like a politician,
+a movie star, etc. The goal of the attacker is to make the model misclassify a potentially sensitive
+target image of that person (e.g., a politically inappropriate image) as “safe.” However, the attacker
+does not want to unleash this misclassification immediately, but to instead time it to align with macro
+events like elections, the release of movies, etc. Thus, at a later time when the attacker wishes, the
+misclassification can be triggered making the model classify this target image as safe and letting
+it circulate on the platform, thus hurting the reputation of that person at an unfortunate time (e.g.,
+before an election or before when their movie is released). The attack is triggered by submitting an
+unlearning request."
+THE ATTACKER INTRODUCES A SMALL NUMBER OF POISONS SAMPLES SPO AND CAMOUFLAGE SAMPLES SCA TO,0.11363636363636363,"We highlight that camouflaged attacks may be more dangerous than traditional data poisoning attacks,
+since camouflaged attacks can be triggered by the adversary. That is, the adversary can reveal the
+attack whenever it wishes by submitting an unlearning request. On the other hand, in the traditional
+poisoning setting, the attack is unleashed as soon as the model is trained and deployed, the timing of
+which the attacker has little control over."
+THE ATTACKER INTRODUCES A SMALL NUMBER OF POISONS SAMPLES SPO AND CAMOUFLAGE SAMPLES SCA TO,0.11688311688311688,"In order to be undetectable, and represent the realistic scenario in which the adversary has limited
+influence on the model’s training data, the attacker is only allowed to introduce a set of points that
+is much smaller than the size of the clean training dataset (i.e., ∣Spo∣≪∣Scl∣and ∣Sca∣≪∣Scl∣).
+Throughout the paper and experiments, we denote the relative size of the poison set and camouflage
+set by bp ∶= ∣Spo∣"
+THE ATTACKER INTRODUCES A SMALL NUMBER OF POISONS SAMPLES SPO AND CAMOUFLAGE SAMPLES SCA TO,0.12012987012987013,∣Scl∣× 100 and bc ∶= ∣Sca∣
+THE ATTACKER INTRODUCES A SMALL NUMBER OF POISONS SAMPLES SPO AND CAMOUFLAGE SAMPLES SCA TO,0.12337662337662338,"∣Scl∣× 100, respectively. Additionally, the attacker is only allowed
+to generate poison and camouflage samples by altering the base images by less than ε distance in the
+ℓ∞norm (in our experiments ε ≤16, where the images are represented as an array of pixels in 0 to
+255). Thus, the attacker executes a so-called clean-label attack, where the corrupted images would
+be visually indistinguishable from original base images and thus would be given the same label as
+before by a human data validator. We parameterize a threat model by the tuple (ε,bc,bp)."
+POISON AND CAMOUFLAGE SAMPLES,0.1266233766233766,"3.2
+Poison and Camouflage Samples"
+POISON AND CAMOUFLAGE SAMPLES,0.12987012987012986,"The attacker implements the attack by first generating poison samples, and then generating camouflage
+samples to cancel their effects, as shown in the following."
+POISON AND CAMOUFLAGE SAMPLES,0.1331168831168831,"Poison samples. Poison samples are designed so that a network trained on Scp = Scl + Spo predicts
+the label yadv (instead of ytar) on a target image xtar. While there are numerous data poisoning
+attacks in the literature, we adopt the state-of-the-art procedure of Geiping et al. [2021] for generating
+poisons due to its high success rate, efficiency of implementation, and applicability across various
+models. However, our framework is flexible: in principle, other attacks for the same setting could"
+POISON AND CAMOUFLAGE SAMPLES,0.13636363636363635,"3The unlearning process aims to forget the subset of samples Sca from the model θcpc (trained on Scpc =
+Scl + Spo + Sca). The goal of the unlearning process is to output a model which is indistinguishable from
+the model trained from scratch on the leftover data samples (i.e. on Scl + Spo). In our work, we simulate
+this indistinguishability by exactly retraining a fresh model from scratch on Scl + Spo. Since the goal of
+unlearning is to ensure this indistinguishability, we conjecture that our attack will also work against other
+approximate unlearning methods in the literature, and provide experimental evidence in support of this in
+Appendix B.6.6.polytope"
+POISON AND CAMOUFLAGE SAMPLES,0.1396103896103896,"serve as a drop-in replacement, e.g., the methods of Aghakhani et al. [2021] or Huang et al. [2020],
+or any method introduced in the future. 4"
+POISON AND CAMOUFLAGE SAMPLES,0.14285714285714285,"Suppose that Scp consist of N1 samples (xi,yi)i≤N1 out of which the first P samples with index i = 1
+to P belong to the poison set Spo.5 The poison samples are generated by adding small perturbations
+∆i to the base image xi so as to minimize the loss on the target with respect to the adversarial label,
+which can be formalized as the following bilevel optimization problem 6"
+POISON AND CAMOUFLAGE SAMPLES,0.1461038961038961,"min
+∆∈Γ ℓ(f(xtar,θ(∆)),yadv)
+where"
+POISON AND CAMOUFLAGE SAMPLES,0.14935064935064934,"θ(∆) ∈arg min
+θ"
+POISON AND CAMOUFLAGE SAMPLES,0.1525974025974026,"1
+N ∑
+i≤N
+ℓ(f(xi + ∆i,θ),yi),
+(1)"
+POISON AND CAMOUFLAGE SAMPLES,0.15584415584415584,"and we define the constraint set Γ ∶= {∆∶∥∆∥∞≤ε and ∆i = 0 for all i > P}. The objective function
+in (1) is called the adversarial loss [Geiping et al., 2021]. In all our experiments, we generate the
+poison points using the gradient matching technique of Geiping et al. [2021], which we detail in
+Appendix A for completeness."
+POISON AND CAMOUFLAGE SAMPLES,0.1590909090909091,"Camouflage samples. Camouflage samples are designed to cancel the effect of the poisons, such
+that a model trained on Scpc = Scl + Spo + Sca behaves identical to the model trained on Scl, and
+makes the correct prediction on xtar. We formulate this task via a bilevel optimization problem
+similar to (1). Let Scpc consist of N2 samples (xj,yj)j≤N2 out of which the last C samples with
+index j = N2 −C + 1 to N2 belong to the camouflage set Sca. The camouflage points are generated
+by adding small perturbations ∆j to the base image xj so as to minimize the loss on the target with
+respect to the adversarial label. In particular, we find the appropriate ∆by solving:"
+POISON AND CAMOUFLAGE SAMPLES,0.16233766233766234,"min
+∆∈Γ ℓ(f(xtar,θ(∆)),ytar)
+where"
+POISON AND CAMOUFLAGE SAMPLES,0.16558441558441558,"θ(∆) ∈arg min
+θ"
+POISON AND CAMOUFLAGE SAMPLES,0.16883116883116883,"1
+N2 ∑
+j≤N2
+ℓ(f(xj + ∆j,θ),yj),
+(2)"
+POISON AND CAMOUFLAGE SAMPLES,0.17207792207792208,and we define the constraint set Γ ∶= {∆∶∥∆∥∞≤ε and ∆j = 0 for all j ≤N2 −C}.
+EFFICIENT ALGORITHMS FOR GENERATING CAMOUFLAGES,0.17532467532467533,"3.3
+Efficient Algorithms for Generating Camouflages"
+EFFICIENT ALGORITHMS FOR GENERATING CAMOUFLAGES,0.17857142857142858,"Given the poison images, camouflage images are designed in order to neutralize the effect of the
+poisons. Here, we give intuition into what we mean by canceling the effect of poisons, and provide
+two procedures for generating camouflages efficiently: label flipping, and gradient matching."
+CAMOUFLAGES VIA LABEL FLIPPING,0.18181818181818182,"3.3.1
+Camouflages via Label Flipping"
+CAMOUFLAGES VIA LABEL FLIPPING,0.18506493506493507,"Suppose that the underlying task is a binary classification problem with the labels y ∈{−1,1}, and
+that the model is trained using linear loss ℓ(f(x,θ),y) = −yf(x,θ). Then, simply flipping the labels
+allows one to generate a camouflage set for any given poison set Spo. In particular, Sca is constructed
+as: for every (xi,yi) ∈Spo, simply add (xi,−yi) to Sca (i.e., bp = bc). It is easy to see that for such
+camouflage samples, we have for any θ,"
+CAMOUFLAGES VIA LABEL FLIPPING,0.18831168831168832,"∑
+(x,y)∈Scpc
+ℓ(f(x,θ),y)"
+CAMOUFLAGES VIA LABEL FLIPPING,0.19155844155844157,"= −
+∑
+(x,y)∈Scl
+yf(x,θ) −
+P
+∑
+i=1
+(yif(xi,θ) + (−yi)f(xi,θ))"
+CAMOUFLAGES VIA LABEL FLIPPING,0.19480519480519481,"=
+∑
+(x,y)∈Scl
+ℓ(f(x,θ),y)."
+WE PROVIDE PRELIMINARY EXPERIMENTS IN APPENDIX C OF CAMOUFLAGED-POISONING ATTACKS DEVELOPED USING THE,0.19805194805194806,"4We provide preliminary experiments in Appendix C of camouflaged-poisoning attacks developed using the
+Bullseye Polytope technique from Aghakhani et al. [2021], and show that the attack continues to succeed even
+when we use alternate poison and camouflage generation techniques.
+5This ordering is for notational convenience; naturally, the datapoints are shuffled to preclude the victim
+simply removing a prefix of the training data.
+6While (1) focuses on misclassifying a single target point, it is straightforward to extend this to multiple
+targets by changing the objective to a sum over losses on the target points."
+WE PROVIDE PRELIMINARY EXPERIMENTS IN APPENDIX C OF CAMOUFLAGED-POISONING ATTACKS DEVELOPED USING THE,0.2012987012987013,"We can also similarly show that the gradients (as well as higher order derivatives) are equal, i.e.,
+∇θ ∑Scpc ℓ(f(x,θ),y) = ∇θ ∑Scl ℓ(f(x,θ),y) for all θ. Thus, training a model on Scpc is equivalent
+to training it on Scl. In essence, the camouflages have perfectly canceled out the effect of the poisons.
+We validate the efficacy of this approach via experiments on linear SVM trained with hinge loss
+(which resembles linear loss when the domain is bounded). See Section 4.1.1 for details."
+WE PROVIDE PRELIMINARY EXPERIMENTS IN APPENDIX C OF CAMOUFLAGED-POISONING ATTACKS DEVELOPED USING THE,0.20454545454545456,"While label flipping is a simple and effective procedure to generate camouflages, it is fairly restrictive.
+Firstly, label flipping only works for binary classification problems trained with linear loss. Secondly,
+the attack is not clean label as the camouflage images are generated as (xi,−yi) by giving them the
+opposite label to the ground truth, which can be easily caught by a validator. Lastly, the attack is
+vulnerable to simple data purification techniques by the victim, e.g., the victim can protect themselves
+by preprocessing the data to remove all the images that have both the labels (y = +1 and y = −1) in
+the training dataset. In the next section, we provide a different procedure to generate clean-label
+camouflages that works for general losses and multi-class classification problems."
+CAMOUFLAGES VIA GRADIENT MATCHING,0.2077922077922078,"3.3.2
+Camouflages via Gradient Matching"
+CAMOUFLAGES VIA GRADIENT MATCHING,0.21103896103896103,"Here, we discuss our main procedure to generate camouflages, which builds on the gradient matching
+idea of Geiping et al. [2021]. Note that, our objective in (2) is to find ∆such that when the model is
+trained with the camouflages, it minimizes the original-target loss in (2) (with respect to the original
+label ytar) thus making the victim model predict the correct label on this target sample. Since, (2) is
+computationally intractable, one may instead try to implicitly minimize the original-target loss by
+finding a ∆such that for any model parameter θ,"
+CAMOUFLAGES VIA GRADIENT MATCHING,0.21428571428571427,"∇θ(ℓ(f(xtar,θ),ytar)) ≈1"
+CAMOUFLAGES VIA GRADIENT MATCHING,0.21753246753246752,"C ∑C
+i=1 ∇θℓ(f(xi + ∆i,θ),yi)."
+CAMOUFLAGES VIA GRADIENT MATCHING,0.22077922077922077,"The above equation suggests that minimizing (e.g., using Adam / SGD) on camouflage samples
+will also minimize the original-target loss, and thus automatically ensure that the model predicts
+the correct label on the target. Unfortunately, finding perturbations that satisfy the above is also
+intractable as the approximate equality is required to hold for all θ. Building on Geiping et al. [2021],
+we relax this condition to be satisfied only for a fixed model θcp-the model trained on the dataset
+Scp = Scl + Spo, and obtain the perturbations which minimize the cosine-similarity loss given by"
+CAMOUFLAGES VIA GRADIENT MATCHING,0.22402597402597402,"ψ(∆, θ)
+(3)"
+CAMOUFLAGES VIA GRADIENT MATCHING,0.22727272727272727,"= 1 −
+⟨∇θℓ(f(xtar, θ), ytar), ∑C
+i=1 ∇θℓ(f(xi + ∆i, θ), yi)⟩"
+CAMOUFLAGES VIA GRADIENT MATCHING,0.2305194805194805,"∥∇θℓ(f(xtar, θ), ytar)∥∥∑C
+i=1 ∇θℓ(f(xi + ∆i, θ), yi)∥."
+CAMOUFLAGES VIA GRADIENT MATCHING,0.23376623376623376,"Implementation details. We minimize (3) using the Adam optimizer [Kingma and Ba, 2015] with a
+fixed step size of 0.1. In order to increase the robustness of camouflage generation, we do R restarts
+(where R ≤10). In each restart, we first initialize ∆randomly such that ∥∆∥∞≤ε and perform M
+steps of Adam optimization to minimize ψ(∆,θcp). Each optimization step only requires a single
+differentiation of the objective ψ with respect to ∆, and can be implemented efficiently. After each
+step, we project back the updated ∆into the constraint set Γ so as to maintain the property that
+∥∆∥∞≤ε. After doing R restarts, we choose the best round by finding ∆∗with the minimum
+ψ(∆⋆,θcp)."
+EXPERIMENTAL EVALUATION,0.237012987012987,"4
+Experimental Evaluation"
+EXPERIMENTAL EVALUATION,0.24025974025974026,"We generate poison samples by running Algorithm 2 (given in the appendix), and camouflage samples
+by running Algorithm 1 with R = 1 and M = 250.7 Each experiment is repeated K times by
+setting a different seed each time, which fixes the target image, poison class, camouflage class, base
+poison images and base camouflage images. Due to limited computation resources, we typically set
+K ∈{3,5,8,10} depending on the dataset and report the mean and standard deviation across different
+trials. We say that poisoning was successful if the model trained on Scp = Scl + Spo predicts the
+label yadv on the target image. Furthermore, we say that camouflaging was successful if the model
+trained on Scpc = Spo + Scl + Sca predicts back the correct label ytar on the target image, provided
+that poisoning was successful. A camouflaged poisoning attack is successful if both poisoning and
+camouflaging were successful."
+EXPERIMENTAL EVALUATION,0.2435064935064935,"7We diverge slightly from the threat model described above, in that the adversary modifies rather than
+introduces new points. We do this for convenience and do not anticipate the results would qualitatively change."
+EXPERIMENTAL EVALUATION,0.24675324675324675,"Algorithm 1 Gradient Matching to generate camouflages
+Require: Network f(⋅;θcp) trained on Scl + Spo , the target (xtar,ytar), Camouflage budget C,
+perturbation bound ε, number of restarts R, optimization steps M"
+EXPERIMENTAL EVALUATION,0.25,"1: Collect a dataset Sca = {xj,yj}
+C"
+EXPERIMENTAL EVALUATION,0.2532467532467532,j=1 of C many images whose true label is ytar.
+EXPERIMENTAL EVALUATION,0.2564935064935065,"2: for r = 1,...R restarts do
+3:
+Randomly initialize perturbations ∆s.t. ∥∆∥∞≤ε.
+4:
+for k = 1,...,M optimization steps do
+5:
+Compute the loss ψ(∆,θcp) as in (5) using the base camouflage images in Sca.
+6:
+Update ∆using an Adam update to minimize ψ, and project onto the constraint set Γ.
+7:
+end for
+8:
+Amongst the R restarts, choose the ∆∗with the smallest value of ψ(∆∗,θcp).
+9: end for
+10: Return the poisoned set Sca = {xj + ∆j
+∗,yj}
+C j=1."
+EXPERIMENTAL EVALUATION,0.2597402597402597,"4.1
+Evaluations on CIFAR-10"
+EXPERIMENTAL EVALUATION,0.262987012987013,"CIFAR-10 [Krizhevsky, 2009] is a multiclass classification problem with 10 classes, with 6,000 color
+images in each class of size 32 × 32. We follow the standard split into 50,000 training images and
+10,000 test images."
+SUPPORT VECTOR MACHINES,0.2662337662337662,"4.1.1
+Support Vector Machines"
+SUPPORT VECTOR MACHINES,0.2694805194805195,"Attack type
+Attack success
+Validation Accuracy
+(ε,bp,bc)
+Poisoning
+Camouflaging
+Clean
+Poisoned
+Camouflaged
+LF (8,0.2%,0.2%)
+70%
+71.5%
+81.63
+81.73 (± 0.14)
+81.74 (± 0.20)
+LF (16,0.2%,0.2%)
+100%
+40%
+81.63
+81.64 (±0.03)
+81.6 (±0.02)
+GM (8,0.2%,0.4%)
+70%
+100%
+81.63
+81.65 (±0.01)
+81.62 (±0.02)
+GM (16,0.2%,0.4%)
+100%
+70%
+81.63
+81.65 (±0.03)
+81.63 (± 0.02)"
+SUPPORT VECTOR MACHINES,0.2727272727272727,"Table 1: Camouflaged poisoning attack on linear SVM on Binary-CIFAR-10 dataset. The first column
+lists the threat model (ε,bp,bc) and the camouflaging type “LF"" for label flipping and “GM"" for
+gradient matching. The implementation details are given in Appendix B.3."
+SUPPORT VECTOR MACHINES,0.275974025974026,"In order to perform evaluations on SVM, we first convert the CIFAR-10 dataset into a binary
+classification dataset (which we term as Binary-CIFAR-10) by merging the 10 classes into two
+groups: animal (y = +1) and machine (y = −1)). Images (in both training and test datasets) that
+were originally labeled (bird, cat, deer, dog, frog, horse) are relabeled animal, and the remaining
+images, with original labels (airplane, cars, ship, truck), are labeled machine."
+SUPPORT VECTOR MACHINES,0.2792207792207792,"We train a linear SVM (no kernel was used) with the hinge loss. We evaluate both label flipping and
+gradient matching to generate camouflages, and different threat models (ε,bp,bc); the results are
+reported in Table 1. Training details and hyperparameters are given in Appendix B.3. Each poison
+and camouflage generation took about 40 - 50 seconds (for bp = bc = 0.2%). Each trained model had
+validation accuracy of around 81.63% on the clean dataset Scl, which did not change significantly
+when we retrained after adding poison samples and/or camouflage samples. Note that the efficacy of
+the camouflaged poisoning attack was more than 70% in most of the experiments. We give examples
+of the generated poisons/camouflages in Appendix B.5."
+NEURAL NETWORKS,0.2824675324675325,"4.1.2
+Neural Networks"
+NEURAL NETWORKS,0.2857142857142857,"We perform extensive evaluations on the (multiclass) CIFAR-10 classification task with various
+popular large-scale neural networks models including VGG-11, VGG-16 [Simonyan and Zisserman,
+2015], ResNet-18, ResNet-34, ResNet-50 [He et al., 2016], and MobileNetV2 [Sandler et al., 2018],
+trained using cross-entropy loss. Details on training setup and hyperparameters are in Appendix B.3."
+NEURAL NETWORKS,0.288961038961039,"We report the efficacy of our camouflaged poisoning attack across different models and threat models
+(ε,bp,bc) in Figure 3; also see Appendix B.3 for detailed results. Each model was trained to have"
+NEURAL NETWORKS,0.2922077922077922,"Figure 3: Efficacy of the proposed camouflaged poisoning attack on CIFAR-10 dataset. The left
+plot gives the success for the threat model ε = 16,bp = 0.6%,bc = 0.6% for different neural network
+architectures. The right plot gives the success for ResNet-18 architecture for different threat models."
+NEURAL NETWORKS,0.29545454545454547,"validation accuracy between 81-87% (depending on the architecture), which changed minimally
+when the model was retrained with poisons and/or camouflages. Camouflaging was successful at
+least 70% of the time for VGG-11, VGG-16, Resnet-18, and Resnet-34 and about 30% of the time
+for MobileNetV2 and Resnet-50."
+NEURAL NETWORKS,0.2987012987012987,"Note that even a small attack success rate represents a credible threat: first, these attack success
+rates are comparable with those of Geiping et al. [2021], and thus future or undisclosed targeted
+data poisoning attacks are likely to be more effective. Second, since these success rates are over
+the choice of the attacker’s random seed, the attacker can locally repeat the attack several times and
+deploy a successful one. Therefore, low success rates do not imply a fundamental barrier, and can be
+overcome by incurring a computational overhead – by repeating an attack 10x, even an attack with
+only 20% success rate can be boosted to ≈90% success rate."
+EVALUATIONS ON IMAGENETTE AND IMAGEWOOF,0.30194805194805197,"4.2
+Evaluations on Imagenette and Imagewoof"
+EVALUATIONS ON IMAGENETTE AND IMAGEWOOF,0.3051948051948052,"We evaluate the efficacy of our attack vector on the challenging multiclass classification problem on
+the Imagenette and Imagewoof datasets [Howard, 2019], both of which are subsets consisting of 10
+classes from the Imagenet dataset [Russakovsky et al., 2015] with about 900 images per class."
+EVALUATIONS ON IMAGENETTE AND IMAGEWOOF,0.30844155844155846,"Dataset
+Model
+Threat Model
+Attack Success
+ε
+bp
+bc
+Poison
+Camou
+IN
+VGG-16
+16
+6.3%
+6.3%
+25%
+100%
+IN
+Resnet-18
+16
+6.3%
+6.3%
+40%
+50%
+IW
+Resnet-18
+16
+6.6%
+6.6%
+50%
+75%
+Table 2: Evaluation of camouflaged poisoning attack on Imagenette (IN) and Imagewoof (IW)
+datasets over 5 seeds (with 1 restart per seed). Note that camouflaging succeeded in most of the
+experiments in which poisoning succeeded."
+EVALUATIONS ON IMAGENETTE AND IMAGEWOOF,0.3116883116883117,"We evaluate our camouflaged poisoning attack on two different neural network architectures-VGG-16
+and ResNet-18 (trained with cross entropy loss), and different threat models (ε,bp,bc) listed in
+Table 2. More details about the dataset, experiment setup and hyperparameters are provided in
+Appendix B.4. In our experiments, camouflaging was successful for at least 50% of the time when
+poisoning was successful. However, because we modified about 13% of the training dataset when
+adding poisons/camouflages, we observe that the fluctuation in the model’s validation accuracy can
+be up to 7%, which is expected since we make such a large change in the training set."
+ADDITIONAL EXPERIMENTS,0.31493506493506496,"4.3
+Additional Experiments"
+ADDITIONAL EXPERIMENTS,0.3181818181818182,"Ablation experiments. In the appendix, we provide the additional experiments on CIFAR-10,
+showing that:"
+ADDITIONAL EXPERIMENTS,0.32142857142857145,"(a) Our attack is robust to random deletions of generated poison and camouflage samples during
+evaluation (Appendix B.6.2), and to training with data augmentation.
+(b) Our attack successfully transfers across different models, i.e., when the victim model
+is different from the model on which poison and camouflage samples were generated.
+(Appendix B.6.3)"
+ADDITIONAL EXPERIMENTS,0.3246753246753247,"(c) Our attack is successful across different threat models i.e., different values of bp and bc
+(Appendix B.6.1).
+(d) The poison and camouflage samples generated in our experiments have similar feature space
+distributions, and thus data sanitization defenses (e.g., Diakonikolas et al. [2019a]) based
+on feature distributions will not succeed in removing the generated poison and camouflage
+samples (Appendix B.6.5)."
+ADDITIONAL EXPERIMENTS,0.32792207792207795,"Approximate unlearning. In all our experiments so far, the victim retrains a model from scratch (on
+the leftover training data) to fulfil the unlearning request, i.e., the victim performs exact unlearning.
+In the past few years there has been significant research effort in developing approximate unlearning
+algorithms under various structural assumptions (e.g., convexity [Sekhari et al., 2021, Guo et al.,
+2020]), or under availability of large memory [Bourtoule et al., 2021, Brophy and Lowd, 2021,
+Graves et al., 2021], etc.), and one may wonder whether attacks are still effective under approximate
+unlearning. Unfortunately, most existing approximate unlearning approaches are not efficient (either
+requiring strong assumptions or taking too much memory) for large-scale deep learning settings
+considered in this paper, and thus we were unable to evaluate our attack against these methods
+with our available resources. However, we provide evalulations against the Amnesiac Unlearning
+algorithm of Graves et al. [2021], which we were able to implement ( Appendix B.6.6). We note that
+our attack continues to be effective even against this approximate unlearning method."
+DISCUSSION AND CONCLUSION,0.33116883116883117,"5
+Discussion and Conclusion"
+DISCUSSION AND CONCLUSION,0.3344155844155844,"We demonstrated a new attack vector, camouflaged poisoning attacks, against machine learning
+pipelines where training points can be unlearned. This shows that as we introduce new functionality
+to machine learning systems, we must be aware of novel threats that emerge. We outline a few
+extensions and future research directions:"
+DISCUSSION AND CONCLUSION,0.33766233766233766,"●Our method for generating poison and camouflage points was based on the gradient-matching
+attack of Geiping et al. [2021]. However, the attack framework could accommodate effectively any
+method for targeted poisoning, e.g., the methods of Aghakhani et al. [2021] or Huang et al. [2020],
+or any method introduced in the future. We provide preliminary experiments in Appendix C of
+camouflaged-poisoning attacks developed using the Bullseye Polytope technique from Aghakhani
+et al. [2021], and show that the attack continues to succeed.
+●While we only performed experiments with a single target point, similar to Geiping et al. [2021]
+(and several other works in the targeted data poisoning literature), the proposed attack extends
+straightforwardly to a collection of targets (rather than a single target). This can be done by
+calculating the gradient of multiple (instead of a single) target images and using it in the gradient
+matching in (5) and (3).
+●In order to generate poisons and camouflages, our approach needs the ability to query gradients
+of a trained model at new samples, thus the attack is not black-box. While the main contribution
+of the paper was to expose that machine unlearning (which is a new and emerging but still under-
+developed technology) can lead to a new kind of vulnerability called a camouflaged poisoning
+attack, performing such an attack in a black-box setting is an interesting research question.
+●While we could not verify our attack against other approximate unlearning methods in the
+literature [Bourtoule et al., 2021, Brophy and Lowd, 2021, Sekhari et al., 2021, Guo et al.,
+2020] due to lack of resources needed to implement them, we believe that our attack should be
+effective against any provable approximate unlearning approach. This is because the objective
+of approximate unlearning is to output a model that is statistically-indistinguishable from the
+model retrained-from-scratch on the remaining data, and the experiments provided in the paper
+directly evaluate on the retrained-from-scratch model (which is the underlying objective that all
+approximate unlearning methods aim to emulate). Verifying the success of our approach against
+other approximate unlearning approaches is an interesting future research direction.
+●We considered a two-stage process in this paper, with one round of learning and one round of
+learning. It would also be interesting to explore what kinds of threats are exposed by even more
+dynamic systems where points can be added or removed in an online fashion.
+●Finally, it is interesting to determine what other types of threats can be camouflaged, e.g.,
+indiscriminate [Lu et al., 2022] or backdoor poisoning attacks [Chen et al., 2017, Saha et al.,
+2020]. Beyond exploring this new attack vector, it is also independently interesting to understand
+how one can neutralize the effect of an attack by adding points."
+DISCUSSION AND CONCLUSION,0.3409090909090909,Acknowledgements
+DISCUSSION AND CONCLUSION,0.34415584415584416,"We thank Chirag Jindal for useful discussions in the early phase of the project. AS thanks Karthik
+Sridharan for helpful discussions. GK is supported by a University of Waterloo startup grant, a
+Canada CIFAR AI Chair, an NSERC Discovery Grant, and an unrestricted gift from Google. JA is
+supported in part by the grant NSF-CCF-1846300 (CAREER), NSF-CCF-1815893, and a Google
+Faculty Fellowship. Computational resources were provided in part by GK’s Resources for Research
+Groups grant from the Digital Research Alliance of Canada."
+REFERENCES,0.3474025974025974,References
+REFERENCES,0.35064935064935066,"Hojjat Aghakhani, Dongyu Meng, Yu-Xiang Wang, Christopher Kruegel, and Giovanni Vigna.
+Bullseye polytope: A scalable clean-label poisoning attack with improved transferability. In 2021
+IEEE European Symposium on Security and Privacy (EuroS&P), pages 159–178. IEEE, 2021."
+REFERENCES,0.3538961038961039,"Marco Barreno, Blaine Nelson, Anthony D Joseph, and J Doug Tygar. The security of machine
+learning. Machine Learning, 81(2):121–148, 2010."
+REFERENCES,0.35714285714285715,"Battista Biggio, Blaine Nelson, and Pavel Laskov. Poisoning attacks against support vector machines.
+In Proceedings of the 29th International Conference on Machine Learning, ICML ’12, pages
+1467–1474. JMLR, Inc., 2012."
+REFERENCES,0.36038961038961037,"Lucas Bourtoule, Varun Chandrasekaran, Christopher A Choquette-Choo, Hengrui Jia, Adelin Travers,
+Baiwu Zhang, David Lie, and Nicolas Papernot. Machine unlearning. In proceedings of the 42nd
+IEEE Symposium on Security and Privacy, SP ’21, Washington, DC, USA, 2021. IEEE Computer
+Society."
+REFERENCES,0.36363636363636365,"Jonathan Brophy and Daniel Lowd. Machine unlearning for random forests. In Proceedings of the
+38th International Conference on Machine Learning, ICML ’21, pages 1092–1104. JMLR, Inc.,
+2021."
+REFERENCES,0.36688311688311687,"Yinzhi Cao and Junfeng Yang. Towards making systems forget with machine unlearning. In
+Proceedings of the 36th IEEE Symposium on Security and Privacy, SP ’15, pages 463–480,
+Washington, DC, USA, 2015. IEEE Computer Society."
+REFERENCES,0.37012987012987014,"Nicholas Carlini, Matthew Jagielski, Nicolas Papernot, Andreas Terzis, Florian Tramer, and Chiyuan
+Zhang. The privacy onion effect: Memorization is relative. arXiv preprint arXiv:2206.10469,
+2022."
+REFERENCES,0.37337662337662336,"Min Chen, Zhikun Zhang, Tianhao Wang, Michael Backes, Mathias Humbert, and Yang Zhang. When
+machine unlearning jeopardizes privacy. In Proceedings of the 2021 ACM SIGSAC Conference on
+Computer and Communications Security, pages 896–911, 2021."
+REFERENCES,0.37662337662337664,"Xinyun Chen, Chang Liu, Bo Li, Kimberly Lu, and Dawn Song. Targeted backdoor attacks on deep
+learning systems using data poisoning. arXiv preprint arXiv:1712.05526, 2017."
+REFERENCES,0.37987012987012986,"Rishav Chourasia, Neil Shah, and Reza Shokri. Forget unlearning: Towards true data-deletion in
+machine learning. arXiv preprint arXiv:2210.08911, 2022."
+REFERENCES,0.38311688311688313,"Antonio Emanuele Cinà, Kathrin Grosse, Ambra Demontis, Sebastiano Vascon, Werner Zellinger,
+Bernhard A Moser, Alina Oprea, Battista Biggio, Marcello Pelillo, and Fabio Roli. Wild patterns
+reloaded: A survey of machine learning security against training data poisoning. arXiv preprint
+arXiv:2205.01992, 2022."
+REFERENCES,0.38636363636363635,"Ilias Diakonikolas, Gautam Kamath, Daniel Kane, Jerry Li, Jacob Steinhardt, and Alistair Stewart.
+Sever: A robust meta-algorithm for stochastic optimization. In International Conference on
+Machine Learning, pages 1596–1606. PMLR, 2019a."
+REFERENCES,0.38961038961038963,"Ilias Diakonikolas, Gautam Kamath, Daniel M. Kane, Jerry Li, Jacob Steinhardt, and Alistair
+Stewart. Sever: A robust meta-algorithm for stochastic optimization. In Proceedings of the 36th
+International Conference on Machine Learning, ICML ’19, pages 1596–1606. JMLR, Inc., 2019b."
+REFERENCES,0.39285714285714285,"Min Du, Zhi Chen, Chang Liu, Rajvardhan Oak, and Dawn Song. Lifelong anomaly detection
+through unlearning. In Proceedings of the 2019 ACM SIGSAC Conference on Computer and
+Communications Security, pages 1283–1297, 2019."
+REFERENCES,0.3961038961038961,"Cynthia Dwork, Frank McSherry, Kobbi Nissim, and Adam Smith. Calibrating noise to sensitivity in
+private data analysis. In Proceedings of the 3rd Conference on Theory of Cryptography, TCC ’06,
+pages 265–284, Berlin, Heidelberg, 2006. Springer."
+REFERENCES,0.39935064935064934,"Federal Trade Commission. California company settles ftc allegations it deceived consumers about
+use of facial recognition in photo storage app, January 2021."
+REFERENCES,0.4025974025974026,"Jonas Geiping, Liam Fowl, W Ronny Huang, Wojciech Czaja, Gavin Taylor, Michael Moeller,
+and Tom Goldstein. Witches’ brew: Industrial scale data poisoning via gradient matching. In
+Proceedings of the 9th International Conference on Learning Representations, ICLR ’21, 2021."
+REFERENCES,0.40584415584415584,"General Data Protection Regulation. Regulation (EU) 2016/679 of the European parliament and of
+the council of 27 April 2016, 2016."
+REFERENCES,0.4090909090909091,"Antonio Ginart, Melody Guan, Gregory Valiant, and James Y Zou. Making AI forget you: Data
+deletion in machine learning. In Advances in Neural Information Processing Systems 32, NeurIPS
+’19, pages 3518–3531. Curran Associates, Inc., 2019."
+REFERENCES,0.41233766233766234,"Aditya Golatkar, Alessandro Achille, and Stefano Soatto. Eternal sunshine of the spotless net: Selec-
+tive forgetting in deep networks. In Proceedings of the 2020 IEEE Computer Society Conference
+on Computer Vision and Pattern Recognition, CVPR ’20, pages 9304–9312, Washington, DC,
+USA, 2020. IEEE Computer Society."
+REFERENCES,0.4155844155844156,"Aditya Golatkar, Alessandro Achille, Avinash Ravichandran, Marzia Polito, and Stefano Soatto.
+Mixed-privacy forgetting in deep networks. In Proceedings of the 2021 IEEE Computer Society
+Conference on Computer Vision and Pattern Recognition, CVPR ’21, pages 792–801. IEEE
+Computer Society, 2021."
+REFERENCES,0.41883116883116883,"Micah Goldblum, Dimitris Tsipras, Chulin Xie, Xinyun Chen, Avi Schwarzschild, Dawn Song,
+Aleksander Madry, Bo Li, and Tom Goldstein. Dataset security for machine learning: Data
+poisoning, backdoor attacks, and defenses. arXiv preprint arXiv:2012.10544, 2020."
+REFERENCES,0.42207792207792205,"Laura Graves, Vineel Nagisetty, and Vijay Ganesh. Amnesiac machine learning. In Proceedings of
+the AAAI Conference on Artificial Intelligence, volume 35, pages 11516–11524, 2021."
+REFERENCES,0.4253246753246753,"Tianyu Gu, Brendan Dolan-Gavitt, and Siddharth Garg. Badnets: Identifying vulnerabilities in the
+machine learning model supply chain. arXiv preprint arXiv:1708.06733, 2017."
+REFERENCES,0.42857142857142855,"Chuan Guo, Tom Goldstein, Awni Hannun, and Laurens Van Der Maaten. Certified data removal
+from machine learning models. In Proceedings of the 37th International Conference on Machine
+Learning, ICML ’20, pages 3832–3842. JMLR, Inc., 2020."
+REFERENCES,0.4318181818181818,"Varun Gupta, Christopher Jung, Seth Neel, Aaron Roth, Saeed Sharifi-Malvajerdi, and Chris Waites.
+Adaptive machine unlearning. In Advances in Neural Information Processing Systems 34, NeurIPS
+’21, pages 16319–16330. Curran Associates, Inc., 2021."
+REFERENCES,0.43506493506493504,"Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image
+recognition. In Proceedings of the 2016 IEEE Computer Society Conference on Computer Vision
+and Pattern Recognition, CVPR ’16, pages 770–778, Washington, DC, USA, 2016. IEEE Computer
+Society."
+REFERENCES,0.4383116883116883,"Jeremy Howard. Imagenette, 2019. URL https://github.com/fastai/imagenette/."
+REFERENCES,0.44155844155844154,"W Ronny Huang, Jonas Geiping, Liam Fowl, Gavin Taylor, and Tom Goldstein. Metapoison: Practical
+general-purpose clean-label data poisoning. In Advances in Neural Information Processing Systems
+33, NeurIPS ’20, pages 12080–12091. Curran Associates, Inc., 2020."
+REFERENCES,0.4448051948051948,"Information Commissioner’s Office. Guidance on the ai auditing framework, February 2020."
+REFERENCES,0.44805194805194803,"Daphne Ippolito, Florian Tramèr, Milad Nasr, Chiyuan Zhang, Matthew Jagielski, Katherine Lee,
+Christopher A Choquette-Choo, and Nicholas Carlini. Preventing verbatim memorization in
+language models gives a false sense of privacy. arXiv preprint arXiv:2210.17546, 2022."
+REFERENCES,0.4512987012987013,"Zachary Izzo, Mary Anne Smart, Kamalika Chaudhuri, and James Zou. Approximate data deletion
+from machine learning models: Algorithms and evaluation. In Proceedings of the 24th International
+Conference on Artificial Intelligence and Statistics, AISTATS ’21, pages 2008–2016. JMLR, Inc.,
+2021."
+REFERENCES,0.45454545454545453,"Angelos Katharopoulos and François Fleuret. Not all samples are created equal: Deep learning with
+importance sampling, 2019."
+REFERENCES,0.4577922077922078,"Diederik P Kingma and Jimmy Ba. Adam: A method for stochastic optimization. In Proceedings of
+the 3rd International Conference on Learning Representations, ICLR ’15, 2015."
+REFERENCES,0.461038961038961,"Pang Wei Koh, Jacob Steinhardt, and Percy Liang. Stronger data poisoning attacks break data
+sanitization defenses. Machine Learning, 111(1):1–47, 2022."
+REFERENCES,0.4642857142857143,"Alex Krizhevsky. Learning multiple layers of features from tiny images, 2009."
+REFERENCES,0.4675324675324675,"Yiwei Lu, Gautam Kamath, and Yaoliang Yu. Indiscriminate data poisoning attacks on neural
+networks. arXiv preprint arXiv:2204.09092, 2022."
+REFERENCES,0.4707792207792208,"Neil G Marchant, Benjamin IP Rubinstein, and Scott Alfeld. Hard to forget: Poisoning attacks on
+certified machine unlearning. In Proceedings of the Thirty-Sixth AAAI Conference on Artificial
+Intelligence, volume 36 of AAAI ’22, pages 7691–7700, 2022."
+REFERENCES,0.474025974025974,"Luis Muñoz-González, Battista Biggio, Ambra Demontis, Andrea Paudice, Vasin Wongrassamee,
+Emil C Lupu, and Fabio Roli. Towards poisoning of deep learning algorithms with back-gradient
+optimization. In Proceedings of the 10th ACM workshop on artificial intelligence and security,
+pages 27–38, 2017."
+REFERENCES,0.4772727272727273,"Seth Neel, Aaron Roth, and Saeed Sharifi-Malvajerdi. Descent-to-delete: Gradient-based methods
+for machine unlearning. In Proceedings of the 32nd International Conference on Algorithmic
+Learning Theory, ALT ’21. JMLR, Inc., 2021."
+REFERENCES,0.4805194805194805,"Quoc Phong Nguyen, Bryan Kian Hsiang Low, and Patrick Jaillet. Variational bayesian unlearning.
+Advances in Neural Information Processing Systems, 33:16025–16036, 2020."
+REFERENCES,0.4837662337662338,"Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor
+Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, Alban Desmaison, Andreas Köpf, Edward
+Yang, Zach DeVito, Martin Raison, Alykhan Tejani, Sasank Chilamkurthy, Benoit Steiner, Lu Fang,
+Junjie Bai, and Soumith Chintala. PyTorch: An imperative style, high-performance deep learning
+library. In Advances in Neural Information Processing Systems 32, NeurIPS ’19, pages 8026–8037.
+Curran Associates, Inc., 2019."
+REFERENCES,0.487012987012987,"Andrea Paudice, Luis Muñoz-González, and Emil C Lupu. Label sanitization against label flipping
+poisoning attacks. In Joint European conference on machine learning and knowledge discovery in
+databases, pages 5–15. Springer, 2018."
+REFERENCES,0.4902597402597403,"Fabian Pedregosa, Gaël Varoquaux, Alexandre Gramfort, Vincent Michel, Bertrand Thirion, Olivier
+Grisel, Mathieu Blondel, Peter Prettenhofer, Ron Weiss, Vincent Dubourg, Jake Vanderplas,
+Alexandre Passos, David Cournapeau, Matthieu Brucher, Matthieu Perrot, and Édouard Duchesnay.
+Scikit-learn: Machine learning in Python. Journal of Machine Learning Research, 12(85):2825–
+2830, 2011."
+REFERENCES,0.4935064935064935,"Olga Russakovsky, Jia Deng, Hao Su, Jonathan Krause, Sanjeev Satheesh, Sean Ma, Zhiheng Huang,
+Andrej Karpathy, Aditya Khosla, Michael Bernstein, et al. Imagenet large scale visual recognition
+challenge. International journal of computer vision, 115(3):211–252, 2015."
+REFERENCES,0.4967532467532468,"Aniruddha Saha, Akshayvarun Subramanya, and Hamed Pirsiavash. Hidden trigger backdoor attacks.
+In Proceedings of the AAAI conference on artificial intelligence, volume 34, pages 11957–11965,
+2020."
+REFERENCES,0.5,"Mark Sandler, Andrew Howard, Menglong Zhu, Andrey Zhmoginov, and Liang-Chieh Chen. Mo-
+bileNetV2: Inverted residuals and linear bottlenecks. In Proceedings of the 2018 IEEE Computer
+Society Conference on Computer Vision and Pattern Recognition, CVPR ’18, pages 4510–4520,
+Washington, DC, USA, 2018. IEEE Computer Society."
+REFERENCES,0.5032467532467533,"Avi Schwarzschild, Micah Goldblum, Arjun Gupta, John P Dickerson, and Tom Goldstein. Just how
+toxic is data poisoning? a unified benchmark for backdoor and data poisoning attacks, 2021."
+REFERENCES,0.5064935064935064,"Ayush Sekhari, Jayadev Acharya, Gautam Kamath, and Ananda Theertha Suresh. Remember what
+you want to forget: Algorithms for machine unlearning. In Advances in Neural Information
+Processing Systems 34, NeurIPS ’21, pages 18075–18086. Curran Associates, Inc., 2021."
+REFERENCES,0.5097402597402597,"Ali Shafahi, W Ronny Huang, Mahyar Najibi, Octavian Suciu, Christoph Studer, Tudor Dumitras,
+and Tom Goldstein. Poison frogs! targeted clean-label poisoning attacks on neural networks.
+Advances in neural information processing systems, 31, 2018."
+REFERENCES,0.512987012987013,"Karen Simonyan and Andrew Zisserman. Very deep convolutional networks for large-scale visual
+recognition. In Proceedings of the 3rd International Conference on Learning Representations,
+ICLR ’15, 2015."
+REFERENCES,0.5162337662337663,"David Marco Sommer, Liwei Song, Sameer Wagh, and Prateek Mittal. Towards probabilistic
+verification of machine unlearning. arXiv preprint arXiv:2003.04247, 2020."
+REFERENCES,0.5194805194805194,"Jacob Steinhardt, Pang Wei W Koh, and Percy S Liang. Certified defenses for data poisoning attacks.
+In Advances in Neural Information Processing Systems 30, NeurIPS ’17, pages 3520–3532. Curran
+Associates, Inc., 2017."
+REFERENCES,0.5227272727272727,"Octavian Suciu, Radu Marginean, Yigitcan Kaya, Hal Daume III, and Tudor Dumitras. When does
+machine learning {FAIL}? generalized transferability for evasion and poisoning attacks. In 27th
+USENIX Security Symposium (USENIX Security 18), pages 1299–1316, 2018."
+REFERENCES,0.525974025974026,"Ziteng Sun, Peter Kairouz, Ananda Theertha Suresh, and H Brendan McMahan. Can you really
+backdoor federated learning? arXiv preprint arXiv:1911.07963, 2019."
+REFERENCES,0.5292207792207793,"Anvith Thudi, Gabriel Deza, Varun Chandrasekaran, and Nicolas Papernot. Unrolling sgd: Under-
+standing factors influencing machine unlearning. In 2022 IEEE 7th European Symposium on
+Security and Privacy (EuroS&P), pages 303–319. IEEE, 2022."
+REFERENCES,0.5324675324675324,"Brandon Tran, Jerry Li, and Aleksander Madry. Spectral signatures in backdoor attacks. In Advances
+in Neural Information Processing Systems 31, NeurIPS ’18, pages 8011–8021. Curran Associates,
+Inc., 2018."
+REFERENCES,0.5357142857142857,"Enayat Ullah, Tung Mai, Anup Rao, Ryan A Rossi, and Raman Arora. Machine unlearning via
+algorithmic stability. In Conference on Learning Theory, pages 4126–4142. PMLR, 2021."
+REFERENCES,0.538961038961039,"Han Xiao, Huang Xiao, and Claudia Eckert. Adversarial label flips attack on support vector machines.
+In ECAI 2012, pages 870–875. IOS Press, 2012."
+REFERENCES,0.5422077922077922,"Huang Xiao, Battista Biggio, Blaine Nelson, Han Xiao, Claudia Eckert, and Fabio Roli. Support
+vector machines under adversarial label contamination. Neurocomputing, 160:53–62, 2015."
+REFERENCES,0.5454545454545454,"Yu Yang, Tian Yu Liu, and Baharan Mirzasoleiman. Not all poisons are created equal: Robust training
+against data poisoning. In International Conference on Machine Learning, pages 25154–25165.
+PMLR, 2022."
+REFERENCES,0.5487012987012987,"Santiago Zanella-Béguelin, Lukas Wutschitz, Shruti Tople, Victor Rühle, Andrew Paverd, Olga
+Ohrimenko, Boris Köpf, and Marc Brockschmidt. Analyzing information leakage of updates to
+natural language models. In Proceedings of the 2020 ACM SIGSAC Conference on Computer and
+Communications Security, pages 363–375, 2020."
+REFERENCES,0.551948051948052,"A
+Gradient Matching for Efficient Poison Generation [Geiping et al., 2021]"
+REFERENCES,0.5551948051948052,"In this section, we discuss the key intuition of Geiping et al. [2021] for efficient poison generation.
+Our objective is to find perturbations ∆such that when the model is trained on the poisoned samples,
+it minimizes the adversarial loss in (1) thus making the victim model predict the wrong label yadv on
+the target sample. However, directly solving (1) is computationally intractable due to bilevel nature
+of the optimization objective. Instead, one may implicitly minimize the adversarial loss by finding a
+∆such that for any model parameter θ,"
+REFERENCES,0.5584415584415584,"∇θ(ℓ(f(xtar,θ),yadv)) ≈∑P
+i=1 ∇θℓ(f(xi + ∆i,θ),yi)"
+REFERENCES,0.5616883116883117,"P
+.
+(4)"
+REFERENCES,0.564935064935065,"In essence, (4) implies that gradient based minimization (e.g., using Adam / SGD) of the training loss
+on poisoned samples also minimizes the adversarial loss. Thus, training a model on Scl + Spo will
+automatically ensure that the model predicts yadv on the target sample. Unfortunately, computing ∆
+that satisfies (4) is also intractable as it is required to hold for all values of θ. The key idea of Geiping
+et al. [2021] to make poison generation efficient is to relax (4) to only be satisfied for a fixed model
+θcl−the model obtained by training on the clean dataset Scl. To implement this, Geiping et al. [2021]
+minimize the cosine-similarity loss between the two gradients defined as:"
+REFERENCES,0.5681818181818182,"ϕ(∆,θ) = 1 −
+⟨∇θℓ(f(xtar,θ),yadv),∑P
+i=1 ∇θℓ(f(xi + ∆i,θ),yi)⟩"
+REFERENCES,0.5714285714285714,"∥∇θℓ(f(xtar,θ),yadv)∥∥∑P
+i=1 ∇θℓ(f(xi + ∆i,θ),yi)∥
+,
+(5)"
+REFERENCES,0.5746753246753247,"Geiping et al. [2021] demonstrated that (5) can be efficiently optimized for many popular large-scale
+machine learning models and datasets. We provide the pseudocode in Algorithm 2."
+REFERENCES,0.577922077922078,"Algorithm 2 Gradient Matching to generate poisons [Geiping et al., 2021]
+Require: Clean network f(⋅;θclean) trained on uncorrupted base images Scl, a target (xtar,ytar)
+and an adversarial label yadv, Poison budget P, perturbation bound ε, number of restarts R,
+optimization steps M"
+REFERENCES,0.5811688311688312,"1: Collect a dataset Spo = {xi,yi}
+P"
+REFERENCES,0.5844155844155844,"i=1 of P many images whose true label is yadv.
+2: for r = 1,...R restarts do
+3:
+Randomly initialize perturbations ∆s.t. ∥∆∥∞≤ε.
+4:
+for k = 1,...,M optimization steps do
+5:
+Compute the loss ϕ(∆,θclean) as in (5) using the base poison images in Spo.
+6:
+Update ∆using an Adam update to minimize ϕ, and project onto the constraint set Γ.
+7:
+end for
+8:
+Amongst the R restarts, choose the ∆∗with the smallest value of ϕ(∆∗,θclean).
+9: end for
+10: Return the poisoned set Spo = {xi + ∆i
+∗,yi}
+P i=1."
+REFERENCES,0.5876623376623377,"B
+Implementation Details"
+REFERENCES,0.5909090909090909,"B.1
+Code"
+REFERENCES,0.5941558441558441,"We provide code for our experiments as ready-to-deploy Jupyter notebooks. The code to work with
+different dataset can be found in:"
+REFERENCES,0.5974025974025974,• SVM_Binay_cifar10.ipynb: Experiments for Binary-CIFAR-10 dataset with linear SVM.
+REFERENCES,0.6006493506493507,• cifar10.ipynb: Experiments for CIFAR-10 dataset with various neural network models.
+REFERENCES,0.6038961038961039,"• imagenette.ipynb: Experiments for Imagenette / Imagewoof dataset with various neural
+network models."
+REFERENCES,0.6071428571428571,We plan to make our code public with the final version of the paper.
+REFERENCES,0.6103896103896104,"B.2
+Experimental Setup"
+REFERENCES,0.6136363636363636,"For the ease of replication, we report the corresponding poison class, target class, camouflage class
+and Target ID for various seeds in different experiments."
+REFERENCES,0.6168831168831169,"Random Seed
+Target Class
+Poison Class
+Camouflage Class
+Target ID
+2000000000
+Deer
+Bird
+Deer
+9621
+2000000001
+Cat
+Horse
+Cat
+1209
+2000000011
+Frog
+Bird
+Frog
+6503
+2000000111
+Bird
+Cat
+Bird
+124
+2000001111
+Plane
+Deer
+Plane
+7649
+2000011111
+Cat
+Dog
+Cat
+4423
+2000111111
+Truck
+Car
+Truck
+8117
+2001111111
+Bird
+Truck
+Bird
+3686
+2011111111
+Cat
+Bird
+Cat
+642
+2111111111
+Frog
+Ship
+Frog
+97
+Table 3: Target, poison and camouflage class corresponding to different initial random seeds used for
+CIFAR-10 experiments. The reported Target ID is relative to the CIFAR-10 validation dataset."
+REFERENCES,0.6201298701298701,"Random Seed
+Target Class
+Poison Class
+Camouflage Class
+Target ID
+2000000000
+Building
+Cassette player
+Building
+1559
+2000000001
+Chain saw
+Gas pump
+Chain saw
+1266
+2000000011
+Truck
+Cassette player
+Truck
+2460
+2000000111
+Cassette player
+Chain saw
+Cassette player
+792
+2000001111
+Tench
+Building
+Tench
+2500
+2000011111
+Chain saw
+French horn
+Chain saw
+1162
+2000111111
+Parachute
+English springer
+Parachute
+3826
+2001111111
+Cassette player
+Parachute
+Cassette player
+1121
+2011111111
+Chain saw
+Cassette player
+Chain saw
+1198
+2111111111
+Truck
+Golf ball
+Truck
+2343
+Table 4: Target class, poison class and camouflage class corresponding to different random seeds
+used for Imagenette experiments. The reported target ID is relative to the Imagenette validation set."
+REFERENCES,0.6233766233766234,"Random Seed
+Target Class
+Poison Class
+Camouflage Class
+Target ID
+2000000000
+Border Terrier
+Beagle
+Border Terrier
+1493
+2000000001
+English Foxhound
+Old English Sheep Dog
+English Foxhound
+1362
+2000000011
+Golden Retriever
+Beagle
+Golden Retriever
+2399
+2000000111
+Beagle
+English Foxhound
+Beagle
+827
+2000001111
+Shih-Tzu
+Border Terrier
+Shih-Tzu
+250
+2000011111
+English Foxhound
+Austrailian Terrier
+English Foxhound
+1405
+2000111111
+Dingo
+Rodesian Ridgeback
+Dingo
+3810
+2001111111
+Beagle
+Dingo
+Beagle
+1204
+2011111111
+English Foxhound
+Beagle
+English Foxhound
+1294
+2111111111
+Golden Retriever
+Samoeyed
+Golden Retriever
+2282"
+REFERENCES,0.6266233766233766,"Table 5: Target class, poison class and camouflage class corresponding to different random seeds
+used for Imagewoof experiments. The reported target ID is relative to the Imagewoof validation set."
+REFERENCES,0.6298701298701299,"B.3
+Additional Details on CIFAR-10 Experiments"
+REFERENCES,0.6331168831168831,"B.3.1
+SVM Experiments"
+REFERENCES,0.6363636363636364,"We train the linear SVM (no kernel was used) with the hinge loss: ℓ(f(x,θ),y) = max{0,1 −
+yf(x,θ)}. The training was done using the svm.LinearSVC class from Scikit-learn [Pedregosa
+et al., 2011] on a single CPU. In the pre-processing stage, each image in the training dataset was"
+REFERENCES,0.6396103896103896,"normalized to have ℓ2-norm 1. Each training on Binary-CIFAR-10 dataset took 25 - 30 seconds. In
+order to generate the poison points, we first use torch.autograd to compute the cosine-similarity
+loss (5), and then optimize it using Adam optimizer with learning rate 0.001. Each poison and
+camouflage generation took about 40 - 50 seconds (for bp = bc = 0.2%). We evaluate both label
+flipping and gradient matching to generate camouflages, and different threat models (ε,bp,bc); the
+results are reported in Table 6. For each of our experiments we chose K = 10 seeds of the form
+“kkkkkk"" where k ∈{0,...,9} and the seed 99999. Each trained model had validation accuracy
+of around 81.63% on the clean dataset Scl, which did not change significantly when we retrained
+after adding poison samples and / or camouflage samples. Note that the efficacy of the camouflaged
+poisoning attack was more than 70% in most of the experiments. We provide a sample of the
+generated poisons and camouflages in Figure 9 in Appendix B.5."
+REFERENCES,0.6428571428571429,"B.3.2
+Support Vector Machines"
+REFERENCES,0.6461038961038961,"Attack type
+Attack success
+Validation Accuracy
+(ε,bp,bc)
+Poisoning
+Camouflaging
+Clean
+Poisoned
+Camouflaged
+LF (8,0.2%,0.2%)
+70%
+71.5%
+81.63
+81.73 (± 0.14)
+81.74 (± 0.20)
+LF (16,0.2%,0.2%)
+100%
+40%
+81.63
+81.64 (±0.03)
+81.6 (±0.02)
+GM (8,0.2%,0.4%)
+70%
+100%
+81.63
+81.65 (±0.01)
+81.62 (±0.02)
+GM (16,0.2%,0.4%)
+100%
+70%
+81.63
+81.65 (±0.03)
+81.63 (± 0.02)"
+REFERENCES,0.6493506493506493,"Table 6: Camouflaged poisoning attack on linear SVM on Binary-CIFAR-10 dataset. The first column
+lists the threat model (ε,bp,bc) and the camouflaging type “LF"" for label flipping and “GM"" for
+gradient matching."
+REFERENCES,0.6525974025974026,"In order to perform evaluations on SVM, we first convert the CIFAR-10 dataset into a binary
+classification dataset (which we term as Binary-CIFAR-10) by merging the 10 classes into two
+groups: animal (y = +1) and machine (y = −1)). Images (in both training and test datasets) that
+were originally labeled (bird, cat, deer, dog, frog, horse) are relabeled animal, and the remaining
+images, with original labels (airplane, cars, ship, truck), are labeled machine."
+REFERENCES,0.6558441558441559,"We train a linear SVM (no kernel was used) with the hinge loss. We evaluate both label flipping
+and gradient matching to generate camouflages, and different threat models (ε,bp,bc); the results
+are reported in Table 6. Each poison and camouflage generation took about 40 - 50 seconds (for
+bp = bc = 0.2%). Each trained model had validation accuracy of around 81.63% on the clean
+dataset Scl, which did not change significantly when we retrained after adding poison samples and/or
+camouflage samples. Note that the efficacy of the camouflaged poisoning attack was more than 70%
+in most of the experiments. We give examples of the generated poisons/camouflages in Appendix B.5."
+REFERENCES,0.6590909090909091,"Figure 4: Efficacy of the proposed camouflaged poisoning attack on CIFAR-10 dataset. The left
+plot gives the success for the threat model ε = 16,bp = 0.6%,bc = 0.6% for different neural network
+architectures. The right plot gives the success for ResNet-18 architecture for different threat models."
+REFERENCES,0.6623376623376623,"B.3.3
+Neural Network Experiments"
+REFERENCES,0.6655844155844156,"Implementation Details and Hyperparameters.
+Each model is trained with cross-entropy loss
+ℓ(f(x,θ),y) = −log(Pr(y = f(x,θ))) on a single GPU using PyTorch [Paszke et al., 2019], and
+using mini-batch SGD with weight decay 5e-4, momentum 0.9, learning rate 0.01, batch size 100,
+and 40 epochs over the training dataset. Each training run took about 45 minutes. The poison
+and camouflage sets were generated using gradient matching by first defining the cosine-similarity"
+REFERENCES,0.6688311688311688,"loss using torch.autograd and then minimizing it using Adam with a learning rate of 0.1. Each
+poison/camouflage generation took about 1.5 hours.8"
+REFERENCES,0.672077922077922,"Further Results.
+We next elaborate on the results reported in Figure 3. In Table 7, we report the
+efficacy of the proposed camouflaged poisoning attack on different neural network architectures
+where the threat model is given by ε = 16,bp = 0.6%,bc = 0.6%. The reported results are an average
+over 5 seeds from 2000000000-2000001111. In the first column under attack success, we report the
+number of times poisoning was successful amongst the run trials, and in the second column, we report
+the number of times camouflaging was successful for the trials for which poisoning was successful."
+REFERENCES,0.6753246753246753,"In Table 8, we report the success of the proposed attack when we change the threat model, but fix the
+network architecture to be ResNet-18. Each experiment was repeated times 5 times with 8 restarts
+each time, and the mean success rate is reported. These experiments were conducted with 5 seeds
+from 2000011111-2111111111."
+REFERENCES,0.6785714285714286,"Network Architecture
+Attack success
+Validation Accuracy"
+REFERENCES,0.6818181818181818,"Poisoning
+Camouflaging
+Clean
+Poisoned
+Camouflaged"
+REFERENCES,0.685064935064935,"VGG-11
+100%
+80%
+85.01
+85.03 (± 0.37)
+85.10 (± 0.29)"
+REFERENCES,0.6883116883116883,"VGG-16
+80%
+75%
+87.68
+87.42 (± 0.17)
+87.45 (± 0.26)"
+REFERENCES,0.6915584415584416,"ResNet-18
+80%
+75%
+82.13
+81.88 (± 0.15)
+81.80 (± 0.12)"
+REFERENCES,0.6948051948051948,"ResNet-34
+80%
+50%
+82.45
+82.61 (± 0.30)
+83.12 (± 0.93)"
+REFERENCES,0.698051948051948,"ResNet-50
+80%
+25%
+81.02
+81.76 (± 0.13)
+84.62 (± 0.71)"
+REFERENCES,0.7012987012987013,"MobileNetV2
+60%
+33%
+82.79
+83.26 (± 0.25)
+85.47 (± 0.27)"
+REFERENCES,0.7045454545454546,"Table 7: Evaluating our proposed camouflaged poisoning attack on various model architectures on
+the CIFAR-10 dataset with the threat model ε = 16,bp = 0.6%,bc = 0.6%."
+REFERENCES,0.7077922077922078,"B.4
+Additional Details on Imagenette / Imagewoof Experiments"
+REFERENCES,0.711038961038961,"We evaluate the efficacy of our attack vector on the challenging multiclass classification problem
+on the Imagenette and Imagewoof datasets [Howard, 2019]. Imagenette is a subset of 10 classes
+(Tench, English springer, Cassette player, Chain saw, Building/church, French horn, Truck, Gas pump,
+Golf ball, Parachute) from the Imagenet dataset [Russakovsky et al., 2015]. The Imagenette dataset
+consists of around 900 images of various sizes for each class. In total, we have 13394 images which
+are divided into a training dataset of size 9469 and test dataset of size 3925. To perform training, all
+images are resized and centrally cropped down to 224 × 224 pixels."
+REFERENCES,0.7142857142857143,"Imagewoof [Howard, 2019] is another subset of Imagenet dataset consisting of 10 classes (Shih-Tzu,
+Rodesian Ridgeback, Beagle, English Foxhound, Border Terrier, Austrailian Terrier, Golden Retriever,"
+REFERENCES,0.7175324675324676,"8Our implementations of Algorithm 1 and 2 are not optimized for computational efficiency, and the provided
+wall clock times simply serve as a proof of concept that our attack is practically implementable. All computations
+are performed on a CPU, but can be made significantly faster by using GPU."
+REFERENCES,0.7207792207792207,"Threat model
+Attack success
+Validation Accuracy"
+REFERENCES,0.724025974025974,"ε
+bp
+bc
+Poisoning
+Camouflaging
+Clean
+Poisoned
+Camouflaged"
+REFERENCES,0.7272727272727273,"16
+1%
+1%
+100%
+80%
+82.13
+81.98 (± 0.16)
+82.12 (± 0.21)"
+REFERENCES,0.7305194805194806,"8
+1%
+1%
+80%
+75%
+82.13
+82.21 (± 0.21)
+82.09 (± 0.23)"
+REFERENCES,0.7337662337662337,"16
+2%
+1%
+100%
+20%
+82.13
+82.31 (± 0.26)
+82.19 (± 0.24)"
+REFERENCES,0.737012987012987,"8
+2%
+1%
+100%
+40%
+82.13
+82.43 (± 0.30)
+82.34 (± 0.27)
+Table 8: Evaluating our proposed camouflaged poisoning attack on various threat models with
+CIFAR-10 dataset trained on ResNet-18."
+REFERENCES,0.7402597402597403,"Old English Sheep Dog, Samoyed, Dingo). Imagewoof consists of around 900 images of various
+sizes for each class, and in total 12954 images which are divided into a training dataset of size 9025
+and test dataset of size 3929. Similar to Imagenette, we resize all images and crop to the central
+224 × 224 pixels before training."
+REFERENCES,0.7435064935064936,"We evaluate our camouflaged poisoning attack on two different neural network architectures-VGG-16
+and ResNet-18, and different threat models (ε,bp,bc) listed in Table 2 . Each model is trained on a
+single GPU with cross-entropy loss, that is minimized using SGD algorithm with weight decay 5e-4,
+momentum 0.9 and batch size 20. We start with a learning rate of 0.01, and exponentially decay it
+with γ = 0.9 after every epoch, for a total of 50 epochs over the training dataset. The poisons and
+camouflages were generated using gradient matching by first defining the cosine-similarity loss using
+torch.autograd and then optimizing it using Adam optimizer with learning rate 0.1."
+REFERENCES,0.7467532467532467,"Figure 5: Visualization of poisons and camouflages on Imagewoof dataset. The first and the third
+columns shows the original images, and the second and the fourth columns shows the corrupted
+images (with added ∆). The shown images were generated for a camouflaged poisoning attack on
+ResNet-18, with Seed = 2111111110, bp = bc = 4.2%, ε = 16. The target and camouflage class is
+Austrailian Terrier, and the poison class is Golden Retriever."
+REFERENCES,0.75,"Figure 6: Some representative poison and camouflage images for attack on Imagewoof dataset. In
+each pair, the left figure is the original picture from the training dataset and the right figure has
+been adversarially manipulated by adding ∆. The shown images were generated for a camouflaged
+poisoning attack on Resnet-18, with Seed = 10000005, bp = bc = 6.6% and ε = 16. The target and
+camouflage class is English Springer, and the poison class is Building (Church)."
+REFERENCES,0.7532467532467533,"B.5
+Visualizations"
+REFERENCES,0.7564935064935064,"Figure 7: Visualization of poisons and camouflages on Imagenette dataset. The first and the third
+columns shows the original images, and the second and the fourth columns shows the corrupted
+images (with added ∆). The shown images were generated for a camouflaged poisoning attack on
+ResNet-18, with Seed = 2000011111 and ε = 8. The target and camouflage class is chain saw, and
+the poison class is French horn."
+REFERENCES,0.7597402597402597,"Figure 8: Visualization of poisons and camouflages on CIFAR-10 dataset (multiclass classification
+task). The top row shows the original images and the bottom row shows the corresponding poisoned
+/ camouflaged images (with the added ∆). The shown images were generated for a camouflaged
+poisoning attack on ResNet-18, with Seed = 2000000000, ε = 8, bp = 0.2,bc = 0.4, poison class bird,
+target class deer, and the target ID 9621."
+REFERENCES,0.762987012987013,"Figure 9: Visualization of poisons and camouflages on Binary-CIFAR-10 dataset (animal vs machine
+classification). The top row shows the original images and the bottom row shows the corresponding
+poisoned / camouflaged images (with the added ∆). The shown images were generated for a
+camouflaged poisoning attack on SVM, with Seed = 555555, ε = 16, bp = 0.2,bc = 0.4, target ID
+6646."
+REFERENCES,0.7662337662337663,"B.6
+Additional Experiments"
+REFERENCES,0.7694805194805194,"B.6.1
+Ablation Study for Different Values of bp and bc"
+REFERENCES,0.7727272727272727,"In this section, we explore the effect of changing the relative sizes of the poison samples and
+camouflage samples. The experiments are performed on ResNet-18 for CIFAR-10 dataset with
+bp = 1% and bc = {0.5,1,1.5}% respectively, and vice-versa. We report the results in Table 9."
+REFERENCES,0.775974025974026,"One may also wonder what is the price that an attacker has to pay in terms of the success rate of a
+poisoning (only) attack if it chooses to devote a part of the budget for camouflages. In Table 10, we
+report the results for comparing the success rate 1% poisons and 1% camouflages, to success rate
+with 2% poisons (and no camouflages.)"
+REFERENCES,0.7792207792207793,"Problem parameters
+Attack success
+Validation Accuracy"
+REFERENCES,0.7824675324675324,"bp
+bc
+Poisoning
+Camouflaging
+Clean
+Poisoned
+Camouflaged"
+REFERENCES,0.7857142857142857,"1%
+1.5%
+83%
+80%
+0.822
+0.8191
+0.8264"
+REFERENCES,0.788961038961039,"1%
+0.5%
+83%
+40%
+0.845
+0.8395
+0.8432"
+REFERENCES,0.7922077922077922,"1%
+1%
+83%
+80%
+0.822
+0.8274
+0.8244"
+REFERENCES,0.7954545454545454,"0.5%
+1%
+33%
+50%
+0.822
+0.8261
+0.8194"
+REFERENCES,0.7987012987012987,"1.5%
+1%
+83%
+20%
+0.822
+0.8156
+0.8118
+Table 9: Effect of different sizes of poison and camouflage datasets on the success of the proposed
+camouflaged poisoning attack on CIFAR-10 dataset trained on ResNet-18, with ε = 16. The reported
+success rates are averaged over six different trials with seeds 200000111-211111111. For each
+experiment, we do 4 restarts for every poison and camouflage generation."
+REFERENCES,0.801948051948052,"Problem parameters
+Attack success
+Validation Accuracy"
+REFERENCES,0.8051948051948052,"bp
+bc
+Poisoning
+Camouflaging
+Clean
+Poisoned
+Camouflaged"
+REFERENCES,0.8084415584415584,"0.5%
+0.5%
+33%
+50%
+0.822
+0.8212
+0.8238"
+REFERENCES,0.8116883116883117,"1%
+1%
+83%
+80%
+0.822
+0.8274
+0.8244"
+REFERENCES,0.814935064935065,"2%
+0
+83%
+N/A
+0.822
+0.817
+N/A
+Table 10: Comparison of success rate when the allocated budget of 2% is split as: (a) 1% poisons and
+1% camouflage, and (b) 2% poison samples and 0% camouflages. The experiment is performed on
+CIFAR-10 dataset trained on ResNet-18 with ε = 16. The reported success rates are averaged over
+six different trials with seeds 200000111 - 211111111. For each experiment, we do 4 restarts per
+poison or camouflage generation."
+REFERENCES,0.8181818181818182,"B.6.2
+Robustness of the Proposed Attack to Random Deletions"
+REFERENCES,0.8214285714285714,"We next explore the effect of random removal of the generated poison and camouflage samples on
+the success of our attack. In a data-scraping scenario, a victim may not scrape all the data points
+modified by an attacker. In Table 11, we report the effect on attack success when different amounts
+of the generated poison and camouflage samples are deleted uniformly at random."
+REFERENCES,0.8246753246753247,"Amount removed
+Attack success
+Validation Accuracy"
+REFERENCES,0.827922077922078,"Poisons
+Camouflages
+Poisoning
+Camouflaging
+Clean
+Poisoned
+Camouflaged"
+REFERENCES,0.8311688311688312,"5%
+5%
+80%
+75%
+0.822
+0.823
+0.819"
+REFERENCES,0.8344155844155844,"10%
+10%
+60%
+33%
+0.822
+0.817
+0.825"
+REFERENCES,0.8376623376623377,"20%
+20%
+80%
+100%
+0.822
+0.826
+0.820"
+REFERENCES,0.8409090909090909,"30%
+30%
+100%
+80%
+0.822
+0.8215
+0.818"
+REFERENCES,0.8441558441558441,"40%
+40%
+20%
+100%
+0.822
+0.825
+0.817
+Table 11: Effect of random removal of the generated poison and camouflage samples on the success of
+the proposed camouflaged poisoning attack on CIFAR-10 dataset trained on ResNet-18, with ε = 16.
+The reported success rates are averaged over 5 different trials with seeds 200001111 - 211111111.
+For each experiment, we do 4 restarts for every poison and camouflage generation."
+REFERENCES,0.8474025974025974,"B.6.3
+Transfer Experiments"
+REFERENCES,0.8506493506493507,"In this section, we show that the poison and camouflage samples generated by the proposed approach
+transfer across models. Thus, an attacker can successfully execute the camouflaged poisoning attack,
+even if the victim trains a different model than the one on which the poison and camouflage samples
+were generated. We show the transfer success in Figure 10. The brewing network denotes the network
+architecture on which poison and camouflage samples were generated (we adopt the same notation
+as Geiping et al. [2021]). The victim network denotes the model architecture used by the victim for
+training on the manipulated dataset."
+REFERENCES,0.8538961038961039,"We ran a total of 3 experiments per (brewing model, victim model) pair using the seeds 2000000000-
+2000000011. Each reported number denotes the fraction of times when both poisoning and camou-
+flaging were successful in the transfer experiment, and thus the attack could take place."
+REFERENCES,0.8571428571428571,Figure 10: Transfer experiments on CIFAR10 dataset.
+REFERENCES,0.8603896103896104,"B.6.4
+Robustness to Data Augmentation"
+REFERENCES,0.8636363636363636,"Data augmentation is commonly used to avoid overfitting in deep neural networks. In order to be
+applicable in the real life, our poisoning and camouflaging attacks must be successful even when the
+model is trained with data augmentation. In order to validate this, we evaluate our approach on CIFAR-
+10 dataset trained with data augmentation on ResNet-18 in the threat model ε = 16,bp = bc = 1%; the
+results are in Table 12. The considered data augmentations are:"
+REFERENCES,0.8668831168831169,"1. No Augmentation: Exact images from the training dataset are used.
+2. Augmentation Set 1: 50% chance that the image will be horizontally flipped, but no rotations.
+3. Augmentation Set 2: 50% chance that the image will be horizontally flipped, and random
+rotations in Uniform(−10,10) degrees."
+REFERENCES,0.8701298701298701,"The reported results in Table 12 are an average over 5 random seeds from “kkkkkk"" where 1 ≤k ≤5.
+As expected, the validation accuracy for the model trained on clean dataset increased from 82%"
+REFERENCES,0.8733766233766234,"percent when trained without augmentation, to 86% for augmentation Set 1 and 88% for augmentation
+set 2. The addition of data augmentation during training and re-training stages make it harder for
+poisoning to succeed and at the same time makes it easier for camouflaging to succeed."
+REFERENCES,0.8766233766233766,"Data Augmentation
+Attack success
+Validation Accuracy"
+REFERENCES,0.8798701298701299,"Poisoning
+Camouflaging
+Clean
+Poisoned
+Camouflaged"
+REFERENCES,0.8831168831168831,"No Augmentation
+100%
+20%
+82%
+82%
+82%"
+REFERENCES,0.8863636363636364,"Augmentation Set 1
+86%
+33%
+86%
+85%
+86%"
+REFERENCES,0.8896103896103896,"Augmentation Set 2
+60%
+100%
+88%
+86
+86%
+Table 12: Effect of data augmentation on our proposed camouflaged poisoning attack."
+REFERENCES,0.8928571428571429,"B.6.5
+Similarity of Feature Space Distance"
+REFERENCES,0.8961038961038961,"A natural approach to defend against dataset manipulation attacks is to try to identify the modified
+images, and then remove them from the training dataset (i.e., data sanitization), e.g. Diakonikolas
+et al. [2019a]. For instance, one could cluster images based on their distance from their class
+mean image, or from the target image. This type of defense could potentially thwart watermarking
+poisoning attacks such as Poison Frogs [Shafahi et al., 2018]. As we show in Figure 11, such a
+defense would not be effective against our proposed poison and camouflage generation procedures,
+as the data distribution for the poison set and the camouflage set is similar to that of the clean images
+from the respective classes."
+REFERENCES,0.8993506493506493,"Figure 11: Feature space distance for our generated poison and camouflage set. The reported data
+was collected by a successful camouflaged poisoning attack on Resnet-18 model trailed on CIFAR-10
+with seed 2000000000, ε = 16 and bp = bc = 1%."
+REFERENCES,0.9025974025974026,"B.6.6
+Approximate Unlearning"
+REFERENCES,0.9058441558441559,"In the experiments reported so far, we assumed that the victim performs exact unlearning, i.e.
+retrains the model from scratch on the leftover training data every time there is an unlearning
+request. However, in many cases, retraining from scratch for every unlearning request could be
+computationally expensive. This has inspired a plethora of research over the past few years in machine
+unlearning to develop approximate unlearning methods that are computationally faster than retraining
+from scratch [Sekhari et al., 2021, Guo et al., 2020, Bourtoule et al., 2021, Brophy and Lowd, 2021,
+Graves et al., 2021]. One may wonder if our attack also succeeds when performing approximate
+unlearning. Unfortunately, the algorithms dicussed in the prior works are infeasible for our large-scale
+deep learning setting; they either require strong structural properties (e.g., convexity [Sekhari et al.,"
+REFERENCES,0.9090909090909091,"2021, Guo et al., 2020]) or require access to large memory [Bourtoule et al., 2021, Brophy and Lowd,
+2021, Graves et al., 2021], etc. Hence, we were unable to evaluable most of these methods. However,
+we were successful in implementing the approximate unlearning methods in Graves et al. [2021]
+called Amnesiac Unlearning withing our available resources and report the results in Table 13."
+REFERENCES,0.9123376623376623,"To give the high level idea of Amnesiac Unlearning, note that the final model produced by multi-epoch
+mini-batch SGD like algorithms is given by:"
+REFERENCES,0.9155844155844156,"θfinal = θinitial +
+E
+∑
+e=1"
+REFERENCES,0.9188311688311688,"B
+∑
+b=1
+∆θe,b"
+REFERENCES,0.922077922077922,"where ∆θe,b is the incremental update using batch b in epoch e. In Amnesiac Unlearning, the learner
+keeps track of which batches contain which sample points. When given an unlearning request, the
+learner computes the bathces SB that contain the sensitive data (that requested for removal) and
+updates the model as"
+REFERENCES,0.9253246753246753,"θupdated = θinitial +
+E
+∑
+e=1"
+REFERENCES,0.9285714285714286,"B
+∑
+b=1
+∆θe,b −
+S
+∑
+sb=1
+B∆θsb = θinitial −
+S
+∑
+sb=1
+B∆θsb."
+REFERENCES,0.9318181818181818,"The above update is followed by a few epochs of fine tuning on left over data samples to recover any
+loss in validation error. As reported in Graves et al. [2021], the above update method is particularly
+effective when the sensitive data comprises of about 1-2% of the training dataset, which is the case in
+our experiments. We refer the reader to Graves et al. [2021] for more details. The reported results in
+Table 13 were obtained by using the open source implementation of Amnesiac Unlearning by Graves
+et al. [2021]. We note that each experiment on CIFAR-10 took about 200GB of memory."
+REFERENCES,0.935064935064935,"Threat model
+Attack success
+Validation Accuracy"
+REFERENCES,0.9383116883116883,"ε
+bp
+bc
+Poisoning
+Camouflaging
+Clean
+Poisoned
+Camouflaged"
+REFERENCES,0.9415584415584416,"16
+0.5%
+1%
+40%
+100%
+0.913
+0.765 (±0.047)
+0.722 (±0.060)"
+REFERENCES,0.9448051948051948,"16
+1%
+1%
+40%
+100%
+0.913
+0.760 (±0.046)
+0.765 (±0.046)
+Table 13: Evaluating the success of our proposed camouflaged poisoning attack against Amnesiac
+Unlearning (an approximate unlearning technique) provided by Graves et al. [2021] using five
+randomly selected seeds provided in the table above. We remark that our attack continues to be
+effective even against approximate unlearning."
+REFERENCES,0.948051948051948,"B.7
+Multiple Targets Scenarios"
+REFERENCES,0.9512987012987013,"In addition, we performed a limited number of experiments on poisoning and camouflaging multiple
+targets using the gradient matching method. The results (as shown in Table 14) are comparable to
+the experiments performed by [Geiping et al., 2021] on multiple targets. We observe that our attack
+continues to be effective under multiple target settings. Furthermore, choosing a method that is more
+effective under the multi-target setting may increase the success of our attack."
+REFERENCES,0.9545454545454546,"Threat model
+Targets
+Attack Success"
+REFERENCES,0.9577922077922078,"ε
+bp
+bc
+Targets
+bp / Targets
+bc / Targets
+Poisoning
+Camouflaging"
+REFERENCES,0.961038961038961,"16
+1%
+1%
+2
+0.5%
+0.5%
+70%
+40%"
+REFERENCES,0.9642857142857143,"16
+1%
+1%
+5
+0.25%
+0.25%
+36%
+33%"
+REFERENCES,0.9675324675324676,"16
+1%
+1%
+10
+0.1%
+0.1%
+21%
+15%
+Table 14: Evaluating the success of our proposed camouflaged poisoning attack against multiple
+targets using the Gradient Matching technique on the CIFAR-10 dataset with default parameters."
+REFERENCES,0.9707792207792207,"C
+Alternative Approaches to Generate Poisons and Camouflages"
+REFERENCES,0.974025974025974,"Thus far, our experiments have focused solely on generating poison and camouflage points using
+the gradient matching technique. In this section, we show that our attack framework is robust to the"
+REFERENCES,0.9772727272727273,"poison generation method: we generate a camouflaged poisoning attack using Bullseye Polytope
+poisoning—a clean-label targeted attack proposed by Aghakhani et al. [2021]. We believe that similar
+results should hold for a variety of other data poisoning techniques."
+REFERENCES,0.9805194805194806,"Bullseye Polytope (BP) maximizes the similarity between representations of the poisons and target.
+In doing so, it implicitly minimizes the alignment between poison and target gradients with respect to
+the penultimate layer, which captures most of the gradient norm variation [Katharopoulos and Fleuret,
+2019]. In the transfer learning scenario, the poisons are crafted to have a similar representation
+to that of the target. Here, a linear layer is trained on the poisoned data using the representations
+obtained from a pre-trained clean model. The gradient of the linear model is proportional to the
+representations learned by the pre-trained model. Therefore, by maximizing the similarity between
+the representations of the poisons and the adversarially labeled target, the attack indeed increases the
+alignment between their gradients [Yang et al., 2022]."
+REFERENCES,0.9837662337662337,"In our experiments, a poison set and a camouflage set were crafted and evaluated in a white-box
+setting, where the method has the highest average attack success rate [Schwarzschild et al., 2021].
+Two pre-trained ResNet-18 models are used as the feature extractor to generate adversarial examples
+and as the victim, respectively. We set an ℓ∞perturbation budget of ε = 7 and perform BP for 1,000
+iterations each to obtain poisons and camouflages. We then use Adam with a learning rate of 0.1 to
+fine-tune the victim’s linear classifier on the poisoned dataset for 60 epochs. Finally, we re-load the
+victim model, repeat the fine-tuning process with the poisoned + camouflaged dataset and compare
+the results."
+REFERENCES,0.987012987012987,"Threat model
+Attack success
+Validation Accuracy"
+REFERENCES,0.9902597402597403,"ε
+bp
+bc
+Poisoning
+Camouflaging
+Clean
+Poisoned
+Camouflaged"
+REFERENCES,0.9935064935064936,"8
+5
+5
+90%
+67%
+0.870
+0.8794 (±0.012)
+0.8737 (±0.021)"
+REFERENCES,0.9967532467532467,"8
+5
+10
+90%
+78%
+0.870
+0.8727 (±0.002)
+0.8716 (±0.002)
+Table 15: Evaluating the success of our proposed camouflaged poisoning attack with Bullseye
+Polytope poisoning (a clean-label targeted attack) provided by Aghakhani et al. [2021] on the CIFAR-
+10 dataset using ten randomly selected seeds provided in the table above. We observe that our attack
+continues to be effective with different targeted poisoning methods."
