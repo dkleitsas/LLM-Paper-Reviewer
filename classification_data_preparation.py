@@ -98,7 +98,6 @@ def aggregate_sections_global(paragraphs, section_labels, acceptance_label):
 
 
 def run_segmentation_inference(model, dataset, output_folder, label_for_doc):
-    print(label_for_doc == "rejected")
     model.eval()
     dataloader = DataLoader(dataset, batch_size=1, collate_fn=dataset.collate_fn)
 
@@ -119,9 +118,7 @@ def run_segmentation_inference(model, dataset, output_folder, label_for_doc):
 
             
             if label_for_doc == "rejected":
-                print(original_paragraphs[0])
                 original_paragraphs[0] = remove_trailing_numbers(original_paragraphs[0])
-                print(original_paragraphs[0])
 
             paragraphs_clean, section_labels_clean = clean_references_and_below(
                 original_paragraphs[0], string_labels, references_labels=["REFERENCES"]
@@ -161,7 +158,7 @@ model.load_state_dict(torch.load("model_weights.pth", weights_only=True, map_loc
 
 model.to(device)
 
-for folder, label in [(rejected_folder, "rejected"), (accepted_folder, "accepted")]:
+for folder, label in [(accepted_folder, "accepted"), (rejected_folder, "rejected")]:
     dataset = DocumentDataset(folder, tokenizer_name, max_tokens=124, training=False)
     run_segmentation_inference(model, dataset, output_folder, label)
 
