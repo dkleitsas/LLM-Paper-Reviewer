@@ -10,7 +10,7 @@ from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 import torch
 
 # === CONFIGURATION ===
-csv_folder = "segmented_outputs"  # Folder where all CSV files are located
+csv_folder = "classification_csvs"  # Folder where all CSV files are located
 text_column = "Paragraph"   # Column name in your CSV
 label_column = "Label" # Column with binary labels
 model_name = "allenai/scibert_scivocab_uncased"

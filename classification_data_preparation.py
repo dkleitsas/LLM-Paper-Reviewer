@@ -141,6 +141,7 @@ model = ParagraphClassifier(
     num_labels=8,
     lstm_hidden_size=128,
 )
+
 model.load_state_dict(torch.load("model_weights.pth", weights_only=True, map_location="cpu"))
 
 for folder, label in [(accepted_folder, "accepted"), (rejected_folder, "rejected")]:
