@@ -24,6 +24,7 @@ from collections import Counter, defaultdict
 import csv
 from tqdm import tqdm
 import os
+import re
 
 
 def filter_short_runs(labels, min_run_length=6):
@@ -70,6 +71,14 @@ def clean_references_and_below(paragraphs, section_labels, references_labels):
     return paragraphs, section_labels
 
 
+def remove_leading_numbers(paragraphs):
+    cleaned = []
+    for para in paragraphs:
+        cleaned_para = re.sub(r"^\s*\d+\s*", "", para)
+        cleaned.append(cleaned_para)
+    return cleaned
+
+
 def aggregate_sections_global(paragraphs, section_labels, acceptance_label):
     section_map = defaultdict(list)
 
@@ -108,6 +117,9 @@ def run_segmentation_inference(model, dataset, output_folder, label_for_doc):
 
             string_labels = dataset.label_encoder.inverse_transform(smoothed_labels)
 
+            if label_for_doc == "rejected":
+                original_paragraphs[0] = remove_leading_numbers(original_paragraphs[0])
+
             paragraphs_clean, section_labels_clean = clean_references_and_below(
                 original_paragraphs[0], string_labels, references_labels=["REFERENCES"]
             )
@@ -117,6 +129,7 @@ def run_segmentation_inference(model, dataset, output_folder, label_for_doc):
             )
             
 
+                
             # Save to CSV
             original_path = dataset.file_paths[batch_idx]
             filename = os.path.basename(original_path)
