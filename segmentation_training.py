@@ -16,8 +16,8 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 
-from segmentation_datasets import DocumentDataset, ParagraphDataset
-from segmentation_models import ParagraphBERTClassifier, ParagraphClassifier
+from segmentation_datasets import DocumentDataset
+from segmentation_models import ParagraphClassifier
 from utils import set_seed
 
 import seaborn as sns
