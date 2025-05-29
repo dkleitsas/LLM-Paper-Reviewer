@@ -1,0 +1,2108 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.002331002331002331,"Modern Neural Architecture Search (NAS) focuses on ﬁnding the best perform-
+ing architectures in hardware-aware settings; e.g., those with an optimal tradeoff
+of accuracy and latency. Due to many advantages of prediction models over live
+measurements, the search process is often guided by estimates of how well each
+considered network architecture performs on the desired metrics. Typical predic-
+tion models range from operation-wise lookup tables over gradient-boosted trees
+and neural networks, with little known information on how they compare. We
+evaluate 18 different performance predictors on ten combinations of metrics, de-
+vices, network types, and training tasks, and ﬁnd that MLP models are the most
+promising. We then simulate and evaluate how the guidance of such prediction
+models affects the subsequent architecture selection. Due to inaccurate predic-
+tions, the selected architectures are generally suboptimal, which we quantify as
+an expected reduction in accuracy and hypervolume. We show that simply ver-
+ifying the predictions of just the selected architectures can lead to substantially
+improved results. Under a time budget, we ﬁnd it preferable to use a fast and
+inaccurate prediction model over accurate but slow live measurements."
+INTRODUCTION,0.004662004662004662,"1
+INTRODUCTION"
+INTRODUCTION,0.006993006993006993,"Modern neural network architectures are designed not only considering their primary objective,
+such as accuracy. While existing architectures can be scaled down to work with the limited available
+memory and computational power of, e.g., mobile phones, they are signiﬁcantly outperformed by
+speciﬁcally designed architectures (Howard et al., 2017; Sandler et al., 2018; Zhang et al., 2018;
+Ma et al., 2018). Standard hardware metrics include memory usage, number of model parameters,
+Multiply-Accumulate operations, energy consumption, latency, and more; each of which may be
+limited by the hardware platform or network task. As the range of tasks and target platforms grows,
+specialized architectures and the methods to ﬁnd them efﬁciently are gaining importance."
+INTRODUCTION,0.009324009324009324,"The automated design and discovery of specialized architectures is the main intent of Neural Archi-
+tecture Search (NAS). This recent ﬁeld of study repeatedly broke state of the art records (Zoph et al.,
+2018; Real et al., 2018; Cai et al., 2019; Tan & Le, 2019; Chu et al., 2019a; Hu et al., 2020) while
+aiming to reduce the researchers’ involvement with this tedious and time-consuming process to a
+minimum. As the performance of each considered architecture needs to be evaluated, the hardware
+metrics need to be either measured live or guessed by a trained prediction model. While measur-
+ing live has the advantage of not suffering from inaccurate predictions, the corresponding hardware
+needs to be available during the search process. Measuring on-demand may also signiﬁcantly slow
+down the search process and necessitates further measurements for each new architecture search.
+On the other hand, a prediction model abstracts the hardware from the search code and simpliﬁes
+changes to the optimization targets, such as metrics or devices. The data set to train the predictor
+also has to be collected only once so that a trained predictor then works in the absence of the hard-
+ware it is predicting for, e.g., in a cloud environment. Furthermore, a differentiable predictor can be
+used for gradient-based architecture optimization of typically non-differentiable metrics (Cai et al.,
+2019; Xu et al., 2020; Nayman et al., 2021)."
+INTRODUCTION,0.011655011655011656,"While the many advantages make predictors a popular choice of hardware-aware NAS (e.g. Xu
+et al. (2020); Wu et al. (2019); Wan et al. (2020); Dai et al. (2020); Nayman et al. (2021)), there
+are no guidelines on which predictors perform best, how many training samples are required, or"
+INTRODUCTION,0.013986013986013986,Under review as a conference paper at ICLR 2022
+INTRODUCTION,0.016317016317016316,"what happens when a predictor is inaccurate. This work investigates the above points. As a ﬁrst
+contribution, we conduct large-scale experiments on ten hardware-metric datasets chosen from HW-
+NAS-Bench (Li et al., 2021a) and TransNAS-Bench-101 (Duan et al., 2021). We explore how
+powerful the different predictors are when using different amounts of training data and whether
+these results generalize across different network architecture types. As a second contribution, we
+extensively simulate the subsequent architecture selection to investigate the impact of inaccurate
+predictors. Our results demonstrate the effectiveness of network-based prediction models; provide
+insights into predictor mistakes and what to expect from them. To facilitate reproducibility and
+further research, our experimental results and code are made available in Appendix A."
+RELATED WORK,0.018648018648018648,"2
+RELATED WORK"
+RELATED WORK,0.02097902097902098,"NAS Benchmarks:
+As the search spaces of NAS methods often differ from one another and lack
+extensive studies, the difﬁculty of fair comparisons and reproducibility have become a major concern
+(Yang et al., 2019; Li & Talwalkar, 2020). To alleviate this problem, researchers have exhaustively
+evaluated search spaces of several thousand architectures to create benchmarks (Ying et al., 2019;
+Dong & Yang, 2020; Dong et al., 2020; Siems et al., 2020), containing detailed statistics for each
+architecture. TransNAS-Bench-101 (Duan et al., 2021) evaluates several thousand architectures
+across seven diverse tasks and ﬁnds that the best task-speciﬁc architectures may vary signiﬁcantly."
+RELATED WORK,0.023310023310023312,"The popular NAS-BENCH 201 benchmark (Dong & Yang, 2020) has been further extended with ten
+different hardware metrics for all 15625 architectures on each of the three data sets CIFAR10, CI-
+FAR100 (Krizhevsky et al., 2009) and ImageNet16-120 (Chrabaszcz et al., 2017). Major ﬁndings of
+this HW-NAS Bench (Li et al., 2021a) include that FLOPs and the number of parameters are a poor
+approximation for other metrics such as latency. Many existing NAS methods use such inadequate
+substitutes for their simplicity and would beneﬁt from their replacement with better prediction mod-
+els. Li et al. also ﬁnd that hardware-speciﬁc costs do not correlate well across hardware platforms.
+While accounting for each device’s characteristics improves the NAS results, it is also expensive.
+Predictors can reduce costs by requiring fewer measurements and shorter query times. 1."
+RELATED WORK,0.02564102564102564,"Predictors in NAS:
+Aside from real-time measurements (Tan et al., 2019; Yang et al., 2018),
+hardware metric estimation in NAS is commonly performed via Lookup Table (Wu et al., 2019),
+Analytical Estimation or a Prediction Model (Dai et al., 2020; Xu et al., 2020). While an operation-
+and layer-wise Lookup Table can accurately estimate hardware-agnostic metrics, such as FLOPs or
+the number of parameters (Cai et al., 2019; Guo et al., 2020; Chu et al., 2019a), they may be subop-
+timal for device-dependent metrics. Latency and energy consumption have non-obvious factors that
+depend on hardware speciﬁcs such as memory, cache usage, the ability to parallelize each operation,
+and an interplay between different network operations. Such details can be captured with neural
+networks (Dai et al., 2020; Mendoza & Wang, 2020; Ponomarev et al., 2020; Xu et al., 2020) or
+other specialized models (Yao et al., 2018; Wess et al., 2021)."
+RELATED WORK,0.027972027972027972,"Of particular interest is the correct prediction of the model loss or accuracy, possibly reducing the
+architecture search time by orders of magnitude (Mellor et al., 2020; Wang et al., 2021; Li et al.,
+2021b). In addition to common predictors such as Linear Regression, Random Forests (Liaw et al.,
+2002) or Gaussian Processes (Rasmussen, 2003); specialized techniques may exploit training curve
+extrapolation, network weight sharing or gradient information. Our experiments follow the recent
+large-scale study of White et al. (2021), who compare 31 diverse accuracy prediction methods based
+on initialization and query time, using three NAS benchmarks."
+PREDICTING HARDWARE METRICS,0.030303030303030304,"3
+PREDICTING HARDWARE METRICS"
+PREDICTING HARDWARE METRICS,0.03263403263403263,"Our methods follow the large-scale study of White et al. (2021), who compared a total of 31 ac-
+curacy prediction methods. The differences between accuracy and hardware-metric prediction, our
+selection of predictors, and the general training pipeline are described in this section. In our ex-
+periments on HW-NAS-Bench and TransNAS-Bench-101, described in Section 4, we then compare
+these predictors across different training set sizes."
+PREDICTING HARDWARE METRICS,0.03496503496503497,"1For further reading, we recommend a recent survey on hardware-aware NAS (Benmeziane et al., 2021)"
+PREDICTING HARDWARE METRICS,0.037296037296037296,Under review as a conference paper at ICLR 2022
+PREDICTING HARDWARE METRICS,0.039627039627039624,"Differences to accuracy predictors:
+There are fundamental differences when predicting hard-
+ware metrics and the accuracy of network topologies. The most essential is the cost to obtain a
+helpful predictor, which may vary widely for accuracy prediction methods. While determining the
+test accuracy requires the costly and lengthy training of networks, measuring hardware metrics does
+not necessitate any network training. Consequentially, specialized accuracy-estimation methods that
+rely on trained networks, loss history, learning curve extrapolation, or early stopping do not apply to
+hardware metrics. Furthermore, so-called zero-cost proxies that predict metrics from the gradients
+of a single batch are dependant on the network topology but not on the hardware the network is
+placed on. Therefore, the dominant hardware-metric predictor family is model-based."
+PREDICTING HARDWARE METRICS,0.04195804195804196,"Since all relevant predictors are model-based, they can be compared by their training set size. This
+simpliﬁes the initialization time of a predictor as the number of prior measured architectures on
+which they are trained. In stark contrast, some accuracy predictors do not need any training data,
+while others require several partially or fully trained networks. Since an untrained network and a
+few batches sufﬁce to measure a hardware-metric, the collection of such a training set is comparably
+inexpensive."
+PREDICTING HARDWARE METRICS,0.04428904428904429,"Additionally, hardware predictors are generally used supplementary to a one-shot network optimized
+for loss or accuracy. Depending on the NAS method, a fully differentiable predictor is required in
+order to guide the gradient-based architecture selection. Typical choices are Lookup Tables (Cai
+et al., 2019; Nayman et al., 2021) and neural networks (Xu et al., 2020)."
+PREDICTING HARDWARE METRICS,0.046620046620046623,"Model-based predictors:
+The goal of a predictor fp(a) is to accurately approximate the function
+f(a), which may be, e.g., the latency of an architecture a from the search space A. A model-based
+predictor is trained via supervised learning on a set Dtrain of datapoints (a, f(a)), after which it can
+be inexpensively queried for estimates on further architectures. The collection of the dataset and the
+duration of the training are referred to as initialization time and training time respectively."
+PREDICTING HARDWARE METRICS,0.04895104895104895,"The quality of such a trained predictor is generally determined by the (ranking) correlation between
+measurements {f(a)|a ∈Atest} and predictions {fp(a)|a ∈Atest} on the unseen architectures
+Atest ⊂A. Common correlation metric choices are Pearson (PCC), Spearman (SCC) and Kendall’s
+Tau (KT) (Chu et al., 2019b; Yu et al., 2020; Siems et al., 2020)."
+PREDICTING HARDWARE METRICS,0.05128205128205128,"Our experiments include 18 model-based predictors from different families: Linear Regression,
+Ridge Regression (Saunders et al., 1998), Bayesian Linear Regression (Bishop, 2007), Support
+Vector Machines (Cortes & Vapnik, 1995), Gaussian Process (Rasmussen, 2003), Sparse Gaus-
+sian Process (Candela & Rasmussen, 2005), Random Forests (Liaw et al., 2002), XGBoost (Chen &
+Guestrin, 2016), NGBoost (Duan et al., 2020), LGBoost (Ke et al., 2017), BOHAMIANN (Sprin-
+genberg et al., 2016), BANANAS (White et al., 2019), BONAS (Shi et al., 2020), GCN (Wen
+et al., 2020), small and large Multi-Layer-Perceptrons (MLP), NAO (Luo et al., 2018), and a layer-
+operation-wise Lookup Table model. We provide further descriptions and implementation details in
+Appendix B."
+PREDICTING HARDWARE METRICS,0.053613053613053616,"Hyper-parameter tuning:
+The default hyperparameters of the used predictors vary signiﬁcantly
+in their levels of hyper-parameter tuning, especially in the context of NAS. Additionally, some pre-
+dictors may internally make use of cross-validation, while others do not. Following White et al.
+(2021), we attempt to level the playing ﬁeld by running a cross-validation random-search over hyper-
+parameters each time a predictor is ﬁt to data. Each search is limited to 5000 iterations and a total
+run time of 15 minutes and naturally excludes any test data. The predictor-speciﬁc parameter details
+are given in Appendix C."
+PREDICTING HARDWARE METRICS,0.055944055944055944,"Training pipeline
+To make a reliable comparison, we use the NASLib library (Ruchte et al.
+(2020), see Appendix A). We ﬁt each predictor on each dataset and training size 50 times, using
+seeds {0, ..., 49}."
+PREDICTING HARDWARE METRICS,0.05827505827505827,"Some predictors internally normalize the training values (subtract mean, divide by standard devia-
+tion). We choose to explicitly do this for all predictors and datasets, which reduces the dependency
+of hyper-parameters (e.g. learning rate) on the dataset and allows us to analyze and compare the
+prediction errors across datasets more effectively."
+PREDICTING HARDWARE METRICS,0.06060606060606061,Under review as a conference paper at ICLR 2022
+PREDICTOR EXPERIMENTS,0.06293706293706294,"4
+PREDICTOR EXPERIMENTS"
+PREDICTOR EXPERIMENTS,0.06526806526806526,"We compare the different predictor models based on two NAS benchmarks, HW-NAS-Bench (Li
+et al., 2021a) and TransNAS-Bench-101 (Duan et al., 2021). They differ considerably by their
+network tasks, hardware devices, and architecture designs."
+PREDICTOR EXPERIMENTS,0.0675990675990676,"HW-NAS-Bench architecture design and datasets
+In HW-NAS-Bench, each architecture is
+solely deﬁned by the topology of a building block (”cell”), which is stacked multiple times to create
+a complete network. Each cell is completely deﬁned by choosing six candidate operations. Since
+they select from ﬁve different candidates each time, there are 56 = 15625 unique cell topologies.
+These cells are not fully sequential but contain paths of different lengths, which is visualized in
+Appendix D."
+PREDICTOR EXPERIMENTS,0.06993006993006994,"HW-NAS-Bench provides ten hardware statistics on CIFAR10, CIFAR100 Krizhevsky et al. (2009)
+and ImageNet16-120 Chrabaszcz et al. (2017), of which we exclude the incomplete EdgeTPU met-
+ric. Thus there are 27 data sets of varying difﬁculty. As detailed in Appendix E, 12 of them can
+be accurately ﬁt with Linear Regression and only 25 training samples. Many are also very similar
+since their measured networks differ only by the number of image classes. We therefore select ﬁve
+datasets that (1.) are not trivial to learn as they are non-linear and (2.) not redundant:"
+PREDICTOR EXPERIMENTS,0.07226107226107226,"• ImageNet16-120, raspi4, latency
+• CIFAR100, pixel3, latency
+• CIFAR10, edgegpu, latency"
+PREDICTOR EXPERIMENTS,0.07459207459207459,"• CIFAR100, edgegpu, energy consumption
+• ImageNet16-120, eyeriss, arithmetic intensity"
+PREDICTOR EXPERIMENTS,0.07692307692307693,"TransNAS-Bench-101 architecture design and datasets
+TransNAS-Bench-101 contains infor-
+mation for 7,352 different network architectures, used as backbones in seven diverse vision tasks.
+Since 4,096 are also a subset of HW-NAS-Bench, we focus on the remaining 3,256 architectures
+with a macro-level search space. Unlike a micro-level search space, where a cell is stacked multiple
+times to create a network, each network layer and block is considered individually. In particular, the
+TransNAS-Bench-101 networks consist of four to six pairs of ResNet blocks (He et al., 2016), which
+may modify the image size and channels in four ways: not at all, double the channel count, halve the
+spatial size, and both. Every network has to double the channel count 1 to 3 times, resulting in 3,256
+unique architectures. The networks may consequentially differ in their number of layers (depth), the
+number of channels (width), and image size at any layer."
+PREDICTOR EXPERIMENTS,0.07925407925407925,"As done for HW-NAS-Bench, we select ﬁve of the seven available datasets for their latency measure-
+ments. Aside from the self-supervised Jigsaw task, there is little difference between the cross-task
+latency measurements (see Appendix E). We evaluate the possibly redundant datasets nonetheless,
+since latency predictions in macro-level search spaces are an important domain for NAS on image
+classiﬁcation and object detection tasks:"
+PREDICTOR EXPERIMENTS,0.08158508158508158,"• Object classiﬁcation
+• Scene classiﬁcation
+• Room layout"
+PREDICTOR EXPERIMENTS,0.08391608391608392,"• Jigsaw
+• Semantic segmentation"
+PREDICTOR EXPERIMENTS,0.08624708624708624,"Fitting results and comparison
+The results, averaged over all selected HW-NAS-Bench and
+TransNAS-Bench-101 datasets, are presented in Figures 1a and 1b, respectively. The left plots
+present the absolute predictor performance, the right ones make relative comparisons easier."
+PREDICTOR EXPERIMENTS,0.08857808857808858,"Unsurprisingly, more training samples (i.e., evaluated architectures) generally lead to better predic-
+tion results, even until the entire search space is known (aside from the test set). This is true for
+most of the predictors, although e.g. Gaussian Processes and BOHAMIANN saturate early. The
+simple Linear Regression and Ridge Regression models also fail to make proper use of hundreds
+of data points but perform decently when only a few training samples are available. Interestingly,
+the same is true for the graph-encoding network-based predictors BONAS and GCN. While know-
+ing how the different paths within each cell connect (see Appendix B) is especially useful given
+less than ﬁfty training samples, the advantage disappears afterward. In contrast, the graph-encoding
+encoder-decoder approach of NAO performs decently at all times."
+PREDICTOR EXPERIMENTS,0.09090909090909091,Under review as a conference paper at ICLR 2022
+PREDICTOR EXPERIMENTS,0.09324009324009325,"101
+102
+103
+104"
+PREDICTOR EXPERIMENTS,0.09557109557109557,training set size 0.0 0.2 0.4 0.6 0.8
+PREDICTOR EXPERIMENTS,0.0979020979020979,Kendall's Tau (absolute) 
+PREDICTOR EXPERIMENTS,0.10023310023310024,"101
+102
+103
+104"
+PREDICTOR EXPERIMENTS,0.10256410256410256,training set size 0.2 0.1 0.0 0.1 0.2
+PREDICTOR EXPERIMENTS,0.1048951048951049,Kendall's Tau (centered on average) 
+PREDICTOR EXPERIMENTS,0.10722610722610723,"Lin. Reg.
+Bayes. Lin. Reg.
+Ridge Reg.
+XGBoost
+NGBoost
+LGBoost
+Random Forests
+Sparse GP
+GP
+BOHAMIANN
+SVM Reg.
+NAO
+GCN
+BONAS
+BANANAS
+MLP (large)
+MLP (small)
+Lookup Table"
+PREDICTOR EXPERIMENTS,0.10955710955710955,"(a) Results on HW-NAS-Bench. NAO performs decently at all times, and none of the prediction models requires
+more than 60 training samples to improve over a Lookup Table model."
+PREDICTOR EXPERIMENTS,0.11188811188811189,"101
+102
+103"
+PREDICTOR EXPERIMENTS,0.11421911421911422,training set size 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9
+PREDICTOR EXPERIMENTS,0.11655011655011654,Kendall's Tau (absolute) 
+PREDICTOR EXPERIMENTS,0.11888111888111888,"101
+102
+103"
+PREDICTOR EXPERIMENTS,0.12121212121212122,training set size 0.10 0.05 0.00 0.05 0.10
+PREDICTOR EXPERIMENTS,0.12354312354312354,Kendall's Tau (centered on average) 
+PREDICTOR EXPERIMENTS,0.1258741258741259,"Lin. Reg.
+Bayes. Lin. Reg.
+Ridge Reg.
+XGBoost
+NGBoost
+LGBoost
+Random Forests
+Sparse GP
+GP
+BOHAMIANN
+SVM Reg.
+MLP (large)
+MLP (small)
+Lookup Table"
+PREDICTOR EXPERIMENTS,0.1282051282051282,"(b) Results on TransNAS-Bench-101. Since all network architectures are purely sequential by design, we do not
+evaluate predictors that speciﬁcally encode the architecture connectivity (BANANAS, BONAS, GCN, NAO).
+After as few as 20 training samples, MLP models outclass all other predictors."
+PREDICTOR EXPERIMENTS,0.13053613053613053,"Figure 1: How well the different predictors rank the test architectures, depending on the training
+set size and averaged over the ﬁve selected datasets. Left plots: absolute Kendall’s Tau ranking
+correlation, higher is better. Right plots: same as left, but centered on the predictor-average."
+PREDICTOR EXPERIMENTS,0.13286713286713286,"Due to their powerful rule-based approach, tree-based models perform much better given many
+training samples. Under such circumstances, LGBoost is a candidate for the best predictor model.
+Similarly, the predictions of Support Vector Machines also beneﬁt strongly from more samples."
+PREDICTOR EXPERIMENTS,0.1351981351981352,"The model we ﬁnd to perform best for most training set sizes are MLPs. They are among the top
+predictors at almost all times in the HW-NAS-Bench, although tree-based models are competitive
+given enough data. After around 3,000 training samples, thinner and deeper MLPs improve over the
+wider and smaller ones. The path-encoding BANANAS model behaves similarly to a regular large
+MLP but requires more samples to reach the same performance. This is interesting since, aside from
+the data encoding, BANANAS is an ensemble of three large MLP models. Even though only the ﬁrst
+network layer is affected by the data encoding, the more complicated path-encoding proves harmful"
+PREDICTOR EXPERIMENTS,0.13752913752913754,Under review as a conference paper at ICLR 2022
+PREDICTOR EXPERIMENTS,0.13986013986013987,"HW-NAS-Bench
+TransNAS-Bench-101"
+PREDICTOR EXPERIMENTS,0.14219114219114218,"Raspi4
+FPGA
+Eyeriss
+Pixel3
+EdgeGPU
+Tesla V100"
+PREDICTOR EXPERIMENTS,0.1445221445221445,"latency
+0.45 (0.75)
+0.99 (0.97)
+0.99 (0.96)
+0.49 (0.78)
+0.21 (0.79)
+0.60 (0.70)
+energy
+0.99 (0.97)
+1.00 (0.99)
+0.23 (0.79)
+arithmetic intensity
+0.84 (0.81)"
+PREDICTOR EXPERIMENTS,0.14685314685314685,"Table 1: The Kendall’s Tau correlation of Lookup Tables and Linear Regression (in brackets, using
+only 124 training samples) across metrics and devices. Lookup Tables perform only marginally
+better on the FPGA and Eyeriss devices, but considerably worse in all other cases. More detailed
+statistics are available in Appendix E."
+PREDICTOR EXPERIMENTS,0.14918414918414918,"when the connectivity of the architectures in the search space is ﬁxed. On TransNAS-Bench-101,
+MLP perform exceptionally well. They are much better than any other tested predictor once more
+than just 20 training samples are available. The small MLP model can achieve a KT correlation
+of 80% with just 200 training samples, which takes the best non-network-based predictor (Support
+Vector Machine) four times as many. They are also the only models that achieve a KT correlation of
+over 90%, about 5% higher than the next best model (LGBoost)."
+PREDICTOR EXPERIMENTS,0.15151515151515152,"Finally, the Lookup Table models (black horizontal lines) perform poorly in comparison to any other
+predictor. Even though building such a model for HW-NAS-Bench datasets requires only 25 neigh-
+bored architectures, NAO and GCN perform better after just ten random samples. More than half
+of the predictor models require less than 25 random samples, while the worst need at most 60. On
+TransNAS-Bench-101, Lookup Tables perform comparably better. Building one requires only 21
+neighbored architectures, and it takes most models between 50 and 100 random training samples to
+achieve better performance. When measured on a per dataset basis, we ﬁnd that the Lookup Table
+models display a severe performance difference ranging from about 20% KT correlation (cifar10-
+edgegpu latency and Jigsaw) to over 70% (ImageNet16-120-eyeriss arithmetic intensity and Se-
+mantic Segmentation, see Appendix E). Other models prove to be much more stable."
+PREDICTOR EXPERIMENTS,0.15384615384615385,"Devices and Metrics
+The previously described results are based on a speciﬁc selection of HW-
+NAS-Bench and TransNAS-Bench-101 datasets that are hard to ﬁt for Lookup Table models. As
+shown in Table 1, that is not always the case. The FPGA and Eyeriss hardware devices are very suit-
+able for Lookup Tables, achieving an almost perfect ranking correlation is possible. Nonetheless,
+Linear Regression requires only 124 training samples to compete even there and is signiﬁcantly bet-
+ter in every other case. We ﬁnally observe that the difﬁculty of ﬁtting predictors primarily depends
+on the hardware device, much more than the measured metric."
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.1561771561771562,"5
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION"
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.1585081585081585,"Although the experiments in Section 4 greatly assist us in selecting a predictor, it is not clear what a
+speciﬁc Kendall’s Tau correlation implies for the subsequent architecture selection. Given a perfect
+hardware metric predictor (Kendall’s Tau = 1.0), we can expect that an ideal architecture search
+process will select the architectures with the best tradeoff of accuracy and the hardware metric, i.e.,
+the true Pareto front. On the other hand, imperfect predictions result in the selection of supposedly-
+best architectures that are wrongly believed to be better."
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.16083916083916083,"To study how hardware predictors affect NAS results, we extensively evaluate the selection of such
+supposedly-best architectures in simulation. This approach can evaluate any combination of predic-
+tor quality, test set size, and dataset, without the technical difﬁculties of obtaining actual predictor
+models that precisely match such requirements. Since the hardware and accuracy prediction models
+are usually independent and can be studied in isolation, we use ground-truth accuracy values in all
+cases."
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.16317016317016317,"Simulating predictors
+The main challenge of the simulation is to quickly and accurately model
+predictor outputs. We base our simulation on how predictor-generated values deviate from their
+ground-truth targets on the test set, which is explained in Figure 2 and further detailed in Ap-
+pendix G. Since the simulated deviations are similar to those of actual predictors, simulated pre-
+dictions are obtained by drawing random values from this deviation distribution and adding them to
+the ground-truth hardware measurements."
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.1655011655011655,Under review as a conference paper at ICLR 2022
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.16783216783216784,"2
+1
+0
+1
+2
+3
+true values 2 1 0 1 2 3"
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.17016317016317017,predicted values
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.17249417249417248,Predictions and targets
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.17482517482517482,"KT=0.73, SCC=0.90, PCC=0.88"
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.17715617715617715,"2
+1
+0
+1
+deviation of the predictions 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.1794871794871795,density
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.18181818181818182,Predictor deviations
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.18414918414918416,"normal fit, std=0.477
+deviations"
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.1864801864801865,"2
+1
+0
+1
+2
+deviation of the simulated predictions 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.1888111888111888,density
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.19114219114219114,Simulated predictor deviations
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.19347319347319347,"normal fit, std=0.500
+mixed dist. generated with std=0.5"
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.1958041958041958,"Figure 2: A trained XGBoost prediction model on normalized ImageNet16-120 raspi4-latency test
+data. Left: The latency prediction (y-axis) for every architecture (blue dot) is approximately correct
+(red line). Center: The same data as on the left, the distribution of deviations made by the predictor
+(blue) and a normal distribution ﬁt to them (orange). Right: A mixed distribution can simulate
+typical deviation distributions as that in the center plot."
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.19813519813519814,"4
+2
+0
+2
+4
+normalized ImageNet16-120-raspi4 latency 0.25 0.30 0.35 0.40 0.45"
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.20046620046620048,accuracy
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.20279720279720279,"true pareto front
+predicted pareto front
+all architectures
+selected architectures"
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.20512820512820512,"2.0
+1.5
+1.0
+0.5
+0.0
+0.5
+normalized ImageNet16-120-raspi4 latency 0.25 0.30 0.35 0.40 0.45"
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.20745920745920746,accuracy
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.2097902097902098,"true pareto front, HV=2.93
+discovered pareto front, HV=2.86
+selected arch., MRAall = 1.06%, MRApareto = 0.43%"
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.21212121212121213,"Figure 3: An example of predictor-guided architecture selection, std=0.5. Left: The simulated pre-
+dictor makes an inaccurate latency prediction for each architecture (blue), resulting in the selection
+of the supposedly-best architectures (orange dots). Even though the predicted Pareto front (orange
+line) may differ signiﬁcantly from the ground-truth Pareto front (red line), most selected architec-
+tures are close to optimal. Right: Same data as left. The true Pareto front (red) and that of the
+selected architectures (orange). Simply accepting all selected architectures results in a Mean Re-
+duction of Accuracy (MRA) of 1.06%, while verifying the predictions and discarding inferior results
+improves that to 0.43%. The hypervolume (HV, area under the Pareto-fronts) is reduced by 0.07."
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.21445221445221446,"A single example of a simulation can be seen in Figure 3. Although most selected architectures
+(orange) are close to the true optimum (red Pareto front), there almost always exists an architec-
+ture that has superior accuracy and, at most, the same latency. Simply accepting the 13 selected
+architectures in this particular example results in a mean reduction of accuracy (MRAall) of 1.06%.
+In other words, the average selected architecture has 1.06% lower accuracy than a comparable one
+on the true Paret front. However, simply verifying the hardware metric predictions through actual
+measurements reveals that some selected architectures are suboptimal. By choosing only the Pareto
+subset of the selection, the opportunity loss can be reduced to 0.43% (MRApareto)."
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.21678321678321677,"An important property of this approach is that it is independent of any particular optimization
+method. The supposedly-best architectures are always correctly identiﬁed, which is an upper bound
+on how well Bayesian Optimization, Evolutionary Algorithms, and other approaches can perform.
+The exemplary MRApareto opportunity loss of 0.43% is therefore unavoidable and depends solely
+on the hardware metric predictor, the dataset, and the number of considered architectures."
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.2191142191142191,"Results
+We simulate 1,000 architecture selections for each of the ﬁve chosen HW-NAS-Bench
+datasets, six different test set sizes, and eleven distribution standard deviations between 0.0 and 1.0.
+As exemplarily shown in Figure 3, each such simulation allows us to compute the mean reduction
+in accuracy (MRA) and the hypervolume (HV) under the Pareto fronts. The most important insights
+are visualized in Figure 4 and summarized below."
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.22144522144522144,Under review as a conference paper at ICLR 2022
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.22377622377622378,"0.0/1.00
+0.2/0.88
+0.4/0.78
+0.6/0.69
+0.8/0.62
+1.0/0.57
+Std. of prediction deviations / Kendall's Tau 0.0 0.5 1.0 1.5 2.0 2.5"
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.2261072261072261,MRA [%]
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.22843822843822845,"all selected architectures
+pareto-set of the selected architectures"
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.23076923076923078,"0.0/1.00
+0.2/0.88
+0.4/0.78
+0.6/0.69
+0.8/0.62
+1.0/0.57
+Std. of prediction deviations / Kendall's Tau 0 1 2 3 4 5 6"
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.2331002331002331,MRA pareto [%] 
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.23543123543123542,"ImageNet16-120-eyeriss_arithmetic_intensity
+ImageNet16-120-raspi4_latency
+cifar10-edgegpu_latency
+cifar100-edgegpu_energy
+cifar100-pixel3_latency
+mean"
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.23776223776223776,"0.0/1.00
+0.2/0.88
+0.4/0.78
+0.6/0.69
+0.8/0.62
+1.0/0.57
+Std. of prediction deviations / Kendall's Tau 2.0 2.5 3.0 3.5 4.0 4.5"
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.2400932400932401,hypervolume 
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.24242424242424243,"100
+500"
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.24475524475524477,"1000
+2000"
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.24708624708624707,"5000
+15625"
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.2494172494172494,"Figure 4: Simulation results, with the standard deviation of the predictor deviations and the resulting
+KT correlation on the x-axis. Left: Verifying the hardware predictions can signiﬁcantly improve the
+results, even more so for better predictors. Center: The drops in average accuracy are dependant on
+the dataset and hardware metric. Right: Considering more candidate architectures and using better
+prediction models improves the results; larger values are better."
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.2517482517482518,"Verifying the predicted results matters (Figure 4, left). The best prediction models achieve a KT
+correlation of almost 0.9, which translates to a mean reduction in accuracy of MRAall ≈1.5%. That
+means, for each selected architecture, there exists an architecture of equal or lower latency in the
+true Pareto set (if latency is the hardware metric) that improves the average accuracy by 1.5%. Even
+though all selected architectures are believed to form a Pareto set, that is not the case. Their optimal
+subset has a reduction of only MRApareto ≈0.5%, a signiﬁcant improvement. However, ﬁnding
+this optimal subset requires actually measuring the hardware metrics of the architectures selected by
+the used NAS method."
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.2540792540792541,"Furthermore, the left of Figure 4 aids in anticipating the MRA given a speciﬁc predictor. If one used
+e.g. BOHAMIANN (KT≈0.8, see Figure1a) instead of MLPs or LGBoost (KT≈0.9), MRApareto
+increases from around 0.5% to roughly 1.2%. The average accuracy of the selected architectures is
+thus reduced by another 0.7%, just by using an unsuitable hardware metric predictor. Lookup Tables
+(KT≈0.45) are not even visualized anymore, they have an MRApareto of over 2.5%."
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.2564102564102564,"Another interesting observation is that the gap between MRAall and MRApareto is wider for better
+predictors. This is a shortcoming of the MRA metric that we elaborate on in Appendix H."
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.25874125874125875,"The dataset and metric matter (Figure 4, center). While we generally present the results averaged
+over datasets, there exists some discrepancy among them. Most interestingly, predicting hardware
+metrics on harder classiﬁcation problems (ImageNet16-120 is harder than CIFAR10) also results in
+a higher MRA. This is especially important since MRA is an absolute accuracy reduction. Even
+though the CIFAR10 networks achieve twice the accuracy of ImageNet16-120 networks, they lose
+less absolute accuracy to imperfect predictions. The order of MRA/dataset is primarily stable for
+any predictor KT correlation. Finally, as visualized by the shaded areas, the standard deviation
+of the MRA is generally huge. Consequentially, predictor-guided NAS is very likely to produce
+results of varying quality for each different predictor or search attempt, especially with less accurate
+predictors."
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.26107226107226106,"The number of considered architectures matters (Figure 4, right). We measure the hypervolume of
+the discovered Pareto front (i.e., the area beneath it, see Appendix H), which, unlike MRA, also
+considers the hardware metric. Quite obviously, if the architectures from the true Pareto set are not
+considered, they can not be selected. To achieve the highest possible hypervolume of around 4.2
+(i.e. ﬁnd the true Pareto set), every architecture in the search space must be evaluated with a perfect
+predictor. This is impossible in most real-world cases, where only a tiny fraction of all possible
+architectures can ever be considered."
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.2634032634032634,"For HW-NAS-Bench, considering 5000 architectures with perfect live measurements and predicting
+the metrics for all 15625 with ranking correlation KT≈0.73 results in selecting equivalent sets of
+architectures. As seen in Figure1a, Ridge Regression can achieve this performance with fewer
+than 100 training samples. Thus, a worse predictor leads to better results if it enables considering
+more architectures. This insight is especially crucial for live measurements, which are accurate but
+slow. Similarly, estimating the network accuracy with super-networks takes much more time than
+predicting their performance with a neural predictor (Wen et al., 2020). If the measurement of any
+metrics is the limiting factor, a guided selection of a cheap predictor is likely to do better."
+EVALUATING THE PREDICTOR-GUIDED ARCHITECTURE SELECTION,0.26573426573426573,Under review as a conference paper at ICLR 2022
+DISCUSSION,0.2680652680652681,"6
+DISCUSSION"
+DISCUSSION,0.2703962703962704,"Chosen prediction methods
+Given the nature of hardware-metric prediction, only the subset of
+model-based predictors evaluated by White et al. (2021) is suitable. We extended this subset with
+four models, including the popular Lookup Table. We abstained from evaluating layer-wise pre-
+dictors (e.g. Wess et al. (2021)) since such data is not available, and meta-learning predictors (Lee
+et al., 2021) due to the vast possibilities to conﬁgure them. A separate and specialized comparison
+between classic and meta-learning predictors seems favorable to us."
+DISCUSSION,0.2727272727272727,"Simulation limitations
+In contrast to evaluating real predictors, the simulation allows us to
+quickly make statements for any test set sizes and predictor-inaccuracies. However, naturally, the
+results are only approximations. While they match actual values, they are generally slightly pes-
+simistic (see Appendix I). We also limit the simulation to HW-NAS-Bench since the changes to
+classiﬁcation results are more accessible to interpretation than changes to loss values across dif-
+ferent problem types. Finally, the current simulation approach can not investigate methods that
+absolutely require a trained one-shot network, such as gradient-based approaches. Including such
+methods is an interesting direction for future research."
+DISCUSSION,0.27505827505827507,"Transferability of the results
+Our evaluation includes ﬁve challenging and diverse datasets
+based on the micro-level search space of HW-NAS-Bench and ﬁve latency-based datasets of var-
+ious macro-level search space architectures in TransNAS-Bench-101. Nonetheless, we ﬁnd shared
+trends: All tested prediction models improve over Lookup Tables with little amounts of training
+data. Furthermore, most predictors beneﬁt from more training data, even until the entire search
+space (aside from the test set) is known. We also ﬁnd that network-based predictors are generally
+best but may be challenged by tree-based predictors if enough training data is available. Given only
+a few samples, Ridge Regression performs better than most other models."
+DISCUSSION,0.2773892773892774,"Recommendations
+While Lookup Tables are a cheap, simple, and popular model in gradient-
+based architecture selection, we ﬁnd a signiﬁcant variance in performance across tasks and devices
+(see Table 1 and Appendix E). We recommend replacing such models with either MLPs or Ridge
+Regression, which are more stable, fully differentiable, and often take less than 100 training samples
+to achieve better results."
+DISCUSSION,0.27972027972027974,"For most realistic scenarios where more than 100 training samples are available, MLP models are
+the most promising. They are among the top predictors on HW-NAS-Bench and demonstrate out-
+standing performance on the TransNAS-Bench-101 datasets. We found that specialized architecture
+encodings are primarily beneﬁcial for little training data but suspect that they enjoy an additional
+advantage when network topologies are more complex and diverse (White et al., 2021)."
+DISCUSSION,0.28205128205128205,"While the query time for all predictors is less than 0.05s and thus negligible, there is a notable
+difference in training time (see Appendix F), primarily due to the hyper-parameter optimization. We
+recommend Ridge Regression for very little amounts of training data and LGBoost otherwise if that
+is an important factor."
+DISCUSSION,0.28438228438228436,"If a NAS method selects architectures based on hardware metric predictions, we strongly suggest
+verifying the results by measuring the true metric value afterward. Doing so may eliminate inferior
+candidates and improve the average result substantially. Finally, if the limiting factor to a NAS
+method is the slow measurement of hardware metrics, using a much faster predictor may lead to an
+improvement, even if the prediction model is less accurate."
+CONCLUSIONS,0.2867132867132867,"7
+CONCLUSIONS"
+CONCLUSIONS,0.289044289044289,"This work evaluated various hardware-metric prediction models on ten problems of different met-
+rics, devices, and network architecture types. We then simulated the selection process for different
+test set sizes and predictor inaccuracies to improve our understanding of predictor-based architec-
+ture selection. We ﬁnd that even imperfect predictors may improve NAS if their low query time
+enables considering more candidate architectures. Finally, verifying the predictions for the selected
+candidates can lead to a drastic improvement of their average performance. The code and results are
+made available, thus acting both for recommendation and as a baseline for future works."
+CONCLUSIONS,0.2913752913752914,Under review as a conference paper at ICLR 2022
+REFERENCES,0.2937062937062937,REFERENCES
+REFERENCES,0.29603729603729606,"Hadjer Benmeziane, Kaoutar El Maghraoui, Hamza Ouarnoughi, Sma¨ıl Niar, Martin Wistuba, and
+Naigang Wang.
+A Comprehensive Survey on Hardware-Aware Neural Architecture Search.
+CoRR, abs/2101.09336, 2021. URL https://arxiv.org/abs/2101.09336."
+REFERENCES,0.29836829836829837,"Christopher M. Bishop. Pattern recognition and machine learning, 5th Edition. Information science
+and statistics. Springer, 2007. ISBN 9780387310732. URL https://www.worldcat.org/
+oclc/71008143."
+REFERENCES,0.3006993006993007,"Han Cai, Ligeng Zhu, and Song Han.
+ProxylessNAS: Direct Neural Architecture Search on
+Target Task and Hardware.
+In 7th International Conference on Learning Representations,
+ICLR 2019, New Orleans, LA, USA, May 6-9, 2019. OpenReview.net, 2019.
+URL https:
+//openreview.net/forum?id=HylVB3AqYm."
+REFERENCES,0.30303030303030304,"Joaquin Qui˜nonero Candela and Carl Edward Rasmussen. A Unifying View of Sparse Approximate
+Gaussian Process Regression. J. Mach. Learn. Res., 6:1939–1959, 2005. URL http://jmlr.
+org/papers/v6/quinonero-candela05a.html."
+REFERENCES,0.30536130536130535,"Tianqi Chen and Carlos Guestrin. XGBoost: A scalable tree boosting system. In Proceedings of the
+22nd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining, KDD
+’16, pp. 785–794, New York, NY, USA, 2016. ACM. ISBN 978-1-4503-4232-2. doi: 10.1145/
+2939672.2939785. URL http://doi.acm.org/10.1145/2939672.2939785."
+REFERENCES,0.3076923076923077,"Patryk Chrabaszcz, Ilya Loshchilov, and Frank Hutter. A downsampled variant of imagenet as an
+alternative to the cifar datasets. arXiv preprint arXiv:1707.08819, 2017."
+REFERENCES,0.31002331002331,"Xiangxiang Chu, Bo Zhang, Jixiang Li, Qingyuan Li, and Ruijun Xu. ScarletNAS: Bridging the
+Gap Between Scalability and Fairness in Neural Architecture Search. CoRR, abs/1908.06022,
+2019a. URL http://arxiv.org/abs/1908.06022."
+REFERENCES,0.3123543123543124,"Xiangxiang Chu, Bo Zhang, Ruijun Xu, and Jixiang Li. FairNAS: Rethinking Evaluation Fairness
+of Weight Sharing Neural Architecture Search. CoRR, abs/1907.01845, 2019b. URL http:
+//arxiv.org/abs/1907.01845."
+REFERENCES,0.3146853146853147,"Corinna Cortes and Vladimir Vapnik. Support-vector networks. Machine learning, 20(3):273–297,
+1995."
+REFERENCES,0.317016317016317,"Xiaoliang Dai, Alvin Wan, Peizhao Zhang, Bichen Wu, Zijian He, Zhen Wei, Kan Chen, Yuandong
+Tian, Matthew Yu, Peter Vajda, and Joseph E. Gonzalez. FBNetV3: Joint Architecture-Recipe
+Search using Neural Acquisition Function.
+CoRR, abs/2006.02049, 2020.
+URL https://
+arxiv.org/abs/2006.02049."
+REFERENCES,0.31934731934731936,"Xuanyi Dong and Yi Yang. NAS-Bench-201: Extending the Scope of Reproducible Neural Archi-
+tecture Search. In 8th International Conference on Learning Representations, ICLR 2020, Addis
+Ababa, Ethiopia, April 26-30, 2020. OpenReview.net, 2020. URL https://openreview.
+net/forum?id=HJxyZkBKDr."
+REFERENCES,0.32167832167832167,"Xuanyi Dong, Lu Liu, Katarzyna Musial, and Bogdan Gabrys. NATS-Bench: Benchmarking NAS
+Algorithms for Architecture Topology and Size. arXiv preprint arXiv:2009.00437, 2020."
+REFERENCES,0.32400932400932403,"Tony Duan, Avati Anand, Daisy Yi Ding, Khanh K. Thai, Sanjay Basu, Andrew Y. Ng, and Alejan-
+dro Schuler. Ngboost: Natural gradient boosting for probabilistic prediction. In Proceedings of
+the 37th International Conference on Machine Learning, ICML 2020, 13-18 July 2020, Virtual
+Event, volume 119 of Proceedings of Machine Learning Research, pp. 2690–2700. PMLR, 2020.
+URL http://proceedings.mlr.press/v119/duan20a.html."
+REFERENCES,0.32634032634032634,"Yawen Duan, Xin Chen, Hang Xu, Zewei Chen, Xiaodan Liang, Tong Zhang, and Zhenguo Li.
+TransNAS-Bench-101: Improving Transferability and Generalizability of Cross-Task Neural Ar-
+chitecture Search. CoRR, abs/2105.11871, 2021. URL https://arxiv.org/abs/2105.
+11871."
+REFERENCES,0.32867132867132864,Under review as a conference paper at ICLR 2022
+REFERENCES,0.331002331002331,"Zichao Guo, Xiangyu Zhang, Haoyuan Mu, Wen Heng, Zechun Liu, Yichen Wei, and Jian Sun. Sin-
+gle Path One-Shot Neural Architecture Search with Uniform Sampling. In European Conference
+on Computer Vision, pp. 544–560. Springer, 2020. URL http://arxiv.org/abs/1904.
+00420."
+REFERENCES,0.3333333333333333,"Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep Residual Learning for Image
+Recognition. In Proceedings of the IEEE conference on computer vision and pattern recognition,
+pp. 770–778, 2016. URL http://arxiv.org/abs/1512.03385."
+REFERENCES,0.3356643356643357,"Andrew G. Howard, Menglong Zhu, Bo Chen, Dmitry Kalenichenko, Weijun Wang, Tobias Weyand,
+Marco Andreetto, and Hartwig Adam. MobileNets: Efﬁcient Convolutional Neural Networks for
+Mobile Vision applications. CoRR, abs/1704.04861, 2017. URL http://arxiv.org/abs/
+1704.04861."
+REFERENCES,0.337995337995338,"Shoukang Hu, Sirui Xie, Hehui Zheng, Chunxiao Liu, Jianping Shi, Xunying Liu, and Dahua Lin.
+DSNAS: Direct Neural Architecture Search without Parameter Retraining. In Proceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern Recognition, pp. 12084–12092, 2020.
+URL http://arxiv.org/abs/2002.09128."
+REFERENCES,0.34032634032634035,"Guolin Ke, Qi Meng, Thomas Finley, Taifeng Wang, Wei Chen, Weidong Ma, Qiwei Ye, and Tie-
+Yan Liu. Lightgbm: A highly efﬁcient gradient boosting decision tree. In Isabelle Guyon, Ulrike
+von Luxburg, Samy Bengio, Hanna M. Wallach, Rob Fergus, S. V. N. Vishwanathan, and Roman
+Garnett (eds.), Advances in Neural Information Processing Systems 30: Annual Conference on
+Neural Information Processing Systems 2017, December 4-9, 2017, Long Beach, CA, USA, pp.
+3146–3154, 2017. URL https://proceedings.neurips.cc/paper/2017/hash/
+6449f44a102fde848669bdd9eb6b76fa-Abstract.html."
+REFERENCES,0.34265734265734266,"Alex Krizhevsky, Vinod Nair, and Geoffrey Hinton. CIFAR-10 (Canadian Institute for Advanced
+Research). 2009. URL http://www.cs.toronto.edu/˜kriz/cifar.html."
+REFERENCES,0.34498834498834496,"Hayeon Lee, Sewoong Lee, Song Chong, and Sung Ju Hwang. HELP: Hardware-Adaptive Efﬁcient
+Latency Predictor for NAS via Meta-Learning. CoRR, abs/2106.08630, 2021. URL https:
+//arxiv.org/abs/2106.08630."
+REFERENCES,0.3473193473193473,"Chaojian Li, Zhongzhi Yu, Yonggan Fu, Yongan Zhang, Yang Zhao, Haoran You, Qixuan Yu, Yue
+Wang, and Yingyan Lin. HW-NAS-Bench: Hardware-Aware Neural Architecture Search Bench-
+mark. CoRR, abs/2103.10584, 2021a. URL https://arxiv.org/abs/2103.10584."
+REFERENCES,0.34965034965034963,"Guihong Li, Sumit K. Mandal, ¨Umit Y. Ogras, and Radu Marculescu. FLASH: Fast Neural Ar-
+chitecture Search with Hardware Optimization. CoRR, abs/2108.00568, 2021b. URL https:
+//arxiv.org/abs/2108.00568."
+REFERENCES,0.351981351981352,"Liam Li and Ameet Talwalkar. Random Search and Reproducibility for Neural Architecture Search.
+In Uncertainty in Artiﬁcial Intelligence, pp. 367–377. PMLR, 2020."
+REFERENCES,0.3543123543123543,"Andy Liaw, Matthew Wiener, et al. Classiﬁcation and Regression by randomForest. R news, 2(3):
+18–22, 2002."
+REFERENCES,0.35664335664335667,"Marius Lindauer and Frank Hutter. Best Practices for Scientiﬁc Research on Neural Architecture
+Search. Journal of Machine Learning Research, 21(243):1–18, 2020."
+REFERENCES,0.358974358974359,"Renqian Luo, Fei Tian, Tao Qin, Enhong Chen, and Tie-Yan Liu. Neural Architecture Optimization.
+In Samy Bengio, Hanna M. Wallach, Hugo Larochelle, Kristen Grauman, Nicol`o Cesa-Bianchi,
+and Roman Garnett (eds.), Advances in Neural Information Processing Systems 31: Annual Con-
+ference on Neural Information Processing Systems 2018, NeurIPS 2018, December 3-8, 2018,
+Montr´eal, Canada, pp. 7827–7838, 2018. URL https://proceedings.neurips.cc/
+paper/2018/hash/933670f1ac8ba969f32989c312faba75-Abstract.html."
+REFERENCES,0.3613053613053613,"Ningning Ma, Xiangyu Zhang, Hai-Tao Zheng, and Jian Sun. ShufﬂeNet V2: Practical Guidelines
+for Efﬁcient CNN Architecture Design. In Vittorio Ferrari, Martial Hebert, Cristian Sminchis-
+escu, and Yair Weiss (eds.), Computer Vision - ECCV 2018 - 15th European Conference, Mu-
+nich, Germany, September 8-14, 2018, Proceedings, Part XIV, volume 11218 of Lecture Notes
+in Computer Science, pp. 122–138. Springer, 2018. doi: 10.1007/978-3-030-01264-9\ 8. URL
+https://doi.org/10.1007/978-3-030-01264-9_8."
+REFERENCES,0.36363636363636365,Under review as a conference paper at ICLR 2022
+REFERENCES,0.36596736596736595,"Joseph Mellor, Jack Turner, Amos Storkey, and Elliot J. Crowley. Neural Architecture Search with-
+out Training, 2020. URL http://arxiv.org/abs/2006.04647."
+REFERENCES,0.3682983682983683,"Daniel M. Mendoza and Sijin Wang.
+Predicting Latency of Neural Network Inference,
+2020.
+URL http://cs230.stanford.edu/projects_fall_2020/reports/
+55793069.pdf."
+REFERENCES,0.3706293706293706,"Niv Nayman, Yonathan Aﬂalo, Asaf Noy, and Lihi Zelnik. HardCoRe-NAS: Hard Constrained
+diffeRentiable Neural Architecture Search. In Marina Meila and Tong Zhang (eds.), Proceedings
+of the 38th International Conference on Machine Learning, ICML 2021, 18-24 July 2021, Virtual
+Event, volume 139 of Proceedings of Machine Learning Research, pp. 7979–7990. PMLR, 2021.
+URL http://proceedings.mlr.press/v139/nayman21a.html."
+REFERENCES,0.372960372960373,"Evgeny Ponomarev, Sergey A. Matveev, and Ivan V. Oseledets. LETI: Latency Estimation Tool and
+Investigation of Neural Networks inference on Mobile GPU. CoRR, abs/2010.02871, 2020. URL
+https://arxiv.org/abs/2010.02871."
+REFERENCES,0.3752913752913753,"Carl Edward Rasmussen. Gaussian Processes in Machine Learning. In Olivier Bousquet, Ulrike
+von Luxburg, and Gunnar R¨atsch (eds.), Advanced Lectures on Machine Learning, ML Sum-
+mer Schools 2003, Canberra, Australia, February 2-14, 2003, T¨ubingen, Germany, August 4-
+16, 2003, Revised Lectures, volume 3176 of Lecture Notes in Computer Science, pp. 63–71.
+Springer, 2003. doi: 10.1007/978-3-540-28650-9\ 4. URL https://doi.org/10.1007/
+978-3-540-28650-9_4."
+REFERENCES,0.3776223776223776,"Esteban Real, Alok Aggarwal, Yanping Huang, and Quoc V Le. Regularized Evolution for Image
+Classiﬁer Architecture Search, 2018. URL http://arxiv.org/abs/1802.01548."
+REFERENCES,0.37995337995337997,"Michael Ruchte, Arber Zela, Julien Siems, Josif Grabocka, and Frank Hutter. Naslib: A modular
+and ﬂexible neural architecture search library. https://github.com/automl/NASLib,
+2020."
+REFERENCES,0.3822843822843823,"Mark Sandler, Andrew Howard, Menglong Zhu, Andrey Zhmoginov, and Liang-Chieh Chen. Mo-
+bilenetv2: Inverted residuals and linear bottlenecks. In Proceedings of the IEEE conference on
+computer vision and pattern recognition, pp. 4510–4520, 2018."
+REFERENCES,0.38461538461538464,"Craig Saunders, Alexander Gammerman, and Volodya Vovk. Ridge Regression Learning Algorithm
+in Dual Variables. In Proceedings of the Fifteenth International Conference on Machine Learning,
+ICML ’98, pp. 515521, San Francisco, CA, USA, 1998. Morgan Kaufmann Publishers Inc. ISBN
+1558605568."
+REFERENCES,0.38694638694638694,"Han Shi, Renjie Pi, Hang Xu, Zhenguo Li, James T. Kwok, and Tong Zhang.
+Bridging
+the Gap between Sample-based and One-shot Neural Architecture Search with BONAS.
+In
+Hugo Larochelle, Marc’Aurelio Ranzato, Raia Hadsell, Maria-Florina Balcan, and Hsuan-
+Tien Lin (eds.), Advances in Neural Information Processing Systems 33:
+Annual Con-
+ference on Neural Information Processing Systems 2020, NeurIPS 2020, December 6-12,
+2020, virtual, 2020. URL https://proceedings.neurips.cc/paper/2020/hash/
+13d4635deccc230c944e4ff6e03404b5-Abstract.html."
+REFERENCES,0.38927738927738925,"Julien Siems, Lucas Zimmer, Arber Zela, Jovita Lukasik, Margret Keuper, and Frank Hutter. NAS-
+Bench-301 and the Case for Surrogate Benchmarks for Neural Architecture Search, 2020."
+REFERENCES,0.3916083916083916,"Jost Tobias Springenberg,
+Aaron Klein,
+Stefan Falkner,
+and Frank Hutter.
+Bayesian
+Optimization with Robust Bayesian Neural Networks.
+In Daniel D. Lee,
+Masashi
+Sugiyama, Ulrike von Luxburg, Isabelle Guyon, and Roman Garnett (eds.), Advances
+in Neural Information Processing Systems 29:
+Annual Conference on Neural Infor-
+mation Processing Systems 2016, December 5-10, 2016, Barcelona, Spain, pp. 4134–
+4142,
+2016.
+URL
+https://proceedings.neurips.cc/paper/2016/hash/
+a96d3afec184766bfeca7a9f989fc7e7-Abstract.html."
+REFERENCES,0.3939393939393939,"Mingxing Tan and Quoc V. Le. EfﬁcientNet: Rethinking Model Scaling for Convolutional Neural
+Networks. CoRR, abs/1905.11946, 2019. URL http://arxiv.org/abs/1905.11946."
+REFERENCES,0.3962703962703963,Under review as a conference paper at ICLR 2022
+REFERENCES,0.3986013986013986,"Mingxing Tan, Bo Chen, Ruoming Pang, Vijay Vasudevan, Mark Sandler, Andrew Howard, and
+Quoc V. Le.
+MnasNet: Platform-Aware Neural Architecture Search for Mobile.
+In IEEE
+Conference on Computer Vision and Pattern Recognition, CVPR 2019, Long Beach, CA,
+USA, June 16-20, 2019, pp. 2820–2828. Computer Vision Foundation / IEEE, 2019.
+doi:
+10.1109/CVPR.2019.00293.
+URL
+http://openaccess.thecvf.com/content_
+CVPR_2019/html/Tan_MnasNet_Platform-Aware_Neural_Architecture_
+Search_for_Mobile_CVPR_2019_paper.html."
+REFERENCES,0.40093240093240096,"Alvin Wan, Xiaoliang Dai, Peizhao Zhang, Zijian He, Yuandong Tian, Saining Xie, Bichen Wu,
+Matthew Yu, Tao Xu, Kan Chen, Peter Vajda, and Joseph E. Gonzalez. FBNetV2: Differentiable
+Neural Architecture Search for Spatial and Channel Dimensions. In 2020 IEEE/CVF Conference
+on Computer Vision and Pattern Recognition, CVPR 2020, Seattle, WA, USA, June 13-19, 2020,
+pp. 12962–12971. IEEE, 2020. doi: 10.1109/CVPR42600.2020.01298. URL https://doi.
+org/10.1109/CVPR42600.2020.01298."
+REFERENCES,0.40326340326340326,"Ruochen Wang, Xiangning Chen, Minhao Cheng, Xiaocheng Tang, and Cho-Jui Hsieh. RANK-
+NOSH: Efﬁcient Predictor-Based Architecture Search via Non-Uniform Successive Halving.
+CoRR, abs/2108.08019, 2021. URL https://arxiv.org/abs/2108.08019."
+REFERENCES,0.40559440559440557,"Wei Wen, Hanxiao Liu, Yiran Chen, Hai Helen Li, Gabriel Bender, and Pieter-Jan Kindermans.
+Neural Predictor for Neural Architecture Search. In Andrea Vedaldi, Horst Bischof, Thomas
+Brox, and Jan-Michael Frahm (eds.), Computer Vision - ECCV 2020 - 16th European Conference,
+Glasgow, UK, August 23-28, 2020, Proceedings, Part XXIX, volume 12374 of Lecture Notes in
+Computer Science, pp. 660–676. Springer, 2020. doi: 10.1007/978-3-030-58526-6\ 39. URL
+https://doi.org/10.1007/978-3-030-58526-6_39."
+REFERENCES,0.40792540792540793,"Matthias Wess, Matvey Ivanov, Christoph Unger, Anvesh Nookala, Alexander Wendt, and Axel
+Jantsch. ANNETTE: Accurate Neural Network Execution Time Estimation With Stacked Models.
+IEEE Access, 9:35453556, 2021. ISSN 2169-3536. doi: 10.1109/access.2020.3047259. URL
+http://dx.doi.org/10.1109/ACCESS.2020.3047259."
+REFERENCES,0.41025641025641024,"Colin White, Willie Neiswanger, and Yash Savani. BANANAS: Bayesian Optimization with Neural
+Architectures for Neural Architecture Search. arXiv preprint arXiv:1910.11858, 2019."
+REFERENCES,0.4125874125874126,"Colin White, Arber Zela, Binxin Ru, Yang Liu, and Frank Hutter. How Powerful are Performance
+Predictors in Neural Architecture Search?
+CoRR, abs/2104.01177, 2021.
+URL https://
+arxiv.org/abs/2104.01177."
+REFERENCES,0.4149184149184149,"Bichen Wu, Xiaoliang Dai, Peizhao Zhang, Yanghan Wang, Fei Sun, Yiming Wu, Yuandong
+Tian, Peter Vajda, Yangqing Jia, and Kurt Keutzer. FBNet: Hardware-Aware Efﬁcient ConvNet
+Design via Differentiable Neural Architecture Search. In IEEE Conference on Computer Vision
+and Pattern Recognition, CVPR 2019, Long Beach, CA, USA, June 16-20, 2019, pp. 10734–
+10742. Computer Vision Foundation / IEEE, 2019.
+doi: 10.1109/CVPR.2019.01099.
+URL
+http://openaccess.thecvf.com/content_CVPR_2019/html/Wu_FBNet_
+Hardware-Aware_Efficient_ConvNet_Design_via_Differentiable_
+Neural_Architecture_Search_CVPR_2019_paper.html."
+REFERENCES,0.4172494172494173,"Yuhui Xu, Lingxi Xie, Xiaopeng Zhang, Xin Chen, Bowen Shi, Qi Tian, and Hongkai Xiong.
+Latency-Aware Differentiable Neural Architecture Search. CoRR, abs/2001.06392, 2020. URL
+https://arxiv.org/abs/2001.06392."
+REFERENCES,0.4195804195804196,"Antoine Yang, Pedro M Esperanc¸a, and Fabio M Carlucci. Nas evaluation is frustratingly hard.
+arXiv preprint arXiv:1912.12522, 2019."
+REFERENCES,0.4219114219114219,"Tien-Ju Yang, Andrew G. Howard, Bo Chen, Xiao Zhang, Alec Go, Mark Sandler, Vivienne Sze,
+and Hartwig Adam. NetAdapt: Platform-Aware Neural Network Adaptation for Mobile Ap-
+plications.
+In Vittorio Ferrari, Martial Hebert, Cristian Sminchisescu, and Yair Weiss (eds.),
+Computer Vision - ECCV 2018 - 15th European Conference, Munich, Germany, September 8-14,
+2018, Proceedings, Part X, volume 11214 of Lecture Notes in Computer Science, pp. 289–304.
+Springer, 2018. doi: 10.1007/978-3-030-01249-6\ 18. URL https://doi.org/10.1007/
+978-3-030-01249-6_18."
+REFERENCES,0.42424242424242425,Under review as a conference paper at ICLR 2022
+REFERENCES,0.42657342657342656,"Shuochao Yao, Yiran Zhao, Huajie Shao, ShengZhong Liu, Dongxin Liu, Lu Su, and Tarek Ab-
+delzaher. FastDeepIoT: Towards Understanding and Optimizing Neural Network Execution Time
+on Mobile and Embedded Devices. In Proceedings of the 16th ACM Conference on Embedded
+Networked Sensor Systems, pp. 278–291, 2018."
+REFERENCES,0.4289044289044289,"Chris Ying, Aaron Klein, Eric Christiansen, Esteban Real, Kevin Murphy, and Frank Hutter. NAS-
+Bench-101: Towards Reproducible Neural Architecture Search. In Kamalika Chaudhuri and Rus-
+lan Salakhutdinov (eds.), Proceedings of the 36th International Conference on Machine Learn-
+ing, ICML 2019, 9-15 June 2019, Long Beach, California, USA, volume 97 of Proceedings of
+Machine Learning Research, pp. 7105–7114. PMLR, 2019. URL http://proceedings.
+mlr.press/v97/ying19a.html."
+REFERENCES,0.43123543123543123,"Kaicheng Yu, Ren´e Ranftl, and Mathieu Salzmann. How to Train Your Super-Net: An Analysis
+of Training Heuristics in Weight-Sharing NAS. CoRR, abs/2003.04276, 2020. URL https:
+//arxiv.org/abs/2003.04276."
+REFERENCES,0.43356643356643354,"Xiangyu Zhang, Xinyu Zhou, Mengxiao Lin, and Jian Sun.
+ShufﬂeNet:
+An Extremely
+Efﬁcient Convolutional Neural Network for Mobile Devices.
+In 2018 IEEE Conference
+on Computer Vision and Pattern Recognition, CVPR 2018, Salt Lake City, UT, USA,
+June 18-22, 2018, pp. 6848–6856. IEEE Computer Society, 2018.
+doi:
+10.1109/CVPR.
+2018.00716. URL http://openaccess.thecvf.com/content_cvpr_2018/html/
+Zhang_ShuffleNet_An_Extremely_CVPR_2018_paper.html."
+REFERENCES,0.4358974358974359,"Barret Zoph, Vijay Vasudevan, Jonathon Shlens, and Quoc V Le. Learning transferable architectures
+for scalable image recognition. In Proceedings of the IEEE conference on computer vision and
+pattern recognition, pp. 8697–8710, 2018. URL http://arxiv.org/abs/1707.07012."
+REFERENCES,0.4382284382284382,Under review as a conference paper at ICLR 2022
+REFERENCES,0.4405594405594406,"A
+BEST PRACTICES FOR NAS, CODE AND DATA"
+REFERENCES,0.4428904428904429,"To improve the reproducibility and facilitate fair experimental comparisons, we follow the best-
+practices checklist (Lindauer & Hutter, 2020):"
+REFERENCES,0.44522144522144524,"• Release Code for the Training Pipeline(s) you use. Our experiments are based on White
+et al. (2021), who use NASLib (Ruchte et al., 2020) to compare 31 methods for accuracy
+prediction. Our NASLib fork, extending the framework for HW-NAS-Bench, TransNAS-
+Bench, some performance predictors and the hypervolume simulations, is provided in the
+supplementary materials. We intend to either make our fork available on GitHub or submit
+the changes upstream once this paper is accepted/published."
+REFERENCES,0.44755244755244755,"• Use the Same Evaluation Protocol for the Methods Being Compared. Aside from the
+implementation of each predictor, all experiments use the same pipeline."
+REFERENCES,0.44988344988344986,"• Validate The Results Several Times.
+We ran each predictor 50 times, with seeds
+{0, ..., 49}. The reductions in hypervolume are simulated 1000 times using different a
+different subset of the data set, for each combination of {iteration, HW-NAS data set, noise
+on HW metric}."
+REFERENCES,0.4522144522144522,"• Control Confounding Factors. While all experiments used the same software libraries
+and hardware resources, they were run on different machines to speed up the evaluation.
+We found hardly any beneﬁt in using a GPU even for the network-based predictors, which
+is why every method only used two CPU cores. The OS is Ubuntu 18.04, notable software
+packages are PyTorch 1.9.0, numpy 1.19.5, scikit-learn 0.24.2, pybnn 0.0.5, ngboost 0.3.11,
+and xgboost 1.4.2"
+REFERENCES,0.45454545454545453,• Report the Use of Hyperparameter Optimization. See Appendix C.
+REFERENCES,0.4568764568764569,"In addition to the code in the supplementary materials, we also provide the experimental results as
+csv ﬁles. Running the predictors and hypervolume simulations takes some time, but the easy access
+to the data of the ﬁnished experiments may prove useful for future research. Please see readme.md
+in the accompanying code zip ﬁle for instructions."
+REFERENCES,0.4592074592074592,"B
+ENCODINGS AND PREDICTORS"
+REFERENCES,0.46153846153846156,"B.1
+DATA ENCODINGS"
+REFERENCES,0.46386946386946387,"Every architecture a ∈A requires a unique representation, which depends on the used predictor.
+The common encoding types are:"
+REFERENCES,0.4662004662004662,"Adjacency one-hot: Each architecture a is uniquely deﬁned by the chosen candidate operation on
+every path. For example, each architecture in NAS-BENCH-201 consists of a repeated cell structure,
+which has ﬁve candidate operations on each of the six paths. Therefore there are 56 = 15625 unique
+architectures, which can each be referenced by a sequence of operation-indices such as [0 1 2 3 4 0].
+Many predictors perform better if the sequence is presented as a one-hot encoding, which is in this
+case [10000 01000 00100 00010 00001 10000]."
+REFERENCES,0.46853146853146854,"Similarly, the path-encoding (used by BANANAS) is a one-hot representation over the used can-
+didate operation all possible paths. Since the connectivity within cells for HW-NAS-Bench and
+TransNAS-Bench-101 is ﬁxed, it provides no more information than the adjacency one-hot encod-
+ing. If the connectivity can be adjusted more freely, as in the NAS-Bench-101 search space, the
+additional information may improve the ﬁt."
+REFERENCES,0.47086247086247085,"The encodings for BONAS, GCN, and NAO each provide further information in addition to the
+Adjacency one-hot vector, most notably the adjacency-matrix. This {0, 1}(N+2)×(N+2) matrix lists
+describes which of the N architecture paths (rows) serves as inputs for each other path (column),
+and also includes input/output."
+REFERENCES,0.4731934731934732,Under review as a conference paper at ICLR 2022
+REFERENCES,0.4755244755244755,"B.2
+PREDICTORS"
+REFERENCES,0.47785547785547783,"We brieﬂy describe the 18 predictor methods in our experiments. We adopt their implementations
+from the NASLib library (see Appendix A), which we extend with Linear Regression, Ridge Re-
+gression, and Support Vector Machines from the scikit-learn package; and a simple Lookup Table
+implementation. Unless speciﬁed otherwise, the methods use the adjacency one-hot encoding."
+REFERENCES,0.4801864801864802,"• BANANAS An ensemble of three MLP models with ﬁve to 20 layers, each using the path-
+encoding (White et al., 2019)."
+REFERENCES,0.4825174825174825,"• Bayesian Linear Regression A bayesian model that assumes (1) a linear dependency be-
+tween inputs and outputs, and (2) that the samples are normally distributed (Bishop, 2007)."
+REFERENCES,0.48484848484848486,"• BOHAMIANN A bayesian inference predictor using stochastic gradient Hamiltonian
+Monte Carlo (SGHMC) to sample from a bayesian neural network (Springenberg et al.,
+2016)."
+REFERENCES,0.48717948717948717,"• BONAS Bayesian Optimization for NAS (Shi et al., 2020) uses a GCN predictor within an
+outer loop of bayesian optimization, as a meta-learning task. The GCN requires encoding
+the adjacency matrix of each architecture."
+REFERENCES,0.48951048951048953,"• Gaussian Process A simple model that assumes a joint Gaussian distribution underlying
+the training data (Rasmussen, 2003)."
+REFERENCES,0.49184149184149184,"• GCN A Graph Convolutional Network that makes use of an adjacency-matrix encoding of
+each architecture (Wen et al., 2020)."
+REFERENCES,0.49417249417249415,"• Linear Regression A simple model that assumes an independent value/cost for each oper-
+ation/layer, which only need to be summed up. Unlike the Lookup Table model, it uses a
+least-square ﬁt on the training data."
+REFERENCES,0.4965034965034965,"• Lookup Table The most simple and perhaps widely used model for differentiable archi-
+tecture selection. It generally assumes a single baseline architecture (e.g. [001 001] in
+adjacency one-hot encoding), and a lookup matrix R(num layers)×(num candidates) that contains
+the increases/reductions in the metric for each layer and candidate operation. The metric
+value of a new architecture can be predicted with a simple sum over the respective matrix
+entries and the baseline value. The model is obtained from measuring either each candidate
+operation in isolation, or by computing the differences between the baseline architecture
+and speciﬁc variations (e.g. [010 001] or [100 001], to measure the ﬁrst candidates). This
+model always requires 1+(num layers) · (num candidates−1) neighbored architectures to
+ﬁt. We detail the resulting correlation values for each used dataset in Appendix E."
+REFERENCES,0.4988344988344988,"• LGBoost Light Gradient Boosting Machine (LightGBM or LGBoost, Ke et al. (2017)) is a
+lightweight gradient-boosted decision tree model."
+REFERENCES,0.5011655011655012,• MLP We use fully-connected Multi Layer Perceptrons in two size-categories.
+REFERENCES,0.5034965034965035,"• NAO NAO (Luo et al., 2018) uses an encoder-decoder topology,
+which en-
+codes/compresses an architecture to a continuous representation, and decodes it again. This
+representation is further used to make architecture predictions."
+REFERENCES,0.5058275058275058,"• NGBoost Natural Gradient Boosting (NGBoost, Duan et al. (2020)) is a gradient-boosted
+decision tree model that uses natural gradients to estimate uncertainty."
+REFERENCES,0.5081585081585082,"• Ridge Regression Ridge Regression (Saunders et al., 1998) extends the Linear Regression
+least-squares ﬁt with a regularization term that serves as bias-variance tradeoff."
+REFERENCES,0.5104895104895105,"• Random Forests An ensemble of decision trees (Liaw et al., 2002)."
+REFERENCES,0.5128205128205128,"• Sparse Gaussian Process an approximation of Gaussian Processes that summarizes train-
+ing data (Candela & Rasmussen, 2005)."
+REFERENCES,0.5151515151515151,"• Support Vector Machine A model that maps its inputs to a high-dimensional space, where
+training samples are used as support-vectors for decision-boundaries (Cortes & Vapnik,
+1995)."
+REFERENCES,0.5174825174825175,"• XGBoost eXtreme Gradient Boosting (XGBoost, Chen & Guestrin (2016)) is a gradient-
+boosted decision tree model."
+REFERENCES,0.5198135198135199,Under review as a conference paper at ICLR 2022
+REFERENCES,0.5221445221445221,"C
+HYPERPARAMETERS"
+REFERENCES,0.5244755244755245,"We list our default and hyper-parameter sample ranges in Table 2. For comparability with White
+et al. (2021), we only change the values of newly introduced parameterized predictors: Ridge Re-
+gression, Support Vector Machines, and small MLPs."
+REFERENCES,0.5268065268065268,"Model
+Hyper-parameter
+Range/Choice
+Log-transform
+Default"
+REFERENCES,0.5291375291375291,"BANANAS
+Num. Layers
+[5, 25]
+false
+20
+Layer width
+[5, 25]
+false
+20
+Learning rate
+[0.0001, 0.1]
+true
+0.001"
+REFERENCES,0.5314685314685315,"BONAS
+Num. Layers
+[16, 128]
+true
+64
+Batch size
+[32, 256]
+true
+128
+Learning rate
+[0.00001, 0.1]
+true
+0.0001 GCN"
+REFERENCES,0.5337995337995338,"Num. Layers
+[64, 200]
+true
+144
+Batch size
+[5, 32]
+true
+7
+Learning rate
+[0.00001, 0.1]
+true
+0.0001
+Weight decay
+[0.00001, 0.1]
+true
+0.0003"
+REFERENCES,0.5361305361305362,"LGBoost
+Num. leaves
+[10, 100]
+false
+31
+Learning rate
+[0.001, 0.1]
+true
+0.05
+Feature fraction
+[0.1, 1]
+false
+0.9"
+REFERENCES,0.5384615384615384,MLP (small)
+REFERENCES,0.5407925407925408,"Num. layers
+[2, 5]
+false
+3
+Layer width
+[16, 128]
+true
+32
+Learning rate
+[0.0001, 0.1]
+true
+0.001
+Activation function
+{relu, tanh, hardswish}
+relu"
+REFERENCES,0.5431235431235432,"MLP (huge)
+Num. layers
+[5, 25]
+false
+20
+Layer width
+[5, 25]
+false
+20
+Learning rate
+[0.0001, 0.1]
+true
+0.001"
+REFERENCES,0.5454545454545454,"NAO
+Num. layers
+[16, 128]
+true
+64
+Batch size
+[32, 256]
+true
+100
+Learning rate
+[0.00001, 0.1]
+true
+0.001"
+REFERENCES,0.5477855477855478,NGBoost
+REFERENCES,0.5501165501165501,"Num. estimators
+[128, 512]
+true
+64
+Learning rate
+[0.001, 0.1]
+true
+0.081
+Max depth
+[1, 25]
+false
+6
+Max features
+[0.1, 1]
+false
+0.79"
+REFERENCES,0.5524475524475524,"Ridge Regression
+Regularization α
+[0.25, 2.5]
+false
+1.0"
+REFERENCES,0.5547785547785548,Random Forests
+REFERENCES,0.5571095571095571,"Num. estimators
+[16, 128]
+true
+116
+Max features
+[0.1, 0.9]
+true
+0.17
+Min samples (leaf)
+[1, 20]
+false
+2
+Min samples (split)
+[2, 20]
+true
+2"
+REFERENCES,0.5594405594405595,"Support Vector Machine
+Regularization C
+[0.5, 1.5]
+false
+1.0
+Kernel
+{linear, poly, rbf, sigmoid}
+rbf"
+REFERENCES,0.5617715617715617,XGBoost
+REFERENCES,0.5641025641025641,"Max depth
+[1, 15]
+false
+6
+Min child weight
+[1, 10]
+false
+1
+Col sample (tree)
+[0, 1]
+false
+1
+Learning rate
+[0.001, 0.5]
+true
+0.3
+Col sample (level)
+[0, 1]
+false
+1"
+REFERENCES,0.5664335664335665,Table 2: Hyper-parameter ranges and default values of the conﬁgurable predictors
+REFERENCES,0.5687645687645687,Under review as a conference paper at ICLR 2022
+REFERENCES,0.5710955710955711,"D
+NAS-BENCH-201 / HW-NAS-BENCH CELL DESIGN 4 3 2 1 6 5"
+REFERENCES,0.5734265734265734,"Figure 5: Basic NAS-Bench-201 / HW-NAS cell design. Each of the six orange paths is ﬁnalized
+with exactly one out of ﬁve candidate operations {Zero, Skip, Convolution 1×1, Convolution 3×3,
+Average Pooling 3×3}."
+REFERENCES,0.5757575757575758,"E
+SELECTION OF DATASETS"
+REFERENCES,0.578088578088578,"Linear Regression
+XGBoost
+LUT"
+REFERENCES,0.5804195804195804,"11
+25
+55
+124
+276
+614
+1366
+3036
+6748
+15000
+15000
+-"
+REFERENCES,0.5827505827505828,"ImageNet16-120-raspi4 latency
+0.324
+0.205
+0.606
+0.676
+0.705
+0.716
+0.715
+0.723
+0.728
+0.729
+0.757
+0.443
+cifar100-pixel3 latency
+0.392
+0.292
+0.732
+0.780
+0.797
+0.803
+0.806
+0.809
+0.812
+0.812
+0.877
+0.484
+cifar10-edgegpu latency
+0.370
+0.258
+0.724
+0.790
+0.806
+0.819
+0.820
+0.822
+0.830
+0.829
+0.926
+0.175
+cifar100-edgegpu energy
+0.376
+0.275
+0.732
+0.793
+0.812
+0.821
+0.821
+0.823
+0.831
+0.831
+0.920
+0.221
+ImageNet16-120-eyeriss arith. int.
+0.369
+0.293
+0.748
+0.805
+0.817
+0.827
+0.825
+0.832
+0.843
+0.846
+0.970
+0.861"
+REFERENCES,0.585081585081585,"cifar10-pixel3 latency
+0.388
+0.300
+0.733
+0.780
+0.797
+0.805
+0.805
+0.810
+0.813
+0.813
+0.878
+0.475
+cifar10-raspi4 latency
+0.393
+0.315
+0.740
+0.787
+0.799
+0.805
+0.807
+0.810
+0.813
+0.813
+0.890
+0.462
+cifar100-raspi4 latency
+0.393
+0.308
+0.744
+0.786
+0.801
+0.807
+0.810
+0.810
+0.814
+0.814
+0.888
+0.445
+ImageNet16-120-pixel3 latency
+0.398
+0.312
+0.739
+0.786
+0.799
+0.807
+0.809
+0.812
+0.815
+0.816
+0.884
+0.509
+cifar100-edgegpu latency
+0.375
+0.268
+0.728
+0.793
+0.810
+0.821
+0.820
+0.822
+0.831
+0.831
+0.924
+0.191
+cifar10-edgegpu energy
+0.375
+0.284
+0.728
+0.792
+0.810
+0.821
+0.823
+0.824
+0.831
+0.831
+0.922
+0.183
+ImageNet16-120-edgegpu energy
+0.377
+0.281
+0.733
+0.797
+0.814
+0.825
+0.825
+0.826
+0.834
+0.833
+0.926
+0.280
+ImageNet16-120-edgegpu latency
+0.379
+0.264
+0.737
+0.799
+0.817
+0.826
+0.826
+0.828
+0.836
+0.835
+0.938
+0.277
+cifar10-eyeriss arith. int.
+0.384
+0.296
+0.757
+0.811
+0.826
+0.835
+0.832
+0.843
+0.854
+0.854
+0.969
+0.826
+cifar100-eyeriss arith. int.
+0.384
+0.297
+0.757
+0.811
+0.826
+0.835
+0.833
+0.844
+0.855
+0.856
+0.971
+0.830
+ImageNet16-120-fpga latency
+0.443
+0.494
+0.904
+0.936
+0.947
+0.951
+0.948
+0.951
+0.952
+0.952
+0.983
+0.965
+ImageNet16-120-fpga energy
+0.443
+0.494
+0.905
+0.935
+0.947
+0.951
+0.948
+0.951
+0.952
+0.952
+0.983
+0.965
+ImageNet16-120-eyeriss latency
+0.457
+0.937
+0.953
+0.954
+0.954
+0.954
+0.953
+0.953
+0.954
+0.954
+0.952
+0.989
+cifar10-eyeriss latency
+0.461
+0.943
+0.959
+0.959
+0.960
+0.960
+0.959
+0.960
+0.960
+0.960
+0.958
+0.995
+cifar100-eyeriss latency
+0.462
+0.946
+0.963
+0.963
+0.963
+0.963
+0.963
+0.963
+0.964
+0.963
+0.962
+0.998
+cifar10-eyeriss energy
+0.456
+0.967
+0.985
+0.985
+0.985
+0.985
+0.985
+0.985
+0.985
+0.985
+0.975
+0.996
+ImageNet16-120-eyeriss energy
+0.458
+0.967
+0.985
+0.985
+0.986
+0.985
+0.986
+0.985
+0.985
+0.986
+0.972
+0.998
+cifar100-eyeriss energy
+0.457
+0.967
+0.985
+0.985
+0.985
+0.986
+0.985
+0.986
+0.986
+0.986
+0.976
+0.998
+cifar10-fpga energy
+0.458
+0.973
+0.987
+0.987
+0.987
+0.987
+0.987
+0.987
+0.987
+0.987
+0.986
+0.999
+cifar100-fpga energy
+0.458
+0.973
+0.987
+0.987
+0.987
+0.987
+0.987
+0.987
+0.987
+0.987
+0.986
+0.999
+cifar100-fpga latency
+0.457
+0.973
+0.987
+0.987
+0.987
+0.987
+0.987
+0.987
+0.987
+0.987
+0.986
+0.999
+cifar10-fpga latency
+0.457
+0.973
+0.987
+0.987
+0.987
+0.987
+0.987
+0.987
+0.987
+0.987
+0.986
+0.999"
+REFERENCES,0.5874125874125874,"Table 3: Kendall’s Tau test correlation for Linear Regression, XGBoost, and Lookup Table (LUT)
+on all HW-NAS-Bench datasets (rows), for different amounts of available training data (columns),
+tested on the remaining 625 samples. The Lookup Table model is tested on all 15625 architectures.
+We selected the ﬁve data sets at the top."
+REFERENCES,0.5897435897435898,"Linear Regression
+XGBoost
+LUT"
+REFERENCES,0.5920745920745921,"9
+18
+34
+65
+123
+234
+442
+837
+1585
+2999
+2999
+-"
+REFERENCES,0.5944055944055944,"jigsaw
+0.201
+0.227
+0.410
+0.535
+0.586
+0.605
+0.616
+0.624
+0.631
+0.632
+0.661
+0.201
+class object
+0.268
+0.262
+0.518
+0.646
+0.711
+0.741
+0.759
+0.771
+0.780
+0.780
+0.828
+0.701
+room layout
+0.275
+0.271
+0.527
+0.653
+0.721
+0.753
+0.768
+0.780
+0.789
+0.789
+0.896
+0.685
+class scene
+0.275
+0.268
+0.527
+0.653
+0.721
+0.755
+0.768
+0.782
+0.789
+0.790
+0.907
+0.710
+segmentsemantic
+0.282
+0.259
+0.545
+0.684
+0.746
+0.780
+0.798
+0.809
+0.816
+0.818
+0.871
+0.726"
+REFERENCES,0.5967365967365967,"Table 4: Kendall’s Tau test correlation for Linear Regression and XGBoost on the ﬁve used
+TransNAS datasets (rows), for different amounts of available training data (columns), tested on
+the remaining 256 samples. The Lookup Table model (LUT) is tested on all 3256 architectures."
+REFERENCES,0.5990675990675991,"HW-NAS-Bench:
+To select ﬁve datasets that are (1) non-linear and (2) different from one another,
+we ﬁrst ﬁt Linear Regression to every available dataset, with the results listed in Table 3. The bottom
+12 datasets can be accurately ﬁt with only 25 training samples, so they are not very interesting as a"
+REFERENCES,0.6013986013986014,Under review as a conference paper at ICLR 2022
+REFERENCES,0.6037296037296037,"challenge. On these datasets, the Lookup Table model achieves exceptional performance. Since the
+networks for CIFAR10, CIFAR100 and ImageNet16-120 only differ slightly, their measurements on
+the same device and metric (e.g. raspi4 latency) is very similar. To improve the generalizability of
+our results, we thus select datasets on different devices and metrics, which are listed at the top of
+Table 3. As displayed in Figure 6, their data distributions are generally different."
+REFERENCES,0.6060606060606061,"TransNAS-Bench-101:
+Since the latency measurements of the architectures is generally very sim-
+ilarly distributed (see Figure 7), it is not necessary to train the predictors on all of them. We select
+all data sets that provide the test loss and inference time attributes for all architectures, resulting in
+exactly the ﬁve datasets listed in Section 4 (the other two datasets contain more speciﬁc test losses)."
+REFERENCES,0.6083916083916084,"0.0
+2.5
+5.0
+7.5
+10.0
+12.5
+15.0
+17.5
+measurements 0 200 400 600 800 1000 1200 1400"
+REFERENCES,0.6107226107226107,occurrences
+REFERENCES,0.6130536130536131,ImageNet16-120-raspi4_latency
+REFERENCES,0.6153846153846154,"0
+10
+20
+30
+40
+measurements 0 200 400 600 800 1000"
+REFERENCES,0.6177156177156177,occurrences
+REFERENCES,0.62004662004662,cifar100-pixel3_latency
+REFERENCES,0.6223776223776224,"0
+2
+4
+6
+8
+10
+12
+measurements 0 200 400 600 800 1000"
+REFERENCES,0.6247086247086248,occurrences
+REFERENCES,0.627039627039627,cifar10-edgegpu_latency
+REFERENCES,0.6293706293706294,"0
+10
+20
+30
+40
+measurements 0 200 400 600 800"
+REFERENCES,0.6317016317016317,occurrences
+REFERENCES,0.634032634032634,cifar100-edgegpu_energy
+REFERENCES,0.6363636363636364,"0
+1
+2
+3
+4
+5
+6
+7
+8
+measurements 0 250 500 750 1000 1250 1500 1750 2000"
+REFERENCES,0.6386946386946387,occurrences
+REFERENCES,0.6410256410256411,ImageNet16-120-eyeriss_arithmetic_intensity
+REFERENCES,0.6433566433566433,Figure 6: How the data of each selected HW-NAS-Bench dataset is distributed (not normalized).
+REFERENCES,0.6456876456876457,"0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+measurements 0 200 400 600 800 1000 1200"
+REFERENCES,0.6480186480186481,occurrences
+REFERENCES,0.6503496503496503,class_object
+REFERENCES,0.6526806526806527,"0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+measurements 0 200 400 600 800 1000 1200"
+REFERENCES,0.655011655011655,occurrences
+REFERENCES,0.6573426573426573,class_scene
+REFERENCES,0.6596736596736597,"0.05
+0.10
+0.15
+0.20
+0.25
+0.30
+measurements 0 100 200 300 400 500 600"
+REFERENCES,0.662004662004662,occurrences
+REFERENCES,0.6643356643356644,jigsaw
+REFERENCES,0.6666666666666666,"0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+measurements 0 200 400 600 800 1000"
+REFERENCES,0.668997668997669,occurrences
+REFERENCES,0.6713286713286714,room_layout
+REFERENCES,0.6736596736596736,"0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+measurements 0 200 400 600 800 1000"
+REFERENCES,0.675990675990676,occurrences
+REFERENCES,0.6783216783216783,segmentsemantic
+REFERENCES,0.6806526806526807,"Figure 7: How the data of each selected TransNAS-Bench-101 dataset is distributed (not normal-
+ized). Since all architectures are measured for latency on the same hardware, the resulting datasets
+are much less diverse than the HW-NAS-Bench ones."
+REFERENCES,0.682983682983683,Under review as a conference paper at ICLR 2022
+REFERENCES,0.6853146853146853,"F
+PREDICTOR FIT TIME"
+REFERENCES,0.6876456876456877,"101
+102
+103"
+REFERENCES,0.6899766899766899,training set size 0 500 1000 1500 2000 2500 3000
+REFERENCES,0.6923076923076923,Time to fit the predictor (absolute)
+REFERENCES,0.6946386946386947,Average over TransNAS datasets
+REFERENCES,0.696969696969697,"101
+102
+103
+104"
+REFERENCES,0.6993006993006993,training set size 0 2500 5000 7500 10000 12500 15000 17500 20000
+REFERENCES,0.7016317016317016,Time to fit the predictor (absolute)
+REFERENCES,0.703962703962704,Average over HW-NAS datasets
+REFERENCES,0.7062937062937062,"Lin. Reg.
+Bayes. Lin. Reg.
+Ridge Reg.
+XGBoost
+NGBoost
+LGBoost
+Random Forests
+Sparse GP
+GP
+BOHAMIANN
+SVM Reg.
+NAO
+GCN
+BONAS
+BANANAS
+MLP (large)
+MLP (small)"
+REFERENCES,0.7086247086247086,"Figure 8: Fit time (in seconds) of predictors to data, depending on the training set size. By far the
+most expensive methods are network-based. However, a signiﬁcant portion of this time is spent on
+the hyper-parameter optimization prior to the actual ﬁtting."
+REFERENCES,0.710955710955711,"G
+APPROXIMATING PREDICTOR MISTAKES"
+REFERENCES,0.7132867132867133,"1
+0
+1
+2
+3
+deviation of the predictions 0.00 0.25 0.50 0.75 1.00 1.25 1.50 1.75 2.00"
+REFERENCES,0.7156177156177156,density
+REFERENCES,0.717948717948718,Predictor deviations
+REFERENCES,0.7202797202797203,"normal fit, std=0.309
+deviations"
+REFERENCES,0.7226107226107226,"2
+1
+0
+deviation of the predictions 0.00 0.25 0.50 0.75 1.00 1.25 1.50 1.75"
+REFERENCES,0.7249417249417249,density
+REFERENCES,0.7272727272727273,Predictor deviations
+REFERENCES,0.7296037296037297,"normal fit, std=0.348
+deviations"
+REFERENCES,0.7319347319347319,"2
+1
+0
+1
+deviation of the predictions 0.00 0.25 0.50 0.75 1.00 1.25 1.50 1.75"
+REFERENCES,0.7342657342657343,density
+REFERENCES,0.7365967365967366,Predictor deviations
+REFERENCES,0.7389277389277389,"normal fit, std=0.456
+deviations"
+REFERENCES,0.7412587412587412,"Figure 9: Further examples of predictor deviation distributions, as visualized in the center of Fig-
+ure 2. Left: Linear Regression on CIFAR100, edgegpu, energy consumption. Center: Support
+Vector Machine on Jigsaw. Right: small MLP on ImageNet16-120, raspi4, latency."
+REFERENCES,0.7435897435897436,"Intuitively, the predictor deviation distributions (see Figures 2 and 9) generally resemble a normal
+distribution. However, most predictors:"
+REFERENCES,0.745920745920746,"(1) Have a notable peak, sometimes off-center (e.g. at x=0.2)
+(2) Have less density than a normal distribution almost everywhere else
+(3) Have some outliers (e.g. at x>1.5) that are extremely unlikely for a normal distribution"
+REFERENCES,0.7482517482517482,"We measured the p-value for different distributions on the ﬁrst 100 test samples using a T-Test, every
+time we evaluated a predictor. The average statistics can be found in Table 5. Since a large number
+of empirical observations generally pushes the p-value to 0, this only serves to compare them to each
+other. We ﬁnd that the outliers (3) appear often enough and are so unlikely to happen for a normal
+distribution, that even a uniform distribution has a higher statistical support. Consequentially, we
+approximate the common predictor deviations by sampling from a mixed distribution that adresses
+(1) to (3)."
+REFERENCES,0.7505827505827506,Under review as a conference paper at ICLR 2022
+REFERENCES,0.752913752913753,p-value
+REFERENCES,0.7552447552447552,"normal
+0.028
+cauchy
+0.030
+lognorm
+0.028
+t
+0.028
+uniform
+0.037"
+REFERENCES,0.7575757575757576,"Table 5: P-values of different distributions, trying to ﬁt the distribution of all predictor mistakes
+according to a t-test. Larger values are better, but comparing many empirically sampled points with
+a true density function tends to push the p-values to 0."
+REFERENCES,0.7599067599067599,"This mixed distribution consists of two Normal distributions (N1, N2) and one Uniform distribution
+(U), from which we sample with 72.5%, 26.5% and 1% respectively. For some constant v:"
+REFERENCES,0.7622377622377622,"• We uniformly sample a shift c from [0, 2 · v], that is used to push the centers of N1 and N2
+to x > 0 and x < 0 respectively."
+REFERENCES,0.7645687645687645,"• We sample each value from N1(c, v), N2(−c, 3·v), and U1(−15·v, 15·v) randomly, with
+the weighting given above."
+REFERENCES,0.7668997668997669,"• We normalize (subtract mean, divide by standard deviation) our sampled distribution and
+then scale it to the desired standard deviation."
+REFERENCES,0.7692307692307693,"• The predictors produce non-smooth distributions. We simulate that by sampling 15 times
+fewer values as needed, and repeat them as often."
+REFERENCES,0.7715617715617715,"The code for the simulation is also provided (see Appendix A). As seen in Figure 10, the resulting
+simulated deviation distributions generally resemble a common predictor pattern. We do not account
+for differences in predictors, training set sizes or more, since that may become too speciﬁc and over-
+engineered."
+REFERENCES,0.7738927738927739,"Appendix I visualizes simulation sanity checks. We ﬁnd that the simulation is slightly pessimistic
+and simpliﬁed, but resembles the results of actual predictors."
+REFERENCES,0.7762237762237763,"2
+0
+2
+deviation of the simulated predictions 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4 1.6"
+REFERENCES,0.7785547785547785,density
+REFERENCES,0.7808857808857809,Simulated predictor deviations
+REFERENCES,0.7832167832167832,"normal fit, std=0.500
+mixed dist. generated with std=0.5"
+REFERENCES,0.7855477855477856,"2
+1
+0
+1
+2
+deviation of the simulated predictions 0.0 0.2 0.4 0.6 0.8 1.0 1.2"
+REFERENCES,0.7878787878787878,density
+REFERENCES,0.7902097902097902,Simulated predictor deviations
+REFERENCES,0.7925407925407926,"normal fit, std=0.500
+mixed dist. generated with std=0.5"
+REFERENCES,0.7948717948717948,"2
+0
+2
+deviation of the simulated predictions 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+REFERENCES,0.7972027972027972,density
+REFERENCES,0.7995337995337995,Simulated predictor deviations
+REFERENCES,0.8018648018648019,"normal fit, std=0.500
+mixed dist. generated with std=0.5"
+REFERENCES,0.8041958041958042,"Figure 10: The sampled values of gaussian+uniform ﬁt the measured predictor mistakes better than
+a single distribution, as they are roughly normally distributed, but include outliers."
+REFERENCES,0.8065268065268065,Under review as a conference paper at ICLR 2022
+REFERENCES,0.8088578088578089,"H
+MEASURING SIMULATED MISTAKES"
+REFERENCES,0.8111888111888111,"4
+2
+0
+2
+4
+normalized ImageNet16-120-raspi4 latency 0.25 0.30 0.35 0.40 0.45"
+REFERENCES,0.8135198135198135,accuracy
+REFERENCES,0.8158508158508159,"true pareto front
+predicted pareto front
+all architectures
+selected architectures"
+REFERENCES,0.8181818181818182,"2.0
+1.5
+1.0
+0.5
+0.0
+0.5
+normalized ImageNet16-120-raspi4 latency 0.25 0.30 0.35 0.40 0.45"
+REFERENCES,0.8205128205128205,accuracy
+REFERENCES,0.8228438228438228,"true pareto front, HV=2.93
+discovered pareto front, HV=2.67
+selected arch., MRAall = 3.22%, MRApareto = 3.77%"
+REFERENCES,0.8251748251748252,"Figure 11: Similar to Figure 3. When the discovered Pareto set is considerably worse than the true
+Pareto set, it is possible for the Mean Reduction of Accuracy of the Pareto subset (MRApareto) to be
+worse than the average over all architectures (MRAall). This naturally happens more frequently for
+worse predictors with a high sampling std. and low KT correlation. Consequentially, the difference
+between MRAall and MRApareto is wider for better predictors (see Figure 4). Additionally, all of
+the selected non-Pareto-front members are clustered in a high-latency area and redundant with each
+other. This emphasizes the limitations of just considering drops in accuracy, as the hardware metric
+aspect is ignored. In this case, the predictor-guided selection failed to ﬁnd a low-latency solution.
+In this regard, hypervolume is a better but less intuitive metric."
+REFERENCES,0.8275058275058275,"18
+20
+22
+24
+26
+28
+30
+hardware metric 44 46 48 50 52 54 56 58 60 62"
+REFERENCES,0.8298368298368298,accuracy [%] A1 A2 A3 A4 A5 C1
+REFERENCES,0.8321678321678322,"accuracy
+difference"
+REFERENCES,0.8344988344988346,HW metric difference
+REFERENCES,0.8368298368298368,"true pareto front
+actually selected architecture"
+REFERENCES,0.8391608391608392,"18
+20
+22
+24
+26
+28
+30
+32
+hardware metric 0 10 20 30 40 50"
+REFERENCES,0.8414918414918415,accuracy [%]
+REFERENCES,0.8438228438228438,reference point +10% to 0
+REFERENCES,0.8461538461538461,"pareto front
+hypervolume
+reference point"
+REFERENCES,0.8484848484848485,"Figure 12: Examples to explain measurement methods.
+Left: The distance of each selected candidate architecture C1 to the true Pareto front is measured,
+for accuracy and the hardware metric. C1 is dominated by A2, A3, and A4 of the true Pareto set. A2
+has a slightly higher accuracy than C1 while being much better on the hardware metric, e.g. latency.
+A4 has a slightly better hardware metric value, but much higher accuracy. Given several candidate
+architectures, their differences are averaged.
+Right: We compute the reference point for the hypervolume (for two objectives: area under a
+Pareto front) by multiplying the highest hardware metric value from the true Pareto front with 1.1,
+and accuracy 0. While we are consistent throughout all experiments, this choice is arbitrary, as there
+is no obviously correct choice for the reference point. If the hypervolume of a supposed Pareto
+front is computed, the reference point of the true Pareto front is reused. Thus, choosing inferior
+architectures will always reduce the hypervolume. We arbitrarily chose the multiplier of m = 1.1
+as a middle ground between making the rightmost point of the Pareto front irrelevant (m = 1.0) and
+overemphasizing it (m >> 1.0)."
+REFERENCES,0.8508158508158508,Under review as a conference paper at ICLR 2022
+REFERENCES,0.8531468531468531,"I
+SIMULATION SANITY CHECK"
+REFERENCES,0.8554778554778555,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Std. of prediction deviations 0.2 0.4 0.6 0.8 1.0"
+REFERENCES,0.8578088578088578,Kendall's Tau
+REFERENCES,0.8601398601398601,"KT=-0.75, SCC=-0.88, PCC=0.77"
+REFERENCES,0.8624708624708625,"0.0/1.00
+0.2/0.88
+0.4/0.78
+0.6/0.69
+0.8/0.62
+1.0/0.57
+Std. of prediction deviations / Kendall's Tau 0.5 0.6 0.7 0.8 0.9 1.0"
+REFERENCES,0.8648018648018648,Kendall's Tau 
+REFERENCES,0.8671328671328671,"ImageNet16-120-eyeriss_arithmetic_intensity
+ImageNet16-120-raspi4_latency
+cifar10-edgegpu_latency
+cifar100-edgegpu_energy
+cifar100-pixel3_latency
+mean"
+REFERENCES,0.8694638694638694,"Figure 13: Standard deviation over the predictor deviations (x axis) and Kendall’s Tau correlation
+(y axis), for the trained predictors on HW-NAS-Bench (left) and in simulation (right). The simulated
+predictor inaccuracies are slightly pessimistic (low KT), but still match the true values."
+REFERENCES,0.8717948717948718,Under review as a conference paper at ICLR 2022
+REFERENCES,0.8741258741258742,All candidates
+REFERENCES,0.8764568764568764,"1
+0
+1
+2
+deviation of the predictions 0.00 0.25 0.50 0.75 1.00 1.25 1.50 1.75"
+REFERENCES,0.8787878787878788,density 
+REFERENCES,0.8811188811188811,"normal fit, std=0.445
+deviations"
+REFERENCES,0.8834498834498834,candidate occurrences in the architecture
+REFERENCES,0.8857808857808858,"candidate
+not at all
+exactly once
+exactly twice Zero"
+REFERENCES,0.8881118881118881,"1.5
+1.0
+0.5
+0.0
+0.5
+1.0
+1.5
+deviation of the predictions 0.0 0.2 0.4 0.6 0.8 1.0 1.2"
+REFERENCES,0.8904428904428905,density 
+REFERENCES,0.8927738927738927,"normal fit, std=0.541
+deviations"
+REFERENCES,0.8951048951048951,"1.5
+1.0
+0.5
+0.0
+0.5
+1.0
+1.5
+deviation of the predictions 0.00 0.25 0.50 0.75 1.00 1.25 1.50 1.75 2.00"
+REFERENCES,0.8974358974358975,density 
+REFERENCES,0.8997668997668997,"normal fit, std=0.443
+deviations"
+REFERENCES,0.9020979020979021,"1
+0
+1
+2
+deviation of the predictions 0.0 0.5 1.0 1.5 2.0 2.5"
+REFERENCES,0.9044289044289044,density 
+REFERENCES,0.9067599067599068,"normal fit, std=0.356
+deviations Skip"
+REFERENCES,0.9090909090909091,"1
+0
+1
+2
+deviation of the predictions 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+REFERENCES,0.9114219114219114,density 
+REFERENCES,0.9137529137529138,"normal fit, std=0.532
+deviations"
+REFERENCES,0.916083916083916,"1.5
+1.0
+0.5
+0.0
+0.5
+1.0
+deviation of the predictions 0.00 0.25 0.50 0.75 1.00 1.25 1.50 1.75"
+REFERENCES,0.9184149184149184,density 
+REFERENCES,0.9207459207459208,"normal fit, std=0.436
+deviations"
+REFERENCES,0.9230769230769231,"1.0
+0.5
+0.0
+0.5
+1.0
+1.5
+deviation of the predictions 0.0 0.5 1.0 1.5 2.0"
+REFERENCES,0.9254079254079254,density 
+REFERENCES,0.9277389277389277,"normal fit, std=0.412
+deviations"
+REFERENCES,0.9300699300699301,Conv1x1
+REFERENCES,0.9324009324009324,"1.0
+0.5
+0.0
+0.5
+1.0
+deviation of the predictions 0.0 0.5 1.0 1.5 2.0"
+REFERENCES,0.9347319347319347,density 
+REFERENCES,0.9370629370629371,"normal fit, std=0.462
+deviations"
+REFERENCES,0.9393939393939394,"1
+0
+1
+2
+deviation of the predictions 0.00 0.25 0.50 0.75 1.00 1.25 1.50 1.75 2.00"
+REFERENCES,0.9417249417249417,density 
+REFERENCES,0.9440559440559441,"normal fit, std=0.470
+deviations"
+REFERENCES,0.9463869463869464,"1.0
+0.5
+0.0
+0.5
+1.0
+1.5
+deviation of the predictions 0.0 0.5 1.0 1.5 2.0"
+REFERENCES,0.9487179487179487,density 
+REFERENCES,0.951048951048951,"normal fit, std=0.393
+deviations"
+REFERENCES,0.9533799533799534,Conv3x3
+REFERENCES,0.9557109557109557,"0.4
+0.2
+0.0
+0.2
+0.4
+deviation of the predictions 0 1 2 3 4"
+REFERENCES,0.958041958041958,density 
+REFERENCES,0.9603729603729604,"normal fit, std=0.146
+deviations"
+REFERENCES,0.9627039627039627,"1.0
+0.5
+0.0
+0.5
+1.0
+1.5
+deviation of the predictions 0.00 0.25 0.50 0.75 1.00 1.25 1.50 1.75 2.00"
+REFERENCES,0.965034965034965,density 
+REFERENCES,0.9673659673659674,"normal fit, std=0.403
+deviations"
+REFERENCES,0.9696969696969697,"1.5
+1.0
+0.5
+0.0
+0.5
+1.0
+1.5
+deviation of the predictions 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+REFERENCES,0.972027972027972,density 
+REFERENCES,0.9743589743589743,"normal fit, std=0.565
+deviations Pool"
+REFERENCES,0.9766899766899767,"1
+0
+1
+2
+deviation of the predictions 0.00 0.25 0.50 0.75 1.00 1.25 1.50 1.75 2.00"
+REFERENCES,0.9790209790209791,density 
+REFERENCES,0.9813519813519813,"normal fit, std=0.446
+deviations"
+REFERENCES,0.9836829836829837,"1.0
+0.5
+0.0
+0.5
+1.0
+1.5
+deviation of the predictions 0.0 0.5 1.0 1.5 2.0"
+REFERENCES,0.986013986013986,density 
+REFERENCES,0.9883449883449883,"normal fit, std=0.411
+deviations"
+REFERENCES,0.9906759906759907,"1.5
+1.0
+0.5
+0.0
+0.5
+1.0
+1.5
+deviation of the predictions 0.00 0.25 0.50 0.75 1.00 1.25 1.50 1.75 2.00"
+REFERENCES,0.993006993006993,density 
+REFERENCES,0.9953379953379954,"normal fit, std=0.477
+deviations"
+REFERENCES,0.9976689976689976,"Table 6: How a trained XGB predictor deviates from the ground-truth values for different architec-
+ture subsets, akin to Figure 2. While they are not exactly the same, they still resemble the distribution
+over the entire test set (top plot, 625 samples). One noteworthy exception is when no Conv3x3 op-
+erations are used at all, in which case the standard deviation is considerably smaller."

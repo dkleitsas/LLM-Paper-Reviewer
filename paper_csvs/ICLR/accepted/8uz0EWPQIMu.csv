@@ -1,0 +1,1249 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.0031746031746031746,"While many studies have shown that linguistic information is encoded in hidden
+word representations, few have studied individual neurons, to show how and in
+which neurons it is encoded. Among these, the common approach is to use an
+external probe to rank neurons according to their relevance to some linguistic
+attribute, and to evaluate the obtained ranking using the same probe that produced
+it. We show two pitfalls in this methodology: 1. It confounds distinct factors: probe
+quality and ranking quality. We separate them and draw conclusions on each. 2. It
+focuses on encoded information, rather than information that is used by the model.
+We show that these are not the same. We compare two recent ranking methods and
+a simple one we introduce, and evaluate them with regard to both of these aspects.1"
+INTRODUCTION,0.006349206349206349,"1
+INTRODUCTION"
+INTRODUCTION,0.009523809523809525,"Many studies attempt to interpret language models by predicting different linguistic properties
+from word representations, an approach called probing classiﬁers (Adi et al., 2017; Conneau et al.,
+2018, inter alia). A growing body of work focuses on individual neurons within the representation,
+attempting to show in which neurons some information is encoded, and whether it is localized
+(concentrated in a small set of neurons) or dispersed. Such knowledge may allow us to control the
+model’s output (Bau et al., 2019), to reduce the number of parameters in the model (Voita et al.,
+2019; Sajjad et al., 2020), and to gain a general scientiﬁc knowledge of the model. The common
+methodology is to train a probe to predict some linguistic attribute from a representation, and to use
+it, in different ways, to rank the neurons of the representation according to their importance for the
+attribute in question. The same probe is then used to predict the attribute, but using only the k-highest
+ranked neurons from the obtained ranking, and the probe’s accuracy in this scenario is considered as
+a measure of the ranking’s quality (Dalvi et al., 2019; Torroba Hennigen et al., 2020; Durrani et al.,
+2020). We see this framework as exhibiting Pitfall I: Two distinct factors are conﬂated—the probe’s
+classiﬁcation quality and the quality of the ranking it produces. A good classiﬁer may provide good
+results even if its ranking is bad, and an optimal ranking may cause an average classiﬁer to provide
+better results than a good classiﬁer that is given a bad ranking."
+INTRODUCTION,0.012698412698412698,"Another shortcoming of the current methodology, which we mark as Pitfall II, is the focus on
+encoded information, regardless of whether it is actually used by the model in its language modeling
+task. A few studies (Elazar et al., 2021; Feder et al., 2020) have considered this question, and shown
+that encoded information is not necessarily being used for language modeling, but these do not look
+at individual neurons. We argue that in order to evaluate a ranking, one should also examine if, and
+how, the k-highest ranked neurons are used by the model for the attribute in question, meaning that
+modifying them would change the model’s prediction—but with respect to that attribute only. This
+would allow some control over the model’s output, and grant us parameter-level explanations of the
+model’s decisions."
+INTRODUCTION,0.015873015873015872,"In this work, we analyze three neuron ranking methods. Since the ranking space is too large (768! in
+BERT’s case), these methods provide approximations to the problem and are non-optimal. Two of
+these methods—LINEAR (Dalvi et al., 2019) and GAUSSIAN (Torroba Hennigen et al., 2020)—rely
+on an external probe to obtain a ranking: the ﬁrst makes use of the internal weights of a linear probe,
+while the second considers the performance of a decomposable generative probe. The third is a"
+INTRODUCTION,0.01904761904761905,"1Our code is available at: https://github.com/technion-cs-nlp/Individual-Neurons-
+Pitfalls"
+INTRODUCTION,0.022222222222222223,"simple ranking method we propose, PROBELESS, which ranks neurons according to the difference in
+their values across labels, and thus can be derived directly from the data, with no probing involved."
+INTRODUCTION,0.025396825396825397,"We experiment with disentangling probe quality and ranking quality, by using a probe from one
+method with a ranking from another method, and comparing the different probe–ranking combinations.
+We expose the problematic nature of the current methodology (Pitfall I), by showing that in some
+cases, a suitable probe which is given an intentionally bad ranking, or a random one, provides higher
+accuracy than another which is given its allegedly optimal ranking. We ﬁnd that while the GAUSSIAN
+method generally provides higher accuracy, its probe’s selectivity (Hewitt & Liang, 2019) is lower,
+implying that it performs the probing task by memorizing, which improves probing quality but not
+necessarily ranking quality. We further ﬁnd that GAUSSIAN provides the best ranking for small sets
+of neurons, while LINEAR provides a better ranking for large sets."
+INTRODUCTION,0.02857142857142857,"We then turn to analyzing which ranking selects neurons that are used by the model, by applying
+interventions on the representation: we modify subsets of neurons from each ranking and measure—
+using a novel metric we introduce—the effect on language modeling w.r.t to the property in question.
+We highlight the need to focus on used information (Pitfall II): even though PROBELESS does not
+excel in the probing scenario, it selects neurons that are used by the model, more so than the two
+probing-based rankings. We ﬁnd that there is an overlap between encoded information and used
+information, but they are not the same, and argue that more attention should be given to the latter."
+INTRODUCTION,0.031746031746031744,"We primarily experiment with the M-BERT model (Devlin et al., 2019) on 9 languages and 13
+morphological attributes, from the Universal Dependencies dataset (Zeman et al., 2020). We also
+experiment with XLM-R (Conneau et al., 2020), and ﬁnd that most of our results are similar between
+the models, with a few differences which we discuss. Our experiments reveal the following insights:"
+INTRODUCTION,0.03492063492063492,"• We show the need to separate between probing quality and ranking quality, via cases where inten-
+tionally poor rankings provide better accuracy than good rankings, due to probing weaknesses."
+INTRODUCTION,0.0380952380952381,"• We present a new ranking method that is free of any probes, and tends to prefer neurons that are
+being used by the model, more so than existing probing-based rankings."
+INTRODUCTION,0.04126984126984127,"• We show that there is an overlap between encoded information and used information, but they are
+not the same."
+NEURON RANKINGS AND DATA,0.044444444444444446,"2
+NEURON RANKINGS AND DATA"
+NEURON RANKINGS AND DATA,0.047619047619047616,"We begin by introducing some notation. Denote the word representation space as H ⊆Rd and an
+auxiliary task as a function F : H →Z, for some task labels Z (e.g., part-of-speech labels). Given
+a word representation h ∈H and some subset of neurons S ⊆{1, ..., d}, we use hS to denote the
+subvector of h in dimensions S. For some auxiliary task F and k ∈N, we search for an optimal subset
+S∗such that |S∗| = k and hS∗contains more information regarding F than any other subvector
+hS′, |S′| = k. For the search task, we deﬁne neuron-ranking as a permutation Π(d) on {1, ..., d} and
+consider the subset Π(d)[k] = {Π(d)1, ..., Π(d)k}. One may wish to ﬁnd an optimal ranking Π∗(d)
+such that ∀k, Π∗(d)[k] is the optimal subset with respect to F. However, ﬁnding an optimal ranking,
+or even an optimal subset, is NP-hard (Binshtok et al., 2007). Thus, we focus on several methods to
+produce rankings, which provide approximations to the problem, and compare them."
+RANKINGS,0.050793650793650794,"2.1
+RANKINGS"
+RANKINGS,0.05396825396825397,"The ranking methods we compare include two rankings obtained from prior probing-based neuron-
+ranking methods, and a novel ranking we propose, based on data statistics rather than probing."
+RANKINGS,0.05714285714285714,"LINEAR
+The ﬁrst method, henceforth LINEAR (named linguistic correlation analysis in Dalvi et al.
+2019),2 trains a linear classiﬁer on the representations to learn the task F. Then, it uses the trained
+classiﬁer’s weights to rank the neurons according to their importance for F. Intuitively, neurons
+with a higher magnitude of absolute weights should be more important, or contain more relevant
+information, for solving the task. Dalvi et al. (2019) showed that their method identiﬁes important
+neurons through probing and ablation studies, and found that while the information is distributed
+across neurons, the distribution is not uniform, meaning it is skewed towards the top-ranked neurons.
+In this work, we use a slightly modiﬁed version of the suggested approach (Appendix A.1)."
+RANKINGS,0.06031746031746032,2A small enhancement to the algorithm was presented in Durrani et al. (2020).
+RANKINGS,0.06349206349206349,"GAUSSIAN
+The second method, henceforth GAUSSIAN (Torroba Hennigen et al., 2020), trains
+a generative classiﬁer on the task F, based on the assumption that each dimension in {1, ..., d}
+is Gaussian-distributed. Then, it makes use of the decomposability of the multivariate Gaussian
+distribution to greedily select the most informative neuron, according to the classiﬁer’s performance,
+at every iteration. This way we obtain a full neuron ranking after training only once, while applying
+this greedy method to LINEAR would require retraining the probe d! times, which is clearly infeasible.
+Torroba Hennigen et al. (2020) found that most of the tasks can be solved using a low number of
+neurons, but also noted that their classiﬁer is limited due to the Gaussian distribution assumption."
+RANKINGS,0.06666666666666667,"PROBELESS
+The third neuron-ranking method we experiment with is based purely on the repre-
+sentations, with no probing involved, making it free of probing limitations (Belinkov, 2021) that
+might affect ranking quality. For every attribute label z ∈Z, we calculate q(z), the mean vector
+of all representations of words that possess the attribute and the value z. Then, we calculate the
+element-wise difference between the mean vectors, r =
+X"
+RANKINGS,0.06984126984126984,"z,z′∈Z
+|q(z) −q(z′)|,
+r ∈Rd
+(1)"
+RANKINGS,0.07301587301587302,"and obtain a ranking by arg-sorting r, i.e., the ﬁrst neuron in the ranking corresponds to the highest
+value in r. For binary-labeled attributes, this is simply the difference in means. In the general case,
+PROBELESS assigns high values to neurons that are most sensitive to a given attribute. We note
+that PROBELESS is very fast to use, as we are only limited by averaging and sorting, as opposed to
+training a classiﬁer in LINEAR or the expensive greedy algorithm of GAUSSIAN."
+DATA AND MODELS,0.0761904761904762,"2.2
+DATA AND MODELS"
+DATA AND MODELS,0.07936507936507936,"Throughout our work, we follow the experimental setting of Torroba Hennigen et al. (2020): we
+map the UD treebanks (Zeman et al., 2020) to the UniMorph schema (Kirov et al., 2018) using the
+mapping by McCarthy et al. (2018). We select a subset of the languages used by Torroba Hennigen
+et al. (2020): Arabic, Bulgarian, English, Finnish, French, Hindi, Russian, Spanish and Turkish, to
+keep linguistic diversity. The tasks we experiment with are predictions of morphological attributes
+from these languages. Full data details are provided in Torroba Hennigen et al. (2020) and further data
+preparation steps are detailed in Appendix A.2. We process each sentence in pre-trained M-BERT and
+XLM-R (unless stated otherwise, all results are with M-BERT), and take word representations from
+layers 2, 7 and 12 of each model, to see if there are different patterns in the beginning, middle and
+end of the models. We end up with a total of 156 different conﬁgs (language × attribute × layer) to
+test for each model. For words that are split during tokenization, we deﬁne their ﬁnal representation
+to be the average over their sub-token representations. Thus, each word has one representation for
+each layer, of dimension d = 768. We do not mask any words throughout our work."
+OVERLAPS,0.08253968253968254,"2.3
+OVERLAPS"
+OVERLAPS,0.08571428571428572,"Before evaluating our rankings in different scenarios, we ﬁrst characterize them by looking at the
+100-highest ranked neurons (out of 768) from different rankings, across different conﬁgs."
+OVERLAPS,0.08888888888888889,"Some neurons are important for an attribute across languages
+Since we work with multilingual
+models, we expect to see overlap in the selected neurons for one attribute across different languages.
+Fig. 1 shows that for PROBELESS this is indeed the case, as some attributes share a large number
+of important neurons across languages. For example, number in Spanish and number in French
+share 70 of their 100 most important neurons, where the expected number for overlap of two random
+selections of neurons is only 13 (Appendix A.3). Compared to the other two rankings (Appendix A.4),
+PROBELESS is the most consistent across languages, while GAUSSIAN rarely shows consistency,
+which may be a weakness."
+OVERLAPS,0.09206349206349207,"Some neurons are unanimously important
+By looking at the overlaps between important neurons
+selected by different rankings for the same conﬁg, we observe that for all conﬁgs, the overlap between
+all three rankings surpasses the expected number (which is ∼1.69; Appendix A.3), meaning there
+are neurons that are recognized by all three rankings as important."
+OVERLAPS,0.09523809523809523,"We further see that in most cases, the greatest overlap is between LINEAR and PROBELESS. We ﬁnd
+it reasonable, as both of them aim to select neurons that separate classes the best—one by a classiﬁer"
+OVERLAPS,0.09841269841269841,"and the other by data statistics—while GAUSSIAN takes a different approach, assuming a Gaussian
+distribution and selecting neurons only by performance. Examples from 8 conﬁgs are shown in Fig. 2."
+OVERLAPS,0.10158730158730159,"Figure 1:
+Layer 7 neurons overlap, using
+PROBELESS ranking. Blue squares are above
+the expected overlap between 2 rankings (Ap-
+pendix A.3), red are below. Major ticks are at-
+tributes, minor are languages."
+OVERLAPS,0.10476190476190476,"Figure 2: Layer 2 neurons overlap between ev-
+ery pair of rankings, from 8 randomly selected
+conﬁgs. Gray and black dashed lines show the
+expected overlap between 2 and 3 random rank-
+ings, respectively (Appendix A.3)."
+OVERLAPS,0.10793650793650794,"There are more overlaps in XLM-R
+Performing the same analysis across languages on XLM-R
+(Appendix A.4), the overlap size is at least as the expected one between all conﬁg pairs, and is usually
+greater. It may imply that XLM-R’s representations can be pruned more easily than M-BERT’s, since
+some neurons encode multiple attributes, and there is greater redundancy among the others."
+OVERLAPS,0.1111111111111111,"3
+PITFALL I: CLASSIFIERS VS. RANKINGS"
+OVERLAPS,0.11428571428571428,"We now turn to evaluating the rankings, and present the pitfalls in doing so. Given some ranking Π(d),
+we would like to evaluate how well it sorts the neurons for the task F. Our ﬁrst ranking-evaluation
+approach is the standard probing approach from previous work (Dalvi et al., 2019; Torroba Hennigen
+et al., 2020), where we expose the classiﬁer to a subvector of the representation and evaluate how well
+it predicts the task. However, while previous work conﬂated rankings and classiﬁers—Pitfall I—we
+are more careful: we separate the two, and pair each ranking with two classiﬁers, meaning that at
+least one of them is completely unrelated to the ranking."
+OVERLAPS,0.11746031746031746,"Formally, for an increasing k ∈N, we train a classiﬁer f : Hk →Z to predict the task label,
+F(h), solely from hΠ(d)[k] (the subvector of the representation h in the top k neurons in ranking Π),
+ignoring the rest of the neurons.3 The assumption is that the better f performs, the more task-relevant
+information is encoded in hΠ(d)[k]. Yet, the behaviour of f itself might affect results and conclusions
+about the ranking. Thus, we take classiﬁer capabilities into consideration when analyzing results, and
+also measure selectivity (§3.1.1). The process is further illustrated in Appendix A.5."
+EXPERIMENTAL SETUP,0.12063492063492064,"3.1
+EXPERIMENTAL SETUP"
+EXPERIMENTAL SETUP,0.12380952380952381,"As classiﬁers, we experiment with both classiﬁers used by the ﬁrst two ranking methods (LINEAR
+and GAUSSIAN). We use the hyperparameters reported in Durrani et al. (2020) and Torroba Hennigen
+et al. (2020) for training the classiﬁers. As rankings, we experiment with the 3 ranking methods
+described in §2.1. For each, we use the original ranking it produces and its reversed version, referred
+to as top-to-bottom and bottom-to-top, respectively. To those we add a random ranking baseline,
+resulting in 7 different rankings overall. We compare all classiﬁer–ranking combinations for each k."
+EXPERIMENTAL SETUP,0.12698412698412698,"Since both of the ﬁrst two ranking methods are inherently tied to the classiﬁer that was used to
+generate them, and the third ranking is a classiﬁer-neutral ranking, it can be used for a fair comparison
+between the classiﬁers."
+EXPERIMENTAL SETUP,0.13015873015873017,"3We only probe into representations of words that possess the attribute, e.g., if the attribute is gender we do
+not probe into the representation of the word “pizza”."
+METRICS,0.13333333333333333,"3.1.1
+METRICS"
+METRICS,0.1365079365079365,"Accuracy
+First, we measure the accuracy of the probe’s predictions. Since we experiment with
+many different conﬁgs, we use the Wilcoxon signed-rank test (Wilcoxon, 1992) as a statistical
+signiﬁcance test to determine whether a certain combination of a classiﬁer and a ranking is statistically
+signiﬁcantly better than another combination."
+METRICS,0.13968253968253969,"Selectivity
+We also evaluate our probes by selectivity (Hewitt & Liang, 2019), deﬁned as the
+difference between the classiﬁer’s accuracy on the actual probing task and its accuracy on predicting
+random labels assigned to word types, called a control task. Low selectivity implies that the probe can
+memorize the word-type–label pair, and so high accuracy in the probing task does not necessarily en-
+tail the presence of the linguistic attribute. Thus, we prefer probes that are both accurate and selective."
+RESULTS,0.14285714285714285,"3.2
+RESULTS"
+RESULTS,0.14603174603174604,"Across the 156 conﬁgs we experiment with, we observe three different accuracy patterns, demon-
+strated in Figs. 3a-3c. In these ﬁgures, each color represents a combination of a classiﬁer and a
+ranking, where a solid line is used for the top-to-bottom version of the ranking and a dotted line is
+for the bottom-to-top version of it, and a dashed line is used for the random ranking. Almost half
+of the conﬁgs follow the Standard pattern (Fig. 3a), in which all top-to-bottom rankings are always
+better than the random ranking, which is always better than all bottom-to-top rankings. The other
+half consists of two surprising patterns, that demonstrate the inherent ﬂaws in this ranking-evaluation
+approach. In the G>L pattern (Fig. 3b), the GAUSSIAN classiﬁer performs exceptionally well, pro-
+viding higher accuracy (after a certain point) using a random or even a bottom-to-top ranking, than
+the LINEAR classiﬁer using its top-to-bottom ranking. In the L>G pattern (Fig. 3c), the GAUSSIAN
+classiﬁer fails quickly, and thus the LINEAR classiﬁer provides higher accuracy using a random or
+bottom-to-top ranking than the GAUSSIAN classiﬁer using its top-to-bottom ranking."
+RESULTS,0.1492063492063492,"Fig. 3d shows a t-SNE (van der Maaten & Hinton, 2008) projection after performing K-means
+clustering on our 156 accuracy results, where each point represents accuracy results from one conﬁg
+(details on clustering procedure are in Appendix A.6). It shows three clusters of conﬁgs, that
+correspond to the three distinct patterns. On XLM-R we see very similar results, and most conﬁgs
+follow the same pattern in each model (Appendix A.8). We now turn to analyze these results."
+RANKING METHODS ARE INHERENTLY CONSISTENT,0.1523809523809524,"3.2.1
+RANKING METHODS ARE INHERENTLY CONSISTENT"
+RANKING METHODS ARE INHERENTLY CONSISTENT,0.15555555555555556,"In most conﬁgs, each classiﬁer provides better accuracy using a top-to-bottom ranking (solid lines)
+compared to the bottom-to-top version of the same ranking (same color, dotted line), and the
+random ranking (dashed lines) is in between. This is also seen in our statistical signiﬁcance tests
+(Appendix A.7). We conclude that even if they are not optimal, all ranking methods we consider
+generally rank task-informative neurons higher than non-informative ones."
+RANKING METHODS ARE INHERENTLY CONSISTENT,0.15873015873015872,"3.2.2
+WHICH CLASSIFIER IS BETTER?"
+RANKING METHODS ARE INHERENTLY CONSISTENT,0.1619047619047619,"In the Standard and G>L patterns (Figs. 3a, 3b), GAUSSIAN achieves better accuracy than LINEAR
+when both of them use the same ranking (including top-to-bottom LINEAR), especially when using
+small sets of neurons. Our statistical signiﬁcance tests (Appendix A.7) show that GAUSSIAN performs
+signiﬁcantly better than LINEAR with 6 out of the 7 rankings we tried when using 10 neurons, with
+5 rankings when using 50 neurons, and with 5 rankings when using 150 neurons. We now turn to
+analyze what makes GAUSSIAN more successful, and show some exceptions."
+RANKING METHODS ARE INHERENTLY CONSISTENT,0.16507936507936508,"GAUSSIAN is memorizing
+Across all conﬁgs, LINEAR provides higher selectivity than GAUSSIAN
+using any ranking, after a certain point (Appendix A.8). This means that GAUSSIAN tends to
+memorize the word-type–label pair when solving the task. While this is apparent in all conﬁgs, we
+note that speciﬁcally in the part-of-speech attribute there is a large portion of function words, i.e.,
+closed set labels (e.g., pronouns, determiners), meaning that memorization can signiﬁcantly help solve
+the task. Thus, most conﬁgs involving part of speech belong to the G>L pattern. Since memorization
+is a trait of the classiﬁer and not of the ranking, this pattern demonstrates the problematic nature of
+the current ranking-evaluation approach, as the results are highly dependent on the probe."
+RANKING METHODS ARE INHERENTLY CONSISTENT,0.16825396825396827,"LINEAR is more stable
+On the other hand, pattern L>G shows that there are certain conﬁgs where
+GAUSSIAN is struggling to model the distribution, resulting in mediocre accuracy results—which"
+RANKING METHODS ARE INHERENTLY CONSISTENT,0.17142857142857143,"(a) Bulgarian deﬁniteness layer 7 (Standard pattern).
+(b) Hindi part of speech layer 12 (G>L pattern)."
+RANKING METHODS ARE INHERENTLY CONSISTENT,0.1746031746031746,"(c) Russian animacy layer 2 (L>G pattern).
+(d) t-SNE projection of clustered probing results."
+RANKING METHODS ARE INHERENTLY CONSISTENT,0.17777777777777778,"Figure 3: Clustering of the three different patterns (3d), and an example of each of the patterns
+(3a–3c). Solid lines are top-to-bottom rankings; dashed are random rankings; dotted are bottom-
+to-top rankings. ""X by Y"" means classiﬁer X using ranking Y. Some lines are omitted for clarity;
+complementing ﬁgures can be found in Appendix A.8."
+RANKING METHODS ARE INHERENTLY CONSISTENT,0.18095238095238095,"even start decreasing at some point—sometimes even below majority baseline, as seen in Fig. 3c.
+This has also been mentioned in Torroba Hennigen et al. (2020), where it was shown that in those
+conﬁgs, there are only a few (or no) dimensions that are informative for the attribute and are Gaussian-
+distributed. Thus, the GAUSSIAN classiﬁer tries to model these distributions with the wrong tools,
+and fails. Poor modeling then leads to wrong predictions and low accuracy. In general, LINEAR
+behaves similarly across conﬁgs, making it more stable."
+RANKING METHODS ARE INHERENTLY CONSISTENT,0.18412698412698414,"3.2.3
+WHICH RANKING IS BETTER?"
+RANKING METHODS ARE INHERENTLY CONSISTENT,0.1873015873015873,"When looking at rankings, we would like to compare performance of the same classiﬁer, using
+different rankings. We would expect that each classiﬁer would perform best when using the ranking it
+has generated. However, this is not always the case. As we can see in all patterns in Fig. 3, for small
+sets of neurons, LINEAR actually achieves better accuracy when using GAUSSIAN’s ranking (solid
+green) than its own ranking (solid orange). As the number of neurons increases, at some point its
+accuracy with its own ranking becomes higher than with GAUSSIAN’s ranking."
+RANKING METHODS ARE INHERENTLY CONSISTENT,0.19047619047619047,"We suggest two explanations for this phenomenon: First, due to its greediness, the GAUSSIAN ranking
+is not guaranteed to provide the optimal subset. For a subset of size 1, it goes over all possibilities,
+but as the size grows there are more subsets that are not taken into consideration in the algorithm, so
+it is more likely to miss the best sets. Second, GAUSSIAN assumes the embedding distribution to be
+Gaussian. On dimensions which are not Gaussian-distributed, it makes a less accurate evaluation
+of the contribution of each neuron. So, if a neuron is informative towards the attribute but is not
+Gaussian-distributed, its addition to the selected neurons set is unlikely to improve performance, and
+thus it is not selected. This is a problem with a performance-based selection criterion, where the
+selection of neurons depends on the performance of the probe."
+RANKING METHODS ARE INHERENTLY CONSISTENT,0.19365079365079366,"To summarize, it seems that GAUSSIAN is good at selecting speciﬁc informative neurons, but misses
+the rest. While LINEAR’s ranking is not optimal (it is deﬁnitely worse then GAUSSIAN’s on small
+sets), it does seem to be more stable on different sizes. PROBELESS provides decent performance
+(and is inherently consistent), but is usually behind the other two."
+RANKING METHODS ARE INHERENTLY CONSISTENT,0.19682539682539682,"4
+PITFALL II: ENCODED INFORMATION VS. USED INFORMATION"
+RANKING METHODS ARE INHERENTLY CONSISTENT,0.2,"The variance of results in our probing experiments can mostly be attributed to probing limitations (He-
+witt & Liang, 2019; Belinkov, 2021), and emphasizes the need to distinguish between two properties:
+the probe’s classiﬁcation quality, and the neuron-ranking quality. To isolate the latter, and to shed
+light on which ranking prefers neurons that are actually used by the model for the attribute in question
+(which is ignored by previous work—Pitfall II), we take a second ranking-evaluation approach: we
+intervene by modifying the representation in the neurons selected by the ranking, and observe if,
+and how, our intervention affects the language model output. This approach is more of a causal
+one, inspired by similar prior work (Giulianelli et al., 2018; Elazar et al., 2021; Feder et al., 2020;
+Lovering et al., 2021; Ravfogel et al., 2021). We note that in this section, we use only the ranking
+itself, detaching it from any probes, thus removing classiﬁcation quality from ranking comparisons."
+RANKING METHODS ARE INHERENTLY CONSISTENT,0.20317460317460317,"Formally, for a representation h ∈H, ranking Π(d) (corresponding to an attribute F) and an
+increasing k ∈N, we intervene by modifying h only in the Π(d)[k] neurons, and observe the effect
+our intervention had on the model’s output—the word prediction (given the modiﬁed representation).4
+For vocabulary V, we divide the model to two components: E : V →H and D : H →V, such
+that for interventions in layer i, E is composed of all of the layers of the model up to (including) i,
+and D is composed of all of the rest of the layers, including the classiﬁcation head. After receiving
+a representation h = E(w) for word w ∈V, we modify h to get a new representation h′. If
+D(h) ̸= D(h′), then D is using the modiﬁed information. The process is illustrated in Appendix A.9."
+RANKING METHODS ARE INHERENTLY CONSISTENT,0.20634920634920634,"However, knowing that the information is being used is not enough; we would like to know to what
+purpose it is being used, and to verify that it only affects the speciﬁc attribute we are interested
+in. Thus, we perform a ﬁner-grained analysis, and check if D(h′) is similar, to some extent, to
+D(h). For that, we deﬁne a lemmatizer L : V →V, which maps words to their lemmas, and an
+analyzer A : V →Z, which maps words to their task labels. Our goal is to intervene such that
+L(D(h)) = L(D(h′)), but A(D(h)) ̸= A(D(h′)). For example, if we intervene for tense, we would
+like the word “sleeps” to become “slept”. If this is the case, it implies that we have successfully
+identiﬁed where the task-relevant information that D uses is encoded, and how it is being used."
+INTERVENTION METHODS,0.20952380952380953,"4.1
+INTERVENTION METHODS"
+INTERVENTION METHODS,0.2126984126984127,"We consider two methods for modifying hπ(d)k, and compare them."
+INTERVENTION METHODS,0.21587301587301588,"Ablation
+A common modiﬁcation method is trying to remove the information by ablating some
+neurons (Morcos et al., 2018; Bau et al., 2019; Lakretz et al., 2019), meaning we set hπ(d)k = 0. By
+that we aim to erase the information encoded in hπ(d)k."
+INTERVENTION METHODS,0.21904761904761905,"Translation
+For a word w ∈V with attribute label z ∈Z, we attempt to translate its representation
+(in the geometric sense) to produce a word with attribute label z′ ∈Z, z ̸= z′ by taking a step in the
+direction of z′, where bigger steps are applied to neurons that are marked as more important for the
+attribute. Formally, we apply the following protocol:"
+INTERVENTION METHODS,0.2222222222222222,"1. We calculate q(z) and q(z′) as in eq. (1).
+2. We set
+hΠ(d)[k] = hΠ(d)[k] + αk(q(z′)Π(d)[k] −q(z)Π(d)[k])
+(2)"
+INTERVENTION METHODS,0.2253968253968254,"where α ∈Rd is a log-scaled coefﬁcients vector in the range [0, β], such that the coefﬁcient of the
+highest-ranked neuron is β and that of the lowest-ranked neuron is 0, and β is a hyperparameter."
+INTERVENTION METHODS,0.22857142857142856,"Note that the rest of the neurons—those not in Π(d)[k]—remain unaffected. Using this protocol,
+we give each neuron its own special treatment—an approach that was not applied before (as far we
+know). This can be seen as a generalization of Gonen et al. (2020)."
+INTERVENTION METHODS,0.23174603174603176,4We apply the intervention on representations of all words that possess the attribute in the sentence.
+EXPERIMENTAL SETUP,0.23492063492063492,"4.2
+EXPERIMENTAL SETUP"
+EXPERIMENTAL SETUP,0.23809523809523808,"We handle the data the same way as in our probing experiments. However, since we analyze
+the model’s predictions—which may be different from the original input—we do not have gold
+morphology labels anymore. Thus, for morphologically analyzing the model’s predictions (L and
+A), we use spaCy (Honnibal et al., 2020). Out of the languages we used in our probing experiments,
+in this section we use only those that are supported by spaCy (English, Spanish and French). We
+calculate q(z) based on the entire training set, and perform our interventions on the test set. We
+compare the same 7 rankings we used in our probing experiments (§ 3.1)."
+METRICS,0.24126984126984127,"4.3
+METRICS"
+METRICS,0.24444444444444444,"Error rate
+For our intervention experiments, we ﬁrst measure the error rate of the language model.
+We want error rate to be high, since high error rate means we modiﬁed parts of the representation that
+have been used by the model in its prediction."
+METRICS,0.24761904761904763,"Correct Lemma, Wrong Value (CLWV)
+While inspecting predictions that are wrong after inter-
+vening (D(h′) ̸= w, where w is the true word), we categorize them by L(D(h′)) and A(D(h′)). If
+our intervention were successful, meaning we changed only the word’s speciﬁc attribute, and not
+other information, then we expect to see L(D(h)) = L(D(h′)) and A(D(h)) ̸= A(D(h′)); that is,
+correct lemma but wrong value (CLWV). For example, if the word “makes” becomes “made” when
+intervening for tense, then it is considered as a correct type of error, but if it becomes “make” or
+“prepared” it does not. Thus, we deﬁne CLWV as the portion of those errors out of all predictions."
+RESULTS,0.2507936507936508,"4.4
+RESULTS"
+ABLATION IS NOT EFFECTIVE,0.25396825396825395,"4.4.1
+ABLATION IS NOT EFFECTIVE"
+ABLATION IS NOT EFFECTIVE,0.2571428571428571,"Across most conﬁgs, about 400 neurons from layer 2 and 200–300 neurons from layers 7 and 12 can
+be ablated without any implications on the output, meaning error rate remains the same; an example is
+shown in Appendix A.10. Moreover, when error rate does grow, CLWV is very low. By qualitatively
+analyzing those errors we saw that most predicted words are common words, e.g., “and”, “if” in
+English. After ablating 600–700 (80%–90%) neurons from the representations, we observe a lot of
+errors, but most of them are because the word is predicted as nonsensical punctuation. Another major
+concern is that in some conﬁgs, ablating by a bottom-to-top ranking provides better results than by
+the top-to-bottom version of the same ranking. In general, there are no distinct differences between
+the rankings. Thus, from here on we focus on translation rather than ablation."
+TRANSLATION IS EFFECTIVE,0.26031746031746034,"4.4.2
+TRANSLATION IS EFFECTIVE"
+TRANSLATION IS EFFECTIVE,0.2634920634920635,"Across all translation experiments (Fig. 4 shows one example, more are in Appendix A.11), CLWV
+increases until a certain saturation point, after which it remains constant or drops a little.5 This means
+that we reached neurons that are not relevant for the attribute, and modifying them can result in loss
+of other information—error rate grows while CLWV does not. Thus, we are interested in the CLWV
+value at the saturation point (higher is better), and in the number of neurons modiﬁed at the saturation
+point (lower is better). We would also like the difference between the error rate and CLWV at the
+saturation point to be as small as possible. All terms considered, we perform a sweep search on the
+values of β in the range [1, 12] on a dev set. We ﬁnd that low β values provide low CLWV, while
+high values provide higher CLWV but also widen the gap between error rate and CLWV. We ﬁnd
+β = 8 to be a balanced point, and thus report test results with β = 8 in three conﬁgs in Table 1, and
+the rest of the conﬁgs in Appendix A.11. The results for XLM-R are given in Appendix A.12."
+TRANSLATION IS EFFECTIVE,0.26666666666666666,"Compared to ablation, translating a relatively small number of neurons results in a higher error rate,
+and these errors are closer to what we would expect. For example, translating only 50 neurons
+selected by PROBELESS in Spanish gender layer 2 results in 37% CLWV and 49% error rate, while
+ablating 50 neurons from the same conﬁg and ranking gives 0% CLWV errors and only 1% of error
+rate. We further note that unlike in ablation experiments, here our rankings are inherently consistent:
+across all conﬁgs, all top-to-bottom rankings perform better than the rest, while random rankings’"
+TRANSLATION IS EFFECTIVE,0.2698412698412698,"5We deﬁne “saturation point” as the ﬁrst point from which there are two consecutive points where the value
+increase is by a factor lower than 1.05."
+TRANSLATION IS EFFECTIVE,0.273015873015873,"error rate sometimes increases a little, and bottom-to-top rankings do not manage to affect the model’s
+output at all (Fig. 4 is one example, more are in Appendix A.11)."
+TRANSLATION IS EFFECTIVE,0.2761904761904762,"Figure 4: Spanish gender layer 2, translation
+results with β = 8. Solid lines are error rates,
+dashed are CLWVs. ttb and btt stand for top-
+to-bottom and bottom-to-top, respectively."
+TRANSLATION IS EFFECTIVE,0.27936507936507937,"Table 1: CLWV value at saturation point and number
+of neurons modiﬁed at the saturation point, using the
+translation method, with β = 8. In each cell, the three
+lines refer to layers 2, 7 and 12 respectively."
+TRANSLATION IS EFFECTIVE,0.28253968253968254,"LINEAR
+GAUSSIAN
+PROBELESS"
+TRANSLATION IS EFFECTIVE,0.2857142857142857,"English
+tense"
+TRANSLATION IS EFFECTIVE,0.28888888888888886,"0.39, 60
+0.37, 50
+0.51, 60"
+TRANSLATION IS EFFECTIVE,0.2920634920634921,"0.26, 150
+0.34, 70
+0.41, 120"
+TRANSLATION IS EFFECTIVE,0.29523809523809524,"0.38, 30
+0.34, 30
+0.46, 30"
+TRANSLATION IS EFFECTIVE,0.2984126984126984,"Spanish
+number"
+TRANSLATION IS EFFECTIVE,0.30158730158730157,"0.28, 110
+0.26, 50
+0.23, 150"
+TRANSLATION IS EFFECTIVE,0.3047619047619048,"0.19, 100
+0.20, 40
+0.16, 140"
+TRANSLATION IS EFFECTIVE,0.30793650793650795,"0.35, 60
+0.25, 30
+0.40, 80"
+TRANSLATION IS EFFECTIVE,0.3111111111111111,"Spanish
+gender"
+TRANSLATION IS EFFECTIVE,0.3142857142857143,"0.29, 50
+0.29, 50
+0.26, 130"
+TRANSLATION IS EFFECTIVE,0.31746031746031744,"0.25, 80
+0.31, 50
+0.16, 110"
+TRANSLATION IS EFFECTIVE,0.32063492063492066,"0.37, 50
+0.33, 30
+0.35, 60"
+PROBELESS IS THE MOST EFFECTIVE RANKING FOR INTERVENTIONS,0.3238095238095238,"4.4.3
+PROBELESS IS THE MOST EFFECTIVE RANKING FOR INTERVENTIONS"
+PROBELESS IS THE MOST EFFECTIVE RANKING FOR INTERVENTIONS,0.326984126984127,"A clear trend from our M-BERT results (Table 1, Fig. 4 and Appendix A.11) is that in most cases,
+PROBELESS achieves higher CLWV values, and does so using a smaller number of neurons, than
+the other two rankings. Furthermore, its error rate is signiﬁcantly higher than the other two. This
+implies that PROBELESS tends to select neurons that are being used by the model, more so than the
+other rankings. However, while it does select neurons that are relevant for the attribute in question
+(CLWV is relatively high), it also tends to select neurons that are used by the model for other kinds
+of attributes (the difference between error rate and CLWV is relatively high). Among LINEAR and
+GAUSSIAN, LINEAR seems to have the upper hand, with higher CLWV values in most conﬁgs. This
+provides another evidence that the superiority of GAUSSIAN in the probing experiments may be due
+to the quality of its classiﬁer, and speciﬁcally its memorization ability, rather than the quality of
+the ranking it produces, as here only the ranking affects results. In XLM-R, it seems that LINEAR
+and PROBELESS both have the lead, with GAUSSIAN falling behind (Appendix A.12). We perform
+additional experiments on monolingual models (Appendix A.13), where PROBELESS is again superior."
+DISCUSSION AND CONCLUSION,0.33015873015873015,"5
+DISCUSSION AND CONCLUSION"
+DISCUSSION AND CONCLUSION,0.3333333333333333,"In this work, we show two pitfalls with the common approach for ranking neurons according to their
+importance for a morphological attribute, and compare different ranking methods that follow this
+approach. We show that to evaluate a ranking in a probing scenario, one should separate between the
+ranking itself and the quality of the classiﬁer that is using the ranking—Pitfall I. While previous work
+concentrated on encoded information—Pitfall II—we show that it is not the same as information
+used by a model, by showing that GAUSSIAN is inferior in the interventions scenario, in contrast
+to our probing results. This implies that high probing accuracy does not necessarily entail that the
+information is actually important for the model. This conclusion is also present in prior work (Elazar
+et al., 2021; Feder et al., 2020; Ravfogel et al., 2021), but it has been largely neglected in studies of
+individual neurons via probes. We propose a new, fast-to-use ranking method that relies solely on
+the data, without training any auxiliary classiﬁer, and show that it is valid, and prefers neurons that
+are being used by the model, more so than other ranking methods. We also propose a method for
+intervening within the model’s representations such that it transforms the output in a desired way."
+DISCUSSION AND CONCLUSION,0.33650793650793653,"In our intervention experiments, modifying too many neurons results in more errors that are not
+related to the true word. This proves the importance of looking into individual neurons, especially
+when trying to intervene in the inner workings of the model. For example, Gonen et al. (2020) try
+to change the language of a word by intervening with the representation, using the same translation
+method we use, but with the same coefﬁcient for every neuron, and on the entire representation. Our
+results imply that they may get better results by using our ﬁner-grained method."
+ETHICS STATEMENT,0.3396825396825397,"Ethics statement
+Our work contributes to the effort of improving the interpretability of language
+models, and more generally of neural networks. Better explanations and controls over a model’s
+outputs can ameliorate its fairness, for example in the case of gender bias: our intervention method
+can guide users on how to reduce such biases, by pointing to model components (neurons) responsible
+for gender and offering intervention methods to control model behavior w.r.t a particular property.
+On the other hand, malicious actors could use such capability to increase discrimination. Exposing
+the capabilities may also help develop defense mechanisms."
+REPRODUCIBILITY STATEMENT,0.34285714285714286,"Reproducibility statement
+All our results are reproducible using the code repository we will
+release. All experimental details, including hyperparameters, are reported in §3.1, 4.1 and 4.2. As
+language models, we used the implementation of the transformers library (Wolf et al., 2020). We
+performed our experiments on NVIDIA RTX 2080 Ti GPU. All data preparation details are reported
+in §2.2 and Appendix A.2."
+REPRODUCIBILITY STATEMENT,0.346031746031746,ACKNOWLEDGMENTS
+REPRODUCIBILITY STATEMENT,0.3492063492063492,"We thank Lucas Torroba Hennigen for his helpful comments. This research was supported by
+the ISRAEL SCIENCE FOUNDATION (grant No. 448/20) and by an Azrieli Foundation Early
+Career Faculty Fellowship. YB is supported by the Viterbi Fellowship in the Center for Computer
+Engineering at the Technion."
+REFERENCES,0.3523809523809524,REFERENCES
+REFERENCES,0.35555555555555557,"Yossi Adi, Einat Kermany, Yonatan Belinkov, Ofer Lavi, and Yoav Goldberg. Fine-grained analysis of
+sentence embeddings using auxiliary prediction tasks. In 5th International Conference on Learning
+Representations, ICLR 2017, Toulon, France, April 24-26, 2017, Conference Track Proceedings.
+OpenReview.net, 2017. URL https://openreview.net/forum?id=BJh6Ztuxl."
+REFERENCES,0.35873015873015873,"Anthony Bau, Yonatan Belinkov, Hassan Sajjad, Nadir Durrani, Fahim Dalvi, and James R. Glass.
+Identifying and controlling important neurons in neural machine translation. In 7th International
+Conference on Learning Representations, ICLR 2019, New Orleans, LA, USA, May 6-9, 2019.
+OpenReview.net, 2019. URL https://openreview.net/forum?id=H1z-PsR5KX."
+REFERENCES,0.3619047619047619,"Yonatan Belinkov.
+Probing classiﬁers:
+Promises, shortcomings, and alternatives.
+CoRR,
+abs/2102.12452, 2021. URL https://arxiv.org/abs/2102.12452."
+REFERENCES,0.36507936507936506,"Maxim Binshtok, Ronen I Brafman, Solomon Eyal Shimony, Ajay Martin, and Craig Boutilier.
+Computing optimal subsets. In AAAI, pp. 1231–1236, 2007."
+REFERENCES,0.3682539682539683,"Alexis Conneau, German Kruszewski, Guillaume Lample, Loïc Barrault, and Marco Baroni. What
+you can cram into a single $&!#* vector: Probing sentence embeddings for linguistic properties. In
+Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume
+1: Long Papers), pp. 2126–2136, Melbourne, Australia, 2018. Association for Computational
+Linguistics. doi: 10.18653/v1/P18-1198. URL https://www.aclweb.org/anthology/
+P18-1198."
+REFERENCES,0.37142857142857144,"Alexis Conneau, Kartikay Khandelwal, Naman Goyal, Vishrav Chaudhary, Guillaume Wenzek,
+Francisco Guzmán, Edouard Grave, Myle Ott, Luke Zettlemoyer, and Veselin Stoyanov. Un-
+supervised cross-lingual representation learning at scale.
+In Proceedings of the 58th An-
+nual Meeting of the Association for Computational Linguistics, pp. 8440–8451, Online, July
+2020. Association for Computational Linguistics. doi: 10.18653/v1/2020.acl-main.747. URL
+https://aclanthology.org/2020.acl-main.747."
+REFERENCES,0.3746031746031746,"Fahim Dalvi, Nadir Durrani, Hassan Sajjad, Yonatan Belinkov, Anthony Bau, and James R. Glass.
+What is one grain of sand in the desert? analyzing individual neurons in deep NLP models. In The
+Thirty-Third AAAI Conference on Artiﬁcial Intelligence, AAAI 2019, The Thirty-First Innovative
+Applications of Artiﬁcial Intelligence Conference, IAAI 2019, The Ninth AAAI Symposium on
+Educational Advances in Artiﬁcial Intelligence, EAAI 2019, Honolulu, Hawaii, USA, January 27 -
+February 1, 2019, pp. 6309–6317. AAAI Press, 2019. doi: 10.1609/aaai.v33i01.33016309. URL
+https://doi.org/10.1609/aaai.v33i01.33016309."
+REFERENCES,0.37777777777777777,"Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. BERT: Pre-training of deep
+bidirectional transformers for language understanding. In Proceedings of the 2019 Conference of
+the North American Chapter of the Association for Computational Linguistics: Human Language
+Technologies, Volume 1 (Long and Short Papers), pp. 4171–4186, Minneapolis, Minnesota, 2019.
+Association for Computational Linguistics. doi: 10.18653/v1/N19-1423. URL https://www.
+aclweb.org/anthology/N19-1423."
+REFERENCES,0.38095238095238093,"Nadir Durrani, Hassan Sajjad, Fahim Dalvi, and Yonatan Belinkov. Analyzing individual neu-
+rons in pre-trained language models. In Proceedings of the 2020 Conference on Empirical
+Methods in Natural Language Processing (EMNLP), pp. 4865–4880, Online, 2020. Associa-
+tion for Computational Linguistics. doi: 10.18653/v1/2020.emnlp-main.395. URL https:
+//www.aclweb.org/anthology/2020.emnlp-main.395."
+REFERENCES,0.38412698412698415,"Yanai Elazar, Shauli Ravfogel, Alon Jacovi, and Yoav Goldberg. Amnesic probing: Behavioral
+explanation with amnesic counterfactuals. Transactions of the Association for Computational
+Linguistics, 9:160–175, 2021."
+REFERENCES,0.3873015873015873,"Amir Feder, Nadav Oved, Uri Shalit, and Roi Reichart. Causalm: Causal model explanation through
+counterfactual language models. Computational Linguistics, pp. 1–52, 2020."
+REFERENCES,0.3904761904761905,"Mario Giulianelli, Jack Harding, Florian Mohnert, Dieuwke Hupkes, and Willem Zuidema. Under
+the hood: Using diagnostic classiﬁers to investigate and improve how language models track
+agreement information. In Proceedings of the 2018 EMNLP Workshop BlackboxNLP: Analyzing
+and Interpreting Neural Networks for NLP, pp. 240–248, Brussels, Belgium, 2018. Association for
+Computational Linguistics. doi: 10.18653/v1/W18-5426. URL https://www.aclweb.org/
+anthology/W18-5426."
+REFERENCES,0.39365079365079364,"Hila Gonen, Shauli Ravfogel, Yanai Elazar, and Yoav Goldberg. It’s not Greek to mBERT: Inducing
+word-level translations from multilingual BERT. In Proceedings of the Third BlackboxNLP
+Workshop on Analyzing and Interpreting Neural Networks for NLP, pp. 45–56, Online, 2020.
+Association for Computational Linguistics. doi: 10.18653/v1/2020.blackboxnlp-1.5. URL https:
+//www.aclweb.org/anthology/2020.blackboxnlp-1.5."
+REFERENCES,0.3968253968253968,"John Hewitt and Percy Liang. Designing and interpreting probes with control tasks. In Proceedings
+of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th
+International Joint Conference on Natural Language Processing (EMNLP-IJCNLP), pp. 2733–
+2743, Hong Kong, China, 2019. Association for Computational Linguistics. doi: 10.18653/v1/D19-
+1275. URL https://www.aclweb.org/anthology/D19-1275."
+REFERENCES,0.4,"Matthew Honnibal, Ines Montani, Soﬁe Van Landeghem, and Adriane Boyd. spaCy: Industrial-
+strength Natural Language Processing in Python, 2020. URL https://doi.org/10.5281/
+zenodo.1212303."
+REFERENCES,0.4031746031746032,"Christo Kirov, Ryan Cotterell, John Sylak-Glassman, Géraldine Walther, Ekaterina Vylomova,
+Patrick Xia, Manaal Faruqui, Sabrina J. Mielke, Arya McCarthy, Sandra Kübler, David Yarowsky,
+Jason Eisner, and Mans Hulden. UniMorph 2.0: Universal Morphology. In Proceedings of
+the Eleventh International Conference on Language Resources and Evaluation (LREC 2018),
+Miyazaki, Japan, 2018. European Language Resources Association (ELRA). URL https:
+//www.aclweb.org/anthology/L18-1293."
+REFERENCES,0.40634920634920635,"Yair Lakretz, German Kruszewski, Theo Desbordes, Dieuwke Hupkes, Stanislas Dehaene, and Marco
+Baroni. The emergence of number and syntax units in LSTM language models. In Proceedings
+of the 2019 Conference of the North American Chapter of the Association for Computational
+Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers), pp. 11–20,
+Minneapolis, Minnesota, June 2019. Association for Computational Linguistics. doi: 10.18653/v1/
+N19-1002. URL https://aclanthology.org/N19-1002."
+REFERENCES,0.4095238095238095,"Charles Lovering, Rohan Jha, Tal Linzen, and Ellie Pavlick. Predicting inductive biases of ﬁne-
+tuned models. In International Conference on Learning Representations, 2021. URL https:
+//openreview.net/forum?id=mNtmhaDkAr."
+REFERENCES,0.4126984126984127,"Arya D. McCarthy, Miikka Silfverberg, Ryan Cotterell, Mans Hulden, and David Yarowsky. Marrying
+Universal Dependencies and Universal Morphology. In Proceedings of the Second Workshop
+on Universal Dependencies (UDW 2018), pp. 91–101, Brussels, Belgium, 2018. Association for
+Computational Linguistics. doi: 10.18653/v1/W18-6011. URL https://www.aclweb.org/
+anthology/W18-6011."
+REFERENCES,0.4158730158730159,"Ari S Morcos, David GT Barrett, Neil C Rabinowitz, and Matthew Botvinick. On the importance of
+single directions for generalization. arXiv preprint arXiv:1803.06959, 2018."
+REFERENCES,0.41904761904761906,"Shauli Ravfogel, Grusha Prasad, Tal Linzen, and Yoav Goldberg. Counterfactual interventions
+reveal the causal effect of relative clause representations on agreement prediction. In Proceedings
+of the 25th Conference on Computational Natural Language Learning, pp. 194–209, Online,
+November 2021. Association for Computational Linguistics. URL https://aclanthology.
+org/2021.conll-1.15."
+REFERENCES,0.4222222222222222,"Hassan Sajjad, Fahim Dalvi, Nadir Durrani, and Preslav Nakov. Poor man’s bert: Smaller and faster
+transformer models. ArXiv, abs/2004.03844, 2020."
+REFERENCES,0.4253968253968254,"Lucas Torroba Hennigen, Adina Williams, and Ryan Cotterell. Intrinsic probing through dimension
+selection. In Proceedings of the 2020 Conference on Empirical Methods in Natural Language
+Processing (EMNLP), pp. 197–216, Online, 2020. Association for Computational Linguistics. doi:
+10.18653/v1/2020.emnlp-main.15. URL https://www.aclweb.org/anthology/2020.
+emnlp-main.15."
+REFERENCES,0.42857142857142855,"Laurens van der Maaten and Geoffrey Hinton.
+Visualizing data using t-sne.
+Journal of Ma-
+chine Learning Research, 9(86):2579–2605, 2008. URL http://jmlr.org/papers/v9/
+vandermaaten08a.html."
+REFERENCES,0.43174603174603177,"Elena Voita, David Talbot, Fedor Moiseev, Rico Sennrich, and Ivan Titov. Analyzing multi-head
+self-attention: Specialized heads do the heavy lifting, the rest can be pruned. In Proceedings
+of the 57th Annual Meeting of the Association for Computational Linguistics, pp. 5797–5808,
+Florence, Italy, 2019. Association for Computational Linguistics. doi: 10.18653/v1/P19-1580.
+URL https://www.aclweb.org/anthology/P19-1580."
+REFERENCES,0.43492063492063493,"Frank Wilcoxon. Individual comparisons by ranking methods. In Breakthroughs in statistics, pp.
+196–202. Springer, 1992."
+REFERENCES,0.4380952380952381,"Thomas Wolf, Lysandre Debut, Victor Sanh, Julien Chaumond, Clement Delangue, Anthony Moi,
+Pierric Cistac, Tim Rault, Remi Louf, Morgan Funtowicz, Joe Davison, Sam Shleifer, Patrick
+von Platen, Clara Ma, Yacine Jernite, Julien Plu, Canwen Xu, Teven Le Scao, Sylvain Gug-
+ger, Mariama Drame, Quentin Lhoest, and Alexander Rush. Transformers: State-of-the-art
+natural language processing. In Proceedings of the 2020 Conference on Empirical Methods
+in Natural Language Processing: System Demonstrations, pp. 38–45, Online, October 2020.
+Association for Computational Linguistics.
+doi: 10.18653/v1/2020.emnlp-demos.6.
+URL
+https://aclanthology.org/2020.emnlp-demos.6."
+REFERENCES,0.44126984126984126,"Daniel Zeman, Joakim Nivre, Mitchell Abrams, Elia Ackermann, Noëmi Aepli, Hamid Aghaei, Željko
+Agi´c, Amir Ahmadi, Lars Ahrenberg, Chika Kennedy Ajede, Gabriel˙e Aleksandraviˇci¯ut˙e, Ika Al-
+ﬁna, Lene Antonsen, Katya Aplonova, Angelina Aquino, Carolina Aragon, Maria Jesus Aranzabe,
+Hórunn Arnardóttir, Gashaw Arutie, Jessica Naraiswari Arwidarasti, Masayuki Asahara, Luma
+Ateyah, Furkan Atmaca, Mohammed Attia, Aitziber Atutxa, Liesbeth Augustinus, Elena Badmaeva,
+Keerthana Balasubramani, Miguel Ballesteros, Esha Banerjee, Sebastian Bank, Verginica Barbu Mi-
+titelu, Victoria Basmov, Colin Batchelor, John Bauer, Seyyit Talha Bedir, Kepa Bengoetxea, Gözde
+Berk, Yevgeni Berzak, Irshad Ahmad Bhat, Riyaz Ahmad Bhat, Erica Biagetti, Eckhard Bick,
+Agn˙e Bielinskien˙e, Kristín Bjarnadóttir, Rogier Blokland, Victoria Bobicev, Loïc Boizou, Emanuel
+Borges Völker, Carl Börstell, Cristina Bosco, Gosse Bouma, Sam Bowman, Adriane Boyd, Kristina
+Brokait˙e, Aljoscha Burchardt, Marie Candito, Bernard Caron, Gauthier Caron, Tatiana Cavalcanti,
+Gül¸sen Cebiro˘glu Eryi˘git, Flavio Massimiliano Cecchini, Giuseppe G. A. Celano, Slavomír ˇCéplö,
+Savas Cetin, Özlem Çetino˘glu, Fabricio Chalub, Ethan Chi, Yongseok Cho, Jinho Choi, Jayeol
+Chun, Alessandra T. Cignarella, Silvie Cinková, Aurélie Collomb, Ça˘grı Çöltekin, Miriam Connor,
+Marine Courtin, Elizabeth Davidson, Marie-Catherine de Marneffe, Valeria de Paiva, Mehmet Oguz"
+REFERENCES,0.4444444444444444,"Derin, Elvis de Souza, Arantza Diaz de Ilarraza, Carly Dickerson, Arawinda Dinakaramani, Bamba
+Dione, Peter Dirix, Kaja Dobrovoljc, Timothy Dozat, Kira Droganova, Puneet Dwivedi, Hanne
+Eckhoff, Marhaba Eli, Ali Elkahky, Binyam Ephrem, Olga Erina, Tomaž Erjavec, Aline Etienne,
+Wograine Evelyn, Sidney Facundes, Richárd Farkas, Marília Fernanda, Hector Fernandez Alcalde,
+Jennifer Foster, Cláudia Freitas, Kazunori Fujita, Katarína Gajdošová, Daniel Galbraith, Marcos
+Garcia, Moa Gärdenfors, Sebastian Garza, Fabrício Ferraz Gerardi, Kim Gerdes, Filip Ginter,
+Iakes Goenaga, Koldo Gojenola, Memduh Gökırmak, Yoav Goldberg, Xavier Gómez Guinovart,
+Berta González Saavedra, Bernadeta Grici¯ut˙e, Matias Grioni, Loïc Grobol, Normunds Gr¯uz¯ıtis,
+Bruno Guillaume, Céline Guillot-Barbance, Tunga Güngör, Nizar Habash, Hinrik Hafsteinsson,
+Jan Hajiˇc, Jan Hajiˇc jr., Mika Hämäläinen, Linh Hà M˜y, Na-Rae Han, Muhammad Yudistira
+Hanifmuti, Sam Hardwick, Kim Harris, Dag Haug, Johannes Heinecke, Oliver Hellwig, Felix
+Hennig, Barbora Hladká, Jaroslava Hlaváˇcová, Florinel Hociung, Petter Hohle, Eva Huber, Jena
+Hwang, Takumi Ikeda, Anton Karl Ingason, Radu Ion, Elena Irimia, O. lájídé Ishola, Tomáš Jelínek,
+Anders Johannsen, Hildur Jónsdóttir, Fredrik Jørgensen, Markus Juutinen, Sarveswaran K, Hüner
+Ka¸sıkara, Andre Kaasen, Nadezhda Kabaeva, Sylvain Kahane, Hiroshi Kanayama, Jenna Kanerva,
+Boris Katz, Tolga Kayadelen, Jessica Kenney, Václava Kettnerová, Jesse Kirchner, Elena Klemen-
+tieva, Arne Köhn, Abdullatif Köksal, Kamil Kopacewicz, Timo Korkiakangas, Natalia Kotsyba,
+Jolanta Kovalevskait˙e, Simon Krek, Parameswari Krishnamurthy, Sookyoung Kwak, Veronika
+Laippala, Lucia Lam, Lorenzo Lambertino, Tatiana Lando, Septina Dian Larasati, Alexei Lavren-
+tiev, John Lee, Phùòng Lê H`ông, Alessandro Lenci, Saran Lertpradit, Herman Leung, Maria Levina,
+Cheuk Ying Li, Josie Li, Keying Li, Yuan Li, KyungTae Lim, Krister Lindén, Nikola Ljubeši´c,
+Olga Loginova, Andry Luthﬁ, Mikko Luukko, Olga Lyashevskaya, Teresa Lynn, Vivien Macketanz,
+Aibek Makazhanov, Michael Mandl, Christopher Manning, Ruli Manurung, C˘at˘alina M˘ar˘anduc,
+David Mareˇcek, Katrin Marheinecke, Héctor Martínez Alonso, André Martins, Jan Mašek, Hiroshi
+Matsuda, Yuji Matsumoto, Ryan McDonald, Sarah McGuinness, Gustavo Mendonça, Niko Miekka,
+Karina Mischenkova, Margarita Misirpashayeva, Anna Missilä, C˘at˘alin Mititelu, Maria Mitrofan,
+Yusuke Miyao, AmirHossein Mojiri Foroushani, Amirsaeid Moloodi, Simonetta Montemagni,
+Amir More, Laura Moreno Romero, Keiko Sophie Mori, Shinsuke Mori, Tomohiko Morioka,
+Shigeki Moro, Bjartur Mortensen, Bohdan Moskalevskyi, Kadri Muischnek, Robert Munro, Yugo
+Murawaki, Kaili Müürisep, Pinkey Nainwani, Mariam Nakhlé, Juan Ignacio Navarro Horñiacek,
+Anna Nedoluzhko, Gunta Nešpore-B¯erzkalne, Lùòng Nguy˜ên Thi., Huy`ên Nguy˜ên Thi. Minh,
+Yoshihiro Nikaido, Vitaly Nikolaev, Rattima Nitisaroj, Alireza Nourian, Hanna Nurmi, Stina Ojala,
+Atul Kr. Ojha, Adédayò. Olúòkun, Mai Omura, Emeka Onwuegbuzia, Petya Osenova, Robert
+Östling, Lilja Øvrelid, ¸Saziye Betül Özate¸s, Arzucan Özgür, Balkız Öztürk Ba¸saran, Niko Parta-
+nen, Elena Pascual, Marco Passarotti, Agnieszka Patejuk, Guilherme Paulino-Passos, Angelika
+Peljak-Łapi´nska, Siyao Peng, Cenel-Augusto Perez, Natalia Perkova, Guy Perrier, Slav Petrov,
+Daria Petrova, Jason Phelan, Jussi Piitulainen, Tommi A Pirinen, Emily Pitler, Barbara Plank,
+Thierry Poibeau, Larisa Ponomareva, Martin Popel, Lauma Pretkalnin, a, Sophie Prévost, Prokopis
+Prokopidis, Adam Przepiórkowski, Tiina Puolakainen, Sampo Pyysalo, Peng Qi, Andriela Rääbis,
+Alexandre Rademaker, Taraka Rama, Loganathan Ramasamy, Carlos Ramisch, Fam Rashel, Mo-
+hammad Sadegh Rasooli, Vinit Ravishankar, Livy Real, Petru Rebeja, Siva Reddy, Georg Rehm,
+Ivan Riabov, Michael Rießler, Erika Rimkut˙e, Larissa Rinaldi, Laura Rituma, Luisa Rocha, Eiríkur
+Rögnvaldsson, Mykhailo Romanenko, Rudolf Rosa, Valentin Ros,ca, Davide Rovati, Olga Rudina,
+Jack Rueter, Kristján Rúnarsson, Shoval Sadde, Pegah Safari, Benoît Sagot, Aleksi Sahala, Shadi
+Saleh, Alessio Salomoni, Tanja Samardži´c, Stephanie Samson, Manuela Sanguinetti, Dage Särg,
+Baiba Saul¯ıte, Yanin Sawanakunanon, Kevin Scannell, Salvatore Scarlata, Nathan Schneider,
+Sebastian Schuster, Djamé Seddah, Wolfgang Seeker, Mojgan Seraji, Mo Shen, Atsuko Shimada,
+Hiroyuki Shirasu, Muh Shohibussirri, Dmitry Sichinava, Einar Freyr Sigurðsson, Aline Silveira,
+Natalia Silveira, Maria Simi, Radu Simionescu, Katalin Simkó, Mária Šimková, Kiril Simov, Maria
+Skachedubova, Aaron Smith, Isabela Soares-Bastos, Carolyn Spadine, Steinhór Steingrímsson,
+Antonio Stella, Milan Straka, Emmett Strickland, Jana Strnadová, Alane Suhr, Yogi Lesmana
+Sulestio, Umut Sulubacak, Shingo Suzuki, Zsolt Szántó, Dima Taji, Yuta Takahashi, Fabio Tam-
+burini, Mary Ann C. Tan, Takaaki Tanaka, Samson Tella, Isabelle Tellier, Guillaume Thomas,
+Liisi Torga, Marsida Toska, Trond Trosterud, Anna Trukhina, Reut Tsarfaty, Utku Türk, Francis
+Tyers, Sumire Uematsu, Roman Untilov, Zdeˇnka Urešová, Larraitz Uria, Hans Uszkoreit, Andrius
+Utka, Sowmya Vajjala, Daniel van Niekerk, Gertjan van Noord, Viktor Varga, Eric Villemonte
+de la Clergerie, Veronika Vincze, Aya Wakasa, Joel C. Wallenberg, Lars Wallin, Abigail Walsh,
+Jing Xian Wang, Jonathan North Washington, Maximilan Wendt, Paul Widmer, Seyi Williams,"
+REFERENCES,0.44761904761904764,"Mats Wirén, Christian Wittern, Tsegay Woldemariam, Tak-sum Wong, Alina Wróblewska, Mary
+Yako, Kayo Yamashita, Naoki Yamazaki, Chunxiao Yan, Koichi Yasuoka, Marat M. Yavrumyan,
+Zhuoran Yu, Zdenˇek Žabokrtský, Shorouq Zahra, Amir Zeldes, Hanzhi Zhu, and Anna Zhuravl-
+eva. Universal dependencies 2.7, 2020. URL http://hdl.handle.net/11234/1-3424.
+LINDAT/CLARIAH-CZ digital library at the Institute of Formal and Applied Linguistics (ÚFAL),
+Faculty of Mathematics and Physics, Charles University."
+REFERENCES,0.4507936507936508,"A
+APPENDIX"
+REFERENCES,0.45396825396825397,"A.1
+LINEAR METHOD MODIFICATION"
+REFERENCES,0.45714285714285713,"In Dalvi et al. (2019), after the probe has been trained, its weights are fed into a neuron ranking
+algorithm. However, we observed that the original algorithm distributes the neurons equally among
+labels, meaning that each label would contribute the same number of neurons at each portion of the
+ranking, regardless of the amount of neurons that are actually important for this label. For example,
+if for label A there are 10 important neurons and for label B there are only 2, then the ﬁrst 10 neurons
+in the ranking would consist of 5 neurons for A and 5 for B, meaning that 3 non-important neurons
+are ranked higher than 5 important ones. Thus, we chose a different way to obtain the ranking: for
+each neuron, we compute the mean absolute value of the |Z| weights associated with it, and sort
+the neurons by this value, from highest to lowest. In early experiments we found that this method
+empirically provides better results, and is more adapted to large label sets."
+REFERENCES,0.4603174603174603,"A.2
+DATA PREPARATION"
+REFERENCES,0.4634920634920635,"We remove any sentences that would have a sub-token length greater than 512, the maximum allowed
+for M-BERT, the language model we use for generating representations. As in Torroba Hennigen
+et al. (2020), we remove attribute labels that are associated with fewer than 100 word types in any
+of the data splits. This mostly removes function words, and we found it makes it harder for probes
+to use memorization for solving the task. The morphological attributes we experiment with include
+(in UniMorph annotations): Animacy, Aspect, Case, Deﬁniteness, Gender and Noun Class, Mood,
+Number, Part of Speech, Person, Polarity, Possession, Tense and Voice."
+REFERENCES,0.4666666666666667,"A.3
+EXPECTED OVERLAP BETWEEN RANDOM RANKINGS"
+REFERENCES,0.46984126984126984,"Given i rankings, we calculate the expected size of overlap between the ﬁrst M neurons across all
+rankings:"
+REFERENCES,0.473015873015873,"For selecting M neurons from the range {1, ..., N}, let Ci ∈RN×N×N be a matrix such that in
+Ci[n, m, k] we keep the number of possibilities to select m neurons from the range [n] such that
+exactly k different neurons are selected by all i rankings, where k ≤m ≤n and n, m, k > 0. For
+calculating Ci[n, m, k] we ﬁrst select the k neurons from range [n] that are selected by all i rankings,
+thus
+ n
+k
+
+possibilities. Then, for selecting the rest of the neurons, each ranking has to select m −k"
+REFERENCES,0.47619047619047616,"neurons from the remaining n −k neurons, so there are
+  n−k
+m−k
+i possibilities. From these, we want
+to substract the number of possibilities in which there is at least one neuron that is selected by all
+rankings, which is Pm−k
+j=1 Ci[n −k, m −k, j]. Concluding, we compute Ci[n, m, k] by:"
+REFERENCES,0.4793650793650794,"Ci[n, m, k] =
+n
+k  "
+REFERENCES,0.48253968253968255,"
+n −k
+m −k i
+− m−k
+X"
+REFERENCES,0.4857142857142857,"j=1
+Ci[n −k, m −k, j]  
+(3)"
+REFERENCES,0.4888888888888889,"after initializing C[1, 1, 1] = 1. Then, we calculate the expected number of overlapping neurons by:"
+REFERENCES,0.49206349206349204,"Ei(n, m) =
+Pm
+k=1 k × C[n, m, k]"
+REFERENCES,0.49523809523809526,"  n
+m
+i
+(4)"
+REFERENCES,0.4984126984126984,"since C[n,m,k]"
+REFERENCES,0.5015873015873016,"(
+n
+m)
+i
+is the probability to have exactly k overlapping neurons. We thus get E2(768, 100) ≈"
+REFERENCES,0.5047619047619047,"13.02 and E3(768, 100) ≈1.69."
+REFERENCES,0.5079365079365079,"A.4
+OVERLAPS"
+REFERENCES,0.5111111111111111,"Fig. 5 shows overlaps between the 100 most important neurons chosen by LINEAR and GAUSSIAN
+for different conﬁgs. Both of them provide less overlaps then PROBELESS, with GAUSSIAN having
+almost no overlaps at all, showing its inconsistency across languages."
+REFERENCES,0.5142857142857142,"Fig. 6 presents the same analysis, but for XLM-R, with PROBELESS ranking (equivalent to Fig. 1 for
+M-BERT). We see far more overlaps in XLM-R, and no red squares (describing a lower overlap size
+than the expected one), implying that the information is more condensed in XLM-R than in M-BERT."
+REFERENCES,0.5174603174603175,"(a) LINEAR
+(b) GAUSSIAN"
+REFERENCES,0.5206349206349207,Figure 5: Layer 7 neurons overlap using LINEAR and GAUSSIAN rankings.
+REFERENCES,0.5238095238095238,"Figure 6: XLM-R layer 7 neurons overlap, using PROBELESS. Blue squares are above expected
+value, red are below."
+REFERENCES,0.526984126984127,"A.5
+RANKING EVALUATION BY PROBING"
+REFERENCES,0.5301587301587302,"Fig. 7 illustrates the process of evaluating rankings by probing. Two different actors affect the ﬁnal
+accuracy: the ranking method, and the probe. In this work, we experiment with the 7 rankings
+described in §3.1 as ranking methods, and the two probes used by LINEAR and GAUSSIAN as probes.
+This methodology is problematic for evaluating rankings, as the choice of a probe signiﬁcantly affects
+results."
+REFERENCES,0.5333333333333333,"A.6
+CLUSTERING PROBING RESULTS"
+REFERENCES,0.5365079365079365,"For each conﬁg out of the 156 we experimented with, we have results of 14 classiﬁer–ranking
+combinations, each of length 150, the max k (number of neurons) we used. For clustering these
+results, we ﬁrst remove all combinations involving a bottom-to-top ranking, as these add a lot of
+noise to the clustering algorithm, making it focus on irrelevant signals. Thus, our results matrix is of
+shape [156, 8, 150]. We then reshape the matrix to shape [156, 8 × 150] and run K-means over it with
+K = 3. Projecting the K-means output with t-SNE gives us Figs. 3d and 9a."
+REFERENCES,0.5396825396825397,"A.7
+STATISTICAL SIGNIFICANCE TESTS"
+REFERENCES,0.5428571428571428,"Table 2 shows the results of our statistical signiﬁcance tests. The three rows in each cell correspond
+to using 10, 50 and 150 neurons. If there is an * in the [i, j] cell, is means that the p-value under
+the null hypothesis that probe j is better than probe i is lower than 0.05, when using the matching
+number of neurons. For example, we see that there is an * in the ﬁrst and second rows in the [0, 3] cell,"
+REFERENCES,0.546031746031746,"Figure 7: Ranking evaluation by probing: The language model creates a word representation (e.g., of
+the word “was”), which is fed into a neuron-ranking method, to rank its neurons according to their
+importance for some attribute (e.g., tense). The k-highest ranked neurons are fed into a probe, which
+is trained to predict the attribute."
+REFERENCES,0.5492063492063493,"Table 2: Statistical signiﬁcance results. G, L, P and ttb are abbreviations for GAUSSIAN, LINEAR,
+PROBELESS and top-to-bottom, respectively."
+REFERENCES,0.5523809523809524,"G by
+ttb G
+L by
+ttb G
+G by
+ttb L
+L by
+ttb L
+G by
+ttb P
+L by
+ttb P"
+REFERENCES,0.5555555555555556,"G by
+ttb G
+—
+*
+*
+* *
+*
+*"
+REFERENCES,0.5587301587301587,"*
+*
+*
+*
+* *
+*"
+REFERENCES,0.5619047619047619,"L by
+ttb G
+—
+*
+*
+*
+*
+*
+*"
+REFERENCES,0.5650793650793651,"G by
+ttb L
+*
+—
+*
+*
+*
+*"
+REFERENCES,0.5682539682539682,"L by
+ttb L
+*
+*
+*
+*
+—
+*
+*
+*
+*"
+REFERENCES,0.5714285714285714,"G by
+ttb P"
+REFERENCES,0.5746031746031746,"*
+*
+—
+*"
+REFERENCES,0.5777777777777777,"L by
+ttb P
+* * *
+—"
+REFERENCES,0.580952380952381,"meaning we can conﬁdently reject the hypothesis that LINEAR by LINEAR is better than GAUSSIAN
+by GAUSSIAN when using 10 or 50 neurons, but we cannot do so for 150 neurons. In fact, looking at
+the [3, 0] cell shows us that when using 150 neurons, GAUSSIAN by GAUSSIAN is not better than
+LINEAR by LINEAR."
+REFERENCES,0.5841269841269842,"While we do not show random and bottom-to-top rankings in Table 2 for clarity, we asserted that
+each classiﬁer is statistically signiﬁcantly better when using a top-to-bottom ranking compared to a
+random ranking, and when using a random ranking compared to a bottom-to-top ranking."
+REFERENCES,0.5873015873015873,"A.8
+PROBING: ADDITIONAL RESULTS"
+REFERENCES,0.5904761904761905,"Fig. 8 complements Fig. 3, including graph lines that are missing in Fig. 3 due to its readability."
+REFERENCES,0.5936507936507937,"Fig. 9 shows XLM-R probing results. XLM-R provides very similar results to M-BERT, apparent in
+Figs. 9a and 9b compared to Figs. 3d and 3c, respectively."
+REFERENCES,0.5968253968253968,"(a) Bulgarian deﬁniteness layer 7.
+(b) Hindi part of speech layer 12."
+REFERENCES,0.6,(c) Russian animacy layer 2.
+REFERENCES,0.6031746031746031,"Figure 8: Examples of each of the patterns, with all graph lines (complementing Fig 3). Solid lines
+are top-to-bottom rankings; dashed are random rankings; dotted are bottom-to-top rankings. ""X by
+Y"" means classiﬁer X using ranking Y."
+REFERENCES,0.6063492063492063,"Selectivity examples from both models are provided in Fig. 10. In all conﬁgs, both in M-BERT and
+XLM-R, LINEAR is signiﬁcantly more selective than GAUSSIAN using any ranking."
+REFERENCES,0.6095238095238096,"A.9
+RANKING EVALUATION BY INTERVENTIONS"
+REFERENCES,0.6126984126984127,"Fig. 11 illustrates the process of evaluating rankings by probing. In this methodology, no external
+probes are involved, and the rankings are evaluated with respect to the degree of their selected
+neurons importance for the language model’s output. In this work, we experiment with the 7 rankings
+described in §3.1 as ranking methods, we intervene by ablations and translations (§4.1), and evaluate
+the model’s outputs by the error rate and CLWV metrics (§4.3)."
+REFERENCES,0.6158730158730159,"A.10
+ABLATION RESULTS"
+REFERENCES,0.6190476190476191,"One ablation example is shown in Fig. 12. No matter the ranking, ∼400 neurons can be ablated with
+little impact on the output, and CLWV remains low. This behaviour is generally consistent across all
+conﬁgs we experimented with."
+REFERENCES,0.6222222222222222,"(a) t-SNE projection of clustered probing results,
+XLM-R.
+(b) Russian animacy layer 2 accuracy, XLM-R."
+REFERENCES,0.6253968253968254,"Figure 9: Clustering of the three different patterns in XLM-R, and an example from one conﬁg. Solid
+lines are top-to-bottom rankings; dashed are random rankings; dotted are bottom-to-top rankings.
+Some lines are omitted for clarity."
+REFERENCES,0.6285714285714286,"(a) Russian animacy layer 2 selectivity, XLM-R.
+(b) Hindi part of speech layer 12 selectivity, M-BERT."
+REFERENCES,0.6317460317460317,"Figure 10: Two selectivity examples from M-BERT and XLM-R. Solid lines are top-to-bottom
+rankings; dashed are random rankings; dotted are bottom-to-top rankings. Some lines are omitted for
+clarity."
+REFERENCES,0.6349206349206349,"A.11
+TRANSLATION RESULTS"
+REFERENCES,0.638095238095238,"All of M-BERT’s translation results (complementing Table 1) are found in Table 3, and examples
+from two conﬁgs are in Fig. 13. As described in §4.4.3, across most conﬁgs, PROBELESS achieves
+higher CLWV at the saturation point, and gets there earlier (using less neurons), than the other two
+rankings—in contrast to probing results. Among the probing-based rankings, LINEAR generally
+provides better results than GAUSSIAN."
+REFERENCES,0.6412698412698413,"We also note that there are certain attributes that seem harder to control for, e.g., English number and
+French tense."
+REFERENCES,0.6444444444444445,"Table 3: CLWV value at saturation point and number of neurons modiﬁed at the saturation point,
+using the translation method on different conﬁgs, with β = 8. In each cell, the three lines refer to
+layers 2, 7 and 12 respectively."
+REFERENCES,0.6476190476190476,"LINEAR
+GAUSSIAN
+PROBELESS"
+REFERENCES,0.6507936507936508,"English
+number"
+REFERENCES,0.653968253968254,"0.04, 70
+0.09, 50
+0.11, 130"
+REFERENCES,0.6571428571428571,"0.02, 60
+0.07, 30
+0.04, 60"
+REFERENCES,0.6603174603174603,"0.06, 90
+0.11, 50
+0.17, 110"
+REFERENCES,0.6634920634920635,"English
+tense"
+REFERENCES,0.6666666666666666,"0.39, 60
+0.37, 50
+0.51, 60"
+REFERENCES,0.6698412698412698,"0.26, 150
+0.34, 70
+0.41, 120"
+REFERENCES,0.6730158730158731,"0.38, 30
+0.34, 30
+0.46, 30"
+REFERENCES,0.6761904761904762,"Spanish
+number"
+REFERENCES,0.6793650793650794,"0.28, 110
+0.26, 50
+0.23, 150"
+REFERENCES,0.6825396825396826,"0.19, 100
+0.20, 40
+0.16, 140"
+REFERENCES,0.6857142857142857,"0.35, 60
+0.25, 30
+0.40, 80"
+REFERENCES,0.6888888888888889,"Spanish
+tense"
+REFERENCES,0.692063492063492,"0.20, 110
+0.16, 80
+0.31, 130"
+REFERENCES,0.6952380952380952,"0.15, 140
+0.11, 70
+0.18, 70"
+REFERENCES,0.6984126984126984,"0.27, 60
+0.20, 60
+0.33, 60"
+REFERENCES,0.7015873015873015,"Spanish
+gender"
+REFERENCES,0.7047619047619048,"0.29, 50
+0.29, 50
+0.26, 130"
+REFERENCES,0.707936507936508,"0.25, 80
+0.31, 50
+0.16, 110"
+REFERENCES,0.7111111111111111,"0.37, 50
+0.33, 30
+0.35, 60"
+REFERENCES,0.7142857142857143,"French
+number"
+REFERENCES,0.7174603174603175,"0.19, 110
+0.18, 50
+0.07, 110"
+REFERENCES,0.7206349206349206,"0.09, 150
+0.17, 30
+0.11, 150"
+REFERENCES,0.7238095238095238,"0.25, 60
+0.20, 30
+0.33, 120"
+REFERENCES,0.726984126984127,"French
+tense"
+REFERENCES,0.7301587301587301,"0.10, 110
+0.10, 120
+0.14, 150"
+REFERENCES,0.7333333333333333,"0.01, 90
+0.06, 100
+0.07, 110"
+REFERENCES,0.7365079365079366,"0.13, 70
+0.08, 70
+0.15, 90"
+REFERENCES,0.7396825396825397,"French
+gender"
+REFERENCES,0.7428571428571429,"0.17, 80
+0.16, 40
+0.14, 170"
+REFERENCES,0.746031746031746,"0.17, 80
+0.16, 40
+0.06, 140"
+REFERENCES,0.7492063492063492,"0.22, 60
+0.17, 30
+0.20, 60"
+REFERENCES,0.7523809523809524,"Figure 11: Ranking evaluation by interventions: The language model creates a word representation
+(e.g., of the word “was”), which is fed into a neuron-ranking method, to rank its neurons according to
+their importance for some attribute (e.g., tense). The k-highest ranked neurons are modiﬁed by an
+intervention (to a different color in the ﬁgure), and the new representation is fed into the rest of the
+language model’s layers, to observe the ﬁnal model’s output."
+REFERENCES,0.7555555555555555,"Figure 12: Spanish gender layer 2, ablation results. Solid lines are error rates, dashed are CLWVs."
+REFERENCES,0.7587301587301587,"A.12
+XLM-R TRANSLATION RESULTS"
+REFERENCES,0.7619047619047619,"XLM-R translation results (equivalent to Table 3 in M-BERT) are shown in Table 4. The superiority
+of PROBELESS is not so clear in XLM-R compared to M-BERT, with LINEAR providing good
+competition. GAUSSIAN on the other hand, still falls behind."
+REFERENCES,0.765079365079365,"We note that in XLM-R the CLWV values are somewhat lower compared to M-BERT. A possible
+explanation to that could be the difference in tokenization between the models."
+REFERENCES,0.7682539682539683,"A.13
+TRANSLATION ON MONOLINGUAL MODELS"
+REFERENCES,0.7714285714285715,"As LINEAR and PROBELESS are somewhat equal on XLM-R, we perform experiments on additional
+models, to break the tie. We experiment with three monolingual models: bert-base-cased for English,
+dccuchile/bert-base-spanish-wwm-cased for Spanish, and camembert-base for French. The results are
+reported in Table 5. PROBELESS is superior in most of these experiments, both in terms of CLWV
+value and at number of modiﬁed neurons when reaching the saturation point, with LINEAR coming
+second."
+REFERENCES,0.7746031746031746,"It is worth noting that in these models, saturation point values are generally higher, and achieved
+using fewer neurons, than in M-BERT and XLM-R. We believe it is due to their relative simplicity
+compared to multilingual models, and their smaller vocabulary."
+REFERENCES,0.7777777777777778,"(a) French number layer 12.
+(b) English tense layer 12."
+REFERENCES,0.780952380952381,"Figure 13: Translation results with β = 8, from two different conﬁgs. Solid lines are error rates,
+dashed are CLWVs. ttb and btt stand for top-to-bottom and bottom-to-top, respectively."
+REFERENCES,0.7841269841269841,"Table 4: XLM-R CLWV value at saturation point and number of neurons modiﬁed at the saturation
+point, using the translation method on different conﬁgs with β = 8. In each cell, the three lines refer
+to layers 2, 7 and 12 respectively."
+REFERENCES,0.7873015873015873,"LINEAR
+GAUSSIAN
+PROBELESS"
+REFERENCES,0.7904761904761904,"English
+number"
+REFERENCES,0.7936507936507936,"0.01, 130
+0.03, 40
+0.08, 90"
+REFERENCES,0.7968253968253968,"0.00, 90
+0.02, 30
+0.06, 90"
+REFERENCES,0.8,"0.02, 80
+0.04, 90
+0.08, 90"
+REFERENCES,0.8031746031746032,"English
+tense"
+REFERENCES,0.8063492063492064,"0.22, 60
+0.34, 50
+0.35, 50"
+REFERENCES,0.8095238095238095,"0.09, 190
+0.05, 50
+0.15, 130"
+REFERENCES,0.8126984126984127,"0.21, 30
+0.09, 60
+0.19, 50"
+REFERENCES,0.8158730158730159,"Spanish
+number"
+REFERENCES,0.819047619047619,"0.29, 70
+0.23, 30
+0.33, 60"
+REFERENCES,0.8222222222222222,"0.11, 80
+0.20, 50
+0.18, 120"
+REFERENCES,0.8253968253968254,"0.34, 70
+0.23, 20
+0.33, 40"
+REFERENCES,0.8285714285714286,"Spanish
+tense"
+REFERENCES,0.8317460317460318,"0.08, 90
+0.22, 50
+0.16, 60"
+REFERENCES,0.834920634920635,"0.00, 0
+0.07, 70
+0.06, 150"
+REFERENCES,0.8380952380952381,"0.18, 70
+0.19, 40
+0.24, 80"
+REFERENCES,0.8412698412698413,"Spanish
+gender"
+REFERENCES,0.8444444444444444,"0.36, 60
+0.39, 70
+0.39, 60"
+REFERENCES,0.8476190476190476,"0.17, 70
+0.30, 30
+0.30, 140"
+REFERENCES,0.8507936507936508,"0.36, 20
+0.33, 30
+0.36, 20"
+REFERENCES,0.8539682539682539,"French
+number"
+REFERENCES,0.8571428571428571,"0.14, 110
+0.20, 80
+0.30, 120"
+REFERENCES,0.8603174603174604,"0.06, 100
+0.14, 60
+0.11, 130"
+REFERENCES,0.8634920634920635,"0.24, 50
+0.27, 80
+0.31, 70"
+REFERENCES,0.8666666666666667,"French
+tense"
+REFERENCES,0.8698412698412699,"0.03, 120
+0.10, 70
+0.10, 120"
+REFERENCES,0.873015873015873,"0.01, 120
+0.01, 40
+0.02, 110"
+REFERENCES,0.8761904761904762,"0.07, 30
+0.06, 20
+0.06, 30"
+REFERENCES,0.8793650793650793,"French
+gender"
+REFERENCES,0.8825396825396825,"0.09, 130
+0.16, 80
+0.13, 90"
+REFERENCES,0.8857142857142857,"0.02, 150
+0.06, 70
+0.05, 100"
+REFERENCES,0.8888888888888888,"0.18, 50
+0.16, 30
+0.19, 70"
+REFERENCES,0.8920634920634921,"Table 5: Monolingual models CLWV value at saturation point and number of neurons modiﬁed at
+the saturation point, using the translation method on different conﬁgs with β = 8. In each cell, the
+three lines refer to layers 2, 7 and 12 respectively."
+REFERENCES,0.8952380952380953,"LINEAR
+GAUSSIAN
+PROBELESS"
+REFERENCES,0.8984126984126984,"English
+number"
+REFERENCES,0.9015873015873016,"0.09, 80
+0.14, 90
+0.17, 110"
+REFERENCES,0.9047619047619048,"0.07, 80
+0.15, 90
+0.08, 60"
+REFERENCES,0.9079365079365079,"0.09, 40
+0.17, 60
+0.22, 90"
+REFERENCES,0.9111111111111111,"English
+tense"
+REFERENCES,0.9142857142857143,"0.49, 60
+0.55, 70
+0.59, 40"
+REFERENCES,0.9174603174603174,"0.44, 70
+0.43, 40
+0.55, 70"
+REFERENCES,0.9206349206349206,"0.47, 20
+0.50, 20
+0.55, 30"
+REFERENCES,0.9238095238095239,"Spanish
+number"
+REFERENCES,0.926984126984127,"0.57, 30
+0.44, 20
+0.49, 80"
+REFERENCES,0.9301587301587302,"0.57, 30
+0.40, 20
+0.40, 110"
+REFERENCES,0.9333333333333333,"0.61, 30
+0.45, 20
+0.54, 60"
+REFERENCES,0.9365079365079365,"Spanish
+tense"
+REFERENCES,0.9396825396825397,"0.41, 60
+0.41, 90
+0.47, 90"
+REFERENCES,0.9428571428571428,"0.35, 100
+0.28, 80
+0.31, 110"
+REFERENCES,0.946031746031746,"0.46, 40
+0.40, 60
+0.57, 60"
+REFERENCES,0.9492063492063492,"Spanish
+gender"
+REFERENCES,0.9523809523809523,"0.38, 30
+0.35, 30
+0.34, 110"
+REFERENCES,0.9555555555555556,"0.35, 30
+0.35, 30
+0.29, 100"
+REFERENCES,0.9587301587301588,"0.41, 30
+0.37, 30
+0.40, 40"
+REFERENCES,0.9619047619047619,"French
+number"
+REFERENCES,0.9650793650793651,"0.49, 10
+0.46, 10
+0.30, 10"
+REFERENCES,0.9682539682539683,"0.50, 10
+0.50, 10
+0.31, 10"
+REFERENCES,0.9714285714285714,"0.51, 10
+0.46, 10
+0.34, 10"
+REFERENCES,0.9746031746031746,"French
+tense"
+REFERENCES,0.9777777777777777,"0.36, 30
+0.17, 10
+0.31, 50"
+REFERENCES,0.9809523809523809,"0.20, 50
+0.26, 10
+0.13, 100"
+REFERENCES,0.9841269841269841,"0.13, 10
+0.09, 10
+0.13, 50"
+REFERENCES,0.9873015873015873,"French
+gender"
+REFERENCES,0.9904761904761905,"0.28, 10
+0.26, 10
+0.17, 90"
+REFERENCES,0.9936507936507937,"0.28, 20
+0.26, 10
+0.14, 20"
+REFERENCES,0.9968253968253968,"0.29, 10
+0.26, 10
+0.15, 40"

@@ -1,0 +1,1784 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.002074688796680498,"Heterogeneous federated learning (HFL) enables clients with different compu-
+tation/communication capabilities to collaboratively train their own customized
+models, in which the knowledge of models is shared via clients’ predictions on
+an auxiliary unlabeled dataset.
+However, there are two major limitations: 1)
+The assumption of auxiliary datasets may be unrealistic for data-critical scenarios
+such as Healthcare and Finance. 2) HFL is vulnerable to various privacy viola-
+tions since the samples and predictions are completely exposed to adversaries. In
+this work, we develop PrivHFL, a general and practical framework for privacy-
+preserving HFL. We bypass the limitation of auxiliary datasets by designing a
+simple yet effective dataset expansion method. The main insight is that expanded
+data could provide good coverage of natural distributions, which is conducive to
+the sharing of model knowledge. To further tackle the privacy issue, we exploit the
+lightweight additive secret sharing technique to construct a series of tailored cryp-
+tographic protocols for key building blocks, such as secure prediction. Our pro-
+tocols implement ciphertext operations through simple vectorized computations,
+which are friendly with GPUs and can be processed by highly-optimized CUDA
+kernels. Extensive evaluations demonstrate that PrivHFL outperforms prior art up
+to two orders of magnitude in efﬁciency and realizes signiﬁcant accuracy gains on
+top of the stand-alone method."
+INTRODUCTION,0.004149377593360996,"1
+INTRODUCTION"
+INTRODUCTION,0.006224066390041493,"Heterogeneous federated learning (HFL) (Li & Wang, 2019; Chang et al., 2019), as a promising
+variant of federated learning (FL), enables clients equipped with different computation and commu-
+nication capabilities to collaboratively train their own customized models that may differ in size, nu-
+merical precision or structure (Lin et al., 2020). In particular, clients share the knowledge of models
+via their predictions on auxiliary datasets, such as unlabeled problem domain datasets (Choquette-
+Choo et al., 2021) and public non-problem domain datasets (Li & Wang, 2019; Lin et al., 2020).
+This ﬂexible approach facilitates customized FL-driven services in areas like Healthcare and Fi-
+nance (Kairouz et al., 2019), while solving the intellectual property concerns of FL models (Atli
+et al., 2020). However, HFL suffers from two major limitations: (1) The assumption of auxiliary
+datasets may be unrealistic for many data-critical scenarios (Zhu et al., 2021). For example, in
+Healthcare applications, task-related auxiliary datasets that contain patients’ sensitive information
+are usually difﬁcult to obtain due to current strict regulations like General Data Protection Regula-
+tion. (2) Sharing predictions may still leak the privacy of local data (Papernot et al., 2017). Several
+works have demonstrated that given the black-box access to a trained model, adversaries can infer
+membership (Salem et al., 2019) and attribute information (Ganju et al., 2018) of the target sample,
+and even can reconstruct the original training data (Yang et al., 2019). Therefore, to promote the
+deployment of HFL in real-world applications, it is crucial to solve the above two problems."
+INTRODUCTION,0.008298755186721992,"To the best of our knowledge, in HFL the relaxation of the auxiliary dataset assumption has not been
+explored before. Speciﬁcally, it is challenging to achieve collaborative training under heterogeneous
+models when there is no an auxiliary dataset as a medium for the model knowledge transfer (Li &
+Wang, 2019). On the other hand, to mitigate the above privacy risks, a natural solution is to integrate
+advanced secure prediction protocols, such as CrypTFlow2 (Rathee et al., 2020), CryptGPU (Tan
+et al., 2021), and HE-transformer (Boemer et al., 2019b). These schemes can protect the private in-
+formation during the model knowledge transfer by utilizing homomorphic encryption (HE) (Gentry,"
+INTRODUCTION,0.01037344398340249,Under review as a conference paper at ICLR 2022
+INTRODUCTION,0.012448132780082987,"2009), garbled circuit (GC) (Yao, 1986) or oblivious transfer (OT) (Naor & Pinkas, 2001) techniques
+(refer to Appendix D.2 for more details). Unfortunately, such methods add huge computation and
+communication overhead due to the use of heavy cryptographic primitives. For instance, Choquette-
+Choo et al. (2021) recently proposed CaPC, the ﬁrst private collaborative learning scheme based
+on HE-transformer (Boemer et al., 2019b) supporting heterogeneous models, which can be directly
+extended to HFL. As mentioned above, this work still suffers from efﬁciency issues, inherited from
+prior secure prediction protocols. Moreover, their scheme is implemented by the interaction between
+clients1, however in real-world applications, clients (e.g., mobile devices) generally cannot establish
+direct communication channels with others (Bonawitz et al., 2017). Therefore, the challenge here is
+how to efﬁciently implement secure prediction protocols in the realistic HFL setting."
+INTRODUCTION,0.014522821576763486,"In this work, to approach the above challenges, we develop PrivHFL, a general and practical frame-
+work for privacy-preserving HFL. First, PrivHFL relaxes the assumption of dependence on auxil-
+iary datasets and designs a simple but effective dataset expansion method only with clients’ private
+datasets. To this end, we instantiate it by leveraging mixup (Zhang et al., 2018) that is originally
+a regularization technique to improve generalization, and also present some exploration with other
+data augmentation methods like cutout (DeVries & Taylor, 2017) and cutmix (Yun et al., 2019).
+The key idea is that the expanded data could provide good coverage of natural dataset distributions
+and hence could be used as an effective medium for transferring model knowledge. Second, to se-
+curely and efﬁciently evaluate HFL, we leverage the lightweight additive secret sharing technique
+(Demmler et al., 2015) to construct customized secure prediction protocols from scratch in a practi-
+cal setting where there is no direct communication between clients. Our gains mainly come from the
+improvement in communication and computation through the elimination of costly HE and GC pro-
+tocols. Moreover, in contrast to prior works that evaluate cryptographic protocols in CPUs, PrivHFL
+converts complex cryptographic operations to simple computations on large blocks of data, which
+are friendly with GPUs and can be processed by highly-optimized CUDA kernels (Tan et al., 2021).
+As a result, PrivHFL is suitable for the batch prediction (i.e., performing multiple predictions at the
+same time) with lower amortized cost. We evaluate the designed protocol on GPUs and CPUs, and
+the results show that our GPU-based protocol is up to 10× faster than its CPU analog. Our key
+contributions can be summarized as follows:"
+INTRODUCTION,0.016597510373443983,"• We introduce a practical HFL framework, which is independent on any auxiliary datasets
+while provably providing comprehensive privacy protection."
+INTRODUCTION,0.01867219917012448,"• We design a simple yet effective dataset expansion method to promote the sharing of model
+knowledge, and construct customized cryptographic protocols for secure prediction."
+INTRODUCTION,0.02074688796680498,"• Extensive experiments on SVHN, CIFAR10, Tiny ImageNet (including IID and Non-IID
+settings) and various heterogeneous models demonstrate that PrivHFL outperforms prior
+art up to two orders of magnitude in efﬁciency and realizes roughly 10% accuracy gains."
+BACKGROUND,0.022821576763485476,"2
+BACKGROUND"
+BACKGROUND,0.024896265560165973,"Before introducing PrivHFL, we ﬁrst describe the heterogeneous federated learning and the threat
+model, and then review the cryptographic primitives that are required to understand our work."
+HETEROGENEOUS FEDERATED LEARNING,0.026970954356846474,"2.1
+HETEROGENEOUS FEDERATED LEARNING"
+HETEROGENEOUS FEDERATED LEARNING,0.029045643153526972,"In HFL (Li & Wang, 2019; Choquette-Choo et al., 2021), the clients independently design their
+own unique models, but due to the model heterogeneity, they cannot directly share model param-
+eters with each other. Instead, they learn the knowledge of other models via the predictions on a
+task-related auxiliary dataset, where a server routes messages between the clients since they gener-
+ally cannot establish direct communication channels with others (Bonawitz et al., 2017; Bell et al.,
+2020). Speciﬁcally, clients ﬁrst train local models with their own private datasets. Then, each client
+performs prediction on the auxiliary dataset based on the local model and sends the prediction re-
+sults to the server to aggregate. Later, the server broadcasts aggregated results to clients, which will
+retrain local models based on the auxiliary dataset and received predictions. The whole process is"
+HETEROGENEOUS FEDERATED LEARNING,0.03112033195020747,"1As shown in C.5, by carefully designing protocols, CaPC can be extended to the communication-limited
+setting but at the cost of increased communication overhead."
+HETEROGENEOUS FEDERATED LEARNING,0.03319502074688797,Under review as a conference paper at ICLR 2022
+HETEROGENEOUS FEDERATED LEARNING,0.035269709543568464,"iterative until each local model meets the pre-deﬁned accuracy requirement. Details can be referred
+to Figure 9 and Appendix A."
+THREAT MODEL,0.03734439834024896,"2.2
+THREAT MODEL"
+THREAT MODEL,0.03941908713692946,"We work in an honest-but-curious adversary setting (Goldreich, 2009), where each entity (including
+the clients and the server) strictly follows the speciﬁcation of the designed protocol but attempts to
+infer more knowledge about other clients’ private information such as model parameters and private
+datasets. Moreover, to maintain the reputation and provide more services, the server does not collude
+with any clients. Formally, an attacker either corrupts the server or a subset of clients but not both.
+This setting is reasonable and has been widely instantiated in previous works (Phong et al., 2018;
+Sun & Lyu, 2021; Choquette-Choo et al., 2021)."
+CRYPTOGRAPHIC PRIMITIVES,0.04149377593360996,"2.3
+CRYPTOGRAPHIC PRIMITIVES"
+CRYPTOGRAPHIC PRIMITIVES,0.043568464730290454,"Additive secret sharing. We adopt lightweight 2-out-of-2 additive secret sharing over the ring ZL
+(Demmler et al., 2015) as the cryptographic building block. We let Share(x) denote the sharing al-
+gorithm that takes as input x in ZL and outputs random sampled shares [x]0, [x]1 with the constraint
+x = [x]0 + [x]1 in ZL. Arithmetic operations can be implemented in the sharing form as shown in
+Appendix C.4.1. The reconstruction algorithm Recon([x]0, [x]1) takes as input the two shares and
+outputs x = [x]0 + [x]1 in ZL. The security of the additive secret sharing protocol guarantees that
+given a share [x]0 or [x]1, the value x is perfectly hidden."
+CRYPTOGRAPHIC PRIMITIVES,0.04564315352697095,"Pseudorandom generator. A Pseudorandom Generator (PRG) takes as input a uniformly random
+seed and a security parameter κ, and outputs a long pseudorandom string. The security of PRG
+ensures that the output is indistinguishable from the uniform distribution. In PrivHFL, PRGs enable
+two parties to generate same (pseudo-) random numbers without communication. We instantiate
+PRG with the technique from (Matyas, 1985) and the seed can be generated by the Difﬁe-Hellman
+Key Agreement protocol (Difﬁe & Hellman, 1976). Details can be referred to Appendix C.4.2."
+THE PRIVHFL PROTOCOL,0.04771784232365145,"3
+THE PRIVHFL PROTOCOL"
+THE PRIVHFL PROTOCOL,0.04979253112033195,"In this section, we introduce the high-level view of PrivHFL, followed by describing in detail our
+dataset expansion method and secure prediction scheme."
+HIGH-LEVEL VIEW OF PRIVHFL,0.05186721991701245,"3.1
+HIGH-LEVEL VIEW OF PRIVHFL"
+HIGH-LEVEL VIEW OF PRIVHFL,0.05394190871369295,Synthetic Pool
+HIGH-LEVEL VIEW OF PRIVHFL,0.056016597510373446,Sampling
+HIGH-LEVEL VIEW OF PRIVHFL,0.058091286307053944,Query Data …
+HIGH-LEVEL VIEW OF PRIVHFL,0.06016597510373444,Data Expansion
+HIGH-LEVEL VIEW OF PRIVHFL,0.06224066390041494,Private Data
+HIGH-LEVEL VIEW OF PRIVHFL,0.06431535269709543,Local Model
+HIGH-LEVEL VIEW OF PRIVHFL,0.06639004149377593,Heterogeneous Models
+HIGH-LEVEL VIEW OF PRIVHFL,0.06846473029045644,prediction label label
+HIGH-LEVEL VIEW OF PRIVHFL,0.07053941908713693,"Local Training
+Query-data Generation
+Secure Querying
+Re-training"
+HIGH-LEVEL VIEW OF PRIVHFL,0.07261410788381743,Local Model
+HIGH-LEVEL VIEW OF PRIVHFL,0.07468879668049792,prediction
+HIGH-LEVEL VIEW OF PRIVHFL,0.07676348547717843,Figure 1: High-level view of PrivHFL
+HIGH-LEVEL VIEW OF PRIVHFL,0.07883817427385892,"PrivHFL follows prior HFL works (Li & Wang, 2019) and iteratively optimizes the clients’ models.
+Each client in PrivHFL can play the role of the querying party and the answering party at the same
+time, and without loss of generality, we denote them as PQ and PA, respectively. As shown in Figure
+1, in each iteration, each PQ performs four-phase operations with other PA, i.e., local training,
+query-data generation, secure querying, and re-training. In detail, clients ﬁrst train the local model
+on their own private datasets, which is the baseline any future improvements will be compared
+with. After that, by utilizing our dataset expansion method, each PQ can generate the query data
+to query other PA (C fraction of all clients) for prediction results. To protect the privacy of query"
+HIGH-LEVEL VIEW OF PRIVHFL,0.08091286307053942,Under review as a conference paper at ICLR 2022
+HIGH-LEVEL VIEW OF PRIVHFL,0.08298755186721991,"samples, predictions and model parameters, clients adopt our secure prediction protocol and conduct
+collaborative querying in the ciphertext form. To the end, each client can retrain the local model
+based on the private dataset, as well as the query samples and corresponding prediction results.
+Algorithm 1 in Appendix C.1 gives the detailed description of PrivHFL."
+QUERY-DATA GENERATION,0.08506224066390042,"3.2
+QUERY-DATA GENERATION"
+QUERY-DATA GENERATION,0.08713692946058091,"To relax the assumption of auxiliary datasets, we design and instantiate an effective dataset expan-
+sion method, inspired by the success of mixup (Zhang et al., 2018) in improving model general-
+ization and the efﬁciency of knowledge distillation (Wang et al., 2020). Speciﬁcally, we repurpose
+mixup to construct a big synthesized pool on the small private dataset, which could provide a good
+coverage of the manifold of natural samples. Given any two private samples xi and xj, we generate
+multiple synthetic query samples by a convex combination with different coefﬁcients λ as follows:"
+QUERY-DATA GENERATION,0.08921161825726141,"˜xi,j(λ) = λ · xi + (1 −λ) · xj.
+(1)"
+QUERY-DATA GENERATION,0.0912863070539419,"Empirically, we set λ ∈[0.1, 0.9] with an interval of 0.1 to generate more diverse synthetic images.
+We also explore the inﬂuence of different λ values in Appendix B.3 and Table 5. This simple method
+can exponentially expand the size of initial dataset and hence provide more candidate samples for
+query. Following CaPC (Choquette-Choo et al., 2021), we use random sampling and active learning
+strategies (Tong & Koller, 2001) in Appendix C.3 to select informative samples from the synthesized
+pool. Note that an alternative solution is to directly use private datasets to query like knowledge
+distillation (Hinton et al., 2015). We compare against this method in Section 4."
+QUERY-DATA GENERATION,0.09336099585062241,"Extensions of mixup-based method. Dataset expansion based on private samples is a universal
+and modular method, therefore it can be readily extended with techniques in data augmentation
+literature. For example, one may replace the mixup-based dataset expansion in PrivHFL with recent
+methods such as cutout (DeVries & Taylor, 2017) and cutmix (Yun et al., 2019). We present some
+exploration and experiments with these extensions in Appendix B.1 and Figure 11."
+SECURE QUERYING PROTOCOL,0.0954356846473029,"3.3
+SECURE QUERYING PROTOCOL"
+SECURE QUERYING PROTOCOL,0.0975103734439834,"As shown in Appendix G and Figure 19, it is entirely possible to reconstruct the original image from
+the mixup-synthetic samples. To further protect the privacy of query samples as well as predictions
+and model parameters, we design a secure querying protocol by exploiting the lightweight additive
+secret sharing technique, rather than heavy HE and GC techniques. Recall that in our querying
+protocol, three entities are included, i.e., the server, PQ and PA. The challenge here is how to
+efﬁciently implement such protocol under strict communication constraints, i.e., the communication
+channels cannot be established among clients. To tackle this challenge, the key idea is to outsource
+the secure querying task to the server and PA, and then design a PQ-assisted customized protocol
+to accelerate the evaluation. Moreover, an important design principle is to conduct a GPU-friendly
+protocol that mainly includes vectorized operations and hence is suitable for batch prediction with
+better amortized costs. In the following, we decompose our scheme into three steps: query-data
+sharing, secure prediction, and result aggregation."
+SECURE QUERYING PROTOCOL,0.0995850622406639,"Query-data sharing. We ﬁrst construct PRG seeds in pairs for PQ, PA and the server, denoted as
+SkQA, SkSA, and SkSQ, which are used to generate same random numbers without communication
+(refer to Figure 18 and Appendix C.4.1). Figure 2 shows our query-data sharing protocol ΠShare, in
+which PQ secret-shares the query data x to the server and PA for secure prediction. In particular,
+PQ non-interactively shares [x]0 = r with PA using PRGs on the same seed SkQA. After that, PQ
+computes and sends [x]1 = x −r to the server."
+SECURE QUERYING PROTOCOL,0.1016597510373444,"Server
+𝑷𝑷𝑄𝑄
+𝑷𝑷𝐴𝐴
+Query data 𝑥𝑥
+𝑟𝑟←𝑃𝑃𝑃𝑃𝑃𝑃(𝑆𝑆𝑆𝑆𝑄𝑄𝑄𝑄)
+𝑥𝑥−𝑟𝑟"
+SECURE QUERYING PROTOCOL,0.1037344398340249,"[𝑥𝑥]0 =𝑟𝑟
+[𝑥𝑥]1=𝑥𝑥−𝑟𝑟"
+SECURE QUERYING PROTOCOL,0.10580912863070539,𝑟𝑟←𝑃𝑃𝑃𝑃𝑃𝑃(𝑆𝑆𝑆𝑆𝑄𝑄𝑄𝑄)
+SECURE QUERYING PROTOCOL,0.1078838174273859,Figure 2: Secure query-data sharing protocol ΠShare
+SECURE QUERYING PROTOCOL,0.10995850622406639,"Secure prediction. Recently, many works achieve secure prediction protocols in client-server set-
+ting (i.e., 2-party setting), such as the SOTA CrypTFlow2 (Rathee et al., 2020) or HE-Transformer"
+SECURE QUERYING PROTOCOL,0.11203319502074689,Under review as a conference paper at ICLR 2022
+SECURE QUERYING PROTOCOL,0.11410788381742738,"(Boemer et al., 2019a) adopted by CaPC (Choquette-Choo et al., 2021). However, such methods
+add a huge overhead due to the use of heavy cryptographic primitives, e.g., HE and GC. The most
+efﬁcient secure prediction protocol by far is CryptGPU (Tan et al., 2021) under the 3-party setting,
+but it cannot be directly applied to HFL due to the inability to communicate between clients. To
+achieve the efﬁciency of secure prediction and adapt to the communication-limited scenarios, we
+design customized protocols for the linear layers and non-linear layers2 from scratch. Figure 17 in
+Appendix C.2 gives a graphic depiction of end-to-end secure prediction. Below, we elaborate on the
+evaluation of the linear layers, ReLU and MaxPooling."
+SECURE QUERYING PROTOCOL,0.11618257261410789,"Server
+𝑷𝑷𝑄𝑄
+𝑷𝑷𝐴𝐴"
+SECURE QUERYING PROTOCOL,0.11825726141078838,"𝑎𝑎, [𝑐𝑐]0←𝑃𝑃𝑃𝑃𝑃𝑃(𝑆𝑆𝑆𝑆𝑄𝑄𝑄𝑄)"
+SECURE QUERYING PROTOCOL,0.12033195020746888,"𝑏𝑏←𝑃𝑃𝑃𝑃𝑃𝑃(𝑆𝑆𝑆𝑆𝑆𝑆𝑆𝑆)
+𝜔𝜔+ 𝑎𝑎"
+SECURE QUERYING PROTOCOL,0.12240663900414937,[𝑥𝑥]1-𝑏𝑏
+SECURE QUERYING PROTOCOL,0.12448132780082988,[𝑦𝑦]0 = 𝜔𝜔[𝑥𝑥]0+𝜔𝜔([𝑥𝑥]1−𝑏𝑏) −[𝑐𝑐]0
+SECURE QUERYING PROTOCOL,0.12655601659751037,"𝑎𝑎, [𝑐𝑐]0←𝑃𝑃𝑃𝑃𝑃𝑃(𝑆𝑆𝑆𝑆𝑄𝑄𝑄𝑄)"
+SECURE QUERYING PROTOCOL,0.12863070539419086,[𝑐𝑐]1= 𝑎𝑎𝑎𝑎−[𝑐𝑐]0
+SECURE QUERYING PROTOCOL,0.13070539419087138,[𝑦𝑦]1= (𝜔𝜔+ 𝑎𝑎)𝑏𝑏-[𝑐𝑐]1
+SECURE QUERYING PROTOCOL,0.13278008298755187,𝑏𝑏←𝑃𝑃𝑃𝑃𝑃𝑃(𝑆𝑆𝑆𝑆𝑆𝑆𝑆𝑆)
+SECURE QUERYING PROTOCOL,0.13485477178423236,"Model parameter 𝜔𝜔,
+[𝑥𝑥]1
+[𝑥𝑥]0"
+SECURE QUERYING PROTOCOL,0.13692946058091288,Figure 3: Secure matrix multiplication protocol ΠMatmul
+SECURE QUERYING PROTOCOL,0.13900414937759337,"(i) Linear layers. Linear layers’ evaluation follows the idea of the Beaver’s multiplication in Ap-
+pendix C.4.1, but we improve the communication efﬁciency using PRGs. Speciﬁcally, PA and the
+server compute matrix multiplication ωx, where the model parameter ω is held by PA and the input
+x is secret-shared between PA and the server. Given that ωx = ω[x]0 + ω[x]1, PA can compute
+ω[x]0 locally. As shown in Figure 3, we design an efﬁcient protocol ΠMatmul for evaluating ω[x]1.
+In particular, PQ ﬁrst generates three random matrices a, b and [c]0 using PRGs, and computes [c]1
+that satisﬁes [c]1 + [c]0 = a · b. Accordingly, the server can generate the same b using PRGs based
+on SkSQ, and PA obtains a and [c]0 using PRGs based on SkQA. (a, b, c) is the Beaver’s triple
+with the constrain c = ab to mask the inputs of PA and the server. Later, the server and PA call the
+Beaver’s multiplication protocol in Appendix C.4.1 to jointly compute [y]1 and [y]0, i.e., the secret
+shares of ωx. Note that the evaluation of fully-connected, convolutional, and AvgPooling layers can
+be derived directly from ΠMatmul (Wagh et al., 2019; Rathee et al., 2020)."
+SECURE QUERYING PROTOCOL,0.14107883817427386,"(ii) ReLU. The formula of ReLU is ReLU(x) = x · DReLU(x), where DReLU(x) = 1 −sign(x)3,
+namely that it equals 1 if x ≥0 and 0 otherwise. Since the multiplication of x and DReLU(x)
+can be implemented by the protocol ΠMatmul, we mainly focus on the evaluation of DReLU(x), i.e.,
+sign(x). The insight is to convert the calculation of sign(x) to the calculation of sign(r · x) where r
+is a random positive number. Based on the above observation, we design a secure DReLU protocol
+ΠDReLU as shown in Figure 4. In detail, PA and the server ﬁrst generate a random positive value r
+using PRGs with SkSA, and compute [z] = r[x] locally. Then they send the secret-shared value [z]
+to PQ. Note that since r is randomly generated, the value of r · x is also a random number in the
+domain. Similar ideas are also applied to other privacy-preserving machine learning works (Wagh
+et al., 2019; Shen et al., 2020). After that, PQ computes the sign of z, i.e., the sign of x. sign(z) is
+shared to the server and PA based on protocol ΠShare in Figure 2."
+SECURE QUERYING PROTOCOL,0.14315352697095435,"Server
+𝑷𝑷𝑄𝑄
+𝑷𝑷𝐴𝐴
+[𝑥𝑥]0"
+SECURE QUERYING PROTOCOL,0.14522821576763487,"[𝑧𝑧]0−𝛿𝛿
+[𝑧𝑧]0−𝛿𝛿+ [𝑧𝑧]1
+𝛿𝛿, 𝛿𝛿′ ←𝑃𝑃𝑃𝑃𝑃𝑃(𝑆𝑆𝑆𝑆𝑄𝑄𝐴𝐴)"
+SECURE QUERYING PROTOCOL,0.14730290456431536,"𝑧𝑧= [𝑧𝑧]0−𝛿𝛿+ [𝑧𝑧]1+𝛿𝛿
+𝑠𝑠𝑠𝑠𝑠𝑠𝑠𝑠(𝑧𝑧) −𝛿𝛿′"
+SECURE QUERYING PROTOCOL,0.14937759336099585,𝑟𝑟←𝑃𝑃𝑃𝑃𝑃𝑃(𝑆𝑆𝑆𝑆𝑆𝑆𝐴𝐴)
+SECURE QUERYING PROTOCOL,0.15145228215767634,[𝑧𝑧]1= 𝑟𝑟[𝑥𝑥]1
+SECURE QUERYING PROTOCOL,0.15352697095435686,[𝑦𝑦]1= 𝑠𝑠𝑠𝑠𝑠𝑠𝑠𝑠(𝑧𝑧) −𝛿𝛿′
+SECURE QUERYING PROTOCOL,0.15560165975103735,[𝑧𝑧]0= 𝑟𝑟[𝑥𝑥]0
+SECURE QUERYING PROTOCOL,0.15767634854771784,𝑟𝑟←𝑃𝑃𝑃𝑃𝑃𝑃(𝑆𝑆𝑆𝑆𝑆𝑆𝐴𝐴)
+SECURE QUERYING PROTOCOL,0.15975103734439833,"𝛿𝛿, 𝛿𝛿′ ←𝑃𝑃𝑃𝑃𝑃𝑃(𝑆𝑆𝑆𝑆𝑄𝑄𝐴𝐴)"
+SECURE QUERYING PROTOCOL,0.16182572614107885,[𝑦𝑦]0= 𝛿𝛿′ [𝑥𝑥]1
+SECURE QUERYING PROTOCOL,0.16390041493775934,Figure 4: Secure DReLU protocol ΠDReLU
+SECURE QUERYING PROTOCOL,0.16597510373443983,"2Deep learning models consist of a sequence of linear layers (e.g., fully-connected layers, convolutional
+layers and AvgPooling) and non-linear layers (e.g., ReLU and MaxPooling).
+3The sign(x) function is the most signiﬁcant bit (MSB) of the value x."
+SECURE QUERYING PROTOCOL,0.16804979253112035,Under review as a conference paper at ICLR 2022
+SECURE QUERYING PROTOCOL,0.17012448132780084,"(iii) Maxpooling. Maxpooling on m values is computed by using a tree-reduction algorithm, which
+recursively partitions the input into two halves and then compares the elements of each half. Specif-
+ically, clients arrange the m values into a 2-ary tree with depth log2 m, and evaluate the tree in a
+top-down fashion. Compared with the method in Rathee et al. (2020) that requires m −1 commu-
+nication rounds, our method achieves lower communication rounds with comparable computational
+overhead. In each comparison of two secret-shared element [x] and [y], we reduce it to the eval-
+uation of ReLU. We observe max([x], [y]) = ReLU([x] −[y]) + [y], and hence the computational
+complexity of Maxpooling evaluation mainly comes from the evaluation of m −1 ReLU."
+SECURE QUERYING PROTOCOL,0.17219917012448133,"Result Aggregation. After the secure prediction, the server and each answering partyP j
+A hold the
+shares of predicted logits [xj], j ∈[n], which will be aggregated and then returned to PQ. As
+shown in Figure 5, P j
+A and PQ ﬁrst generate a random value rj based on PRGs. Then each P j
+A
+computes [xj]0 −rj and sends it to the server. The server aggregates all received values and sends
+Pn
+j=1
+ 
+[xj]0 −rj + [xj]1
+
+to PQ. Thus, PQ can reconstruct the aggregated logit y = Pn
+j=1 xj and
+obtains the soft label of the query data."
+SECURE QUERYING PROTOCOL,0.17427385892116182,Server
+SECURE QUERYING PROTOCOL,0.17634854771784234,"[𝑥𝑥𝑗𝑗]1, 𝑗𝑗∈[𝑛𝑛]"
+SECURE QUERYING PROTOCOL,0.17842323651452283,"𝑷𝑷𝑨𝑨
+𝒋𝒋, 𝑗𝑗∈[𝑛𝑛]"
+SECURE QUERYING PROTOCOL,0.18049792531120332,"[𝑥𝑥𝑗𝑗]0
+𝑟𝑟𝑗𝑗←𝑃𝑃𝑃𝑃𝑃𝑃(𝑆𝑆𝑆𝑆𝑄𝑄𝑄𝑄)
+[𝑥𝑥𝑗𝑗]0−𝑟𝑟𝑗𝑗
+∑𝑗𝑗=1
+𝑛𝑛
+([𝑥𝑥𝑗𝑗]0−𝑟𝑟𝑗𝑗+ [𝑥𝑥𝑗𝑗]1) 𝑷𝑷𝑄𝑄"
+SECURE QUERYING PROTOCOL,0.1825726141078838,𝑟𝑟𝑗𝑗←𝑃𝑃𝑃𝑃𝑃𝑃(𝑆𝑆𝑆𝑆𝑄𝑄𝑄𝑄)
+SECURE QUERYING PROTOCOL,0.18464730290456433,"𝑦𝑦= ∑𝑗𝑗=1
+𝑛𝑛
+([𝑥𝑥𝑗𝑗]0 −𝑟𝑟𝑗𝑗+ 𝑥𝑥𝑗𝑗1)+∑𝑗𝑗=1
+𝑛𝑛
+𝑟𝑟𝑗𝑗
+𝑦𝑦←𝑠𝑠𝑠𝑠𝑠𝑠𝑠𝑠𝑠𝑠𝑠𝑠𝑠𝑠(𝑦𝑦)"
+SECURE QUERYING PROTOCOL,0.18672199170124482,Figure 5: Secure result aggregation protocol ΠAgg
+SECURE QUERYING PROTOCOL,0.1887966804979253,"GPU Acceleration.
+Our protocols mainly consists of GPU-friendly vectorized secret-sharing,
+which can be processed by highly-optimized CUDA kernels. However, for multiplication opera-
+tions, existing CUDA kernels are designed to operate on ﬂoating-point inputs. In PrivHFL, we
+typically compute over integer values. To leverage optimized kernels for protocol acceleration,
+our PrivHFL integrates the CUDALongTensor abstract in CryptGPU (Tan et al., 2021) that embeds
+the integer-valued cryptographic operations into ﬂoating-point arithmetic (refer to Appendix C.6
+for more details). However, CryptGPU’s protocols cannot be directly extended to PrivHFL in the
+communication-limited scenario, and hence we redesign all cryptographic protocols from scratch."
+SECURE QUERYING PROTOCOL,0.1908713692946058,"Security analysis of PrivHFL. We give a formal security proof in Appendix E. Intuitively, PrivHFL
+reveals zero information to PA and the server, and only reveals the ﬁnal aggregated prediction to
+PQ, since all intermediate values are secret-shared4. Given the above, a corrupted PA cannot learn
+anything about the query data of querying parties, while the conﬁdentiality of answering parties’
+model parameters against corrupted PQ is also protected."
+DISCUSSIONS,0.19294605809128632,"3.4
+DISCUSSIONS"
+DISCUSSIONS,0.1950207468879668,"Discussions on differential privacy extension. The differential privacy (DP) guarantee can com-
+plement PrivHFL. A well-designed DP mechanism can be used as a plug-and-play module to pre-
+vent privacy leakage from the aggregated result. While several works have been proposed in the
+deep learning domain (Papernot et al., 2017; Sun & Lyu, 2021; Choquette-Choo et al., 2021), this
+is non-trivial to design a customized DP mechanism for HFL, because the privacy-utility tradeoff is
+difﬁcult to resolve. Especially, the privacy guarantee will deteriorate with the increase of corrupted
+clients, unless it is mitigated by adding more DP noises at the cost of accuracy. In our setting, we
+assume up to n −1 (n is the number of clients) clients can be corrupted such that the above problem
+will be escalated to the worst case. Therefore, it is an interesting and challenging work to design a
+high-utility DP mechanism in the distributed scenario where multiple clients may be corrupted."
+DISCUSSIONS,0.1970954356846473,"Discussions on scalability. In PrivHFL and general heterogeneous federated learning, each client
+can play the role of the querying party and the answering party at the same time (Li & Wang,
+2019). This will incur the overhead of O(n2) secure predictions for each iteration, where n is the
+number of clients. As the size of the model or the number of clients increases, such overhead issue"
+DISCUSSIONS,0.1991701244813278,"4Note that the reveal in the DReLU protocol are masked intermediate values, rather than plain values."
+DISCUSSIONS,0.2012448132780083,Under review as a conference paper at ICLR 2022
+DISCUSSIONS,0.2033195020746888,"(especially communication overhead) will become the main bottleneck for the scalability of the
+system. Currently, the system can only carry a small number of clients and medium-sized models.
+Hence, we view PrivHFL as a ﬁrst step in constructing privacy-preserving protocols for HFL."
+EVALUATION,0.2053941908713693,"4
+EVALUATION"
+EVALUATION SETUP,0.2074688796680498,"4.1
+EVALUATION SETUP"
+EVALUATION SETUP,0.2095435684647303,"Datasets and models. We evaluate PrivHFL on three image datasets (SVHN, CIFAR10 and Tiny
+ImageNet). By default, we assume independent and identically distributed (IID) training data among
+clients, and the Non-IID setting can be found in Appendix B.3. For SVHN and CIFAR10, following
+CaPC we set the number of clients n = 50 and use VGG-7, ResNet-8 and ResNet-10 architectures
+as the clients’ local models. For Tiny ImageNet, we use ResNet-14, ResNet-16, ResNet-18 architec-
+tures and set n = 10. Unless otherwise stated, we only report the accuracy after one iteration, and
+each model architecture is used by n/3 clients. Refer to Appendix F for more experimental setup."
+EVALUATION SETUP,0.21161825726141079,"Cryptographic protocol. We build PrivHFL on top of CryptGPU (Tan et al., 2021), but reimple-
+ment the underlying cryptographic protocols proposed in Section 3. We set the security parameter
+κ as 128. As recommended by CryptGPU, we set secret-sharing protocols over the 64-bit ring Z264,
+and encode inputs using a ﬁxed-point representation with 20-bit precision."
+EVALUATION SETUP,0.21369294605809128,"0
+2
+4
+6
+8
+10
+Iterations 70 75 80 85 90"
+EVALUATION SETUP,0.2157676348547718,Accuracy
+EVALUATION SETUP,0.21784232365145229,"VGG7-mixup
+Resnet8-mixup
+Resnet10-mixup"
+EVALUATION SETUP,0.21991701244813278,"VGG7-private
+Resnet8-private
+Resnet10-private"
+EVALUATION SETUP,0.22199170124481327,(a) SVHN
+EVALUATION SETUP,0.22406639004149378,"0
+2
+4
+6
+8
+10
+Iterations 50 55 60 65 70"
+EVALUATION SETUP,0.22614107883817428,Accuracy
+EVALUATION SETUP,0.22821576763485477,"VGG7-mixup
+Resnet8-mixup
+Resnet10-mixup"
+EVALUATION SETUP,0.23029045643153526,"VGG7-private
+Resnet8-private
+Resnet10-private"
+EVALUATION SETUP,0.23236514522821577,(b) CIFAR10
+EVALUATION SETUP,0.23443983402489627,"Figure 6: The performance of PrivHFL on different query datasets: the private dataset and
+the synthetic datset based on mixup. We report the average accuracy of each model architecture."
+EVALUATION ON THE HETEROGENEOUS FEDERATED LEARNING,0.23651452282157676,"4.2
+EVALUATION ON THE HETEROGENEOUS FEDERATED LEARNING"
+EVALUATION ON THE HETEROGENEOUS FEDERATED LEARNING,0.23858921161825727,"Table 1:
+Test accuracy of PrivHFL on different fractions of participating clients and differ-
+ent numbers of query data. We also report the model accuracy trained on the local dataset (i.e.,
+baseline described in Section 3.1), and the model accuracy retrained on the private data-based query."
+EVALUATION ON THE HETEROGENEOUS FEDERATED LEARNING,0.24066390041493776,"SVHN
+CIFAR10
+Tiny ImageNet"
+EVALUATION ON THE HETEROGENEOUS FEDERATED LEARNING,0.24273858921161826,"C = 0.6
+C = 0.8
+C = 1
+C = 0.6
+C = 0.8
+C = 1
+C = 0.6
+C = 0.8
+C = 1"
+EVALUATION ON THE HETEROGENEOUS FEDERATED LEARNING,0.24481327800829875,"Baseline
+75.46
+56.66
+22.26"
+EVALUATION ON THE HETEROGENEOUS FEDERATED LEARNING,0.24688796680497926,"Private data
+79.43
+79.56
+80.29
+60.82
+61.01
+61.49
+24.89
+25.11
+25.23"
+EVALUATION ON THE HETEROGENEOUS FEDERATED LEARNING,0.24896265560165975,mixup data
+K,0.25103734439834025,"2.5K
+80.09
+80.32
+81.69
+62.87
+63.05
+63.23
+25.82
+26.03
+26.23
+5.0K
+83.32
+83.52
+83.82
+63.04
+63.44
+63.69
+26.22
+26.46
+26.75
+7.5K
+84.54
+84.78
+85.12
+62.97
+63.64
+63.88
+27.14
+27.54
+27.75
+10K
+84.58
+84.97
+85.62
+63.79
+63.82
+64.56
+27.67
+28.19
+28.46"
+K,0.25311203319502074,"Table 1 shows the detailed results on the performance improvement (i.e., accuracy gains) brought by
+PrivHFL, where we randomly select synthetic data to query instead of using active learning strate-
+gies. We observe that for SVHN and CIFAR10, the accuracy gain is about 10% when we use 10K"
+K,0.2551867219917012,Under review as a conference paper at ICLR 2022
+K,0.2572614107883817,"mixup samples. However, using the private dataset-based query strategy only increases the accuracy
+by about 4%. Table 1 also shows different accuracy gains as the number of mixup data increases, in
+which compared with 2.5K mixup data, we obtain 4.65%, 1.33%, 3.23% increased accuracy using
+10K samples on SVHN, CIFAR10 and Tiny ImageNet, respectively. This is because more synthetic
+data could provide a better coverage of natural dataset distributions. Besides, with the increase of
+participating fraction C, the accuracy improves slightly.Figure 6 and Figure 7 show the improve-
+ment of different heterogeneous models under different iterations and different numbers of query
+data. We observe that as the number of query data increases, PrivHFL consistently outperforms the
+baseline for the above datasets and heterogeneous models."
+K,0.25933609958506226,"2500
+5000
+7500
+10000
+Number of Query Data 50 60 70 80 90 100"
+K,0.26141078838174275,Accuracy (%)
+K,0.26348547717842324,"VGG7
+ResNet8
+ResNet10"
+K,0.26556016597510373,(a) SVHN
+K,0.2676348547717842,"2500
+5000
+7500
+10000
+Number of Query Data 50 55 60 65 70"
+K,0.2697095435684647,Accuracy (%)
+K,0.2717842323651452,"VGG7
+ResNet8
+ResNet10"
+K,0.27385892116182575,(b) CIFAR10
+K,0.27593360995850624,"2500
+5000
+7500
+10000
+Number of Query Data 10 15 20 25 30 35"
+K,0.27800829875518673,Accuracy (%)
+K,0.2800829875518672,"ResNet14
+ResNet16
+ResNet18"
+K,0.2821576763485477,(c) Tiny ImageNet
+K,0.2842323651452282,"Figure 7: Test accuracy of heterogeneous models after PrivHFL as the number of query data
+increases. Dashed lines represent the baseline, i.e., the test accuracy before executing PrivHFL."
+K,0.2863070539419087,"Ablation study of PrivHFL. Figure 11(c) in Appendix B.1 illustrates the effectiveness of different
+data expansion methods. Figure 12 and Figure 16 in Appendix B.3 further illustrate the impact of
+active learning strategies and the number of private data samples on the test accuracy, respectively.
+Besides, we also show the test accuracy of PrivHFL on CIFAR10 and SVHN for different degrees
+of Non-IID-ness in Figure 15 in Appendix B.3."
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.2883817427385892,"4.3
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS"
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.29045643153526973,"Table 2: Runtime (sec) of the three steps in PrivHFL’s secure querying protocol. The runtime of
+secure prediction represents the query time of each client on different models. CIFAR10 and SVHN
+have the same time due to the same input size and model architecture."
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.2925311203319502,"Dataset
+# Queries
+1. Query-data sharing
+2. Secure prediction
+3. Result aggregation"
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.2946058091286307,"VGG7
+ResNet8
+ResNet10"
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.2966804979253112,"CIFAR10
+(SVHN)"
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.2987551867219917,"1000
+5.08
+55.97
+87.71
+106.46
+0.09
+2500
+7.16
+133.52
+206.20
+256.39
+0.12
+5000
+11.32
+271.89
+428.54
+512.88
+0.30"
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.3008298755186722,"ResNet14
+ResNet16
+ResNet18"
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.3029045643153527,"Tiny
+ImageNet
+1000
+9.87
+737.43
+962.51
+1075.13
+0.18
+2500
+18.78
+1778.69
+2356.33
+2537.49
+0.32"
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.3049792531120332,"We mainly focus on the extra overhead caused by the secure querying phase. To clearly illustrate the
+efﬁciency of PrivHFL, unless otherwise speciﬁed, we only show the overhead of one communication
+round as shown in Section 3. Recall that our secure querying protocol consists of three phases, i.e.,
+query-data sharing, secure prediction, and result aggregation. As shown in Table 2, the main cost of
+our framework comes from the second phase, where the evaluation of batched secure prediction is
+required. Speciﬁcally, it takes 4.5 minutes to evaluate 5000 query samples securely on VGG7 and
+CIFAR10. Besides, only 11.32 seconds and 0.3 seconds are spent on the query-data sharing and
+result aggregation phases. More runtime is required to evaluate Tiny ImageNet because of increased
+input size and model architecture."
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.3070539419087137,"To demonstrate the effectiveness of PrivHFL’s secure prediction protocol, we compare with CrypT-
+Flow2 (Rathee et al., 2020) and CryptGPU (Tan et al., 2021). In Table 4 of Appendix B.2, we also"
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.3091286307053942,Under review as a conference paper at ICLR 2022
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.3112033195020747,"Table 3: Runtime (sec) and communication cost (MB) of secure prediction for different meth-
+ods on CIFAR10. CrypTFlow2 (Rathee et al., 2020) is the SOTA 2-party protocol that contains
+two variants (OT-based and HE-based) and CryptGPU (Tan et al., 2021) is the SOTA 3-party GPU-
+friendly protocol. We report the cost of a single prediction on three models."
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.3132780082987552,"Method
+VGG7
+ResNet8
+ResNet10"
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.3153526970954357,"Time
+Comm.
+Time
+Comm.
+Time
+Comm."
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.31742738589211617,"CrypTFlow2-OT (Rathee et al., 2020)
+39.22
+15562.9
+39.35
+21261.6
+55.76
+28517.6
+CrypTFlow2-HE (Rathee et al., 2020)
+48.70
+651.51
+56.21
+1110.39
+97.46
+1395.18
+CryptGPU (Tan et al., 2021)
+1.61
+144.51
+2.02
+131.39
+2.79
+221.57"
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.31950207468879666,"This work (CPU)
+1.03
+66.61
+1.63
+73.85
+2.00
+105.88
+This work (GPU)
+0.35
+66.61
+0.36
+73.85
+0.53
+105.88"
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.3215767634854772,"compare with CaPC (Choquette-Choo et al., 2021) that uses HE-Transformer as the building block.
+Table 3 summarizes this improvement for three models over CIFAR10. We observe that, PrivHFL
+achieves signiﬁcant improvement on all the models in terms of runtime and communication costs.
+To be speciﬁc, PrivHFL requires 105.2-112.0 × less runtime and 233.6-269.3 × less communica-
+tion compared with CrypTFlow2-OT. Similarly, compared with CrypTFlow2-HE, we show a greater
+advantage (i.e., 139.1-183.8 ×) in runtime, and a relatively small advantage (i.e., 9.7-15.0 ×) in com-
+munication overhead. In addition, we also test the performance under the CPU architecture. Notably,
+even comparing with CryptGPU, our weaker CPU setting obtains an improvement of roughly 1.5 ×
+and 2 × in terms of computation and communication overheads, respectively."
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.3236514522821577,"0
+10
+20
+30
+40
+50
+60
+Batch Size 0 5 10 15 20 25"
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.3257261410788382,Runtime (sec)
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.3278008298755187,"VGG7-GPU
+VGG9-GPU
+VGG11-GPU"
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.32987551867219916,"VGG7-CPU
+VGG9-CPU
+VGG11-CPU"
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.33195020746887965,"0
+10
+20
+30
+40
+50
+60
+Batch Size 0 10 20 30 40 50 60 70"
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.33402489626556015,Runtime (sec)
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.3360995850622407,"Resnet8-GPU
+Resnet10-GPU
+Resnet12-GPU"
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.3381742738589212,"Resnet8-CPU
+Resnet10-CPU
+Resnet12-CPU"
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.34024896265560167,"Figure 8: Runtime (sec) of batch secure prediction on CPU and GPU settings as the batch size
+increases. We report the result of VGG-style and ResNet-style networks on CIFAR10."
+EVALUATION ON THE CRYPTOGRAPHIC PROTOCOLS,0.34232365145228216,"To further understand the impact of GPU acceleration on PrivHFL, we evaluate our secure prediction
+protocol under both the CPU and GPU settings with different batch size in Figure 8. We observe that
+the GPU-based secure prediction is always superior to the CPU analogs. As the batch size increases,
+the advantages of GPU-based protocols becomes more pronounced, e.g., the 9.5 × reduction on
+ResNet8 over a batch of 64 images."
+CONCLUSION,0.34439834024896265,"5
+CONCLUSION"
+CONCLUSION,0.34647302904564314,"In this paper, we propose a practical heterogeneous federated learning framework, which is inde-
+pendent on auxiliary datasets while provably guaranteeing the privacy of samples, model parameters
+and predictions. Extensive experiments demonstrate that PrivHFL outperforms prior art two orders
+of magnitude in efﬁciency and realizes about 10% accuracy gains. In the future, we will further
+improve the scalability of the system and integrate with advanced differential privacy mechanisms."
+CONCLUSION,0.34854771784232363,Under review as a conference paper at ICLR 2022
+REFERENCES,0.3506224066390041,REFERENCES
+REFERENCES,0.35269709543568467,"Michel Abdalla, Mihir Bellare, and Phillip Rogaway. The oracle difﬁe-hellman assumptions and an
+analysis of dhies. In Proceedings of CT-RSA, pp. 143–158. Springer, 2001."
+REFERENCES,0.35477178423236516,"Buse Gul Atli, Yuxi Xia, Samuel Marchal, and N Asokan. Wafﬂe: Watermarking in federated
+learning. arXiv preprint arXiv:2008.07298, 2020."
+REFERENCES,0.35684647302904565,"James Henry Bell, Kallista A Bonawitz, Adri`a Gasc´on, Tancr`ede Lepoint, and Mariana Raykova.
+Secure single-server aggregation with (poly) logarithmic overhead. In Proceedings of ACM CCS,
+pp. 1253–1269, 2020."
+REFERENCES,0.35892116182572614,"Fabian Boemer, Anamaria Costache, Rosario Cammarota, and Casimir Wierzynski. ngraph-he2:
+A high-throughput framework for neural network inference on encrypted data. In Proceedings
+of the 7th ACM Workshop on Encrypted Computing & Applied Homomorphic Cryptography, pp.
+45–56, 2019a."
+REFERENCES,0.36099585062240663,"Fabian Boemer, Yixing Lao, Rosario Cammarota, and Casimir Wierzynski. ngraph-he: a graph
+compiler for deep learning on homomorphically encrypted data. In Proceedings of the 16th ACM
+International Conference on Computing Frontiers, pp. 3–13, 2019b."
+REFERENCES,0.3630705394190871,"Keith Bonawitz, Vladimir Ivanov, Ben Kreuter, Antonio Marcedone, H Brendan McMahan, Sarvar
+Patel, Daniel Ramage, Aaron Segal, and Karn Seth. Practical secure aggregation for privacy-
+preserving machine learning. In proceedings of ACM CCS, pp. 1175–1191, 2017."
+REFERENCES,0.3651452282157676,"Alon Brutzkus, Ran Gilad-Bachrach, and Oren Elisha. Low latency privacy preserving inference.
+In Proceedings of ICML, pp. 812–821, 2019."
+REFERENCES,0.36721991701244816,"Ran Canetti. Universally composable security: A new paradigm for cryptographic protocols. In
+Proceedings of FOCS, pp. 136–145. IEEE, 2001."
+REFERENCES,0.36929460580912865,"Hongyan Chang, Virat Shejwalkar, Reza Shokri, and Amir Houmansadr.
+Cronus:
+Robust
+and heterogeneous collaborative learning with black-box knowledge transfer.
+arXiv preprint
+arXiv:1912.11279, 2019."
+REFERENCES,0.37136929460580914,"Hao Chen, Wei Dai, Miran Kim, and Yongsoo Song. Efﬁcient multi-key homomorphic encryption
+with packed ciphertexts with application to oblivious neural network inference. In Proceedings
+of ACM CCS, pp. 395–412, 2019."
+REFERENCES,0.37344398340248963,"Christopher A Choquette-Choo, Natalie Dullerud, Adam Dziedzic, Yunxiang Zhang, Somesh Jha,
+Nicolas Papernot, and Xiao Wang. Capc learning: Conﬁdential and private collaborative learning.
+In Proceedings of ICLR, 2021."
+REFERENCES,0.3755186721991701,"Daniel Demmler, Thomas Schneider, and Michael Zohner. Aby-a framework for efﬁcient mixed-
+protocol secure two-party computation. In Proceedings of NDSS, 2015."
+REFERENCES,0.3775933609958506,"Terrance DeVries and Graham W Taylor. Improved regularization of convolutional neural networks
+with cutout. arXiv preprint arXiv:1708.04552, 2017."
+REFERENCES,0.3796680497925311,"Enmao Diao, Jie Ding, and Vahid Tarokh. Heteroﬂ: Computation and communication efﬁcient
+federated learning for heterogeneous clients. In Proceedings of ICLR, 2021."
+REFERENCES,0.3817427385892116,"Whitﬁeld Difﬁe and Martin Hellman. New directions in cryptography. IEEE Transactions on Infor-
+mation Theory, 22(6):644–654, 1976."
+REFERENCES,0.38381742738589214,"Canh T Dinh, Nguyen H Tran, and Tuan Dung Nguyen. Personalized federated learning with moreau
+envelopes. In Proceedings of NeurIPS, 2020."
+REFERENCES,0.38589211618257263,"Alireza Fallah, Aryan Mokhtari, and Asuman Ozdaglar. Personalized federated learning with theo-
+retical guarantees: A model-agnostic meta-learning approach. In Proceedings of NeurIPS, 2020."
+REFERENCES,0.3879668049792531,"Karan Ganju, Qi Wang, Wei Yang, Carl A Gunter, and Nikita Borisov. Property inference attacks
+on fully connected neural networks using permutation invariant representations. In Proceedings
+of ACM CCS, pp. 619–633, 2018."
+REFERENCES,0.3900414937759336,Under review as a conference paper at ICLR 2022
+REFERENCES,0.3921161825726141,"Craig Gentry. Fully homomorphic encryption using ideal lattices. In Proceedings of ACM STOC,
+pp. 169–178, 2009."
+REFERENCES,0.3941908713692946,"Ran Gilad-Bachrach, Nathan Dowlin, Kim Laine, Kristin Lauter, Michael Naehrig, and John Werns-
+ing. Cryptonets: Applying neural networks to encrypted data with high throughput and accuracy.
+In Proceedings of ICML, pp. 201–210, 2016."
+REFERENCES,0.3962655601659751,"Oded Goldreich. Foundations of cryptography. Cambridge university press, 2009."
+REFERENCES,0.3983402489626556,"Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recog-
+nition. In Proceedings of CVPR, pp. 770–778, 2016."
+REFERENCES,0.4004149377593361,"Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. Distilling the knowledge in a neural network. arXiv
+preprint arXiv:1503.02531, 2015."
+REFERENCES,0.4024896265560166,"Bargav Jayaraman and David Evans. Evaluating differentially private machine learning in practice.
+In Proceedings of USENIX Security, pp. 1895–1912, 2019."
+REFERENCES,0.4045643153526971,"Bargav Jayaraman and Lingxiao Wang. Distributed learning without distress: Privacy-preserving
+empirical risk minimization. 2018."
+REFERENCES,0.4066390041493776,"Chiraag Juvekar, Vinod Vaikuntanathan, and Anantha Chandrakasan. Gazelle: A low latency frame-
+work for secure neural network inference. In Proceedings of USENIX Security, pp. 1651–1669,
+2018."
+REFERENCES,0.4087136929460581,"Peter Kairouz, H Brendan McMahan, Brendan Avent, Aur´elien Bellet, Mehdi Bennis, Arjun Nitin
+Bhagoji, Kallista Bonawitz, Zachary Charles, Graham Cormode, Rachel Cummings, et al. Ad-
+vances and open problems in federated learning. arXiv preprint arXiv:1912.04977, 2019."
+REFERENCES,0.4107883817427386,"Brian Knott, Shobha Venkataraman, Awni Hannun, Shubho Sengupta, Mark Ibrahim, and Laurens
+van der Maaten. Crypten: Secure multi-party computation meets machine learning. arXiv preprint
+arXiv:2109.00984, 2021."
+REFERENCES,0.41286307053941906,"Daliang Li and Junpu Wang. Fedmd: Heterogenous federated learning via model distillation. In
+Proceedings of NeurIPS Workshop on Federated Learning for Data Privacy and Conﬁdentiality,
+2019."
+REFERENCES,0.4149377593360996,"Tao Lin, Lingjing Kong, Sebastian U Stich, and Martin Jaggi. Ensemble distillation for robust model
+fusion in federated learning. In Proceedings of NeurIPS, 2020."
+REFERENCES,0.4170124481327801,"Stephen M Matyas. Generating strong one-way functions with cryptographic algorithm. IBM Tech-
+nical Disclosure Bulletin, 27:5658–5659, 1985."
+REFERENCES,0.4190871369294606,"Pratyush Mishra, Ryan Lehmkuhl, Akshayaram Srinivasan, Wenting Zheng, and Raluca Ada Popa.
+Delphi: A cryptographic inference service for neural networks. In Proceedings of USENIX Secu-
+rity, pp. 2505–2522, 2020."
+REFERENCES,0.4211618257261411,"Payman Mohassel and Yupeng Zhang. Secureml: A system for scalable privacy-preserving machine
+learning. In Proceedings of IEEE S&P, pp. 19–38, 2017."
+REFERENCES,0.42323651452282157,"Moni Naor and Benny Pinkas. Efﬁcient oblivious transfer protocols. In Proceedings of SODA, pp.
+448–457, 2001."
+REFERENCES,0.42531120331950206,"Nicolas Papernot, Mart´ın Abadi, Ulfar Erlingsson, Ian Goodfellow, and Kunal Talwar.
+Semi-
+supervised knowledge transfer for deep learning from private training data. In Proceedings of
+ICLR, 2017."
+REFERENCES,0.42738589211618255,"Le Trieu Phong, Yoshinori Aono, Takuya Hayashi, Lihua Wang, and Shiho Moriai.
+Privacy-
+preserving deep learning via additively homomorphic encryption. IEEE Transactions on Infor-
+mation Forensics and Security, 13(5):1333–1345, 2018."
+REFERENCES,0.42946058091286304,"Deevashwer Rathee, Mayank Rathee, Nishant Kumar, Nishanth Chandran, Divya Gupta, Aseem
+Rastogi, and Rahul Sharma. Cryptﬂow2: Practical 2-party secure inference. In Proceedings of
+ACM CCS, pp. 325–342, 2020."
+REFERENCES,0.4315352697095436,Under review as a conference paper at ICLR 2022
+REFERENCES,0.4336099585062241,"M Sadegh Riazi, Christian Weinert, Oleksandr Tkachenko, Ebrahim M Songhori, Thomas Schnei-
+der, and Farinaz Koushanfar. Chameleon: A hybrid secure computation framework for machine
+learning applications. In Proceedings of AsiaCCS, pp. 707–721, 2018."
+REFERENCES,0.43568464730290457,"Ahmed Salem, Yang Zhang, Mathias Humbert, Pascal Berrang, Mario Fritz, and Michael Backes.
+Ml-leaks: Model and data independent membership inference attacks and defenses on machine
+learning models. In Proceedings of NDSS, 2019."
+REFERENCES,0.43775933609958506,"Sinem Sav, Apostolos Pyrgelis, Juan R Troncoso-Pastoriza, David Froelicher, Jean-Philippe
+Bossuat, Joao Sa Sousa, and Jean-Pierre Hubaux. Poseidon: Privacy-preserving federated neural
+network learning. In Proceedings of NDSS, 2021."
+REFERENCES,0.43983402489626555,"Tobias Scheffer, Christian Decomain, and Stefan Wrobel. Active hidden markov models for in-
+formation extraction. In International Symposium on Intelligent Data Analysis, pp. 309–318.
+Springer, 2001."
+REFERENCES,0.44190871369294604,"Ozan Sener and Silvio Savarese. Active learning for convolutional neural networks: A core-set
+approach. In Proceedings of ICLR, 2018."
+REFERENCES,0.44398340248962653,"Claude Elwood Shannon. A mathematical theory of communication. ACM SIGMOBILE mobile
+computing and communications review, 5(1):3–55, 2001."
+REFERENCES,0.4460580912863071,"Liyan Shen, Xiaojun Chen, Jinqiao Shi, Ye Dong, and Binxing Fang. An efﬁcient 3-party framework
+for privacy-preserving neural network inference. In Proceedings of ESORICS, pp. 419–439, 2020."
+REFERENCES,0.44813278008298757,"Lichao Sun and Lingjuan Lyu. Federated model distillation with noise-free differential privacy. In
+Proceedings of IJCAI, 2021."
+REFERENCES,0.45020746887966806,"Sijun Tan, Brian Knott, Yuan Tian, and David J Wu. Cryptgpu: Fast privacy-preserving machine
+learning on the gpu. In Proceedings of IEEE S&P, 2021."
+REFERENCES,0.45228215767634855,"Simon Tong and Daphne Koller. Support vector machine active learning with applications to text
+classiﬁcation. Journal of Machine Learning Research, 2(Nov):45–66, 2001."
+REFERENCES,0.45435684647302904,"Sameer Wagh, Divya Gupta, and Nishanth Chandran. Securenn: 3-party secure computation for
+neural network training. Proceedings on Privacy Enhancing Technologies, 2019(3):26–49, 2019."
+REFERENCES,0.45643153526970953,"Dongdong Wang, Yandong Li, Liqiang Wang, and Boqing Gong. Neural networks are more pro-
+ductive teachers than human raters: Active mixup for data-efﬁcient knowledge distillation from a
+blackbox model. In Proceedings of CVPR, pp. 1498–1507, 2020."
+REFERENCES,0.45850622406639,"Ziqi Yang, Jiyi Zhang, Ee-Chien Chang, and Zhenkai Liang. Neural network inversion in adversarial
+setting via background knowledge alignment. In Proceedings of ACM CCS, pp. 225–240, 2019."
+REFERENCES,0.4605809128630705,"Andrew Chi-Chih Yao. How to generate and exchange secrets. In Proceedings of IEEE FOCS, pp.
+162–167, 1986."
+REFERENCES,0.46265560165975106,"Tehrim Yoon, Sumin Shin, Sung Ju Hwang, and Eunho Yang. Fedmix: Approximation of mixup
+under mean augmented federated learning. In Proceedings of ICLR, 2021."
+REFERENCES,0.46473029045643155,"Sangdoo Yun, Dongyoon Han, Seong Joon Oh, Sanghyuk Chun, Junsuk Choe, and Youngjoon Yoo.
+Cutmix: Regularization strategy to train strong classiﬁers with localizable features. In Proceed-
+ings of ICCV, pp. 6023–6032, 2019."
+REFERENCES,0.46680497925311204,"Mikhail Yurochkin, Mayank Agarwal, Soumya Ghosh, Kristjan Greenewald, Nghia Hoang, and
+Yasaman Khazaeni. Bayesian nonparametric federated learning of neural networks. In Proceed-
+ings of ICML, pp. 7252–7261, 2019."
+REFERENCES,0.46887966804979253,"Hongyi Zhang, Moustapha Cisse, Yann N Dauphin, and David Lopez-Paz. mixup: Beyond empirical
+risk minimization. In Proceedings of ICLR, 2018."
+REFERENCES,0.470954356846473,"Zhuangdi Zhu, Junyuan Hong, and Jiayu Zhou. Data-free knowledge distillation for heterogeneous
+federated learning. In Proceedings of ICML, 2021."
+REFERENCES,0.4730290456431535,Under review as a conference paper at ICLR 2022
+REFERENCES,0.475103734439834,"A
+HETEROGENEOUS FEDERATED LEARNING"
+REFERENCES,0.47717842323651455,"In federated learning (FL), multiple clients collectively learn a single model with a ﬁxed architecture,
+in which each client maintains a local model for the private dataset, while the server maintains a
+global model via aggregating the local model gradients from clients. Although successful, FL is
+often restrictive in practice, since it assumes all clients sharing the same model architecture. To
+tackle this problem, heterogeneous federated learning (HFL) is proposed, which enables clients to
+collaboratively train their own customized models that may differ in size or structure. Due to the
+heterogeneity in local models among clients, it’s not possible to collaborate via sharing gradients
+like FL. As shown in Figure 9, generally, HFL uses a task-related auxiliary dataset to assist in
+collaborative learning. To be speciﬁc, each client ﬁrst trains the local model with individual private
+dataset and then performs inference on the auxiliary dataset to obtain the prediction results, which
+are sent to the server to aggregate, rather than the local model gradients. Then, the server broadcasts
+the aggregated results to clients, and the clients will retrain local models based on the auxiliary
+dataset and the received predictions."
+REFERENCES,0.47925311203319504,Server
+REFERENCES,0.48132780082987553,Local Model
+REFERENCES,0.483402489626556,Local Data
+REFERENCES,0.4854771784232365,Local Model
+REFERENCES,0.487551867219917,Local Data
+REFERENCES,0.4896265560165975,Local Model
+REFERENCES,0.491701244813278,Local Data
+REFERENCES,0.49377593360995853,Broadcast the global model …
+REFERENCES,0.495850622406639,Server
+REFERENCES,0.4979253112033195,Local Model
+REFERENCES,0.5,Local Data
+REFERENCES,0.5020746887966805,Local Model
+REFERENCES,0.504149377593361,Local Data
+REFERENCES,0.5062240663900415,Local Model
+REFERENCES,0.508298755186722,Local Data
+REFERENCES,0.5103734439834025,Broadcast the global prediction …
+REFERENCES,0.5124481327800829,Auxiliary Dataset
+REFERENCES,0.5145228215767634,Model prediction
+REFERENCES,0.516597510373444,Global Model
+REFERENCES,0.5186721991701245,Figure 9: Comparison with federated learning and heterogeneous federated learning
+REFERENCES,0.520746887966805,"B
+ADDITIONAL EXPERIMENTAL RESULTS"
+REFERENCES,0.5228215767634855,"B.1
+UNDERSTANDING DATASET EXPANSION"
+REFERENCES,0.524896265560166,"Recall that we instantiate the dataset expansion method by leveraging mixup (Zhang et al., 2018)
+in Section 3.2. To explore the effectiveness of the mixup-based datset expansion method, we vi-
+sualize the feature distribution of original data and synthetic samples on SVHN and CIFAR10. As
+shown in Figure 11(a) and Figure 11(b), the synthetic samples cover a larger part of the feature
+space and hence they should be more diverse and informative compared with original data. In other
+words, it could provide a good coverage of the manifold of natural samples. Therefore, learning the
+predictions from other clients on the synthetic samples can further improve the accuracy of local
+models."
+REFERENCES,0.5269709543568465,"Note that our dataset expansion method is universal and reconﬁgurable, which can be extended by
+leveraging other data augmentation strategies. Figure 11(c) gives the accuracy gains under various
+data augmentation strategies, including random sampling from Gaussian distribution, random ﬂip-
+ping, cutmix and cutout. Cutmix (Yun et al., 2019) can be formulated as ˜xi,j = M ·xi+(1−M)·xj,
+where M ∈{0, 1}W ×H is a binary mask matrix of size W × H to indicate the location of drop-
+ping out and ﬁlling from the two images xi and xj. Cutout (DeVries & Taylor, 2017) augments
+the dataset with partially occluded versions of original samples. Figure 10 shows the overview of
+the results of these ﬁve strategies on an original image. As shown in Figure 11(c), the Gaussian"
+REFERENCES,0.529045643153527,Under review as a conference paper at ICLR 2022
+REFERENCES,0.5311203319502075,"noise-based and random ﬂipping-based dataset expansion strategies dramatically reduce the model
+accuracy. The main reason is that the two strategies do not necessarily model the problem domain
+distributions and do not provide informative natural images. In contrast, the strong data augmen-
+tation strategies, cutout and cutmix, are good choices for data generation in PrivHFL. Like mixup,
+these two methods can construct a big synthesized pool on a small private dataset that could provide
+a good coverage of the manifold of natural samples, to better distill knowledge of heterogeneous
+models."
+REFERENCES,0.533195020746888,"Gaussian Noise
+Random Flipping
+Cutout
+Cutmix
+Mixup"
+REFERENCES,0.5352697095435685,"Figure 10: Overview of the results of Gussian noise, random ﬂipping, cutmix, cutout, and
+mixup data augmentation strategies."
+REFERENCES,0.5373443983402489,"B.2
+EXPERIMENTAL RESULTS FOR SECURE PREDICTION"
+REFERENCES,0.5394190871369294,"In the model querying phase, we leverage the GPU parallelism to process private querying on a
+batch of images, which effectively amortize the cost of private inference. In Table 4, we compare our
+GPU-friendly method on MNIST using the three model architectures (CryptoNets (Gilad-Bachrach
+et al., 2016), CryptoNets-ReLU (Gilad-Bachrach et al., 2016) and MLP (Boemer et al., 2019b))
+with HE-Transformer, which also achieves batch-axis packing for private inference. Note that CaPC
+(Choquette-Choo et al., 2021) also adopt HE-Transformer as the building block. We can observe that
+PrivHFL is up to three orders of magnitude faster than HE-Transformer on the CryptoNets-ReLU
+and MLP models. The main reason is the efﬁciency of the protocol and the parallelism supported
+by the GPU. However, when evaluating CryptoNets that replaces ReLU activations with squared
+approximation, the improvement from PrivHFL will gradually decrease as the batch size increases,
+because the HE-based method does not require communication during the entire evaluation pro-
+cess. Note that approximations result in signiﬁcant accuracy losses and degrades user experience,
+especially when evaluating modern large-scale models."
+REFERENCES,0.5414937759336099,"B.3
+EXPERIMENTAL RESULTS FOR HETEROGENEOUS FEDERATED LEARNING"
+REFERENCES,0.5435684647302904,"Impact of different active learning strategies. Figure 12 depicts the impact of different active
+learning strategies, in which even random sampling can drastically improve the model accuracy by"
+REFERENCES,0.5456431535269709,"(a) Feature distribution on SVHN. (b) Feature
+distribution
+on
+CI-
+FAR10."
+REFERENCES,0.5477178423236515,"CIFAR10
+SVHN
+30 40 50 60 70 80 90"
+REFERENCES,0.549792531120332,Accuracy (%)
+REFERENCES,0.5518672199170125,"Gaussian Noise
+Random Flipping
+Cutmix
+Cutout
+Mixup"
+REFERENCES,0.553941908713693,"(c) Comparison with other dataset
+expansion methods."
+REFERENCES,0.5560165975103735,"Figure 11:
+Understanding the importance of dataset expansion on improving model perfor-
+mance. In (a) and (b), the bright colored points indicate the position of the original training data in
+the feature space, and the light blue points indicate the distribution of the expanded points based on
+mixup in the feature space. In (c), the left and right dashed lines are the baseline test accuracy on
+CIFAR10 and SVHN, respectively."
+REFERENCES,0.558091286307054,Under review as a conference paper at ICLR 2022
+REFERENCES,0.5601659751037344,"Table 4: Runtime (sec) of secure prediction for HE-Transformer and our PrivHFL on MNIST
+as the batch size increases. He-Transformer is the 2-party secure prediction protocol used in CaPC
+(Choquette-Choo et al., 2021)."
+REFERENCES,0.5622406639004149,"Model
+BS=128
+BS=256
+BS=512
+BS=1024
+BS=2048"
+REFERENCES,0.5643153526970954,"Ours
+HE-T
+Ours
+HE-T
+Ours
+HE-T
+Ours
+HE-T
+Ours
+HE-T"
+REFERENCES,0.5663900414937759,"CNet1
+0.07
+17.75
+0.14
+17.56
+0.25
+17.62
+0.49
+17.77
+0.99
+17.67
+CNet2
+0.07
+48.83
+0.15
+70.14
+0.26
+112.42
+0.51
+201.42
+1.01
+369.51
+MLP
+0.05
+65.01
+0.06
+86.37
+0.10
+129.81
+0.16
+216.61
+0.29
+391.13"
+REFERENCES,0.5684647302904564,"2500
+5000
+7500
+Number of Query Data 50 60 70 80 90 100"
+REFERENCES,0.5705394190871369,Accuracy (%)
+REFERENCES,0.5726141078838174,"Random
+Entropy
+Margin"
+REFERENCES,0.5746887966804979,"ICD
+K-Center"
+REFERENCES,0.5767634854771784,(a) SVHN
+REFERENCES,0.578838174273859,"2500
+5000
+7500
+Number of Query Data 50 55 60 65 70"
+REFERENCES,0.5809128630705395,Accuracy (%)
+REFERENCES,0.58298755186722,"Random
+Entropy
+Margin"
+REFERENCES,0.5850622406639004,"ICD
+K-Center"
+REFERENCES,0.5871369294605809,(b) CIFAR10
+REFERENCES,0.5892116182572614,"Figure 12: Using PrivHFL with active learning strategies to improve model accracy on SVHN
+and CIFAR10 datasets. Dashed line represents the baseline accuracy of models, and the histogram
+represents the accuracy of the model after PrivHFL based on different active learning strategies."
+REFERENCES,0.5912863070539419,"4.46%-9.66% and 6.57%-7.22% on SVHN and CIFAR10 datasets. Nonetheless, we can also achieve
+additional beneﬁts leveraging active learning, such as 1.44% gains on SVHN with the entropy sam-
+pling and 0.8 % gains on CIFAR10 with the margin sampling."
+REFERENCES,0.5933609958506224,"Impact of the Non-IID-ness degree. We use the Dirichlet distribution Dir(α) as in Lin et al. (2020)
+to simulate disjoint Non-IID training data. Figure 14 visualizes the distributions of Non-IID samples
+among clients with different Dir(α) on CIFAR10 dataset, where the number of clients n = 20. The
+value of α controls the degree of Non-IID-ness, in which a smaller α indicates higher degree of
+Non-IID-ness. When α = 100, the distribution closes to uniform sampling. When α = 0.5,
+the distribution of samples of each class among clients is extremely uneven. Figure 15 shows the
+test accuracy of PrivHFL on SVHN and CIFAR10 for different degrees of Non-IID-ness. We can
+observe that the higher the degree of Non-IID-ness, the lower the accuracy of the model. However,
+in this case, the mixup-based data expansion method can still signiﬁcantly improve the performance
+of models."
+REFERENCES,0.5954356846473029,"Impact of the private data volume. Figure 16 illustrates the impact of private data volume on the
+test accuracy. We can observe that as the private data volume increases, the performance of models
+is on the rise. The main reason is that the model can learn more knowledge from more private
+training data, and it can also generate more mixup synthetic samples to query, so as to promote the
+sharing of model knowledge."
+REFERENCES,0.5975103734439834,"Impact of the normalization operation. As described in Figure 5, we directly aggregate the pre-
+dicted logits instead of the normalized values. There are two major reasons: i) The normalization
+operation in the secure computation will introduce extra communication and computation overheads,
+since it contains costly multiplication and division operations (Knott et al., 2021). ii) The diverse
+logits of the heterogeneous models may contain informative content and hence facilitate model ac-
+curacy. This phenomenon is particularly prominent on complex datasets. As shown in Figure 13,"
+REFERENCES,0.5995850622406639,Under review as a conference paper at ICLR 2022
+REFERENCES,0.6016597510373444,"Table 5: Impact of the coefﬁcient λ in mixup on CIFAR10.
+mixup λ
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+Accuracy
+61.93
+61.82
+61.42
+61.37
+61.38
+61.35
+61.80
+61.53
+61.73"
+REFERENCES,0.6037344398340249,"VGG7
+ResNet8
+ResNet10
+60 65 70 75 80 85 90 95"
+REFERENCES,0.6058091286307054,Accuracy (%)
+REFERENCES,0.6078838174273858,"W/o normalization
+With normalization"
+REFERENCES,0.6099585062240664,(a) SVHN
+REFERENCES,0.6120331950207469,"VGG7
+ResNet8
+ResNet10
+50 55 60 65 70"
+REFERENCES,0.6141078838174274,Accuracy (%)
+REFERENCES,0.6161825726141079,"W/o normalization
+With normalization"
+REFERENCES,0.6182572614107884,(b) CIFAR10
+REFERENCES,0.6203319502074689,"Figure 13: Impact of the normalization operation on the accuracy of heterogeneous models
+on SVHN and CIFAR10 datasets. Dashed line represents the average accuracy of heterogeneous
+models when only private data is used for query."
+REFERENCES,0.6224066390041494,"the model accuracy on CIFAR10 without normalization is about 5% higher than that with normal-
+ization. On SVHN, the inﬂuence of normalization is negligible, since this classiﬁcation task is
+relatively simple."
+REFERENCES,0.6244813278008299,"Impact of the coefﬁcient λ in mixup. Table 5 shows the impact of different mixup coefﬁcients
+λ on the model accuracy over CIFAR10. For each result, we only use one coefﬁcient to generate
+synthetic images. We can observe that in different coefﬁcient values, the model accuracy remains
+almost unchanged, and hence the coefﬁcient of mixup has a negligible effect on the accuracy of the
+heterogeneous models in PrivHFL. Therefore, we set λ ∈[0.1, 0.9] with an interval of 0.1 in our
+experiments to generate more diverse synthetic images."
+REFERENCES,0.6265560165975104,"C
+MISSING DETAILS ON PRIVHFL"
+REFERENCES,0.6286307053941909,"C.1
+ALGORITHMIC DESCRIPTION"
+REFERENCES,0.6307053941908713,"Algorithm 1 gives the detailed description of the PrivHFL framework. In PrivHFL, each client ﬁrst
+trains the local model Mj to convergence on the private dataset. Later, clients improve the perfor-
+mance of local models based on the knowledge of others via the predictions on the synthetic dataset."
+REFERENCES,0.6327800829875518,0 1 2 3 4 5 6 7 8 9 10111213141516171819
+REFERENCES,0.6348547717842323,Party IDs 0 1 2 3 4 5 6 7 8 9
+REFERENCES,0.6369294605809128,Class labels
+REFERENCES,0.6390041493775933,(a) α = 100
+REFERENCES,0.6410788381742739,0 1 2 3 4 5 6 7 8 9 10111213141516171819
+REFERENCES,0.6431535269709544,Party IDs 0 1 2 3 4 5 6 7 8 9
+REFERENCES,0.6452282157676349,Class labels
+REFERENCES,0.6473029045643154,(b) α = 1
+REFERENCES,0.6493775933609959,0 1 2 3 4 5 6 7 8 9 10111213141516171819
+REFERENCES,0.6514522821576764,Party IDs 0 1 2 3 4 5 6 7 8 9
+REFERENCES,0.6535269709543569,Class labels
+REFERENCES,0.6556016597510373,(c) α = 0.5
+REFERENCES,0.6576763485477178,"Figure 14: Visualization of Non-IID-ness among clients with different Dirichlet distribution α
+values on CIFAR10 dataset. The size of scattered points indicates the number of training samples
+for a class available to that client."
+REFERENCES,0.6597510373443983,Under review as a conference paper at ICLR 2022
+REFERENCES,0.6618257261410788,"0.5
+1
+Degree of Non-IID-ness 30 40 50 60 70 80 90"
+REFERENCES,0.6639004149377593,Accuracy (%)
+REFERENCES,0.6659751037344398,"Baseline
+Private data query
+Mixup data query"
+REFERENCES,0.6680497925311203,(a) The model accuracy on SVHN.
+REFERENCES,0.6701244813278008,"0.5
+1
+Degree of Non-IID-ness 30 40 50 60 70"
+REFERENCES,0.6721991701244814,Accuracy (%)
+REFERENCES,0.6742738589211619,"Baseline
+Private data query
+Mixup data query"
+REFERENCES,0.6763485477178424,(b) The model accuracy on CIFAR10.
+REFERENCES,0.6784232365145229,"Figure 15:
+The test accuracy of PrivHFL on SVHN and CIFAR10 with different degrees of
+Non-IID-ness. The number of clients n = 20."
+REFERENCES,0.6804979253112033,"200
+500
+600
+800
+1000
+Number of Private Data Samples 30 40 50 60 70 80 90 100"
+REFERENCES,0.6825726141078838,Accuracy (%)
+REFERENCES,0.6846473029045643,"Baseline
+Private data query
+Mixup data query"
+REFERENCES,0.6867219917012448,(a) SVHN
+REFERENCES,0.6887966804979253,"200
+500
+600
+800
+1000
+Number of Private Data Samples 20 30 40 50 60 70"
+REFERENCES,0.6908713692946058,Accuracy (%)
+REFERENCES,0.6929460580912863,"Baseline
+Private data query
+Mixup data query"
+REFERENCES,0.6950207468879668,(b) CIFAR10
+REFERENCES,0.6970954356846473,"Figure 16: Impact of different amounts of private data on the accuracy of models on SVHN
+and CIFAR10. The number of clients n = 50, and the number of private data samples for each
+client ranges from 200 to 1000."
+REFERENCES,0.6991701244813278,Under review as a conference paper at ICLR 2022
+REFERENCES,0.7012448132780082,"Therefore, they need to ﬁrst construct a big unlabeled data pool based on the small number of pri-
+vate data, and then actively choose a subset from the pool as the query data in each iteration. Next,
+they perform the secure querying protocol based on the query data, and obtains the ﬁnal predictions,
+which will be used to retrain the local model. Query-data generation and secure querying process
+(refer to Section 3 for more details) will iterate iter times until the model Mj achieves pre-deﬁned
+performance."
+REFERENCES,0.7033195020746889,Algorithm 1 The PrivHFL framework.
+REFERENCES,0.7053941908713693,"Input: Each client Pj, j ∈[n], holds a private dataset Dj and a customized local model Mj. iter
+denotes the number of training iterations, where in HFL an iteration means that all clients have
+completed one knowledge transfer. B denotes the number of the query dataset and C denotes
+the set of selected answering parties in current query phase.
+Output: Trained models Mj, j ∈[n]."
+REFERENCES,0.7074688796680498,"1: for each j ∈[n] do
+2:
+Pj locally trains the local model Mj on Dj using the stochastic gradient descent optimization.
+3: end for
+4: for each iter do
+5:
+for each querying party P j
+Q, j ∈[n] do"
+REFERENCES,0.7095435684647303,"6:
+P j
+Q generates an unlabeled synthetic pool Dj
+pool with its own private dataset Dj by utilizing
+the dataset expansion method in Section 3.2.
+7:
+P j
+Q applies the active learning methods in Section C.3 to select the query dataset {xb}b∈[B]
+from Dj
+pool."
+REFERENCES,0.7116182572614108,"8:
+for each answering party P i
+A, i ∈C do
+9:
+P j
+Q secret-shares {[xb]}b∈[B] with P i
+A and the server, based on the protocol ΠShare."
+REFERENCES,0.7136929460580913,"10:
+P i
+A, P j
+Q and the server jointly perform the secure querying protocol in Section 3.3."
+REFERENCES,0.7157676348547718,"11:
+P i
+A secret-shares the predictions {[yi
+b]}b∈[B] to PQ and the server.
+12:
+end for
+13:
+P j
+Q computes {yb}b∈[B] with yb = P"
+REFERENCES,0.7178423236514523,"i∈C yi
+b via performing the secure result aggregation
+protocol ΠAgg with the server.
+14:
+P j
+Q retrains its local model based on the query dataset {xb, yb}b∈[B] and private dataset Dj.
+15:
+end for
+16: end for"
+REFERENCES,0.7199170124481328,"C.2
+GRAPHIC DEPICTION OF END-TO-END SECURE PREDICTION"
+REFERENCES,0.7219917012448133,"Figure 17 gives a graphic depiction to illustrate the end-to-end secure prediction implemented across
+all the layers, where the inputs are secret-shares of image x, i.e., [x]0 and [x]1 (as shown in Figure
+20). The inputs ﬁrst pass through a convolutional layer that mainly contains matrix multiplication
+operations ω1·x (ω1 is the parameter of this layer) and can be implemented by the protocol ΠMatmul in
+Figure 3. The outputs of this layer are in the secret sharing form, i.e., [y1]0 and [y1]1 obtained by PA
+and the server, respectively. For the ReLU layer, recall that ReLU(y1) = y1·DReLU(y1). Therefore,
+the protocol ΠDReLU in Figure 4 is executed ﬁrst to obtain DReLU(y1)’s shares [DReLU(y1)]0 and
+[DReLU(y1)]1. Then, PA and the server invoke an instance of the protocol ΠMatmul, and obtain
+[y2]0 and [y2]1, respectively. The outputs of ΠDReLU are the inputs of the subsequent MaxPooling
+layer. As described in Section 3.3 (iii), MaxPooling on n values can be converted into n −1 ReLU
+operations. Therefore, the output of this layer is also in the secret sharing form. When the inference
+goes to the ﬁnal fully-connected layer with inputs [yn−1]0 and [yn−1]1 owned by PA and the server,
+respectively, the protocol ΠMatmul is executed. In the end, PA and the server obtain the secret-shares
+of the predicted logit, i.e., [logit]0 and [logit]1, respectively."
+REFERENCES,0.7240663900414938,"C.3
+ACTIVE LEARNING STRATEGIES"
+REFERENCES,0.7261410788381742,"In order to choose query data that most likely contribute to improve the performance of local mod-
+els, inspired by CaPC (Choquette-Choo et al., 2021), active learning is adopted. To be speciﬁc,
+active learning allows local models to actively choose the data from which they learn, which con-"
+REFERENCES,0.7282157676348547,Under review as a conference paper at ICLR 2022
+REFERENCES,0.7302904564315352,"Conv
+(Protocol 
+)"
+REFERENCES,0.7323651452282157,𝑦𝑦1 = 𝜔𝜔1 ȉ 𝑥𝑥
+REFERENCES,0.7344398340248963,"ReLU
+(Protocol
+)
+(Protocol
+)"
+REFERENCES,0.7365145228215768,𝑦𝑦2 = 𝑦𝑦1 ȉ 𝐷𝐷𝐷𝐷𝐷𝐷𝐷𝐷𝐷𝐷(𝑦𝑦1)
+REFERENCES,0.7385892116182573,"MaxPooling
+(Protocol 
+)
+(Protocol 
+)"
+REFERENCES,0.7406639004149378,𝑦𝑦3 ←𝑚𝑚𝑚𝑚𝑚𝑚𝑚𝑚𝑚𝑚𝑚𝑚𝑚𝑚(𝑦𝑦2)
+REFERENCES,0.7427385892116183,"FC
+(Protocol 
+)"
+REFERENCES,0.7448132780082988,"𝑙𝑙𝑙𝑙𝑙𝑙𝑙𝑙𝑙𝑙= 𝜔𝜔𝑘𝑘ȉ 𝑦𝑦𝑛𝑛−1
+… [𝑥𝑥]1"
+REFERENCES,0.7468879668049793,"[𝑥𝑥]0,"
+REFERENCES,0.7489626556016598,[𝑦𝑦1]1
+REFERENCES,0.7510373443983402,[𝑦𝑦1]0
+REFERENCES,0.7531120331950207,[𝑦𝑦2]1
+REFERENCES,0.7551867219917012,[𝑦𝑦2]0
+REFERENCES,0.7572614107883817,[𝑦𝑦3]1
+REFERENCES,0.7593360995850622,[𝑦𝑦3]0
+REFERENCES,0.7614107883817427,[𝑦𝑦𝑛𝑛−1]1
+REFERENCES,0.7634854771784232,"[𝑦𝑦𝑛𝑛−1]0, 𝜔𝜔𝑘𝑘
+𝜔𝜔1"
+REFERENCES,0.7655601659751037,[𝑙𝑙𝑙𝑙𝑙𝑙𝑙𝑙𝑙𝑙]1
+REFERENCES,0.7676348547717843,[𝑙𝑙𝑙𝑙𝑙𝑙𝑙𝑙𝑙𝑙]0
+REFERENCES,0.7697095435684648,Server MPC 𝑷𝑷𝑨𝑨
+REFERENCES,0.7717842323651453,"Figure 17: The whole private inference implemented across all the layers. Orange boxes rep-
+resent linear layers (including convolutional/fully-connected/AvgPooling layers), and blue boxes
+represent non-linear layers (including ReLU/MaxPooling layers)."
+REFERENCES,0.7738589211618258,"tains various pool sampling strategies to estimate the informativeness and diversity of unlabeled
+samplings. These strategies can be classiﬁed into two categories. One important class is that of
+uncertainty-based approaches, which try to ﬁnd hard samples using heuristics like highest entropy,
+such as margin sampling and entropy sampling. There are recent optimization-based methods, such
+as greedy-k-center sampling to obtain a diverse subset of hard samples."
+REFERENCES,0.7759336099585062,"Deﬁnition 1 (Margin Sampling (Scheffer et al., 2001)). Margin sampling assumes that the most
+informative samples are those which fall within this margin of decision boundary. Formally, given
+an unlabeled dataset D, it can be represented as:"
+REFERENCES,0.7780082987551867,"ˆx = arg min
+x∈D"
+REFERENCES,0.7800829875518672,"n
+min
+ω |f (x, ω)|
+o
+(2)"
+REFERENCES,0.7821576763485477,"where f (x, ω) represents the distance of the data sample x from the hyperplane for class ω."
+REFERENCES,0.7842323651452282,"Deﬁnition 2 (Entropy Sampling (Shannon, 2001)). Using entropy as an uncertainty measure as
+follows:"
+REFERENCES,0.7863070539419087,"ˆx = arg max
+x∈D
+−
+X"
+REFERENCES,0.7883817427385892,"i
+Pθ (yi | x) log Pθ (yi | x)
+(3)"
+REFERENCES,0.7904564315352697,"where Pθ(y | x) is the conditional label distribution of the model, yi ranges over all possible labels."
+REFERENCES,0.7925311203319502,"Deﬁnition 3 (Greedy-k-center Sampling (Sener & Savarese, 2018)). Solving the k-center problem,
+i.e., choosing b center points such that the largest distance between a data point and its nearest center
+is minimized. Formally, this goal is deﬁned as:"
+REFERENCES,0.7946058091286307,"min
+s1:|s1|≤b
+max
+i
+min
+j∈s1∪s0 ∆(xi, xj)
+(4)"
+REFERENCES,0.7966804979253111,"where s1 is new chosen center points, s0 is the current training set."
+REFERENCES,0.7987551867219918,"Besides, to better balance uncertainty and diversity, we introduce informative-and-diverse sampling
+called ICD, which chooses query data based on informative and diverse criteria using margin and
+cluster-based sampling methods. It will return highest uncertainty lowest margin points while main-
+taining same distribution over clusters as entire dataset."
+REFERENCES,0.8008298755186722,"C.4
+MORE BACKGROUND ON CRYPTOGRAPHY"
+REFERENCES,0.8029045643153527,"C.4.1
+SECRET SHARING AND MULTIPLICATION TRIPLES"
+REFERENCES,0.8049792531120332,"As shown in Section 2.3, in PrivHFL, we utilize additive secret sharing to protect the privacy of sen-
+sitive information. Assume there are two secret-shared values [x] and [y] that owned by two parties,
+addition and subtraction operations ([z] = [x]±[y]) can be done locally without any communication,
+which is realized as [z]i = [x]i ± [y]i mod 264 by each party Pi, i ∈{0, 1}."
+REFERENCES,0.8070539419087137,z = xy = ([x]0 + [x]1)([y]0 + [y]1) =
+REFERENCES,0.8091286307053942,"P0
+z }| {
+[x]0[y]0 +"
+REFERENCES,0.8112033195020747,"P1
+z }| {
+[x]1[y]1 +[x]0[y]1 + [x]1[y]0
+(5)"
+REFERENCES,0.8132780082987552,Under review as a conference paper at ICLR 2022
+REFERENCES,0.8153526970954357,"Multiplying two secrets, i.e., [z] = [x] · [y], however, is evaluated by using Beaver Multiplication
+Triple (Demmler et al., 2015). The triple refers to (a, b, c) with the constraint c = ab, which can
+be generated using cryptographic techniques (Demmler et al., 2015) or a trusted dealer (Riazi et al.,
+2018). To be speciﬁc, as shown in Eq.5, [x]i[y]i can be computed by party Pi locally, but [x]i[y]1−i
+evaluated as follows. Taking [x]0[y]1 as an example, we suppose P0 and P1 already hold the triples
+(a, [c]0) and (b, [c]1), respectively. P0 ﬁrst sends [x]0 + a (mod 264) to P1, while P1 sends [y]1 −b
+(mod 264) to P0. Then P0 computes one share of [x]0[y]1 as [x]0([y]1−b)−[c]0 (mod 264), and P0
+computes another as ([x]0 + a)[y]1 −[c]1 (mod 264), locally. In this way, both parties can achieve
+secure multiplication operation, and the outputs are still in the form of secret sharing."
+REFERENCES,0.8174273858921162,"C.4.2
+DIFFIE-HELLMAN KEY AGREEMENT PROTOCOL"
+REFERENCES,0.8195020746887967,"In order to allow two parties to agree the same secret key on an insecure channel, the Difﬁe-Hellman
+Key Agreement (DH) protocol (Difﬁe & Hellman, 1976) was proposed. In PrivHFL, the DH pro-
+tocol is used to generate the consistent PRG seeds between clients, which consists of the following
+three steps:"
+REFERENCES,0.8215767634854771,"• DH.param(k) →(G, g, q, H) generates a group G of prime order q, along with a generator
+g, and a hash function H."
+REFERENCES,0.8236514522821576,"• DH.gen(G, g, q, H) →(xi, gxi) randomly samples xi ∈Zq as the secret key and let gxi
+as the public key."
+REFERENCES,0.8257261410788381,"• DH.agree(xi, gxj, H) →si,j outputs the seed si,j = H((gxj)xi)."
+REFERENCES,0.8278008298755186,"In the DH protocol, correctness requires that for any key pairs (xi, gxi) and (xj, gxj) gen-
+erated by two paries Pi and Pj using DH.gen under the same parameters (G, g, q, H),
+DH.agree(xi, gxj, H) = DH.agree(xj, gxi, H). Besides, in the honest-but-curious adversary set-
+ting, security requires that for any adversary who steals gxi and gxj (but neither of the corresponding
+xi and xj), the agreed secret si,j derived from those keys is indistinguishable from a uniformly ran-
+dom value (Abdalla et al., 2001)."
+REFERENCES,0.8298755186721992,"Seed generation between clients without directly communication. The communication improve-
+ment of our PrivHFL is largely derived from the application of PRGs. These allow any two clients
+to jointly generate same (pseudo-) random values that are used in MPC protocols without commu-
+nication. It is trivial to construct PRG seeds SkSA (between PA and the server) and SkSQ (between
+PQ and the server). For instance, the server ﬁrst generates SkSA and SkSQ, and then sends them
+to PA and PQ, respectively. However, this is challenging for constructing SkQA, given that direct
+communication channels can not be constructed between clients. To tackle this issue, we generate
+seed SkQA using the DH protocol (Difﬁe & Hellman, 1976), a classic algorithm for exchanging
+secret keys securely. Speciﬁcally, we ﬁrst call the above DH.gen algorithm, and communicate the
+resulting public keys of two clients via the server as an intermediary. After that, the same seed is
+locally generated by the two clients via the DH.agree algorithm. We show the protocol ΠSeed in
+Figure 18 and its security follows from the security of the DH protocol (Abdalla et al., 2001)."
+REFERENCES,0.8319502074688797,Server
+REFERENCES,0.8340248962655602,Sample 𝑘𝑘𝑄𝑄∈ℤ𝑝𝑝
+REFERENCES,0.8360995850622407,"𝑷𝑷𝑄𝑄
+𝑷𝑷𝐴𝐴
+Sample 𝑘𝑘𝐴𝐴∈ℤ𝑝𝑝
+𝐴𝐴= 𝑔𝑔𝑘𝑘𝑄𝑄mod 𝑝𝑝
+𝐵𝐵= 𝑔𝑔𝑘𝑘𝐴𝐴mod 𝑝𝑝 𝐴𝐴"
+REFERENCES,0.8381742738589212,"𝑆𝑆𝑆𝑆𝑄𝑄𝑄𝑄= 𝐷𝐷𝐷𝐷. 𝑎𝑎𝑎𝑎𝑎𝑎𝑎𝑎𝑎𝑎(𝑘𝑘𝑄𝑄, 𝐵𝐵, 𝐻𝐻)mod 𝑝𝑝"
+REFERENCES,0.8402489626556017,"𝐵𝐵, 𝑆𝑆𝑆𝑆𝑆𝑆𝑆𝑆"
+REFERENCES,0.8423236514522822,"𝐴𝐴, 𝑆𝑆𝑆𝑆𝑆𝑆𝐴𝐴"
+REFERENCES,0.8443983402489627,"𝑆𝑆𝑆𝑆𝑄𝑄𝑄𝑄= 𝐷𝐷𝐷𝐷. 𝑎𝑎𝑎𝑎𝑎𝑎𝑎𝑎𝑎𝑎(𝑘𝑘𝐴𝐴, 𝐴𝐴, 𝐻𝐻)mod 𝑝𝑝"
+REFERENCES,0.8464730290456431,"Sample 𝑆𝑆𝑆𝑆𝑆𝑆𝑆𝑆, 𝑆𝑆𝑆𝑆𝑆𝑆𝐴𝐴∈ℤ𝑝𝑝 𝐵𝐵"
+REFERENCES,0.8485477178423236,"𝑆𝑆𝑆𝑆𝑆𝑆𝑆𝑆
+𝑆𝑆𝑆𝑆𝑆𝑆𝐴𝐴"
+REFERENCES,0.8506224066390041,Figure 18: Secure PRG seed generation protocol ΠSeed
+REFERENCES,0.8526970954356846,Under review as a conference paper at ICLR 2022
+REFERENCES,0.8547717842323651,"C.5
+EXTENDING CAPC TO COMMUNICATION-LIMITED SETTINGS"
+REFERENCES,0.8568464730290456,"By carefully designing protocols, CaPC (Choquette-Choo et al., 2021) can also be extended to a
+setting where there is no direct communication between clients. However, as analyzed below, such
+extension comes at the cost of increased communication overhead. Therefore, our PrivHFL has
+greater advantages compared to the following modiﬁed protocols."
+REFERENCES,0.8589211618257261,"Recall that HE-Transformer (Boemer et al., 2019b;a) provides two secure prediction schemes, i.e., a
+pure HE-based scheme and a hybrid scheme combining HE and GC. Given that the HE-Transformer
+framework is employed in CaPC, we design two customized protocols for HE-Transformer to
+achieve such communication requirement. Although it is trivial to extend CaPC equipped with the
+HE-based scheme to the above communication-limited settings, it has two key problems: 1) activa-
+tion functions need to be approximated as low-degree polynomials, which leads to serious accuracy
+loss; 2) due to the inherent high computational complexity, HE-based secure prediction is difﬁcult
+to extend to large-scale models. For completeness, we brieﬂy describe the extension procedure. PQ
+ﬁrst encrypts the query samples and asks the server to pass them to PA. After that, PA evaluates se-
+cure prediction non-interactively in the ciphertext environment. Finally, PA sends encrypted masked
+predictions (due to privacy-preserving aggregation in CaPC) back to PQ via the server acting as a
+intermediary. As mentioned above, the HE-based method is impractical and below, we elaborate on
+the extension of CaPC that uses the hybrid scheme as a building block. In CaPC, secure predictions
+are executed between PQ and PA. To tackle the communication limitation, we can employ secure
+predictions between the server and PA. We discuss the modiﬁed algorithms of the linear layer and
+the non-linear layer separately. In the linear layer, 1) PQ encrypts query samples with HE and sends
+the ciphertext to PA through the server5. 2) PA evaluates linear layers locally, such as convolution
+and full-connected layers, and returns the encrypted masked results to PQ through the server. 3)
+PQ decrypts to obtain the masked results and sends it to the server. As a result, the results of linear
+layers are shared between the server and PA. For the non-linear layer, given that the server and PA
+hold shares of the linear layer’s results, the two parties (rather than PA and PQ in CaPC) call the GC
+protocol to evaluate the nonlinear layer function."
+REFERENCES,0.8609958506224067,"Next, we analyze the efﬁciency of the modiﬁed hybrid protocols. For the computational cost, the
+modiﬁed secure prediction protocol is exactly the same as that of CaPC, and thus we mainly focus on
+the communication cost. In the linear layer, the modiﬁed protocol adds the communication overhead
+of a ciphertext (two ciphertexts for the input layer) and a plaintext of the result of the linear layer.
+For the non-linear layer, the communication overhead is not increased, but the overhead between PA
+and PQ is transferred to the server and PA. In summary, although CaPC can be extended to scenarios
+with limited communication, they sacriﬁce the efﬁciency of secure predictions. Therefore, PrivHFL
+shows better adaptability and efﬁciency in scenarios where there is no direct communication between
+clients."
+REFERENCES,0.8630705394190872,"C.6
+GPU ACCELERATION"
+REFERENCES,0.8651452282157677,"Existing general-purpose platforms on the GPUs such as NVIDIA’s CUDA are designed to operate
+on ﬂoating-point inputs (Tan et al., 2021). On the contrary, the shares in our protocol is embedded
+in the ring Z264. Thus, we need to convert the ring operations into 64-bit ﬂoating point operations
+to obtain GPU support. Speciﬁcally, a 64-bit ﬂoating-point number has 1 bit sign, 11 bits exponent,
+and 52 bits precision, which can exactly represent all integers in the interval
+
+−252, 252
+. Therefore,
+the multiplication E · F can be correctly computed and recovered over the integers if and only if
+E, F ∈Z ∩
+
+−226, 226
+. Based on this observation, we decompose each input E and F in Z264
+into 4 blocks, and the values in each block are represented by a 16-bit value. Thus, the integer
+multiplication is converted to 16 (exactly, 10) ﬂoating-point operations. Speciﬁcally, E is rewritten
+as E0 + 216E1 + 232E2 + 248E3, and F = F0 + 216F1 + 232F2 + 248F3. The multiplication can
+be represented as follows:"
+REFERENCES,0.8672199170124482,E · F = (E0 + 216E1 + 232E2 + 248E3) · (F0 + 216F1 + 232F2 + 248F3)
+REFERENCES,0.8692946058091287,= E0F0 + 216E1F0 + 232E2F0 + 248E3F0 + 216F1E0 + 232F1E1 + 248F1E2
+REFERENCES,0.8713692946058091,+ 232F2E0 + 248F2E1 + 248F3E0 (6)
+REFERENCES,0.8734439834024896,"5To be more precise, this step is for the input layer. In the hidden layer, one of the input shares of the linear
+layer should be encrypted by the server and sent to PA."
+REFERENCES,0.8755186721991701,Under review as a conference paper at ICLR 2022
+REFERENCES,0.8775933609958506,"After that, computing E · F from the pairwise products requires element-wise additions and scalar
+multiplications, which can be executed by optimized CUDA kernels on 64-bit integer values."
+REFERENCES,0.8796680497925311,"D
+RELATED WORK"
+REFERENCES,0.8817427385892116,Table 6: Comparison with prior works on properties necessary for federated learning
+REFERENCES,0.8838174273858921,"Framework
+Privacy
+Usability
+Efﬁciency"
+REFERENCES,0.8858921161825726,"Data
+Privacy
+Model
+Privacy
+Model
+Heterogeneity
+w/o Dataset
+Dependency
+GPU
+Compatibility
+Protocol
+Efﬁciency"
+REFERENCES,0.8879668049792531,"Bonawitz et al. (2017)
+
+
+
+
+
+
+Bell et al. (2020)
+
+
+
+
+
+
+Sav et al. (2021)
+
+
+
+
+
+
+Jayaraman & Wang (2018)
+
+
+
+
+
+"
+REFERENCES,0.8900414937759336,"Li & Wang (2019)
+
+
+
+
+
+-
+Choquette-Choo et al. (2021)
+
+
+
+
+
+
+Lin et al. (2020)
+
+
+
+
+
+-
+Sun & Lyu (2021)
+
+
+
+
+
+
+Diao et al. (2021)
+
+
+
+
+
+-
+This work
+
+
+
+
+
+"
+REFERENCES,0.8921161825726142,"D.1
+HETEROGENEOUS FEDERATED LEARNING"
+REFERENCES,0.8941908713692946,"Federated learning achieves collaboration among clients via sharing model gradients. While suc-
+cessful, it still faces many challenges, among which, of particular importance is the heterogeneity
+that appear in all aspects of the learning process. This consists of system heterogeneity (Diao et al.,
+2021), model heterogeneity (Li & Wang, 2019) and statistical heterogeneity (Zhu et al., 2021).
+Statistical heterogeneity means that clients’ data from real-world comes from distinct distributions
+(i.e., Non-IID data), which may induce deﬂected local optimum. Solving the statistical heterogene-
+ity has been extensively studied, such as Dinh et al. (2020); Zhu et al. (2021); Yurochkin et al.
+(2019); Fallah et al. (2020); Yoon et al. (2021)6, and is out-of-the-scope of this work. However,
+our PrivHFL may help alleviate the statistical heterogeneity due to customized model design and
+knowledge distillation-based aggregation rule."
+REFERENCES,0.8962655601659751,"Our work mainly focuses on model heterogeneity that has been explored in recent works (Li &
+Wang, 2019; Lin et al., 2020; Choquette-Choo et al., 2021), while the issue of system heterogeneous
+is alleviated through the resource-customized model architecture design. In particular, Li & Wang
+(2019) proposed the ﬁrst federated learning framework FedMD supporting heterogeneous models by
+combining transfer learning and knowledge distillation techniques. They ﬁrst used a public dataset
+to pre-train the model and transferred to the task of private dataset. After that, to exchange the
+knowledge, each client used the public data and the aggregated predictions from others as carrier
+for knowledge distillation. To further improve test accuracy, Lin et al. (Lin et al., 2020) proposed
+FedDF, similar to FedMD, which also used model distillation technique for knowledge sharing. The
+difference is that they ﬁrst performed FedAvg on clients’ local models and integrated knowledge
+distillation on the aggregated model. The dependence on model averaging leads to limited model
+heterogeneity. Besides, Diao et al. (Diao et al., 2021) focused on heterogeneous clients equipped
+with different computation and communication capabilities. In their framework, each client only
+updated a subset of global model parameters through varying the width of hidden channels, which
+reduces the computation and communication complexity of local models. However, this approach
+only learns a single global model, rather than unique models designed by clients. Moreover, the
+above three methods rarely consider the issue of privacy leakage from the prediction results."
+REFERENCES,0.8983402489626556,"The privacy protection techniques (i.e., secure aggregation) have been studied in federated learning
+(Bonawitz et al., 2017; Bell et al., 2020; Sav et al., 2021; Jayaraman & Wang, 2018). However,
+these techniques can not be directly extended to privacy-preserving HFL. More recently, Sun & Lyu"
+REFERENCES,0.9004149377593361,"6This work also uses mixup in federated learning, but aims to address the challenge of non-iid data."
+REFERENCES,0.9024896265560166,Under review as a conference paper at ICLR 2022
+REFERENCES,0.9045643153526971,"(2021) proposed a noise-free differential privacy solution for heterogeneous federated learning to
+guarantee each client’s privacy. However, as shown in Jayaraman & Evans (2019), there is a huge
+gap between the upper bounds on privacy loss analyzed by advanced mechanisms and the effective
+privacy loss. Thus, differentially private mechanisms offer undesirable utility-privacy trade-offs.
+To further formally guarantee the privacy, Choquette-Choo et al. (2021) leveraged secure multi-
+party computation (MPC), homomorphic encryption (HE) and privately aggregated teacher models
+techniques to realize conﬁdential and private collaborative learning. Speciﬁcally, clients learn from
+each other collaboratively utilizing a secure inference strategy based on MPC and HE protocols
+and a private aggregation method. As noted in the Introduction, CaPC’s use of heavy cryptography
+leads to signiﬁcant efﬁciency and communication overheads. Besides, existing methods require an
+auxiliary dataset to implement heterogeneous federated learning. However, data collection could
+be unrealistic in many real-world scenarios due to various reasons, such as privacy concerns and
+rare classes. Therefore, our work is dedicated to solving two key challenges. The ﬁrst is to relax
+the assumption of relying on public datasets, and the second is to design an efﬁcient cryptographic
+protocol for knowledge transfer during the model aggregation."
+REFERENCES,0.9066390041493776,"D.2
+PRIVATE NEURAL NETWORK PREDICTION"
+REFERENCES,0.9087136929460581,"Neural networks present a challenge to cryptographic protocols due to their unique structure and ex-
+ploitative combination of linear computations and non-linear activation functions. In real scenarios,
+model inference can be viewed as a two-party computation case, where one party with private data
+wants to obtain prediction results from the other party who owns the model. During the whole pro-
+cess, the cryptographic protocols, typically HE and MPC, are applied to ensure the conﬁdentiality
+of the private data and model."
+REFERENCES,0.9107883817427386,"Existing works (Boemer et al., 2019b; Gilad-Bachrach et al., 2016; Brutzkus et al., 2019) support
+pure HE protocols for secure predictions. Typically, nGraph-HE (Boemer et al., 2019b;a) allows
+linear computations using CKKS homomorphic encryption scheme.
+However, since a solution
+that builds upon HE protocols should be restricted to compute low degree polynomials, the non-
+polynomial activation functions, such as MaxPooling and ReLU, are forced to be evaluated in the
+clear by the party who owns private query data. This leaks the feature maps, from which adversaries
+may deduce the model weights. To solve this problem, Gilad-Bachrach et al. (2016) and Chen et al.
+(2019) use low-degree polynomial approximation to estimate non-linear functions. Unfortunately, it
+will affect the accuracy of predictions, while leading to huge computation overhead."
+REFERENCES,0.9128630705394191,"On the other hand, server libraries (Mohassel & Zhang, 2017; Knott et al., 2021; Wagh et al., 2019;
+Shen et al., 2020) employ primarily MPC technology in secure predictions, which provides support
+for linear and non-linear activations through the use of oblivious transfer (OT), garbled circuit (GC)
+and secret sharing. For example, CryptTen (Knott et al., 2021) performs linear operations based on
+n-out-of-n additive secret sharing over the ring, Z264. However, it uses boolean secret sharing for
+the non-linear operations, which will result in a higher communication round. CrpytGPU (Tan et al.,
+2021) builds on CrypTen, working in a 3-party setting using replicated secret shares. Although
+the scalability is poor, it introduces an interface to losslessly embed cryptographic operations over
+secret-shared values in a discrete somain into ﬂoating-point operations, which can implement the
+whole inference process on the GPU."
+REFERENCES,0.9149377593360996,"Many other works focus on hybrid protocols, in which they combines the advantages of HE and
+MPC to improve prediction efﬁciency (Juvekar et al., 2018; Mishra et al., 2020; Rathee et al., 2020).
+CrypTFlow2 (Rathee et al., 2020) points out that currently, it was not clear whether HE-based linear
+operations would provide the best latency. Therefore, the authors implement two class of protocols,
+HE-based and OT-based, for linear operations. For non-linear layers, they also design efﬁcient
+protocols based on OT. It turns out that in a WAN setting, HE-based inference is always faster and
+in a LAN setting OT and HE are incomparable. HE-transformer employs nGraph-HE for evaluation
+of linear operations, and ABY framework (Demmler et al., 2015) for GC to evaluate non-linear
+functions. Since non-linear operations cannot be parallelized between query data, GC is inefﬁcient,
+especially for large networks with thousands of parameters. In contrast, our PrivHFL avoids the use
+of heavy cryptographic tools, and only employs additive secret sharing to achieve high efﬁciency,
+conﬁdentiality and practicability."
+REFERENCES,0.91701244813278,Under review as a conference paper at ICLR 2022
+REFERENCES,0.9190871369294605,"E
+SECURITY ANALYSIS"
+REFERENCES,0.921161825726141,"Our security proof follows the standard ideal-world/real-world paradigm (Canetti, 2001): in real-
+world, three parties interact according to the protocol speciﬁcation, and in ideal-world, they have
+access to a ideal functionality. When a protocol invokes another sub-protocol, we use F-hybrid
+model for security proof by replacing the sub-protocol with the corresponding functionality. Note
+that our proof works in the FP RG-hybrid model where FP RG represents the ideal functionality cor-
+responding to the protocol PRG. The executions in both worlds are coordinated by the environment
+Env, who chooses the inputs to parties and plays the role of a distinguisher between the real and
+ideal executions. We will show that the real-world distribution is computationally indistinguishable
+to the ideal-world distribution."
+REFERENCES,0.9232365145228216,Theorem 1. ΠShare securely realizes the functionality FShare in the FPRG-hybrid model.
+REFERENCES,0.9253112033195021,"Proof. Note that PQ and PA receive no messages in the protocol, and hence the sharing protocol
+is trivially secure against corruption of PQ and PA. Next, the only message that the server receives
+is the value [x]1. However, [x]1 = x −r, where given the security of PRG, r is a random value
+unknown to the server. Thus, the distribution of [x]1 is uniformly random from the server’s view
+and the information learned by the server can be perfectly simulated.
+□"
+REFERENCES,0.9273858921161826,Theorem 2. ΠMatmul securely realizes the functionality FMatmul in the FPRG-hybrid model.
+REFERENCES,0.9294605809128631,"Proof. Note that PQ receives no messages in the protocol, and hence the sharing protocol is trivially
+secure against corruption of PQ. The only message that PA receives is the value [x]1 −b. However,
+given the security of PRG, b is a random value unknown to PA. Thus, the distribution of [x]1 −b
+is uniformly random from PA’s view and the information learned by PA can be perfectly simulated.
+Next, during the protocol, the server learns [c]1 and w + a. However, the distribution of [c]1 and
+w + a is uniformly random from the server’s view, since given the security of PRG, a and [c]1 are
+random values unknown to the server. Thus, the information learned by the server can be perfectly
+simulated.
+□"
+REFERENCES,0.9315352697095436,Theorem 3. ΠDReLU securely realizes the functionality FDReLU in the FPRG-hybrid model.
+REFERENCES,0.9336099585062241,"Proof. Note that PA receives no messages in the protocol, and hence the sharing protocol is trivially
+secure against corruption of PA. Next, the messages that the server receives are [z]0−δ and sign(z)−
+δ′. However, given the security of PRG, δ and δ′ are random values unknown to the server. Thus,
+the distribution of [z]0 −δ and sign(z) −δ′ is uniformly random from the server’s view and the
+information learned by the server can be perfectly simulated. Then, the message that PQ learns is
+z = rx, where r is a random number in the ring. Thus, the distribution of z is uniformly random
+from the server’s view.
+□"
+REFERENCES,0.9356846473029046,"Theorem 4. ΠReLU securely realizes the functionality FReLU in the (FMatmul, FDReLU)-hybrid model."
+REFERENCES,0.9377593360995851,"Proof. Note that as shown in Figure 4, ΠReLU consists of ΠDReLU and ΠMatmul. Therefore, the ReLU
+protocol is trivially secure in the (FMatmul, FDReLU)-hybrid model.
+□"
+REFERENCES,0.9398340248962656,Theorem 5. ΠMaxPool securely realizes the functionality FMaxPool in the FReLU-hybrid model.
+REFERENCES,0.941908713692946,"Proof. Note that as shown in Figure 4, ΠMaxPool consists of ΠReLU. Therefore, the MaxPool protocol
+is trivially secure in the FReLU-hybrid model.
+□"
+REFERENCES,0.9439834024896265,Theorem 6. ΠAgg securely realizes the functionality FAgg in the FPRG-hybrid model.
+REFERENCES,0.946058091286307,"Proof. Note that PA receives no messages in the protocol, and hence the aggregation protocol is
+trivially secure against corruption of PA. Next, the only message that the server receives is the value
+[xj]0 −rj. However, given the security of PRG, rj is a random value unknown to the server. Thus,
+the distribution of [xj]0−rj is uniformly random from the server’s view and the information learned
+by the server can be perfectly simulated. After the aggregation, PQ only learns the aggregated result"
+REFERENCES,0.9481327800829875,Under review as a conference paper at ICLR 2022
+REFERENCES,0.950207468879668,Table 7: Experiment setting of different datasets during local model training.
+REFERENCES,0.9522821576763485,"Loss Function
+Learning Rate
+Batch Size
+Epoch
+Number of Private Data"
+REFERENCES,0.9543568464730291,"SVHN
+cross-entropy
+0.5
+256
+250
+1465
+CIFAR10
+cross-entropy
+0.1
+64
+500
+1000
+Tiny ImageNet
+cross-entropy
+0.01
+64
+500
+10000 P"
+REFERENCES,0.9564315352697096,"j∈[n] xj, but is unknown to a single xj. Therefore, the aggregation protocol is secure assuming
+the aggregation result will not reveal privacy.
+□"
+REFERENCES,0.9585062240663901,"F
+ADDITIONAL EXPERIMENTAL SETUP"
+REFERENCES,0.9605809128630706,Datasets. We evaluate PrivHFL on the following standard datasets for image classiﬁcation:
+REFERENCES,0.9626556016597511,"• SVHN. SVHN is a real-world image dataset obtained from house numbers in Google Street
+View images. Each sample is 32×32 RGB image. We use 73257 digits for training and
+26032 digits for testing.
+• CIFAR10. CIFAR-10 consists of 60,000 32×32 RGB images in 10 classes. There are
+50,000 training images and 10,000 test images.
+• Tiny ImageNet. Tiny ImageNet contains 100,000 images of 200 classes (500 for each
+class) downsized to 64×64 colored images. Each class has 500 training images, 50 valida-
+tion images and 50 test images."
+REFERENCES,0.9647302904564315,"Model architecture. We use VGG-7, ResNet-8 and ResNet-10 for SVHN and CIFAR10 datasets.
+VGG-7 contains 6 convolutional layers, followed by a fully-connected layer, where ReLU is ap-
+plied as the activation function and MaxPooling is used for downsampling, giving 7 layers in total.
+ResNet-8 we use follows the same architecture in CaPC, which consists of a convolutional layer, 2
+residual blocks with 4 convolutional layers, followed by a fully-connected layer. Compared with the
+original architecture, the last block is excluded and neurons of the last layer is increased. ResNet-10
+begins with a convolutional layer, followed by 4 residual blocks with 2 convolutional layers in each
+block, and one ﬁnal fully-connected layer, thus there are 10 functional layers overall. Besides, we
+use ResNet-14, ResNet-16 and ResNet-18 (He et al., 2016) for Tiny ImageNet."
+REFERENCES,0.966804979253112,"Training procedure. Utilizing the private data, each client ﬁrst trains the local model from scratch
+using SGD optimizer, where the detail training setting is shown in Table 7. Next, the clients run the
+PrivHFL protocol to generate query-response pairs, which will be used to retrain the local model.
+When retraining the models, they use Adam optimizer for 50 epochs with learning rate of 2e-3
+decayed by a factor of 0.1 on 25 epochs, where the batch size is 256 on SVHN, and 64 on CIFAR10
+and Tiny ImageNet."
+REFERENCES,0.9688796680497925,"G
+VISUALIZATION OF MIXUP AND SECRET-SHARING SAMPLES"
+REFERENCES,0.970954356846473,"The mixup-synthetic data expansion method of PrivHFL is only to expand private data locally to
+generate a large data pool, which cannot provide any privacy guarantee. Figure 19 shows the mixup
+images synthesized from the same pair of real images with different mixup coefﬁcients λ. As shown
+in the ﬁgure, when λ = 1, the mixup image will be identical to the real sample. Even if λ =
+0.7, 0.5, 0.2, the original images can still be visually recognized."
+REFERENCES,0.9730290456431535,"To further protect the PQ’s privacy, the mixup images are secret-shared between the server and PA,
+rather than being disclosed directly to them. As shown in Figure 20, the secret-shared images look
+like two random noises, since in secret sharing each share is randomly sampled from the ring Z264.
+To be speciﬁc, for a mixup image x, the server owns x1, in which each element is randomly sampled
+from the ring Z264. Meanwhile, the answering party PA owns a random x0 with x0 = x−x1 ∈Z264.
+Besides, note that in our secure querying protocol, the intermediate values always maintain such
+secret sharing invariant, so that neither party can steal any private information about real datasets,
+local models and prediction results from the knowledge they obtain."
+REFERENCES,0.975103734439834,Under review as a conference paper at ICLR 2022
+REFERENCES,0.9771784232365145,𝟏𝟏−𝝀𝝀= 𝟎𝟎
+REFERENCES,0.979253112033195,𝝀𝝀= 𝟎𝟎. 𝟕𝟕
+REFERENCES,0.9813278008298755,𝟏𝟏−𝝀𝝀= 𝟎𝟎. 𝟑𝟑
+REFERENCES,0.983402489626556,𝝀𝝀= 𝟎𝟎. 𝟓𝟓
+REFERENCES,0.9854771784232366,𝟏𝟏−𝝀𝝀= 𝟎𝟎. 𝟓𝟓
+REFERENCES,0.9875518672199171,"𝝀𝝀= 𝟏𝟏
+𝝀𝝀= 𝟎𝟎. 𝟐𝟐"
+REFERENCES,0.9896265560165975,𝟏𝟏−𝝀𝝀= 𝟎𝟎. 𝟖𝟖
+REFERENCES,0.991701244813278,"Figure 19: Different mixup-synthetic images from the same pair of the natural images by vary-
+ing the mixup coefﬁcient λ."
+REFERENCES,0.9937759336099585,"Server
+𝑷𝑷𝑨𝑨"
+REFERENCES,0.995850622406639,"𝑥𝑥
+𝑥𝑥1 ∈ℤ264
+𝑥𝑥0 = 𝑥𝑥−𝑥𝑥1 ∈ℤ264 𝑷𝑷𝑸𝑸"
+REFERENCES,0.9979253112033195,"Figure 20: An example of secret sharing on the mixup image. x, x1 and x0 are pixel matrices,
+owned by the querying party PQ, the server, and the answering party PA, respectively."

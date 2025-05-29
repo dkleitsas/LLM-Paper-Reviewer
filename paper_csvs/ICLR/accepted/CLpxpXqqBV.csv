@@ -1,0 +1,1473 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.003115264797507788,"We propose learning via retracing, a novel self-supervised approach for learning
+the state representation (and the associated dynamics model) for reinforcement
+learning tasks. In addition to the predictive (reconstruction) supervision in the
+forward direction, we propose to include “retraced” transitions for representa-
+tion/model learning, by enforcing the cycle-consistency constraint between the
+original and retraced states, hence improve upon the sample efﬁciency of learning.
+Moreover, learning via retracing explicitly propagates information about future
+transitions backward for inferring previous states, thus facilitates stronger repre-
+sentation learning for the downstream reinforcement learning tasks. We introduce
+Cycle-Consistency World Model (CCWM), a concrete model-based instantiation
+of learning via retracing. Additionally we propose a novel adaptive “truncation”
+mechanism for counteracting the negative impacts brought by “irreversible” tran-
+sitions such that learning via retracing can be maximally effective. Through
+extensive empirical studies on visual-based continuous control benchmarks, we
+demonstrate that CCWM achieves state-of-the-art performance in terms of sam-
+ple efﬁciency and asymptotic performance, whilst exhibiting behaviours that are
+indicative of stronger representation learning."
+INTRODUCTION,0.006230529595015576,"1
+INTRODUCTION"
+INTRODUCTION,0.009345794392523364,"Recent developments in deep reinforcement learning (RL) have made great progress in solving
+complex control tasks (Mnih et al., 2013; Levine et al., 2016; Silver et al., 2017; Vinyals et al.,
+2017; Schrittwieser et al., 2020). With the increasing capacity of deep RL algorithms, the problems
+of interests become increasingly complex. An immediate challenge is that the observation space
+becomes unprecedentedly high-dimensional, and often the perceived observations have signiﬁcant
+redundancy and might only contain partial information with respect to the associated ground-truth
+states, hence negatively impacting the policy learning. The ﬁeld of representation learning offers
+a wide range of approaches for extracting useful information from high-dimensional data (with
+potentially sequential dependency structure) (Bengio et al., 2013). Many recent works have explored
+the application of representation learning in RL (Ha and Schmidhuber, 2018; Hafner et al., 2019;
+2020a; Schrittwieser et al., 2020; Schwarzer et al., 2021; Zhang et al., 2020), which lead to superior
+performance comparing to naive embedding. Many such algorithms rely on predictive (reconstruction)
+supervision for representation learning, such that the effects of actions in the observable space are
+maximally preserved in the learned representation space."
+INTRODUCTION,0.012461059190031152,"Here we argue that existing methods do not fully exploit the supervisory signals inherent in the data.
+Additional valid supervision can often be obtained for representation learning by including temporally
+“backward” transitions in situations in which the same set of rules govern both temporally forward
+and backward transitions. Hence, with “learning via retracing”, we obtain more training samples for
+representation learning without additional interaction with the environment (twice as much as existing
+approaches in tasks that admit perfect reversibility across all transitions). Therefore, we hypothesise
+that by augmenting representation learning with “learning via retracing”, we can signiﬁcantly improve"
+INTRODUCTION,0.01557632398753894,∗Please send any enquiry to changmin.yu.19@ucl.ac.uk and n.burgess@ucl.ac.uk
+INTRODUCTION,0.018691588785046728,Published as a conference paper at ICLR 2022
+INTRODUCTION,0.021806853582554516,Forward path
+INTRODUCTION,0.024922118380062305,Retracing paths
+INTRODUCTION,0.028037383177570093,"(a)
+(b)
+Figure 1: Motivation of “learning via retrac-
+ing”. (a): Retracing in navigation tasks yields
+faster representation learning and potentially sup-
+ports stronger generalisation; (b): “Irreversible”
+transitions (graphical demonstration from the
+DeepMind Control Suite Tassa et al. (2018))."
+INTRODUCTION,0.03115264797507788,"the sample efﬁciency of representation learning
+and the overall RL task, which is a long-standing
+issue that plagues the practical applicability of
+deep RL algorithms. Beyond improved sample
+efﬁciency, joint predictive supervision in tem-
+porally forward and backward directions use in-
+formation from both the future and the past for
+the inference of states, similar to the smoothing
+operation for latent state inference in state-space
+models (Kalman, 1960; Murphy, 2012), leading
+to more accurate latent state inference, hence
+achieving stronger representation learning."
+INTRODUCTION,0.03426791277258567,"As a motivating example, consider a rat navigating towards a cheese in a cluttered environment
+(Figure 1a). Upon ﬁrst visit to the goal state, multiple imaginative retracing trajectories can be
+randomly simulated. By constraining the temporal cycle-consistency of the retracing transitions, the
+rat quickly builds a state representation that accurately preserves the transitions in the area around the
+actual forward trajectory taken by the rat. Moreover, all retracing simulations pass through the two
+“doors”, allowing the rat to quickly identify the key bottleneck states that are essential for successful
+navigation towards the goal and generalisation to other task topologies (Section 5.3). We conjecture
+that such imaginative retracing could be neurally implemented by the reversed hippocampal “replay”
+that has been observed in both rodents and humans (Foster and Wilson, 2006; Penny et al., 2013; Liu
+et al., 2021) (see Section 6 for further discussion)."
+INTRODUCTION,0.037383177570093455,"One problem that hinders the successful application of “learning via retracing” is that reversibility
+might not be preserved across all valid transitions, i.e., there exists transitions such that s →s′
+for some action a, but no action a′ such that s′ →s (Figure 1b). Under these situations, naively
+enforcing the similarity between the representations of s and ˇs (the retraced state given s′ and a, see
+Section 3) leads to a suboptimal representation space, potentially hindering RL training. Hence in
+order to maximally preserve the advantages brought by “learning via retracing”, it is essential to
+identify “irreversible” transitions and rule them out from representation learning via retracing. To this
+end, we propose a novel dynamically regulated approach for identifying such “irreversible” states,
+which we term adaptive truncation (Section 3.3)."
+INTRODUCTION,0.040498442367601244,"“Learning via retracing” can be integrated into any representation learning method that utilises a
+transition model, under both the model-free and model-based RL frameworks. Here we propose
+Cycle-Consistency World Model (CCWM), a self-supervised instantiation of “learning via retracing”,
+for joint representation learning and generative model learning under the model-based RL setting.
+We empirically evaluate CCWM on challenging visual-based continuous control benchmarks. Experi-
+mental results show that CCWM achieves state-of-the-art performance in terms of sample efﬁciency
+and asymptotic performance, whilst providing additional beneﬁts such as stronger generalisability
+and extended planning horizon, indicative of stronger representation learning is achieved."
+PRELIMINARIES,0.04361370716510903,"2
+PRELIMINARIES"
+PROBLEM FORMULATION,0.04672897196261682,"2.1
+PROBLEM FORMULATION"
+PROBLEM FORMULATION,0.04984423676012461,"We consider reinforcement learning problems in Markov Decision Processes (MDPs). An MDP
+can be charaterised by the tuple, M = ⟨S, A, R, P, γ⟩, where S, A are the state and action spaces,
+respectively; R : S →R is the reward function (we assume determinisitc reward functions unless
+stated otherwise), P : S ×A×S →[0, 1] is the transition distribution of the task dynamics; γ ∈R is
+the discounting factor. The control policy, π : S × A →[0, 1], represents a distribution over actions
+at each state. The goal is to learn the optimal policy, π∗, such that the expected future reward is
+maximised across all states, i.e.,"
+PROBLEM FORMULATION,0.0529595015576324,"π∗= arg max
+π∈Π
+Eπ ""X"
+PROBLEM FORMULATION,0.056074766355140186,"t
+γtR(st, at)|s0 = s #"
+PROBLEM FORMULATION,0.059190031152647975,", ∀s ∈S, where st ∼P(·|st−1, at−1) for t = 1, 2, . . ."
+PROBLEM FORMULATION,0.06230529595015576,"(1)
+Here we consider tasks in which the perceivable observation space, O, is high-dimensional, due to
+either redundant information or simply because only visual inputs are available. Hence it is necessary"
+PROBLEM FORMULATION,0.06542056074766354,Published as a conference paper at ICLR 2022
+PROBLEM FORMULATION,0.06853582554517133,"to learn an embedding function, φ : O →Z, such that the embedded observation space, φO, could
+act as S in the MDP, to support efﬁcient learning of the optimal policy using existing RL algorithms."
+GENERATIVE MODELLING OF DYNAMICS,0.07165109034267912,"2.2
+GENERATIVE MODELLING OF DYNAMICS"
+GENERATIVE MODELLING OF DYNAMICS,0.07476635514018691,"Modelling the transition dynamics using a sequential VAE-like structure enables joint learning of the
+latent representation and the associated latent transitions. Speciﬁcally, the dynamics model is deﬁned
+in terms of the following components (see also top part in Figure 2b).
+Observation (context) embedding: et = qφ(Ot),
+Latent posterior distribution: p(zt+1|zt, at, Ot+1),
+Latent variational transition (prior) distribution: qψ1(zt+1|zt, at),
+Latent variational posterior distribution: qψ2(zt+1|zt, at, et+1),
+Generative distribution: pθ(Ot+1|zt+1), (2)"
+GENERATIVE MODELLING OF DYNAMICS,0.0778816199376947,"where ψ = {ψ1, ψ2, φ} and θ represent the parameters associated with the recognition and generative
+models respectively. Latent variables z ∈Z are introduced for more ﬂexible modelling of the
+distribution of the observed variables. A variational approximation is employed since the true
+posterior p(zt+1|zt, at, Ot+1) is usually intractable in practice."
+GENERATIVE MODELLING OF DYNAMICS,0.08099688473520249,"At each time step t, the agent receives an observation Ot, which is then embedded into a context
+vector et = qφ(Ot). After initialisation, the latent space vector is rolled out in a forward fashion
+given the action at, yielding one-step prediction into the future following the variational transition
+(prior) distribution qψ1(zt+1|zt, at) (we assume standard ﬁrst-order Markovian structure in the latent
+space). The dynamics model is trained via maximum likelihood learning, and due to intractability, we
+adopt standard amortised variational inference, and the parameters of the recognition and generative
+models in Eq. 2 are learned by maximising the variational free energy (also known as the ELBO;
+(Wainwright and Jordan, 2008; Higgins et al., 2016)).
+Lforward(Ot+1) = Ezt+1∼qψ2[log pθ(Ot+1|zt+1) −βDKL [qψ2(zt+1|zt, at, et+1)||qψ1(zt+1|zt, at)]],
+(3)
+The variational free energy objective consists of the reconstruction error, pθ(Ot+1|zt+1), and the KL-
+divergence between the variational posterior distributions and the predictive prior as regularisation.
+The intuitive autoencoder-like structure nicely separates the generative process from the inference
+process, with the variational posterior (qψ2(zt+1|zt, at, et+1)) serving as the main inference engine of
+the optimal latent representations. Note that the β parameter controls the degree of factored structure
+(disentanglement) of the latent code, which by default is set to 1 (Higgins et al., 2016)."
+METHOD,0.08411214953271028,"3
+METHOD"
+METHOD,0.08722741433021806,"We ﬁrstly introduce learning via retracing in its most general format, then provide a concrete model-
+based instantiation based on generative dynamics modelling We ﬁnally propose a novel adaptive
+truncation scheme for dealing with the “irreversibility” issue in “learning via retracing”."
+LEARNING VIA RETRACING,0.09034267912772585,"3.1
+LEARNING VIA RETRACING"
+LEARNING VIA RETRACING,0.09345794392523364,"We always assume the usage of an approximate dynamics model, regardless of the overall RL agent
+being model-free or model-based (the dynamics model would only be used for representation learning
+under the model-free setting, hence it is possible to have separate dynamics models for forward
+and “reversed” transitions). Given a set of observations, O = {O1, . . . , OT }, a dynamics model,
+M : S × A × S →[0, 1], most existing methods of self-supervised representation learning involve
+learning an encoder (Eφ) and a decoder (Dθ), trained via minimising the predictive reconstruction.
+L(φ, θ) = d(O1:T , Dθ(f(Eφ(O1:T ); A1:T −1, M))
+(4)
+where d is some metric of the observable space (e.g., the L2 distance). The function f(e; M, a)
+is some function specifying the schedule for predictions, e.g., f(et, M, at) = M(et, at) = ˆet+1
+corresponds to learning the representations based on one-step predictive reconstruction."
+LEARNING VIA RETRACING,0.09657320872274143,"Existing methods explore predictive supervision in a temporally forward direction, however, we argue
+that the “reversed” transitions can also contain useful signals for learning. Consider a transition tuple,
+(s, a, s′), we deﬁne the “reversed” transitions being the tuple (s′, a′, s), where a′ is the “reversed” ac-
+tion. In situations where the same set of rules apply to forward and backward transitions, the reversed
+transition given a′ could contribute to representation learning via Eq. 4 as an additional training"
+LEARNING VIA RETRACING,0.09968847352024922,Published as a conference paper at ICLR 2022
+LEARNING VIA RETRACING,0.102803738317757,"s
+ˆs′
+ˇs a
+ˇa′"
+LEARNING VIA RETRACING,0.1059190031152648,"d(s, ˇs) (a) · · ·"
+LEARNING VIA RETRACING,0.10903426791277258,"zt
+zt+1
+zt+2 · · ·"
+LEARNING VIA RETRACING,0.11214953271028037,"at
+at+1
+at+2"
+LEARNING VIA RETRACING,0.11526479750778816,"Ot
+Ot+1
+Ot+2"
+LEARNING VIA RETRACING,0.11838006230529595,"˜Ot
+˜Ot+1
+˜Ot+2 ρζ ˇat+2 ρζ ˇat+1"
+LEARNING VIA RETRACING,0.12149532710280374,"ˇzt+2
+ˇzt+1
+ˇzt"
+LEARNING VIA RETRACING,0.12461059190031153,"ˇzt+2 = ˆzt+2
+Lretrace"
+LEARNING VIA RETRACING,0.1277258566978193,"forward
+pass"
+LEARNING VIA RETRACING,0.1308411214953271,"backward
+pass (b)"
+LEARNING VIA RETRACING,0.13395638629283488,"Figure 2: Graphical illustration of “learning via
+retracing”. (a) “learning via retracing” addition-
+ally constrains the similarity between the retraced
+and original states for representation learning; (b)
+Graphical model of CCWM. The empty circle and
+ﬁller square nodes represent the stochastic and de-
+terministic variables, respectively."
+LEARNING VIA RETRACING,0.13707165109034267,"sample (utilising a potentially different loss
+function from the forward supervision, see Fig-
+ure 2a)."
+LEARNING VIA RETRACING,0.14018691588785046,"Hence by utilising the additional reversed transi-
+tion for representation learning, we improve the
+sample efﬁciency of learning without additional
+interaction with the environment. As mentioned
+previously, in situations where perfect reversibil-
+ity is not preserved across all transitions, such
+“irreversible” transitions could negatively impact
+the overall learning. Correct identiﬁcation of
+such states is hence essential for the successful
+implementation of “learning via retracing”. To
+this end, we propose a novel adaptive truncation
+scheme in Section 3.3."
+LEARNING VIA RETRACING,0.14330218068535824,"Despite the intuitive simplicity of learning via
+retracing, it offers a number of advantages com-
+paring to existing representation learning meth-
+ods. In addition to the improved sample efﬁ-
+ciency, we can interpret learning with “reversed”
+transitions as explicit inference of the current la-
+tent state given future information. In combina-
+tion with the forward predictive supervision, the
+joint learning dynamics is similar to the smooth-
+ing operation in dynamical systems, which is
+often superior than ﬁltering (corresponds to us-
+ing solely the forward predictive supervision)
+in terms of inference accuracy (Kalman, 1960;
+Murphy, 2012). Hence learning via retracing
+could support stronger representation learning
+for the downstream RL task. We note that the
+overall RL agent could still beneﬁt from the representations obtain from learning via retracing even in
+tasks without perfect reversibility, such as a moving car where the external state feature, such as the
+absolute location, and controllable internal state features, such as the velocity and acceleration, are not
+jointly reversible. In such cases, we expect learning via retracing would dissect out the controllable
+internal features from the external features and prioritise the training with respect to such features."
+LEARNING VIA RETRACING,0.14641744548286603,"We have introduced learning via retracing in its most general form, where a large degree of freedom
+exists such that the method can be tailored and integrated with many of the existing representation
+learning approaches. There are many free model choices, such as being model-free or model-based;
+whether or not to use a separate “reversed” dynamics model; loss function for constraining the
+“retraced” transitions; deterministic or probabilistic dynamics model, just to name a few. Below we
+provide one concrete instantiation of learning via retracing, the Cycle-Consistency World Model
+(CCWM), under the model-based framework based on generative dynamics modelling."
+CYCLE-CONSISTENCY WORLD MODEL,0.14953271028037382,"3.2
+CYCLE-CONSISTENCY WORLD MODEL"
+CYCLE-CONSISTENCY WORLD MODEL,0.1526479750778816,"CCWM is a model-based RL agent that utilises a generative world-model, trained given both the
+predictive reconstruction of future states, and constraining the temporal cycle-consistency of the
+“retraced” states (i.e., constraining the retraced states to match the original states). For notational
+convenience, we denote all predictive prior estimates, posterior estimates, and the retraced predictive
+latent estimates as ˆz, ˜z and ˇz, respectively."
+CYCLE-CONSISTENCY WORLD MODEL,0.1557632398753894,"We use the similar dynamics model described in Section 2.2 (top panel in Figure 2b). We additionally
+deﬁne a reverse action approximator, ρζ : Z × Z →A, which takes in a tuple of latent states
+(zt+1, zt) and outputs an action ˇat+1 that approximates the “reversed” action that leads the transition
+from zt+1 back to zt. Instead of introducing a separate “reversed” dynamics model, we use the
+same dynamics model for both the forward and retracing transitions, which lead to improved sample
+efﬁciency of model learning in addition to representation learning. The parameters of ρ, ζ, can be"
+CYCLE-CONSISTENCY WORLD MODEL,0.1588785046728972,Published as a conference paper at ICLR 2022
+CYCLE-CONSISTENCY WORLD MODEL,0.16199376947040497,"either learned jointly with the model in an end-to-end fashion, or trained separately (see Appendix D).
+The graphical model of CCWM is shown in Figure 2b."
+CYCLE-CONSISTENCY WORLD MODEL,0.16510903426791276,"During training, given a sample trajectory {O1:T +1, a1:T }, we ﬁrstly perform a one-step forward
+sweep through all timesteps to compute the variational prior and posterior estimates of latent states."
+CYCLE-CONSISTENCY WORLD MODEL,0.16822429906542055,"ˆzτ+1 ∼qψ1(z|˜zτ, aτ)
+˜zτ+1 ∼qψ2(z|ˆzτ, aτ, qφ(Oτ))
+(5)"
+CYCLE-CONSISTENCY WORLD MODEL,0.17133956386292834,"for τ = 0, . . . , T, where ˆz0 is randomly initialised. Note that we also include reward prediction as
+part of the dynamics modelling, and we have omitted showing this for simplicity."
+CYCLE-CONSISTENCY WORLD MODEL,0.17445482866043613,"Given the predictive estimates in the forward direction, we compute the “retracing” estimates, utilising
+the same latent transition dynamics (variational predictive prior distribution)."
+CYCLE-CONSISTENCY WORLD MODEL,0.17757009345794392,"ˇzτ ∼qψ1(z|˜zτ+1, ˇaτ+1), where ˇaτ+1 = ρζ(˜zτ+1, ˜zτ), for τ = 1, . . . , T
+(6)"
+CYCLE-CONSISTENCY WORLD MODEL,0.1806853582554517,"The forward and retracing predictive supervision separately contributes to the model learning of
+CCWM. For the forward pass, the parameters of the dynamics model are trained to maximise the
+likelihood of the sampled observations via predictive reconstruction. We follow the variational
+principle, by maximising the variational free energy (Eq. 3), computed by Monte Carlo estimate
+given the posterior predictive samples. For the “retracing” operation, model learning is based on
+constraining the deviation of the retraced states from the original states. Intuitively, this utilises the
+temporal cycle-consistency of the transition dynamics: assuming that the action-dependent transition
+mapping is invertible across all timesteps (Dwibedi et al., 2019). The loss function for constraining
+the cycle-consistency is another degree of freedom of “learning via retracing”. For CCWM, we
+choose bisimulation metric as the loss function for the retracing operations, which has been shown to
+yield stronger constraints of the latent states on the MDP level, and also leads to more robust and
+noise-invariant representation without reconstruction (Ferns et al., 2011; Zhang et al., 2020)."
+CYCLE-CONSISTENCY WORLD MODEL,0.1838006230529595,"Lretrace(˜zt, ˇzt) = Eˇzt
+h
+(||˜zt −ˇzt||1 −DKL[ ˆR(·|˜zt)|| ˆR(·|ˇzt)] −γW2(qψ1(·|˜zt, π(˜zt)), qψ1(·|ˇzt, π(ˇzt))))2i
+, (7)"
+CYCLE-CONSISTENCY WORLD MODEL,0.18691588785046728,"where ˆR(r|z) represents the learned reward distributions (we assume stochastic rewards), and W2(·, ·)
+represents the 2-Wasserstein distance (see Eq. 11 in Appendix D). The advantage of choosing the
+bisimulation metric as the retrace loss function is further empirically shown in Appendix G through
+careful ablation studies (Figure 11). Multiple retracing trajectories can be simulated and the retrace
+loss is again a Monte Carlo estimate based on sampled “retracing” states, but empirically we observe
+that one “retracing” sample is sufﬁcient as we do not observe noticeable improvements for increasing
+the number of “retraced” samples. We note that here we utilise the same transition dynamics model
+for both forward and reversed rollouts, which might cause issues in model learning due to the absence
+of perfect “reversibility” across all valid transitions. Hence we need a method for dynamically
+assessing the “reversibility” so as to know when to apply learning via retracing (see Section 3.3)."
+CYCLE-CONSISTENCY WORLD MODEL,0.19003115264797507,"The overall objective for the CCWM dynamics model training is thus a linear combination of the
+forward and “retracing” loss functions."
+CYCLE-CONSISTENCY WORLD MODEL,0.19314641744548286,"L(θ, ψ, ζ) =
+1
+NT N
+X n=1 T
+X"
+CYCLE-CONSISTENCY WORLD MODEL,0.19626168224299065,"τ=1
+[Lforward(On
+τ ; θ, ψ) + λLretrace(˜zn
+τ , ˇzn
+τ ; ψ, ζ)] ,
+(8)"
+CYCLE-CONSISTENCY WORLD MODEL,0.19937694704049844,"where λ is the scalar multiplier for the retrace loss, and N is the batch size. We implement CCWM
+using a Recurrent State-Space Model (RSSM; Hafner et al. (2019)). The complete pseudocode for
+CCWM training is shown in Algorithm 1 in Appendix A. We note that “learning via retracing” is also
+applicable under the model-free setting, we describe one such instantiation in Appendix B."
+REVERSIBILITY AND TRUNCATION,0.20249221183800623,"3.3
+REVERSIBILITY AND TRUNCATION"
+REVERSIBILITY AND TRUNCATION,0.205607476635514,"As we noted above, perfect reversibility is not always present across all transitions in many environ-
+ments. For instance, consider the falling android presented in Figure 1b, it is trivial to observe that
+no valid action is able to transit a falling android to its previous state. Under such situations, naive
+application of “learning via retracing”, by constraining the temporal cycle-consistency, will corrupt"
+REVERSIBILITY AND TRUNCATION,0.2087227414330218,Published as a conference paper at ICLR 2022
+REVERSIBILITY AND TRUNCATION,0.2118380062305296,"representation learning (and dynamics model learning in CCWM). Here we propose an approach to
+deal with such “irreversibility”."
+REVERSIBILITY AND TRUNCATION,0.21495327102803738,"Our approach is based on adaptive identiﬁcation of “irreversible” transitions. We propose that the
+value function of the controller (e.g., an actor-critic agent) possesses some information about the
+continuity of the latent states (Gelada et al. (2019); see Appendix C for further discussion). Hence
+we use the value function as an indicator for sudden change in the agent’s state. Speciﬁcally, for each
+sampled trajectory, we ﬁrstly compute the values of each state-action pair using the current value
+function approximator, [Q(z1, a1), . . . , Q(zT , aT )]. We then compute the averages of the values
+over a sliding window of size S through the value vectors of each sampled trajectory, resulting in
+a (T −S)-length vector [ ¯Q1, . . . , ¯QT −S]. Any drop/increase in the sliding averages (above some
+pre-deﬁned threshold) indicates a sudden change in the value function, hence a sudden change in the
+latent representation given the continuity conveyed by the value function. Given some timestep, τ, at
+which the sudden change occurs, we then remove the transitions {zτ−S:τ, aτ−S:τ} from “learning
+via retracing”. Such adaptive scheduling allows us to deal with “irreversibility”."
+RELATED WORKS,0.21806853582554517,"4
+RELATED WORKS"
+RELATED WORKS,0.22118380062305296,"Representation learning in RL. Finding useful state representations that could aid RL tasks has
+long been studied. Early works have investigated representations based on a ﬁxed basis such as
+tile coding and Fourier basis (Mahadevan, 2005; Sutton and Barto, 2018). With the development
+of deep learning techniques, recent works explored automatic feature discovery based on neural
+network training, which can be categorised into three large classes. The ﬁrst class of methods
+studies the usage of data augmentation for broadening the data distribution for training more robust
+feature representation (Laskin et al., 2020; Kostrikov et al., 2020; Schwarzer et al., 2021; Yarats
+et al., 2021). The second class explores the role of auxiliary tasks in learning representations,
+such as weakly-supervised classiﬁcation and location recognition, for dealing with sparse and
+delayed supervision (Lee et al., 2020b; Mirowski et al., 2017; Oord et al., 2018). The third class
+of methods, speciﬁcally tailored to model-based RL models, leverages generative modelling of
+environment dynamics, enabling joint learning of the representations and the dynamics model (Ha and
+Schmidhuber, 2018; Buesing et al., 2018; Hafner et al., 2019; 2020a; Lee et al., 2020a; Schrittwieser
+et al., 2020; Hafner et al., 2020b)."
+RELATED WORKS,0.22429906542056074,"Cycle-Consistency. Cycle-consistency is a commonly adopted approach in computer vision and
+natural language processing (Zhou et al., 2016; Zhu et al., 2017; Yang et al., 2017; Dwibedi et al.,
+2019), where the core idea is the validation of matches between cycling through multiple samples. We
+adopt similar design principles for sequential decision-making tasks: rollouts in a temporally forward
+direction alone yield under-constrained learning of the world model. By additionally incorporating
+backwards rollouts into model learning in a self-supervised fashion, we enforce the inductive bias
+that the same transition rules govern the dynamics of the task."
+RELATED WORKS,0.22741433021806853,"Concurrent to our work, Yu et al. (2021) proposed PlayVirtual, a model-free RL method that
+integrates a similar cycle-consistency philosophy into training representations with data augmen-
+tations (Schwarzer et al., 2021). We note that PlayVirtual falls under the proposed “learning via
+retracing” framework, but lying on the opposite spectrum comparing to the CCWM agent, being
+model-free and utilising a separate reversed dynamics model, with the latter being the main difference
+between the premises of PlayVirtual and CCWM. By using the same dynamics model for both the for-
+ward and reversed transitions, we hope to exploit and embed the context prior of reversible transitions
+into the learnt representations, hence the induced advantages extend beyond the explicit advantage of
+improved sample efﬁciency, but also stronger generalisation, improved predictive rollouts (leads to
+more accurate policy gradient hence improving policy training)."
+EXPERIMENTAL STUDIES,0.23052959501557632,"5
+EXPERIMENTAL STUDIES"
+EXPERIMENTAL STUDIES,0.2336448598130841,"The experimental studies aim at examining if “learning via retracing” truly helps with the overall RL
+training and planning, improves the generalisability of the learned representation, and whether the
+truncation schedule proposed in Section 3.3 deals with the irreversibility of some state transitions."
+EXPERIMENT SETUP,0.2367601246105919,"5.1
+EXPERIMENT SETUP"
+EXPERIMENT SETUP,0.2398753894080997,"CCWM can be combined with any value-based or policy-based RL algorithms. We implement CCWM
+with a simple actor-critic RL agent with generalised advantage estimation based on standard model-"
+EXPERIMENT SETUP,0.24299065420560748,Published as a conference paper at ICLR 2022 (a)
+EXPERIMENT SETUP,0.24610591900311526,"0.2
+0.4
+0.6
+0.8
+1.0
+1e6 0 250 500 750 1000"
+EXPERIMENT SETUP,0.24922118380062305,Evaluation Return
+EXPERIMENT SETUP,0.2523364485981308,Cheetah Run
+EXPERIMENT SETUP,0.2554517133956386,"0.5
+1.0
+1.5
+2.0
+1e6 0 250 500 750 1000"
+EXPERIMENT SETUP,0.2585669781931464,Finger Spin
+EXPERIMENT SETUP,0.2616822429906542,"1
+2
+3
+4
+5
+1e5 0 100 200"
+EXPERIMENT SETUP,0.26479750778816197,Hopper Hop
+EXPERIMENT SETUP,0.26791277258566976,"0.2
+0.4
+0.6
+0.8
+1.0
+1e6 0 250 500 750 1000"
+EXPERIMENT SETUP,0.27102803738317754,Hopper Stand
+EXPERIMENT SETUP,0.27414330218068533,"0.5
+1.0
+1.5
+2.0
+Steps
+1e6 0 200 400 600"
+EXPERIMENT SETUP,0.2772585669781931,Evaluation Return
+EXPERIMENT SETUP,0.2803738317757009,Quadruped Run
+EXPERIMENT SETUP,0.2834890965732087,"0.5
+1.0
+1.5
+Steps
+1e6 0 500 1000"
+EXPERIMENT SETUP,0.2866043613707165,Reacher Easy
+EXPERIMENT SETUP,0.2897196261682243,"0.2
+0.4
+0.6
+0.8
+1.0
+Steps
+1e6 0 200 400"
+EXPERIMENT SETUP,0.29283489096573206,Walker Run
+EXPERIMENT SETUP,0.29595015576323985,"0.2
+0.4
+0.6
+0.8
+1.0
+Steps
+1e6 0 250 500 750 1000"
+EXPERIMENT SETUP,0.29906542056074764,Walker Walk
+EXPERIMENT SETUP,0.30218068535825543,"CCWM-A3C
+Dreamer
+A3C (state)
+D4PG (state)
+SAC (state)
+(b)
+Figure 3: Evaluation of CCWM on DeepMind Control Suite. (a): Graphical demonstration of
+selected continuous control task environments, from left to right: hopper stand/hop, walker run/walk,
+ﬁnger spin, reacher easy, cheetah run, quadruped run. (b): Average evaluation returns (±1 s.d.) during
+training (5 random seeds). “Learning via retracing” generally improves the performance of learning
+from pixel inputs in presented tasks comparing to the main baseline Dreamer agent (which could
+approximately be viewed as CCWM without retracing). CCWM reaches the asymptotic performance
+of state-of-the-art model-free methods (SAC, D4PG at 108 steps) on several tasks."
+EXPERIMENT SETUP,0.3052959501557632,"based RL framework using model-based rollouts1 (Sutton and Barto, 2018; Konda and Tsitsiklis,
+1999; Schulman et al., 2015). We base our experimental studies on the challenging visual-based
+continuous control benchmarks for which we choose 8 tasks from the DeepMind Control Suite (Tassa
+et al. (2018); Figure. 3a). The details of training and the architecture can be found in Appendix D."
+EXPERIMENT SETUP,0.308411214953271,"Baselines: We implement Dreamer as our main model-based baseline (Hafner et al., 2020a), which
+represents the current state-of-the-art world-model-type model-based RL agent on visual-based
+continuous control tasks.We also compare with the following model-free baselines: SAC Haarnoja
+et al. (2018), D4PG Barth-Maron et al. (2018), A3C Mnih et al. (2016). We implement the SAC
+agent given the state inputs and directly report the asymptotic performance of the D4PG and A3C
+algorithms from Tassa et al. (2018). We report the asymptotic scores for the model-free algorithms
+due to the large gap in sample efﬁciency comparing to the model-based methods."
+EVALUATION ON CONTINUOUS CONTROL TASKS,0.3115264797507788,"5.2
+EVALUATION ON CONTINUOUS CONTROL TASKS"
+EVALUATION ON CONTINUOUS CONTROL TASKS,0.3146417445482866,"The performance of CCWM and selected baseline algorithms is shown in Figure 3b. The empirical
+results show that CCWM (without adaptive truncation introduced in Section 3.3) generally achieves
+faster behaviour learning comparing to the baselines, which conforms with our hypothesis that
+utilising backward passes in addition to forward passes provides additional supervision, hence
+improving the sample efﬁciency of learning (see also Appendix E). CCWM outperforms Dreamer on
+5 of the selected tasks, and is comparable to Dreamer on 2 of the remaining 3 tasks, in terms of both
+the sample efﬁciency and ﬁnal convergence performance. We note the relative poor performance
+of CCWM on the Hopper Stand task, which might be accredited to the inherent large degree of
+irreversibility of the task, we shall examine how to deal with such irreversible tasks in Section 5.4."
+EVALUATION ON CONTINUOUS CONTROL TASKS,0.3177570093457944,"Moreover, in the “Cheetah Run” task, CCWM converges at ∼900 score with ∼5 × 105 steps,
+whereas Dreamer, by the time it has received 1 × 106 training steps, is yet to reach a comparable"
+EVALUATION ON CONTINUOUS CONTROL TASKS,0.32087227414330216,"1Note that for the maximally fair comparison with our main baseline, Dreamer (Hafner et al., 2020a), we
+utilise the same policy agent as Dreamer in order to fully demonstrate the utility of “learning via retracing” ."
+EVALUATION ON CONTINUOUS CONTROL TASKS,0.32398753894080995,Published as a conference paper at ICLR 2022
+EVALUATION ON CONTINUOUS CONTROL TASKS,0.32710280373831774,"True
+CCWM
+Dreamer"
+EVALUATION ON CONTINUOUS CONTROL TASKS,0.3302180685358255,"Context
+10
+15
+20
+25
+30
+35"
+EVALUATION ON CONTINUOUS CONTROL TASKS,0.3333333333333333,"True
+CCWM
+Dreamer 6"
+EVALUATION ON CONTINUOUS CONTROL TASKS,0.3364485981308411,"walker walk
+cheetah run"
+EVALUATION ON CONTINUOUS CONTROL TASKS,0.3395638629283489,"Figure 4: Qualitative comparison of long-range predictive reconstruction of CCWM and
+Dreamer. Predictive rollouts over 30 time-steps given the actions are computed using the rep-
+resentation models. CCWM consistently generates more accurate predictive reconstructions further
+into the future than Dreamer, with CCWM becoming noticeably inaccurate by 25 −30 timesteps, and
+Dreamer by 10 −15 timesteps. See implementation details and further discussion in Appendix F."
+EVALUATION ON CONTINUOUS CONTROL TASKS,0.3426791277258567,"CHANGED COMPONENTS
+CCWM
+DREAMER
+P-VALUE
+SIGNIFICANT?
+(MEAN ±1 S.D.)
+(MEAN ±1 S.D.)
+(3 S.F.)
+(α = 0.01)"
+EVALUATION ON CONTINUOUS CONTROL TASKS,0.34579439252336447,"R + M + F
+628.07 ± 36.95
+468.82 ± 94.73
+7.27 × 10−6
+YES
+R +M + S + F
+641.89 ± 28.67
+562.58 ± 93.91
+3.97 × 10−3
+YES"
+EVALUATION ON CONTINUOUS CONTROL TASKS,0.34890965732087226,"Table 1: Evaluation of trained CCWM and Dreamer on the ability of zero-shot transfer in cheetah run
+tasks with different conﬁgurations. (R: Reward; M: Mass; F: Friction; S: Stiffness.)"
+EVALUATION ON CONTINUOUS CONTROL TASKS,0.35202492211838005,"score. This demonstrates that “learning via retracing” brings more beneﬁts beyond plain sample
+efﬁciency, i.e., doubling the training steps does not eliminate the performance gap. This corresponds
+to our hypothesis that by explicitly conveying future information back to previous states, “learning
+via retracing” enables the learning of task-aware representations that support stronger behaviour
+learning. To test our hypothesis, we empirically evaluate CCWM’s ability of long-term predictive
+reconstructions and compare with Dreamer. To ensure fair comparison, we provide further training
+for Dreamer whenever necessary, such that the asymptotic performance is comparable with CCWM
+(see Appendix D for details). Figure 4 shows that CCWM consistently yields more accurate predictive
+reconstructions over a longer time span, on both the walker walk and cheetah run tasks. The empirical
+evidence conﬁrms our hypothesis that by incorporating “learning via retracing” into model learning
+enables the resulting latent space to support more accurate latent predictions, hence leading to stronger
+behaviour learning. Increased range of accurate latent prediction additionally enables CCWM to
+perform better planning. We provide further analysis of predictive reconstruction in Appendix F."
+ZERO-SHOT TRANSFER,0.35514018691588783,"5.3
+ZERO-SHOT TRANSFER"
+ZERO-SHOT TRANSFER,0.3582554517133956,"Based on the motivation that “learning via retracing” will improve the generalisability of the agent
+(Figure 1a), we empirically test the generalisability of CCWM on the basis of zero-shot transfer tasks.
+Speciﬁcally, we modify a number of basic conﬁgurations of the cheetah run task, such as the mass of
+the agent and the friction coefﬁcients between the joints. The details of the changes can be found
+in Appendix D. Despite the increased sample efﬁciency of CCWM over Dreamer during training
+(Figure 3b), both methods converge at similar values at 2×106 steps. We directly evaluate the trained
+agents on the updated cheetah run task without further training to test their abilities on zero-shot
+transfer. We report the mean evaluation scores (± 1 s.d.) of both agents over 15 random seeds, as well
+as the one-sided t-test statistics and signiﬁcance of the difference between the two sets of evaluations
+in Table 1. The overall performance on zero-shot transfer of our approach is comparable with Dreamer
+on simpler transfer tasks (full results shown in Appendix 5.3), and signiﬁcantly outperforms Dreamer
+on more non-trivial modiﬁcations to the original task. The introduction of retracing also improves the
+stability of zero-shot transfer in general (reduced variance in evaluation). These conﬁrm our previous
+hypothesis that “learning via retracing” improves the ability of within-domain generalisation."
+ZERO-SHOT TRANSFER,0.3613707165109034,Published as a conference paper at ICLR 2022
+ZERO-SHOT TRANSFER,0.3644859813084112,"5.4
+ADAPTIVE TRUNCATION OF “LEARNING VIA RETRACING”"
+ZERO-SHOT TRANSFER,0.367601246105919,"We wish to examine the effects of the proposed adaptive scheduling of truncation (Section 3.3). From
+Figure 3b, we observe that the original CCWM is outperformed by Dreamer on the Hopper Stand
+task, probably due to the large degree of “irreversibility” of the task comparing to the others such that
+the naive representation learning by enforcing “learning via retracing” leads to suboptimal training."
+ZERO-SHOT TRANSFER,0.3707165109034268,"0
+1e5
+2e5
+3e5
+4e5
+5e5
+steps 0 200 400 600 800 1000"
+ZERO-SHOT TRANSFER,0.37383177570093457,Average Evaluation
+ZERO-SHOT TRANSFER,0.37694704049844235,walker walk
+ZERO-SHOT TRANSFER,0.38006230529595014,"CCWM
+Dreamer
+CCWM-AT"
+ZERO-SHOT TRANSFER,0.38317757009345793,"0
+1e5
+2e5
+3e5
+4e5
+5e5
+steps 0 200 400 600 800"
+ZERO-SHOT TRANSFER,0.3862928348909657,hopper stand
+ZERO-SHOT TRANSFER,0.3894080996884735,"CCWM
+Dreamer
+CCWM-AT"
+ZERO-SHOT TRANSFER,0.3925233644859813,"Figure 5: Evaluation of Adaptive Truncation on
+tasks with varying degrees of “irreversibility”.
+Minimal improvement is observed on tasks with
+low degree of “irreversibility” (walker walk in the
+left panel); whereas signiﬁcant improvements are
+observed on tasks with high degree of “irreversibil-
+ity” (hopper stand in the right panel)."
+ZERO-SHOT TRANSFER,0.3956386292834891,"From Figure 5, we observe that augmenting
+CCWM with the proposed ﬂexible truncation
+schedule yields signiﬁcant performance increase
+on the Hopper-Stand task, with consistently bet-
+ter sample efﬁciency than both Dreamer and the
+standard CCWM. For tasks with less degree of
+“irreversibility”, such as Walker-Walk (Figure 5
+right), we do not observe signiﬁcant improve-
+ment by the introduction of adaptive truncation
+since the amount of negative impacts were al-
+ready minimal in the original settings. Similar
+patterns are observed across the other tasks (no
+noticeable improvement except for the Hopper-
+Stand/Hop tasks). We extend our discussion on
+adaptive truncation in Appendix C."
+DISCUSSION,0.3987538940809969,"6
+DISCUSSION"
+DISCUSSION,0.40186915887850466,"We proposed “learning via retracing”, a novel representation learning method for RL problems
+that utilises the temporal cycle-consistency of the transition dynamics in addition to the predictive
+reconstruction in the temporally forward direction. We introduce CCWM, a concrete model-based
+instantiation of “learning via retracing” based on generative dynamics modelling. We empirically
+show that CCWM yields improved performance over state-of-the-art model-based and model-free
+methods on a number of challenging continuous control benchmarks, in terms of both the sample-
+efﬁciency and the asymptotic performance. We also show that “learning via retracing” supports
+stronger generalisability and more accurate long-range predictions, hence stronger planning, both
+adhere nicely to our intuition and predictions.We note that “learning via retracing” is strongly affected
+by the degree of “irreversibility” of the task. We propose an adaptive truncation scheme for alleviating
+the negative impacts caused by the “irreversible” transitions, and empirically show the utility of the
+proposed truncation mechanism in tasks with a large degree of “irreversibility”."
+DISCUSSION,0.40498442367601245,"Hippocampal replay has long been thought to play a critical role in model-based decision-making in
+humans and rodents (Mattar and Daw, 2018; Evans and Burgess, 2019). Recently, Liu et al. (2021)
+showed how reversed hippocampal replays are prioritised due to its utility in non-local (model-based)
+inference and learning in humans. CCWM can be interpreted as an immediate model-based instantia-
+tion of the reversed hippocampal replay. Similar to intuitions from the computational neuroscience
+literature (Penny et al., 2013), we also ﬁnd that “learning via retracing” brings a number of merits
+comparing to its counterparts that only uses forward rollouts. In addition to improved sample efﬁ-
+ciency and asymptotic performance, we show that CCWM also supports stronger generalisability
+and extends the planning horizon, indicating that stronger model-based inferences are obtained.
+Moreover, as discussed previously, “learning via retracing” can enable the learning of reversible “con-
+trollable” internal states of the agent even when external features (e.g. location) are irreversible. Such
+representation could be combined with task-speciﬁc global contextual information/representation
+provided by an independent system to facilitate stronger policy learning. The independent system
+could be supported by the hippocampal area, where reversed hippocampal “replay” of the allocentric
+“cognitive map” could in turn drive reverse replay of egocentric sensory or motoric representations."
+DISCUSSION,0.40809968847352024,Published as a conference paper at ICLR 2022
+DISCUSSION,0.411214953271028,ACKNOWLEDGEMENT
+DISCUSSION,0.4143302180685358,"C.Y. is supported by the DeepMind studentship funded through UCL CDT in Foundational Artiﬁcial
+Intelligence. N.B. is supported by the Wellcome Trust. The authors would like to thank Maneesh
+Sahani, Peter Dayan, Jessica Hamricks, and the anonymous reviewers for helpful comments and
+discussions."
+REFERENCES,0.4174454828660436,REFERENCES
+REFERENCES,0.4205607476635514,"M. Abadi, A. Agarwal, P. Barham, E. Brevdo, Z. Chen, C. Citro, G. S. Corrado, A. Davis, J. Dean,
+M. Devin, S. Ghemawat, I. Goodfellow, A. Harp, G. Irving, M. Isard, Y. Jia, R. Jozefowicz,
+L. Kaiser, M. Kudlur, J. Levenberg, D. Man´e, R. Monga, S. Moore, D. Murray, C. Olah, M. Schuster,
+J. Shlens, B. Steiner, I. Sutskever, K. Talwar, P. Tucker, V. Vanhoucke, V. Vasudevan, F. Vi´egas,
+O. Vinyals, P. Warden, M. Wattenberg, M. Wicke, Y. Yu, and X. Zheng. TensorFlow: Large-scale
+machine learning on heterogeneous systems, 2015. URL https://www.tensorflow.org/.
+Software available from tensorﬂow.org."
+REFERENCES,0.4236760124610592,"G. Barth-Maron, M. W. Hoffman, D. Budden, W. Dabney, D. Horgan, T. Dhruva, A. Muldal, N. Heess,
+and T. Lillicrap. Distributed distributional deterministic policy gradients. ArXiv, abs/1804.08617,
+2018."
+REFERENCES,0.42679127725856697,"Y. Bengio, A. Courville, and P. Vincent. Representation learning: A review and new perspectives.
+IEEE transactions on pattern analysis and machine intelligence, 35(8):1798–1828, 2013."
+REFERENCES,0.42990654205607476,"G. Brockman, V. Cheung, L. Pettersson, J. Schneider, J. Schulman, J. Tang, and W. Zaremba. Openai
+gym. arXiv preprint arXiv:1606.01540, 2016."
+REFERENCES,0.43302180685358255,"L. Buesing, T. Weber, S. Racani`ere, S. Eslami, D. J. Rezende, D. P. Reichert, F. Viola, F. Besse,
+K. Gregor, D. Hassabis, and D. Wierstra. Learning and querying fast generative models for
+reinforcement learning. ArXiv, abs/1802.03006, 2018."
+REFERENCES,0.43613707165109034,"J. Chung, C. Gulcehre, K. Cho, and Y. Bengio. Empirical evaluation of gated recurrent neural
+networks on sequence modeling. arXiv preprint arXiv:1412.3555, 2014."
+REFERENCES,0.4392523364485981,"J. V. Dillon, I. Langmore, D. Tran, E. Brevdo, S. Vasudevan, D. Moore, B. Patton, A. Alemi,
+M. Hoffman, and R. A. Saurous. Tensorﬂow distributions. arXiv preprint arXiv:1711.10604, 2017."
+REFERENCES,0.4423676012461059,"D. Dwibedi, Y. Aytar, J. Tompson, P. Sermanet, and A. Zisserman. Temporal cycle-consistency
+learning. 2019 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pages
+1801–1810, 2019."
+REFERENCES,0.4454828660436137,"T. Evans and N. Burgess. Coordinated hippocampal-entorhinal replay as structural inference. In
+NeurIPS, volume 32. NIPS, 2019."
+REFERENCES,0.4485981308411215,"N. Ferns, P. Panangaden, and D. Precup. Bisimulation metrics for continuous markov decision
+processes. SIAM J. Comput., 40:1662–1714, 2011."
+REFERENCES,0.4517133956386293,"D. J. Foster and M. Wilson. Reverse replay of behavioural sequences in hippocampal place cells
+during the awake state. Nature, 440:680–683, 2006."
+REFERENCES,0.45482866043613707,"C. Gelada, S. Kumar, J. Buckman, O. Nachum, and M. G. Bellemare. Deepmdp: Learning continuous
+latent space models for representation learning. In International Conference on Machine Learning,
+pages 2170–2179. PMLR, 2019."
+REFERENCES,0.45794392523364486,"D. R. Ha and J. Schmidhuber. World models. ArXiv, abs/1803.10122, 2018."
+REFERENCES,0.46105919003115264,"T. Haarnoja, A. Zhou, P. Abbeel, and S. Levine. Soft actor-critic: Off-policy maximum entropy deep
+reinforcement learning with a stochastic actor. In ICML, 2018."
+REFERENCES,0.46417445482866043,"D. Hafner, T. Lillicrap, I. S. Fischer, R. Villegas, D. R. Ha, H. Lee, and J. Davidson. Learning latent
+dynamics for planning from pixels. ArXiv, abs/1811.04551, 2019."
+REFERENCES,0.4672897196261682,Published as a conference paper at ICLR 2022
+REFERENCES,0.470404984423676,"D. Hafner, T. Lillicrap, J. Ba, and M. Norouzi. Dream to control: Learning behaviors by latent
+imagination. ArXiv, abs/1912.01603, 2020a."
+REFERENCES,0.4735202492211838,"D. Hafner, T. Lillicrap, M. Norouzi, and J. Ba. Mastering atari with discrete world models. arXiv
+preprint arXiv:2010.02193, 2020b."
+REFERENCES,0.4766355140186916,"I. Higgins, L. Matthey, A. Pal, C. Burgess, X. Glorot, M. Botvinick, S. Mohamed, and A. Lerchner.
+beta-vae: Learning basic visual concepts with a constrained variational framework. 2016."
+REFERENCES,0.4797507788161994,R. E. Kalman. A new approach to linear ﬁltering and prediction problems. 1960.
+REFERENCES,0.48286604361370716,"D. P. Kingma and J. Ba. Adam: A method for stochastic optimization. arXiv preprint arXiv:1412.6980,
+2014."
+REFERENCES,0.48598130841121495,"V. R. Konda and J. Tsitsiklis. Actor-critic algorithms. In NIPS, 1999."
+REFERENCES,0.48909657320872274,"I. Kostrikov, D. Yarats, and R. Fergus. Image augmentation is all you need: Regularizing deep
+reinforcement learning from pixels. arXiv preprint arXiv:2004.13649, 2020."
+REFERENCES,0.49221183800623053,"M. Laskin, K. Lee, A. Stooke, L. Pinto, P. Abbeel, and A. Srinivas. Reinforcement learning with
+augmented data. arXiv preprint arXiv:2004.14990, 2020."
+REFERENCES,0.4953271028037383,"A. X. Lee, A. Nagabandi, P. Abbeel, and S. Levine. Stochastic latent actor-critic: Deep reinforcement
+learning with a latent variable model. ArXiv, abs/1907.00953, 2020a."
+REFERENCES,0.4984423676012461,"L. Lee, B. Eysenbach, R. Salakhutdinov, S. Gu, and C. Finn. Weakly-supervised reinforcement
+learning for controllable behavior. ArXiv, abs/2004.02860, 2020b."
+REFERENCES,0.5015576323987538,"S. Levine, C. Finn, T. Darrell, and P. Abbeel. End-to-end training of deep visuomotor policies. The
+Journal of Machine Learning Research, 17(1):1334–1373, 2016."
+REFERENCES,0.5046728971962616,"Y. Liu, M. G. Mattar, T. E. Behrens, N. D. Daw, and R. J. Dolan. Experience replay is associated
+with efﬁcient nonlocal learning. Science, 372(6544), 2021."
+REFERENCES,0.5077881619937694,"S. Mahadevan. Proto-value functions: Developmental reinforcement learning. In Proceedings of the
+22nd international conference on Machine learning, pages 553–560, 2005."
+REFERENCES,0.5109034267912772,"M. Mattar and N. Daw. Prioritized memory access explains planning and hippocampal replay. Nature
+neuroscience, 21:1609 – 1617, 2018."
+REFERENCES,0.514018691588785,"P. Mirowski, R. Pascanu, F. Viola, H. Soyer, A. Ballard, A. Banino, M. Denil, R. Goroshin, L. Sifre,
+K. Kavukcuoglu, D. Kumaran, and R. Hadsell. Learning to navigate in complex environments.
+ArXiv, abs/1611.03673, 2017."
+REFERENCES,0.5171339563862928,"V. Mnih, K. Kavukcuoglu, D. Silver, A. Graves, I. Antonoglou, D. Wierstra, and M. A. Riedmiller.
+Playing atari with deep reinforcement learning. ArXiv, abs/1312.5602, 2013."
+REFERENCES,0.5202492211838006,"V. Mnih, A. P. Badia, M. Mirza, A. Graves, T. Lillicrap, T. Harley, D. Silver, and K. Kavukcuoglu.
+Asynchronous methods for deep reinforcement learning. ArXiv, abs/1602.01783, 2016."
+REFERENCES,0.5233644859813084,K. P. Murphy. Machine learning: a probabilistic perspective. 2012.
+REFERENCES,0.5264797507788161,"A. Oord, Y. Li, and O. Vinyals. Representation learning with contrastive predictive coding. ArXiv,
+abs/1807.03748, 2018."
+REFERENCES,0.5295950155763239,"I. Osband, C. Blundell, A. Pritzel, and B. Van Roy. Deep exploration via bootstrapped dqn. Advances
+in neural information processing systems, 29, 2016."
+REFERENCES,0.5327102803738317,"W. D. Penny, P. Zeidman, and N. Burgess. Forward and backward inference in spatial cognition.
+PLoS Comput Biol, 9(12):e1003383, 2013."
+REFERENCES,0.5358255451713395,"J. Schrittwieser, I. Antonoglou, T. Hubert, K. Simonyan, L. Sifre, S. Schmitt, A. Guez, E. Lockhart,
+D. Hassabis, T. Graepel, T. Lillicrap, and D. Silver. Mastering atari, go, chess and shogi by
+planning with a learned model. Nature, 588 7839:604–609, 2020."
+REFERENCES,0.5389408099688473,Published as a conference paper at ICLR 2022
+REFERENCES,0.5420560747663551,"J. Schulman, P. Moritz, S. Levine, M. Jordan, and P. Abbeel. High-dimensional continuous control
+using generalized advantage estimation. arXiv preprint arXiv:1506.02438, 2015."
+REFERENCES,0.5451713395638629,"M. Schwarzer, A. Anand, R. Goel, R. D. Hjelm, A. Courville, and P. Bachman. Data-efﬁcient
+reinforcement learning with self-predictive representations. In ICLR, 2021."
+REFERENCES,0.5482866043613707,"D. Silver, J. Schrittwieser, K. Simonyan, I. Antonoglou, A. Huang, A. Guez, T. Hubert, L. Baker,
+M. Lai, A. Bolton, et al. Mastering the game of go without human knowledge. nature, 550(7676):
+354–359, 2017."
+REFERENCES,0.5514018691588785,"R. S. Sutton and A. G. Barto. Reinforcement learning: An introduction. MIT press, 2018."
+REFERENCES,0.5545171339563862,"Y. Tassa, Y. Doron, A. Muldal, T. Erez, Y. Li, D. Casas, D. Budden, A. Abdolmaleki, J. Merel,
+A. Lefrancq, T. Lillicrap, and M. A. Riedmiller. Deepmind control suite. ArXiv, abs/1801.00690,
+2018."
+REFERENCES,0.557632398753894,"L. Van der Maaten and G. Hinton. Visualizing data using t-sne. Journal of machine learning research,
+9(11), 2008."
+REFERENCES,0.5607476635514018,"O. Vinyals, T. Ewalds, S. Bartunov, P. Georgiev, A. S. Vezhnevets, M. Yeo, A. Makhzani, H. K¨uttler,
+J. Agapiou, J. Schrittwieser, et al. Starcraft ii: A new challenge for reinforcement learning. arXiv
+preprint arXiv:1708.04782, 2017."
+REFERENCES,0.5638629283489096,"M. Wainwright and M. Jordan. Graphical models, exponential families, and variational inference.
+Found. Trends Mach. Learn., 1:1–305, 2008."
+REFERENCES,0.5669781931464174,"Z. Yang, W. Chen, F. Wang, and B. Xu. Improving neural machine translation with conditional
+sequence generative adversarial nets. arXiv preprint arXiv:1703.04887, 2017."
+REFERENCES,0.5700934579439252,"D. Yarats, R. Fergus, A. Lazaric, and L. Pinto. Mastering visual continuous control: Improved
+data-augmented reinforcement learning. arXiv preprint arXiv:2107.09645, 2021."
+REFERENCES,0.573208722741433,"T. Yu, C. Lan, W. Zeng, M. Feng, and Z. Chen. Playvirtual: Augmenting cycle-consistent virtual
+trajectories for reinforcement learning. arXiv preprint arXiv:2106.04152, 2021."
+REFERENCES,0.5763239875389408,"M. D. Zeiler, D. Krishnan, G. W. Taylor, and R. Fergus. Deconvolutional networks. In 2010 IEEE
+Computer Society Conference on computer vision and pattern recognition, pages 2528–2535. IEEE,
+2010."
+REFERENCES,0.5794392523364486,"A. Zhang, R. McAllister, R. Calandra, Y. Gal, and S. Levine. Learning invariant representations for
+reinforcement learning without reconstruction. ArXiv, abs/2006.10742, 2020."
+REFERENCES,0.5825545171339563,"T. Zhou, P. Kr¨ahenb¨uhl, M. Aubry, Q. Huang, and A. A. Efros. Learning dense correspondence via
+3d-guided cycle consistency. 2016 IEEE Conference on Computer Vision and Pattern Recognition
+(CVPR), pages 117–126, 2016."
+REFERENCES,0.5856697819314641,"J.-Y. Zhu, T. Park, P. Isola, and A. A. Efros. Unpaired image-to-image translation using cycle-
+consistent adversarial networks. In Proceedings of the IEEE international conference on computer
+vision, pages 2223–2232, 2017."
+REFERENCES,0.5887850467289719,Published as a conference paper at ICLR 2022
+REFERENCES,0.5919003115264797,"A
+PSEUDOCODE FOR CCWM"
+REFERENCES,0.5950155763239875,"The pseudocode for CCWM training is shown in Algorithm 1. In the current instance, we show
+the full algorithm with the augmentation of adaptive truncation (Section 3.3). Given the adaptive
+truncation, we need to slightly modify the loss function in Eq. 8."
+REFERENCES,0.5981308411214953,"L(θ, ψ, ζ) =
+1
+NT N
+X n=1 T
+X"
+REFERENCES,0.6012461059190031,"τ=1
+[LELBO(On
+τ ; θ, ψ) + λM n
+τ Lretrace(˜zn
+τ , ˇzn
+τ ; ψ, ζ)] ,
+(9)"
+REFERENCES,0.6043613707165109,"where M n
+τ is the entry τ of the mask vector M n with values in {0, 1}, which we describe in
+Algorithm 1."
+REFERENCES,0.6074766355140186,Algorithm 1 Cycle-Consistency World Model (CCWM)
+REFERENCES,0.6105919003115264,"1: Given:
+policy π(a|s), encoders qφ(O), qψ1(z′|z, a), qψ2(z′|z, a, qφ(O′)), decoder qθ(O|z),
+reverse action approximator ρζ(z, z′), latent horizon K, average loss Lavg = 0, counter c = 0,
+adaptive truncation threshold, η, adaptive truncation sliding window size, S, current estimate of
+the Q-function, Qγ, CCWM parameters: Θ = {φ, ψ1, ψ2, θ, ζ}.
+2: Input: Batch of N sampled trajectories of length T, {On
+tn:tn+T , an
+tn:tn+T }N
+n=1.
+3: for n = 1 to N do
+4:
+O = {On
+tn+k}T
+k=1, a = {an
+tn+k}T −1
+k=0 .
+5:
+for k = 1 to T −K do
+6:
+Compute prior ˆzk+1:k+K and posterior estimates ˜zk+1:k+K using Eq. 5
+7:
+Compute
+the
+sliding
+window
+average,
+[ ¯Q1, . . . , ¯QK−S],
+where
+¯Qi
+=
+1
+S
+PS
+s=1 Qγ(˜zi+s, ai+s)"
+REFERENCES,0.6137071651090342,"8:
+Compute the step-wise difference, ∆= [|
+¯
+Q2−¯
+Q1
+¯
+Q1
+|, . . . , |
+¯
+QK−S−¯
+QK−S−1
+¯
+QK−S−1
+|]"
+REFERENCES,0.616822429906542,"9:
+Compute the adaptive truncation mask, M ∈{0, 1}K, where Mk = 1 if ∨k
+j=k−S(∆j < η),
+and 0 otherwise
+10:
+Compute retraced states ˇzk:k+K using Eq. 6
+11:
+Compute the latent model loss Lk using Eq. 9.
+12:
+Update Lavg ←
+c
+c+1Lavg +
+1
+c+1Lk.
+13:
+Increment counter, c ←c + 1.
+14:
+end for
+15: end for
+16: Compute the gradient, ∇ΘLavg.
+17: Update the model parameters, Θ ←Θ + α∇ΘLavg."
+REFERENCES,0.6199376947040498,"B
+MODEL-FREE INSTANTIATION OF “LEARNING VIA RETRACING”"
+REFERENCES,0.6230529595015576,"As mentioned in Section 3, “learning via retracing” admits many degrees of freedom in its implemen-
+tation. CCWM provides one such instantiation under the model-based RL setting, here we provide an
+alternative model based on “learning via retracing” under the model-free RL setting. The graphical
+illustration of the model-free instantiation is shown in Figure 6."
+REFERENCES,0.6261682242990654,"Visual inspection indicates the high similarity between the graphical models of the model-free version
+and the model-based version (CCWM), but there are essential differences. Similar to PlayVirtual (Yu
+et al., 2021), due to the model-free nature of the model, we no longer requires further supervisory
+signals obtained from ”learning via retracing” to contribute to training of the dynamics model, hence
+we are free to employ an independent ”reversed” dynamics model (denoted by the red arrows in
+the reversed direction in Figure 6) for performing the retracing operations. Moreover, given the
+independent ”reversed” dynamics model, we no longer requires approximation of the ”reversed”
+actions, hence removing the necessity of using ρ as in Figure 2b, and we only need to use the ground-
+truth forward actions for the retracing operations. The learned representation in this case would
+beneﬁt the downstream model-free RL agent since the resulting state representation is efﬁcient for the
+prediction of future states. We note a key difference between our model-free instantiation of learning
+via retracing and PlayVirtual (Yu et al., 2021), that we have consistently employed probabilistic"
+REFERENCES,0.6292834890965732,Published as a conference paper at ICLR 2022 · · ·
+REFERENCES,0.632398753894081,"zt
+zt+1
+zt+2 · · ·"
+REFERENCES,0.6355140186915887,"Ot
+Ot+1
+Ot+2"
+REFERENCES,0.6386292834890965,"at−1
+at
+at+1"
+REFERENCES,0.6417445482866043,"˜Ot
+˜Ot+1
+˜Ot+2"
+REFERENCES,0.6448598130841121,"ˇzt+2
+ˇzt+1
+ˇzt"
+REFERENCES,0.6479750778816199,"ˇzt+2 = ˆzt+2
+Lretrace"
+REFERENCES,0.6510903426791277,"forward
+pass"
+REFERENCES,0.6542056074766355,"backward
+pass"
+REFERENCES,0.6573208722741433,"Figure 6: Graphical illustration of a model-free instantiation of ”learning via retracing”. The forward
+model is a state-space model and is trained in a generative fashion under the variational principles.
+The retracing operations are now performed with a separate ”reversed” dynamics model (indicated by
+the red arrows). Given the independent ”reversed” dynamics model, we can use the same action as in
+the forward model for retracing, removing the necessity of using the ”reversed” action approximator."
+REFERENCES,0.660436137071651,"models over deterministic models for modelling the embedding and latent transitions, which naturally
+provides posterior predictive uncertainty that can be used for various downstream tasks, such as
+exploration (Osband et al., 2016)."
+REFERENCES,0.6635514018691588,"Here we stick with the general architectural choice of using a sequential state-space model for the
+forward dynamics model as in CCWM, but the ”reversed” dynamics model can be chosen to be
+deterministic and trained discriminatively jointly with the entire model. Note that Figure 6, like
+CCWM, only describes one of many possible instantiations of ”learning via retracing”, we leave
+further investigation to future work."
+REFERENCES,0.6666666666666666,"C
+FURTHER DISCUSSION ON TRUNCATION AND THE DEGREE OF
+“IRREVERSIBILITY”"
+REFERENCES,0.6697819314641744,"In Section 3.3, we introduced the adaptive truncation as a general-purpose method for improving
+the performance of CCWM in continuous control tasks. On a high level, we choose to remove
+the transitions from model/representation learning through ”learning via retracing” whenever large
+changes in the Q-values occur, hence the ”irreversibility” of the transitions depend on the local
+continuity of the corresponding Q-values. Our argument is largely based on Theorem 1 from Gelada
+et al. (2019), which we re-iterate below for consistency."
+REFERENCES,0.6728971962616822,"Theorem 1 For an MDP M
+=
+⟨S, A, R, P, γ⟩and the corresponding DeepMDP
+¯
+M
+=
+⟨¯S, A, ¯R, ¯P, γ⟩(see Section 2.2 in Gelada et al. (2019) for detailed deﬁnition of DeepMDP), let d ¯
+S
+be a metric over ¯S, φ : S →¯S be the embedding function, L∞
+¯
+R = sups∈S,a∈A |R(s, a)−¯R(φ(s), a)|
+and L∞
+¯
+P = sups∈S,a∈A W(φP(·|s, a), ¯P(·|φ(s), a)) be the global loss function (for training the
+DeepMDP, where W(·, ·) is the Wasserstein distance). For any K ¯V -Lipschitz policy ¯π ∈¯Π, the
+representation φ guarantees that for all s1, s2 ∈S, and a ∈A,"
+REFERENCES,0.67601246105919,"|Q¯π(s1, a) −Q¯π(s2, a)| ≤K ¯V d ¯
+S(φ(s1), φ(s2)) + 2L∞
+¯
+R + γK ¯V L∞
+¯
+P
+1 −γ
+(10)"
+REFERENCES,0.6791277258566978,"The proof of Theorem 1 can be found in Appendix A.2 in Gelada et al. (2019). The high-level
+interpretation for Theorem 1 is that the learned representation space should admit the situation where
+two states with different values collapse onto the same representations. Theorem 1 tells us that
+given a good representation (embedding function), the absolute difference between the Q-values"
+REFERENCES,0.6822429906542056,Published as a conference paper at ICLR 2022
+REFERENCES,0.6853582554517134,"of two latent states should lower-bound the distance (some metric over the representation space)
+between the representations of the two states (up to some additive and scalar multiplicative constants).
+Hence whenever there is a large change in the Q-values of between the adjacent states in a trajectory,
+there must also be a large jump in the representation space, which we interpret as an ”irreversible”
+transition. The latter interpretation can be substantiated with the visualisation of the low-dimensional
+embeddings of the learned representations at different stages in Figure 7 and Figure 8. Figure 7
+shows the TSNE embeddings of a trajectory taken by a successfully trained agent in the Cheetah
+Run task (we focus on the left ﬁgure in both Figure 7(a) and (b), please refer to the full discussion of
+Figure 7 in Appendix E). We see that the resulting TSNE-embeddings of the representation along a
+trajectory show that the magnitude of the transitions in the representation space is consistently low,
+hence respecting the temporal locality of the states along the trajectory. However, in Figure 8, where
+we show the TSNE-embeddings of the representation along a trajectory in an under-trained CCWM
+agent in the Hopper Stand task (∼2 × 105 training steps), we observe clear clusters of the state
+representations along the same trajectory. Moreover, the clustered structure also shows locality with
+respect to the temporal ordering (along the trajectory), showing that even in tasks such as Hopper
+Stand, which we view as the more ”irreversible” task, a large proportion of all transitions allows
+retracing operations, which can contribute as additional samples for the training of representation
+and the dynamics model through ”learning via retracing”. The quality of the overall representation
+learning is dependent on the correct identiﬁcation of the ”irreversible” transitions (large jumps
+between adjacent states in Figure 8), which necessitates the usage of the adaptive truncation approach
+to identify and remove the ”irreversible” transitions from corrupting the learning process. These
+evidence further substantiate our proposal of the overall framework of ”learning via retracing” and
+the adaptive truncation technique."
+REFERENCES,0.6884735202492211,"We note that as the agent is undergoing a sequence of consecutive ”irreversible” transitions, such as
+when the walker agent is falling down shown in Figure 1(b) of the main paper, the transitions the agent
+goes through are ”irreversible” albeit having similar Q-values (all leading to the inevitable fallen
+down state). In order to deal with such ”continuity” in the ”irreversibility” of the transitions along
+the same trajectory, the adaptive truncation is introduced by detecting the changes in the average
+Q-values over a sliding window instead of the single Q-values, which allows a delayed detection
+of the sudden (and extended) changes in the state values along the same trajectory (the degree of
+delay depends on the choice of the threshold of adaptive truncation and the sliding window size,
+see Section 3.3 and Algorithm 1 for more details). Hence upon the ”delayed” identiﬁcation of the
+”irreversible” transition at state st, we remove the state as well as a certain number of states preceding
+st (i.e., {st−τ, st−τ+1, . . . , st}) from ”learning via retracing”. We note that the choice of the sliding
+window size, S, threshold, η and the number of preceding states to remove, τ, are all chosen based
+on hyperparameter tuning at this stage. We leave the automatic determination of the parameters
+associated with adaptive truncation to future work."
+REFERENCES,0.6915887850467289,"We additionally propose an intermediate approach for ruling out the “irretraceable” states from
+“learning via retracing”, based on ﬁxed scheduling of truncating out the ﬁnal proportions of each
+collected episode (but still use these samples for representation learning in the forward direction). In
+many episodic environments, (e.g., LunarLander; Brockman et al. (2016)), each episode terminates
+upon either successful completion of the task or failing the task (e.g., crashing in LunarLander). For
+the failure cases, which is more often during the early phase of training, even the transitions leading
+to the failure states might be considered “irreversible” (falling android; Figure 1b). Hence early
+truncation of each episode is able to rule out many such “irreversible” transitions from contributing
+to representation/model learning. We additionally propose annealing schedules for the truncation
+proportion as given the training of the controller, successful completion will be more frequently
+encountered comparing to the failure cases."
+REFERENCES,0.6947040498442367,"D
+IMPLEMENTATION DETAILS"
+REFERENCES,0.6978193146417445,"We implement the latent transition dynamics model of CCWM using the RSSM (Hafner et al., 2019),
+utilising a Gated Recurrent Unit (GRU) as the core component (Chung et al., 2014) in combination
+with multi-layer perceptrons (MLP). The RSSM is used for modelling the predictive inferences,
+qψ1(zt+1|zt, at) and qψ2(zt+1|zt, at, et+1), from Eq. 2. The context embedding function is given
+by a convolutional encoder that deterministically embeds the high-dimensional observation into
+a context vector. The dimension of the latent space is set to equal 32, there is low sensitivity of"
+REFERENCES,0.7009345794392523,Published as a conference paper at ICLR 2022
+REFERENCES,0.7040498442367601,"the performance with respect to the dimension of the latent embedding. The generative function
+qθ(Ot|zt) is implemented with the combination of an MLP and a deconvolution network (Zeiler
+et al., 2010), outputting the means of the Gaussian distributions for each pixel value of the decoded
+observation. The reward distribution ˆR(r|z) is modelled by an MLP, outputting a univariate Gaussian
+distribution. The supervision of the model learning is based on the ELBO and the bisimulation metric
+as described in Section 3."
+REFERENCES,0.7071651090342679,"In the implementation of our policy agent, A3C, we implement the critic (value network) using an
+MLP, with latent state inputs. The value network models a Gaussian distribution with means and
+variances. The policy network also describes a Gaussian distribution, with means and variances
+parameterised by an MLP. We used distributed actors for interacting with the environment for more
+efﬁciency collection of sampled episodes as in (Mnih et al., 2016). The value function is optimised by
+maximising the probability of the “ground-truth” values estimated by the lambda return (Sutton and
+Barto, 2018). The policy network is updated using policy gradient estimated based on generalised
+advantage estimation (GAE) ()schulman2015high."
+REFERENCES,0.7102803738317757,"We use the Adam optimiser for updating the parameters for the model, value function, and policy
+networks (Kingma and Ba, 2014)."
+REFERENCES,0.7133956386292835,"The speciﬁc conﬁgurations for the neural network implementations is summarised in Table 2. Note
+that the activation functions for all non-output layers are assumed to be ReLU activation function
+unless otherwise stated."
+REFERENCES,0.7165109034267912,"All neural network implementation are carried out using TensorFlow (Abadi et al., 2015) and
+TensorFlow Distributions (Dillon et al., 2017)."
+REFERENCES,0.719626168224299,"For the actual training, the batch size is chosen to be 64, and all sampled trajectories are taken
+to be 50 timesteps long. Greedy evaluation is performed every 104 training steps. The reported
+evaluation scores are averaged values over 5 random seeds. We adopt the same scheme for setting the
+action repeats equal to 2 across all tested environments as in (Hafner et al., 2020a). The parameter λ
+controlling the weights of the retrace auxiliary loss in Eq. 8 is set to 1.0. The discounting factor for
+the expected value function is set to 0.99."
+REFERENCES,0.7227414330218068,"The predictive reconstruction (Figure 4, Figure 10) is performed by ﬁrstly applying the dynamics
+model to the ﬁrst 5 frames of the trajectory, and starting from the posterior latent estimates at step 5,
+the latent predictions are performed given solely the action inputs, and the predicted latent estimates
+are then decoded back into the observable space. To ensure fair comparison, as well as to demonstrate
+that CCWM improves model learning beyond solely sample efﬁciency, the model of the baseline
+Dreamer is provided further training, until the training steps is twice the training steps of CCWM and
+the ﬁnal performance reaches a comparable score of CCWM. Speciﬁcally, for both the walker walk
+and cheetah run tasks, the Dreamer model used for reconstruction is provided with 2 × 106 training
+steps."
+REFERENCES,0.7258566978193146,"For the implementation details of the generalisability experiments in Section 5.3, we man-
+ually changed the corresponding settings of the agent in the task-dependent XML ﬁle (see
+e.g.,
+https://github.com/deepmind/dm_control/blob/master/dm_control/
+suite/cheetah.xml). We choose the semantically interpretable physical quantities that we
+hypothesise to alter the underlying task MDP, including changing mass from 14 to any one of the
+list: [6, 8, 10, 20], changing the friction constants from (0.4, 0.1, 0.1) to any element of the list:
+{(i, j, k)|i ∈{0.6, 0.8}, j ∈{0.4, 0.5}, k ∈{0.3, 0.4}}, changing the stiffness constants from 8
+to any of the element in {2, 6, 10}. We directly evaluate (without any further training) the trained
+CCWM and Dreamer on the original task structure on the tasks corresponding to each of the above
+changes and any combination of the individual changes. The change in reward setting is merely a
+constant reward reshaping across all transitions, and should not result in any difference in the task
+dynamics, hence the evaluations, and we use this as the sanity check and a baseline."
+REFERENCES,0.7289719626168224,"Note that in Eq. 7, we follow (Zhang et al., 2020) to replace the 1-Wasserstein distance with the
+2-Wasserstein distance, since the 2-Wasserstein distance between two Gaussians has closed-form
+expression:
+W2(N(µi, Σi), N(µj, Σj) = ||µi −µj||2
+2 + ||Σ1/2
+i
+−Σ1/2
+j
+||2
+F
+(11)"
+REFERENCES,0.7320872274143302,"where || · ||F is the matrix Frobenius norm. This admits analytical computation instead of having
+sample from the joint distribution hence reducing the variance of loss function."
+REFERENCES,0.735202492211838,Published as a conference paper at ICLR 2022
+REFERENCES,0.7383177570093458,"COMPONENT
+ATTRIBUTE
+VALUE"
+REFERENCES,0.7414330218068536,"RSSM
+INTERNAL STATE DIMENSION
+256
+MLP LAYER 1 UNITS
+256
+MLP LAYER 2 UNITS
+64"
+REFERENCES,0.7445482866043613,"EMBEDDING FUNCTION
+CONV LAYER 1 NUMBER OF FILTERS
+32
+CONV LAYER 1 KERNEL SIZE
+4
+CONV LAYER 2 NUMBER OF FILTERS
+64
+CONV LAYER 2 KERNEL SIZE
+4
+CONV LAYER 3 NUMBER OF FILTERS
+128
+CONV LAYER 3 KERNEL SIZE
+4
+CONV LAYER 4 NUMBER OF FILTERS
+256
+CONV LAYER 4 KERNEL SIZE
+4
+FINAL OUTPUT OPERATION
+CONCATENATION"
+REFERENCES,0.7476635514018691,"GENERATIVE MODEL
+MLP LAYER 1 NUMBER OF UNITS
+1024
+DECONVOLUTION LAYER 1 NUMBER OF FILTERS
+128
+DECONVOLUTION LAYER 1 KERNEL SIZE
+5
+DECONVOLUTION LAYER 2 NUMBER OF FILTERS
+64
+DECONVOLUTION LAYER 2 KERNEL SIZE
+5
+DECONVOLUTION LAYER 3 NUMBER OF FILTERS
+32
+DECONVOLUTION LAYER 3 KERNEL SIZE
+6
+DECONVOLUTION LAYER 4 NUMBER OF FILTERS
+3
+DECONVOLUTION LAYER 4 KERNEL SIZE
+6"
+REFERENCES,0.7507788161993769,"REWARD MODEL
+MLP LAYER 1 NUMBER OF UNITS
+512
+MLP LAYER 2 NUMBER OF UNITS
+512
+MLP LAYER 3 NUMBER OF UNITS
+1"
+REFERENCES,0.7538940809968847,"VALUE MODEL
+MLP LAYER 1 NUMBER OF UNITS
+512
+MLP LAYER 2 NUMBER OF UNITS
+512
+MLP LAYER 3 NUMBER OF UNITS
+512
+MLP LAYER 4 NUMBER OF UNITS
+1"
+REFERENCES,0.7570093457943925,"POLICY MODEL
+ALL FULLY CONNECTED LAYERS ACTIVATION
+ELU
+MLP LAYER 1 NUMBER OF UNITS
+512
+MLP LAYER 2 NUMBER OF UNITS
+512
+MLP LAYER 3 NUMBER OF UNITS
+512
+MLP LAYER 4 NUMBER OF UNITS
+512
+MLP LAYER 5 NUMBER OF UNITS
+2"
+REFERENCES,0.7601246105919003,"ADAM OPTIMISER
+LEARNING RATE FOR MODEL LEARNING
+6 × 10−4"
+REFERENCES,0.7632398753894081,"LEARNING RATE FOR VALUE MODEL
+8 × 10−5"
+REFERENCES,0.7663551401869159,"LEARNING RATE FOR POLICY MODEL
+8 × 10−5"
+REFERENCES,0.7694704049844237,Table 2: Conﬁgurations for the neural network implementations of CCWM.
+REFERENCES,0.7725856697819314,"For our implementation of the adaptive truncation technique (Section 3.3), the associated parameters
+that require pre-speciﬁcation are the detection threshold, η, adaptive truncation sliding window size,
+S. There are also the optional parameters, the number of states preceding the detected changes to be
+omitted from ”learning via retracing” (which is set to equal to S by default, see Line 9 in Algorithm 1
+and Section 3.3), τ, and the number of initial steps to be omitted from adaptive truncation (due to
+under-training of the critic, which is set to 0 by default), ξ. The default values for the parameters
+we used for the empirical evaluation shown in Figure 5 are: η = 0.10, S = 10, τ = 5, ξ = 1 × 105.
+The hyperparameters are determined through standard grid search, and we leave the automatic
+determination of the parameters associated with adaptive truncation to future work."
+REFERENCES,0.7757009345794392,"The python implementation of CCWM can be found at https://github.com/changmin-yu/
+CCWM_code."
+REFERENCES,0.778816199376947,Published as a conference paper at ICLR 2022
+REFERENCES,0.7819314641744548,"20
+10
+0
+10
+20 20 10 0 10 20"
+REFERENCES,0.7850467289719626,true states
+REFERENCES,0.7881619937694704,"20
+10
+0
+10
+20 20 10 0 10 20"
+REFERENCES,0.7912772585669782,retraced states
+REFERENCES,0.794392523364486,"0
+100
+200
+300
+400
+(a)"
+REFERENCES,0.7975077881619937,"6
+5
+4
+3
+2
+1
+0 2 4 6 8 0 1"
+REFERENCES,0.8006230529595015,"2
+3
+4
+5
+6 7 8 9 10"
+REFERENCES,0.8037383177570093,"11
+12
+13 14 15 16"
+REFERENCES,0.8068535825545171,"17
+18
+19"
+REFERENCES,0.8099688473520249,"20
+21
+22 23 24 25 26"
+REFERENCES,0.8130841121495327,"27
+28
+29
+30 31"
+REFERENCES,0.8161993769470405,"32
+33
+34
+35
+36
+37 38
+39 40 41 42"
+REFERENCES,0.8193146417445483,"43
+44
+45
+46 47 48"
+REFERENCES,0.822429906542056,"49
+50
+51
+52
+53
+54 55 56 57"
+REFERENCES,0.8255451713395638,"58
+59
+60 61 62 63 64 65"
+REFERENCES,0.8286604361370716,"66
+67
+68
+69 70 71 72 73 74"
+REFERENCES,0.8317757009345794,true states
+REFERENCES,0.8348909657320872,"4
+2
+0
+2
+4 0 2 4 6 75 74 73
+72 71 70 69"
+REFERENCES,0.838006230529595,"68
+67
+66
+65
+64
+63 62 61"
+REFERENCES,0.8411214953271028,"60 59
+58
+57
+56
+55 54 53 52"
+REFERENCES,0.8442367601246106,"51
+50
+49
+48 47 46 45 44 43
+42 41 40 39 38 37 36"
+REFERENCES,0.8473520249221184,"35
+34
+33
+32 31 30 2928 27 26 25
+24 23 22 21"
+REFERENCES,0.8504672897196262,"20
+19
+18
+17
+16
+15 14 13"
+REFERENCES,0.8535825545171339,"12 11
+109 8
+7 6 5 4 3
+2
+1"
+REFERENCES,0.8566978193146417,retraced states
+REFERENCES,0.8598130841121495,"0
+10
+20
+30
+40
+50
+60
+70
+(b)"
+REFERENCES,0.8629283489096573,"Figure 7: Visualisation of similarity between the ground-truth states and retraced states using
+tSNE. The two-dimensional embeddings for a 500-step trajectory (a) and a 76-step subtrajectory (b)
+is shown. Color of the scatters indicates the temporal ordering of the states within the trajectories."
+REFERENCES,0.8660436137071651,"30
+20
+10
+0
+10
+20
+30 40 30 20 10 0 10 20 30 0 100 200 300 400"
+REFERENCES,0.8691588785046729,"Figure 8: Visualisation of state representations along the same trajectory in Hopper Stand task.
+We show the TSNE-embeddings of the state representations over a trajectory of length 500 steps in
+Hopper Stand task, with a standard CCWM agent (without adaptive truncation) that has received
+2×105 training steps. Clear clustered structured can be observed in the visualisation, which indicates:
+(a) the existence of ”irreversible” transitions, and (b) the majority of the transitions are ”reversible”,
+hence ”learning via retracing” should still apply to facilitate improved sample efﬁciency."
+REFERENCES,0.8722741433021807,"75
+50
+25
+0
+25
+50
+75 75 50 25 0 25 50 75 5.5 6.0 6.5 7.0 7.5 8.0"
+REFERENCES,0.8753894080996885,"100
+50
+0
+50
+100 75 50 25 0 25 50 75 90 95 100 105 110 115"
+REFERENCES,0.8785046728971962,"Figure 9: Visualisation of the structure of the state representations with respect to the Q-values.
+We show the TSNE-embeddings of the state representations of 10000 randomly sampled states (from
+the cached replay buffer) of CCWM (left) and Dreamer (right) in the Walker Walk task. Visual
+inspections show that CCWM leads to more disentangled state representations with respect to the
+state-values, hence potentially supports stronger generalisability (Higgins et al., 2016)."
+REFERENCES,0.881619937694704,Published as a conference paper at ICLR 2022
+REFERENCES,0.8847352024922118,"True
+CCWM
+Dreamer"
+REFERENCES,0.8878504672897196,"Context
+10
+15
+20
+25
+30
+35
+40
+45
+50"
+REFERENCES,0.8909657320872274,"True
+CCWM
+Dreamer"
+REFERENCES,0.8940809968847352,"walker walk
+cheetah run 6"
+REFERENCES,0.897196261682243,"Figure 10: Qualitative comparison of long-range predictive reconstruction of CCWM and
+Dreamer. Predictive rollouts over 45 time-steps given the actions are computed using the rep-
+resentation models. Comparing to Dreamer, CCWM consistently generates more accurate predictive
+reconstructions over longer time spans. CCWM generates accurate predictions up to ∼18 steps on
+Walker task, and ∼35 steps on Cheetah task; Dreamer generates accurate predictions up to ∼8 steps
+on Walker task, and ∼15 steps on Cheetah task (evaluated over 5 randomly sampled trajectories)."
+REFERENCES,0.9003115264797508,"E
+FURTHER INVESTIGATION OF THE EFFECTS OF “LEARNING VIA
+RETRACING” IN THE SAMPLE EFFICIENCY OF LEARNING"
+REFERENCES,0.9034267912772586,"In order to demonstrate that “learning via retracing” indeed brings additional “valid” supervision
+signals for model learning, we need to examine whether the retracing operation is correctly learned.
+In Figure 7 we show the t-SNE embeddings of the true and retraced latent states over a trajectory
+of 500 steps of the trained agent on the cheetah run task (Van der Maaten and Hinton, 2008). We
+observe a similar dominant ring structure in both embeddings. This matches our intuition, since
+during running, the simulated cheetah repeats its states periodically to resume running at a high speed.
+This is more clearly observed from a sub-trajectory towards the end of the entire episode in Figure 7b,
+where most states are densely distributed on both sides of the ring and more loosely distributed on the
+paths connecting the two sides for both the original and retraced states. Moreover, during the early
+stage of the episode (darker dots in Figure 7a), the agent starts to accelerate from stationary and the
+states of the agent are periodic in nature but differs from the states when the agent is running at full
+speed. Such early-phase structure is correctly captured by the retracing operation. Collectively these
+evidence support that the retracing is correctly learned hence provides useful supervision signals for
+model training."
+REFERENCES,0.9065420560747663,"F
+LONG-RANGE PREDICTION RECONSTRUCTION"
+REFERENCES,0.9096573208722741,"In Figure 10, we show the complete 45-step predictive reconstructions for CCWM and Dreamer on
+“walker walk” and “cheetah run” tasks. We see that CCWM is able to retain accurate predictions
+over the entire 45 predictive time-steps in the cheetah task, whereas Dreamer fails to do so. By
+looking more carefully at Figure 10, latent rollouts in the embedding space learned by CCWM
+yield less accurate predictions for the “irrecoverable” states (e.g., when the agent is falling, see
+Section 5.4 for further discussion). This property of the learned representation enables “task-aware
+planning”, i.e., the behaviour learning agent is trained to acquire more precise control policy such that
+the “irrecoverable” states that might hinder the overall learning process are minimally encountered,
+leading to improved efﬁciency and quality of learning."
+REFERENCES,0.9127725856697819,Published as a conference paper at ICLR 2022
+REFERENCES,0.9158878504672897,"0.2
+0.4
+0.6
+0.8
+1.0
+1e6 0 250 500 750 1000"
+REFERENCES,0.9190031152647975,Evaluation Return
+REFERENCES,0.9221183800623053,Cheetah Run
+REFERENCES,0.9252336448598131,"0.5
+1.0
+1.5
+2.0
+1e6 0 250 500 750"
+REFERENCES,0.9283489096573209,Finger Spin
+REFERENCES,0.9314641744548287,"1
+2
+3
+4
+5
+1e5 0 50 100 150 200"
+REFERENCES,0.9345794392523364,Hopper Hop
+REFERENCES,0.9376947040498442,"0.2
+0.4
+0.6
+0.8
+1.0
+1e6 0 250 500 750 1000"
+REFERENCES,0.940809968847352,Hopper Stand
+REFERENCES,0.9439252336448598,"2
+4
+6
+8
+Steps
+1e5 0 200 400"
+REFERENCES,0.9470404984423676,Evaluation Return
+REFERENCES,0.9501557632398754,Quadruped Run
+REFERENCES,0.9532710280373832,"2
+4
+6
+8
+Steps
+1e5 0 500 1000"
+REFERENCES,0.956386292834891,Reacher Easy
+REFERENCES,0.9595015576323987,"0.2
+0.4
+0.6
+0.8
+1.0
+Steps
+1e6 0 200 400"
+REFERENCES,0.9626168224299065,Walker Run
+REFERENCES,0.9657320872274143,"0.2
+0.4
+0.6
+0.8
+1.0
+Steps
+1e6 0 250 500 750 1000"
+REFERENCES,0.9688473520249221,Walker Walk
+REFERENCES,0.9719626168224299,"L2
+CCWM-A3C
+reconstruction"
+REFERENCES,0.9750778816199377,"Figure 11: Full ablation studies of the retracing loss function. CCWM with bisimulation metrics
+as the retracing loss function consistently outperforms the alternatives using the L2 and reconstruction
+retracing error."
+REFERENCES,0.9781931464174455,"CHANGED COMPONENTS
+CCWM
+DREAMER
+P-VALUE
+SIGNIFICANT?
+(MEAN ±1 S.D.)
+(MEAN ±1 S.D.)
+(3 S.F.)
+(α = 0.01)"
+REFERENCES,0.9813084112149533,"R
+630.40 ± 6.49
+629.00 ± 47.01
+5.22 × 10−1
+NO
+R + M
+635.37 ± 40.12
+597.43 ± 87.68
+7.84 × 10−2
+NO
+R + F
+643.58 ± 9.29
+649.27 ± 3.96
+9.76 × 10−1
+NO
+R + S
+634.80 ± 10.92
+646.07 ± 7.78
+9.98 × 10−1
+NO
+R + M + F
+628.07 ± 36.95
+468.82 ± 94.73
+7.27 × 10−6
+YES
+R +M + S + F
+641.89 ± 28.67
+562.58 ± 93.91
+3.97 × 10−3
+YES"
+REFERENCES,0.9844236760124611,"Table 3: Evaluation of trained CCWM and Dreamer on the ability of zero-shot transfer in cheetah run
+tasks with different conﬁgurations. (R: Reward; M: Mass; F: Friction; S: Stiffness.)"
+REFERENCES,0.9875389408099688,"G
+FULL ABLATION STUDIES ON THE RETRACE LOSS FUNCTION"
+REFERENCES,0.9906542056074766,"In Figure 11, we show the full ablation studies of the retracing loss function in CCWM. We observe
+that the bisimulation metric retracing loss function consistently outperforms the other alternatives (L2
+and reconstruction error). This result conforms with our hypothesis that cycle-consistency supervision
+given bisimulation metrics poses a stronger constraint on the learning of the representation, leading
+to a learned representation that better respect the cycle-consistency properties of the environment."
+REFERENCES,0.9937694704049844,"H
+FULL RESULTS OF ZERO-SHOT TRANSFER"
+REFERENCES,0.9968847352024922,"Please refer to Table 3 for full results on the zero-shot transfer experiment. Note that the R-changes
+only rescale the reward function by a constant, hence should not count towards a transfer task."

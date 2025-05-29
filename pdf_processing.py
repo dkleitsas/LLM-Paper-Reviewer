@@ -100,13 +100,13 @@ with open(filename, mode="a", newline="", encoding="utf-8") as file:
                 app_order += 1
 """
 
-folder_path = "paper_pdfs/NeurIPS/rejected/"
+folder_path = "paper_pdfs/ICLR/rejected/"
 
 for filename in os.listdir(folder_path):
     if filename.endswith(".pdf"):
         file_path = os.path.join(folder_path, filename)
         print(f"Processing {filename}...")
-        output_csv = f"paper_csvs/NeurIPS/rejected/{filename.replace('.pdf', '.csv')}"
+        output_csv = f"paper_csvs/ICLR/rejected/{filename.replace('.pdf', '.csv')}"
         with open(output_csv, mode="w", newline="", encoding="utf-8") as file:
             writer = csv.writer(file)
             writer.writerow(["Section", "Section Appearance Order", "Paragraph"])

@@ -1,0 +1,1678 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.0029411764705882353,"Neural networks have matched or surpassed human abilities in many tasks that
+humans solve quickly and unconsciously, i.e., via Kahneman’s “System 1”, but
+have not been as successful when applied to “System 2” tasks that involve con-
+scious multi-step reasoning. In this work, we argue that the kind of training that
+works for System 1 tasks is not sufﬁcient for System 2 tasks, propose an alterna-
+tive, and empirically demonstrate its effectiveness. Speciﬁcally, while learning a
+direct mapping from inputs to outputs is feasible for System 1 tasks, we argue that
+algorithmic System 2 tasks can only be solved by learning a mapping from in-
+puts to outputs through a series of intermediate steps. We ﬁrst show that by using
+enough intermediate steps a 1-layer 1-head Transformer can in principle compute
+any ﬁnite function, proving the generality of the approach. We then show em-
+pirically that a 1-layer 1-head Transformer cannot learn to compute the sum of
+binary numbers directly from the inputs, but is able to compute the sum when
+trained to ﬁrst generate a series of intermediate results. This demonstrates, at a
+small scale, how a ﬁxed-size neural network can lack the expressivity to encode
+the direct input-output mapping for an algorithmic task and yet be fully capa-
+ble of computing the outputs through intermediate steps. Finally, we show that
+a Frozen Pretrained Transformer is able to learn binary addition when trained to
+compute the carry bits before the sum, while it fails to learn the task without using
+intermediates. These results indicate that explicitly guiding the neural networks
+through the intermediate computations can be an effective approach for tackling
+algorithmic tasks."
+INTRODUCTION,0.0058823529411764705,"1
+INTRODUCTION"
+INTRODUCTION,0.008823529411764706,"Daniel Kahneman has pointed out that there is a fundamental difference in how humans solve the
+following two tasks (Kahneman, 2011):"
+INTRODUCTION,0.011764705882352941,"(1) complete the phrase “bread and ...”;
+(2) complete the equation “17 × 24 = ...”."
+INTRODUCTION,0.014705882352941176,"The answer to (1) comes to mind instantly, with no mental effort, and is a result of a computation
+that one is not consciously aware of and could not explain. The answer to (2) requires time and
+effort to come up with, and is a result of a sequence of computations that one consciously carries
+out. The former mode of cognition is what Kahneman calls System 1, the latter System 2."
+INTRODUCTION,0.01764705882352941,"We currently have separate tools for solving each of these two kinds of problems on a computer, but
+it is not yet clear how to build a single system capable of both modes of cognition simultaneously.
+Many tasks that exercise System 2 in humans involve executing some fully-speciﬁed algorithm and
+thus are quite straightforward to solve using conventional computer programs. However, classical
+programming is not applicable to System 1 tasks as these typically correspond to functions that we
+do not know how to implement. Instead, System 1 tasks are usually tackled by approximating the
+target functions from observed input-output pairs. Whether such a learning-based approach could
+be successfully extended to System 2 tasks is an open question, and one that we aim to explore in
+this paper."
+INTRODUCTION,0.020588235294117647,"We argue that the classical System 1 paradigm of training neural networks to approximate functions
+from inputs and outputs corresponding to a given task is not a scalable approach for tackling tasks
+from the System 2 domain. We claim that, given only inputs and outputs, neural networks will"
+INTRODUCTION,0.023529411764705882,Under review as a conference paper at ICLR 2022
+INTRODUCTION,0.026470588235294117,"not receive enough supervision to converge to a solution when trained to perform algorithmic tasks
+that humans solve via System 2. To circumvent this, we propose to supplement the training data
+with intermediate results that would be helpful to compute before arriving at the ﬁnal output. By
+modifying the training data in this way, we are effectively changing the training objective — instead
+of having to learn any arbitrary way of mapping inputs to outputs, the neural networks are now
+trained to compute the outputs from the inputs through a particular sequence of intermediate steps.
+We hypothesize that such additional guidance might be necessary in order for neural networks to
+learn algorithmic tasks, and we empirically evaluate this hypothesis."
+INTRODUCTION,0.029411764705882353,"Much of existing work in applying neural networks for System 2 tasks has been focused on making
+neural architectures more aligned with the execution of algorithms. While ﬁne-tuning the model
+architectures may ultimately lead to superior System 2 capabilities (after all, the architecture of a
+calculator allows it to perform arithmetic at a super-human level), we instead explore the challenge
+of extending the capabilities of existing state-of-the-art System 1 models — namely, the Trans-
+former — towards the System 2 domain. In particular, we take inspiration from the human ability
+to solve algorithmic tasks by writing down symbols on paper and propose to formulate such tasks
+as sequence-to-sequence problems where the target sequence includes both the outputs and all the
+intermediate symbols that a human would write (or more). That is, instead of modifying the models,
+we experiment with modifying the data. Our main contributions can be summarized as follows:"
+INTRODUCTION,0.03235294117647059,"• We show that it is possible to hand-code a 1-layer 1-head Transformer to compute any ﬁnite
+function if enough intermediate steps are used;"
+INTRODUCTION,0.03529411764705882,"• We show that a 1-layer 1-head Transformer can be trained to perform binary addition if
+the target sequences include intermediate results, whereas it fails to learn the task when
+predicting the outputs directly from the inputs; and"
+INTRODUCTION,0.03823529411764706,"• We show that a Frozen Pretrained Transformer can be trained to perform binary addition
+if the target sequences include intermediate results, whereas it fails to learn the task when
+predicting the outputs directly from the inputs."
+RELATED WORK,0.041176470588235294,"2
+RELATED WORK"
+RELATED WORK,0.04411764705882353,"The need of bridging the gap between System 1 and System 2 capabilities in current deep learning
+models has recently been emphasized by Yoshua Bengio (Bengio, 2019; Bengio et al., 2021). The
+work of Bengio and colleagues addresses the higher-level cognition in its broadest sense, seeking to
+model and incorporate into current systems concepts such as consciousness (Bengio, 2017), causal-
+ity (Bengio et al., 2020), agency (Thomas et al., 2018), and global workspace (Goyal et al., 2021). In
+Goyal & Bengio (2020), they question the paradigm of classical statistical learning and propose to
+shift from training models on curated datasets towards training agents in complex non-stationary en-
+vironments. In contrast to that, our approach lies within a conventional learning framework (namely,
+sequence-to-sequence modeling with Transformers), and addresses System 2 in a slightly narrower
+sense (namely, as algorithmic execution)."
+RELATED WORK,0.047058823529411764,"A considerable fraction of recent work in applying neural networks for algorithmic tasks has been
+concerned with modifying or augmenting neural architectures to make them more suitable for algo-
+rithmic execution. One very common approach involves trying to bring components from classical
+computer architecture into the neural setting: Neural Turing Machines give neural networks access
+to dynamic external memory (Graves et al., 2014; 2016), Stack-augmented RNNs augment the net-
+works with an inﬁnite pushdown stack (Joulin & Mikolov, 2015), Neural Random Access Machines
+use registers and introduce the ability to manipulate and dereference pointers (Kurach et al., 2016),
+while Neural Arithmetic Logic Modules represent neural versions of the ALU (Trask et al., 2018;
+Madsen & Johansen, 2020). A parallel but closely related line of research frames these new kinds of
+augmented architectures as neural controllers endowed with access to external interfaces and applies
+reinforcement learning techniques to train them to solve algorithmic tasks by interacting with the
+interfaces (Zaremba & Sutskever, 2015; Zaremba et al., 2016)."
+RELATED WORK,0.05,"The approach of using variable amount of computation per input, known as Adaptive Computation
+Time (ACT), has been introduced by Graves (2016). Universal Transformers (Dehghani et al., 2019)
+integrate ACT into the Transformer architecture, allowing each output symbol to be a result of a
+variable number of applications of a single Transformer layer. While these works are, like ours,"
+RELATED WORK,0.052941176470588235,Under review as a conference paper at ICLR 2022
+RELATED WORK,0.05588235294117647,"motivated by the apparent necessity of intermediate processing in certain tasks, they use learned
+ponder time and learned ponder content whereas our work uses given ponder time and given ponder
+content. The main advantage of learned ponder time and content is that the model is free to discover
+and learn to perform the intermediate computations that it ﬁnds most useful. This also means that the
+researcher does not need to know the correct intermediate steps to train the model and can thus tackle
+a potentially larger class of problems. The main disadvantage of learned ponder time and content
+is that the amount of supervision per forward pass decreases as the model uses more intermediate
+steps, and the signal can quickly become too weak for the model to train at all. It is also worth
+noting that intermediate steps are typically given when humans are taught to perform algorithmic
+tasks (rather than being asked to infer intermediate computations by just looking at input-output
+pairs), which might be an important argument for given ponder content."
+RELATED WORK,0.058823529411764705,"The idea of providing supervision beyond input-output examples has already appeared in several
+projects, although, in our view, it still remains largely underexplored. Reed & de Freitas (2016) train
+Neural Programmer-Interpreters by providing supervision on the correct action sequences (execution
+traces) of the recurrent controller, Mirman et al. (2018) train differential Neural Computational
+Machines with extra supervision on the movements of the read-write heads, and Mirman et al. (2018)
+train Neural Execution Engines with extra supervision on the attention masks. While the added
+training signal does lead to better sample efﬁciency and improved generalization, a major limitation
+of all of these approaches, as acknowledged by Mirman et al. (2018), is that the extra supervision
+needs to be highly specialized as it applies to very speciﬁc components of each architecture. Our
+approach of supplementing the target sequences with intermediate results is completely architecture-
+independent and thus does not share this limitation. Veliˇckovi´c et al. (2020) use extra supervision at
+the data level as well, though their work is focused speciﬁcally on tasks involving graph-structured
+inputs and is thus based on neural network architectures that are tailored for processing graphs. In
+contrast to that, we adopt a general sequence-to-sequence modeling framework, with an intention to
+imitate a human executing an algorithm on a piece of paper. Our main goal is to explore how and
+whether powerful existing System 1 models could be used in the System 2 domain, rather than to
+ﬁnd a neural architecture that would be most suitable for executing algorithms. We therefore use
+vanilla decoder-only Transformers in our experiments."
+MOTIVATION,0.061764705882352944,"3
+MOTIVATION"
+MOTIVATION,0.06470588235294118,"The distinguishing characteristic of System 1 tasks is that they can be solved instantly and uncon-
+sciously, in something akin to a single “forward pass” through a human neural network. It thus
+seems plausible that all input-output mappings corresponding to System 1 tasks are in principle
+computable via a single forward pass through a sufﬁciently large artiﬁcial neural network. Recent
+success in deep learning shows that training bigger models on more data indeed makes it possible to
+solve more and more System 1 tasks, and it is not unreasonable to expect this trend to continue."
+MOTIVATION,0.06764705882352941,"When it comes to solving System 2 tasks, however, scaling up appears to be a dead-end. Consider
+the problem of completing the sentence “The ﬁrst digit of the n-th Fibonacci number is ...”, where
+n is replaced by some positive integer. Since a single forward pass through a neural network (no
+matter how large) involves a constant amount of computation, there will be some number N ∈N
+such that for all n > N the correct output is not computable. It follows that the only viable approach
+for solving these kinds of algorithmic tasks is to arrive at the output through intermediate steps."
+MOTIVATION,0.07058823529411765,"The main value of introducing intermediate steps is that it gives control over the level of model
+expressivity required to implement a solution to a particular task. No matter how many atomic
+operations separate the outputs from the inputs in a given algorithmic problem, performing those
+exact operations in sequence would make each execution step only as complex as a single atomic
+operation. This is arguably the main reason why a human brain can “implement” something like
+integer multiplication even though it does not contain a circuit for multiplying arbitrarily large num-
+bers directly — the key is that a complex problem can be decomposed into simpler ones until each
+sub-problem becomes solvable “atomically” via System 1. By the same token, a neural network that
+is not expressive enough to compute some output through 0 intermediate steps may be expressive
+enough to compute the same output through l intermediate steps for some l > 0, since each of the l
+steps would involve computing a simpler function. Since many System 2 tasks are algorithmic, their
+outputs can be made arbitrarily distant from the inputs (in terms of the number of atomic operations"
+MOTIVATION,0.07352941176470588,Under review as a conference paper at ICLR 2022
+MOTIVATION,0.07647058823529412,"separating the two), which implies that step-by-step processing is the only scalable approach for
+solving them."
+MOTIVATION,0.07941176470588235,"The necessity of intermediate processing does not by itself imply the amount of guidance that the
+neural networks should receive during training. The exact intermediate computations can either
+remain unspeciﬁed and be inferred by the model, or be ﬁxed and provided as part of the training
+data. Although there are pros and cons to both alternatives (as we have outlined in section 2),
+we see the latter as more promising and choose to include the intermediate results in the target
+sequences used during training. Our position is based on the following three observations: ﬁrst,
+it is natural to provide complete supervision over the intermediate computations when teaching
+humans to perform algorithmic tasks; second, learned intermediates create the vanishing supervision
+problem (the longer the ponder time, the less training signal is received per forward pass); and third,
+for all algorithmic tasks the exact intermediate results are fully known anyway. While manually
+increasing the amount of supervision goes against the tradition of minimizing the reliance on expert
+knowledge that arguably lead to most of the recent achievements in the System 1 domain, System 2
+tasks represent a structurally different class of problems for which a different set of constraints may
+apply."
+MOTIVATION,0.08235294117647059,The arguments laid out above have the following important implications:
+MOTIVATION,0.08529411764705883,"• Expressiveness: a neural network implementing only some very basic atomic operations
+should in principle be capable of expressing arbitrarily complex functions as long as enough
+intermediate steps are used;
+• Training: a neural network that fails to learn some algorithmic task when trained without
+intermediate processing may be able to learn the same task if enough intermediate steps are
+used; and
+• Composability: a neural network that is pretrained on some general-purpose task and does
+not contain a circuit implementing some algorithmic computation directly may nevertheless
+be able to solve the same task by computing the output through simpler operations which
+it does contain circuits for."
+MOTIVATION,0.08823529411764706,"We establish the ﬁrst of these implications in Section 4 and we empirically validate the latter two
+in Sections 5 and 6. Even though demonstrating a single example where a statement holds does not
+prove it in general, our empirical results conﬁrm that the hypothesized phenomena do occur in the
+particular contexts we considered in this work and thus serve as evidence in favor of the latter two
+implications."
+EXPRESSIVENESS,0.09117647058823529,"4
+EXPRESSIVENESS"
+EXPRESSIVENESS,0.09411764705882353,"Human beings are able to solve algorithmic problems, such as integer multiplication, by writing
+down sequences of symbols, usually with outputs at the end, where each new symbol is a result
+of some basic operation applied to some of the symbols preceding it. Intuitively, it seems that the
+Transformer architecture should have just the right ingredients for emulating this kind of processing:
+it is typically used for generating sequences of symbols by iteratively predicting the next one, and its
+attention mechanism allows each predicted symbol to be a function of selected preceding ones. We
+prove this intuition by demonstrating that it is possible to construct a 1-layer 1-head Transformer to
+compute any ﬁnite function through intermediate steps by emulating NOR circuits. The full details
+are included in Appendix A, but the general argument goes as follows:"
+EXPRESSIVENESS,0.09705882352941177,"(1) Since NOR is a universal gate, for every ﬁnite function f : {0, 1}n →{0, 1}m there is a
+Boolean circuit made up of NOR gates that computes f.
+(2) By sorting the gates of such a NOR circuit according to their topological order, we can rep-
+resent the circuit as a sequence of binary symbols (s1, . . . , sn+l+m), where (s1, . . . , sn) are
+the inputs, (sn+l+1, . . . , sn+l+m) are the outputs, and, for each i > n, si = NOR(sji, ski)
+with ji, ki < i.
+(3) Given (s1, . . . , sn), we can correctly complete the sequence with a 1-layer 1-head decoder-
+only Transformer if its attention matrix A satisﬁes Ai,z = 0.5 if z ∈{ji, ki} and Ai,z = 0
+otherwise (the model attends to the correct pair of symbols at each step) and the position-
+wise feed-forward module computes the NOR of the two symbols attended to."
+EXPRESSIVENESS,0.1,Under review as a conference paper at ICLR 2022 0.0 0.2 0.4 0.6 0.8 1.0
+EXPRESSIVENESS,0.10294117647058823,(a) representation 1 0.0 0.2 0.4 0.6 0.8 1.0
+EXPRESSIVENESS,0.10588235294117647,(b) representation 2
+EXPRESSIVENESS,0.10882352941176471,"Figure 1: Attention matrices from the hand-coded Transformer implementing binary addition with
+n = 8."
+EXPRESSIVENESS,0.11176470588235295,"We present a concrete setting of all of the weights of a 1-layer 1-head decoder-only Transformer that
+makes (3) possible in Appendix A, conﬁrming the ﬁrst implication from Section 3."
+EXPRESSIVENESS,0.11470588235294117,"While implementing NOR gates is sufﬁcient for the proof due to the universality of the NOR gate,
+a slight modiﬁcation to the weights of the feed-forward module allows us to choose between NOR,
+AND, and XOR operations at each position in the output sequence. As a concrete example, we
+used this construction to implement addition of ﬁxed-length bit strings (with guaranteed perfect
+accuracy), proving that addition, with the right number of intermediates, is in the space of programs
+computable by a 1-layer 1-head Transformer. In particular, for each position i along the inputs,
+letting ai and bi denote the input bits and ci denote the carry bit (obtained from the previous position,
+i.e., from the sum ai−1 + bi−1 + ci−1), we compute"
+EXPRESSIVENESS,0.11764705882352941,"di = XOR(ai, bi)
+ei = XOR(ci, di)
+fi = AND(ai, bi)
+gi = AND(ci, di)
+ci+1 = XOR(fi, gi)"
+EXPRESSIVENESS,0.12058823529411765,"where ei is the i-th bit of the sum and ci+1 is the carry bit for the next position (deﬁning c1 = 0).
+We can thus represent the addition of, say, 3-bit numbers a1a2a3 and b1b2b3 (in little-endian order,
+where a1 is the least signiﬁcant bit) as the sequence"
+EXPRESSIVENESS,0.12352941176470589,"(representation 1)
+a1a2a3b1b2b3c1d1e1f1g2c2d2e2f2g2c3d3e3f3g3c4,"
+EXPRESSIVENESS,0.1264705882352941,"or, by reordering the symbols to put the sum at the end and intermediates in between the inputs and
+the outputs,"
+EXPRESSIVENESS,0.12941176470588237,"(representation 2)
+a1a2a3b1b2b3
+|
+{z
+}
+inputs"
+EXPRESSIVENESS,0.1323529411764706,"d1d2d3f1f2f3c1g1c2g2c3g3c4
+|
+{z
+}
+intermediates"
+EXPRESSIVENESS,0.13529411764705881,"e1e2e3
+| {z }
+outputs
+,"
+EXPRESSIVENESS,0.13823529411764707,"which is the representation that we actually use in our training experiments. Figure 1 shows the
+attention matrices corresponding to both representations (row i of the attention matrix indicates
+which symbols are attended to when predicting the i-th symbol from the output sequence). As can
+be veriﬁed from the ﬁgure, the hand-coded Transformer does indeed implement the correct attention
+patterns corresponding to two different representations of the Boolean circuit for binary addition."
+EXPRESSIVENESS,0.1411764705882353,Under review as a conference paper at ICLR 2022
+TRAINING,0.14411764705882352,"5
+TRAINING"
+TRAINING,0.14705882352941177,"One of our core hypotheses in this work is that in many System 2 tasks the outputs will be too many
+atomic operations away from the inputs to be computable in a single forward pass, regardless of how
+much the neural networks are scaled up, and that introducing intermediate computation is one way of
+solving the issue. If true, this phenomenon should manifest at small scale as well: a shallow model
+may lack the expressivity to learn a direct mapping from inputs to outputs for a relatively simple
+task but be expressive enough to learn the mapping from inputs to outputs through intermediates, as
+decomposing the problem would reduce the minimum required complexity of a single operation to
+the point where each individual step becomes computable in a single forward pass. We evaluate this
+hypothesis empirically by training a 1-layer 1-head decoder-only Transformer on the task of binary
+addition. (We use the minGPT implementation for our experiments (Karpathy, 2020).)"
+TRAINING,0.15,"We chose to investigate binary addition primarily because of its simplicity. Conveniently, there
+are very clear candidates for what intermediate computations to use – e.g., we can supplement the
+training data with the carry bits (which are usually explicitly computed when a human is adding
+numbers on a piece of paper), or the values of all non-output gates in a Boolean circuit implementing
+binary addition (which is what we did in a previous section and do here as well). This means that,
+even if the task is decomposed into the most elementary operations (i.e., binary Boolean gates), each
+output symbol would be associated with at most 4 intermediate computations and so the gap between
+the inputs and outputs that is left for storing the intermediate results will not be disproportionately
+large."
+TRAINING,0.15294117647058825,"We chose to investigate the 1-layer 1-head Transformer for three main reasons. First, we know
+from Section 4 that this model is sufﬁcient for emulating the Boolean circuit for binary addition and
+we know what the target attention patterns look like (Figure 1). Second, using only a single layer
+and a single attention head enhances the interpretability of the model as this makes it possible to
+unambiguously determine its attention patterns (there is only a single attention matrix we need to
+look at). Finally, recall that the goal of our experiment is to test whether a model that is unable to
+learn a task without the use of intermediate computations could learn the same task if intermediates
+were used. Thus, even though binary addition may well be a simple enough problem for a large
+transformer to solve without any intermediate steps at all, our aim here is to artiﬁcially restrict
+the expressivity of the transformer to a point where it is unable to learn the task without using
+intermediate steps so that we could then add intermediate computations and test whether this makes
+the task learnable. As the results of this section demonstrate, reducing both the number of layers
+and the number of heads of the Transformer to 1 is sufﬁcient to achieve this."
+TRAINING,0.15588235294117647,"We frame binary addition as a task of sequence completion — that is, the model receives a preﬁx of
+2n symbols representing the two input numbers and has to predict the subsequent l + n symbols,
+where l is the number of intermediate symbols and the last n symbols represent the sum (ignoring
+the overﬂow bit). We train the model in 3 different regimes:"
+TRAINING,0.1588235294117647,"(1) Weak supervision: the model is trained to predict the sum immediately after the inputs, i.e.,
+l = 0. A single training example for n = 3 would have the form a1a2a3b1b2b3e1e2e3, with
+loss computed on the model’s predictions of e1e2e3.
+(2) Medium supervision: the model is trained to predict the sum after l = 4n+1 intermediates,
+with loss computed only on the sum and not the intermediates. A single training example
+for n = 3 would have the form a1a2a3b1b2b3d1d2d3f1f2f3c1g1c2g2c3g3c4e1e2e3, with
+loss computed on the model’s predictions of e1e2e3.
+(3) Strong supervision: the model is trained to predict both the sum and the l = 4n +
+1 intermediates obtained by decomposing binary addition down to logic gates as ex-
+plained in section 3.
+A single training example for n = 3 would have the form
+a1a2a3b1b2b3d1d2d3f1f2f3c1g1c2g2c3g3c4e1e2e3, with loss computed on the model’s
+predictions of d1d2d3f1f2f3c1g1c2g2c3g3c4e1e2e3."
+TRAINING,0.16176470588235295,"In all three regimes we use teacher-forcing during training, meaning that when predicting the i-th
+symbol of the sequence the model sees the correct target symbols at all positions up to i. During
+testing, the model receives only the two input numbers (e.g., a1a2a3b1b2b3) and is used to generate
+the completion (e.g., e1e2e3 for weak supervision and x1x2x3x4x5x6x7x8x9x10x11x12x13e1e2e3
+for medium and strong supervision) autoregressively using greedy sampling."
+TRAINING,0.16470588235294117,Under review as a conference paper at ICLR 2022
+TRAINING,0.1676470588235294,Table 1: Test set accuracy of a 1-layer 1-head Transformer on binary addition of up to n-bit numbers.
+TRAINING,0.17058823529411765,"n = 8
+n = 16
+n = 24
+n = 32
+n = 40
+n = 48"
+TRAINING,0.17352941176470588,"weak supervision
+1.0000
+0.2529
+0.1773
+0.1961
+0.0720
+0.0000
+medium supervision
+0.0473
+0.0003
+0.0000
+0.0000
+0.0000
+0.0000
+strong supervision
+1.0000
+1.0000
+1.0000
+1.0000
+0.8916
+0.9873"
+TRAINING,0.17647058823529413,"We run experiments with n ∈{8, 16, 24, 32, 40, 48}. For each n, we perform a grid search over
+5 × 2 × 3 × 3 = 90 hyperparameter settings and run 4 randomly initialized trials for each of those.
+The hyperparameters we vary are the embedding dimension (chosen from {32, 64, 128, 256, 512}),
+the number of training examples (chosen from {1000, 10000}), the positional encodings (either ﬁxed
+and deﬁned via the sine and cosine functions as in the original Transformer (Vaswani et al., 2017),
+ﬁxed and set to the hand-coded values as in Appendix A, or learned), and the training regime (weak,
+medium, or strong supervision). In Table 1, we report the maximum accuracy achieved with weak,
+medium, and strong supervision over all hyperparameter settings and random trials for each n. We
+measure the exact-match accuracy against the target output bits representing the sum of the input
+numbers. The test set consists of 10000 examples not seen by the model during training."
+TRAINING,0.17941176470588235,"The results in Table 1 show that, for n ≥16, a 1-layer 1-head Transformer is not able to learn
+binary addition from weak or medium supervision while it can learn to solve the problem when
+strong supervision is used, supporting the second implication from Section 3. This experiment thus
+serves as a demonstration of a concrete problem for which the use of intermediate steps is the key
+factor determining whether a neural network will be able to solve a task or not. This supports our
+main hypothesis that constant-size neural networks incapable of encoding the input-output mappings
+corresponding to algorithmic tasks may be capable of solving these same tasks by encoding the
+mappings from inputs to outputs through a series of intermediate steps."
+TRAINING,0.18235294117647058,"We also include a visualization of the attention patterns of a Transformer trained with strong su-
+pervision in Figure 2 (speciﬁcally, we plot the attention matrix averaged over 100 evaluations on
+random inputs), along with the target patterns taken from the hand-coded model. As indicated by the
+considerable resemblance between most of the corresponding rows from the two plots, the trained
+Transformer does indeed learn to compute the intermediate results correctly and make use of them
+when predicting the outputs. This conﬁrms that guiding Transformers through particular chains of
+intermediate computations can be instrumental in training them to perform algorithmic tasks."
+TRAINING,0.18529411764705883,"Finally, for more context on the impact of hyperparameters on performance, Figures 3 and 4 compare
+the maximum test accuracies achieved with different positional encodings and sizes of the training
+dataset, respectively. We ﬁnd that the best performance is achieved by using the sinusoidal positional
+encodings as used in the original Transformer (Vaswani et al., 2017), and that the smaller dataset of
+1000 examples is sufﬁcient to achieve the best performance in most cases (the only exception being
+the strong supervision case with n = 40)."
+COMPOSABILITY,0.18823529411764706,"6
+COMPOSABILITY"
+COMPOSABILITY,0.19117647058823528,"Lu et al. (2021) have demonstrated that the weights of large pretrained Transformers encode general-
+purpose computations which can be leveraged to solve tasks from a diverse set of modalities. They
+show that it is possible to achieve competitive accuracies on a range of tasks by ﬁne-tuning only
+the input layer, the output layer, and the layer-norm parameters of a pretrained GPT-2 model while
+freezing all of the remaining weights in the “body” of the model (which comprise more than 99.9%
+of the parameters). This restricted version of the model is called a Frozen Pretrained Transformer
+(FPT)."
+COMPOSABILITY,0.19411764705882353,"While it is demonstrated that FPT is able to achieve perfect accuracy on symbol manipulation tasks
+like bit memory or bitwise XOR, these tasks only involve elementary single-step computations and
+thus fall into the domain of System 1. The question we are interested in is whether the weights
+of a pretrained language model contain circuits for solving non-trivial multi-step algorithmic tasks,
+and if not, whether solutions to such tasks can be assembled by composing simpler circuits that are"
+COMPOSABILITY,0.19705882352941176,Under review as a conference paper at ICLR 2022 0.0 0.2 0.4 0.6 0.8 1.0
+COMPOSABILITY,0.2,(a) hand-coded 0.0 0.2 0.4 0.6 0.8 1.0
+COMPOSABILITY,0.20294117647058824,(b) learned
+COMPOSABILITY,0.20588235294117646,"Figure 2: Attention matrices from the hand-coded vs. trained Transformer implementing binary
+addition with n = 8."
+COMPOSABILITY,0.2088235294117647,"8
+16
+24
+32
+40
+48
+n 0.0 0.2 0.4 0.6 0.8 1.0"
+COMPOSABILITY,0.21176470588235294,accuracy
+COMPOSABILITY,0.21470588235294116,"fixed (sinusoidal)
+fixed (handcoded)
+learned"
+COMPOSABILITY,0.21764705882352942,(a) weak supervision
+COMPOSABILITY,0.22058823529411764,"8
+16
+24
+32
+40
+48
+n 0.0 0.2 0.4 0.6 0.8 1.0"
+COMPOSABILITY,0.2235294117647059,accuracy
+COMPOSABILITY,0.22647058823529412,"fixed (sinusoidal)
+fixed (handcoded)
+learned"
+COMPOSABILITY,0.22941176470588234,(b) medium supervision
+COMPOSABILITY,0.2323529411764706,"8
+16
+24
+32
+40
+48
+n 0.0 0.2 0.4 0.6 0.8 1.0"
+COMPOSABILITY,0.23529411764705882,accuracy
+COMPOSABILITY,0.23823529411764705,"fixed (sinusoidal)
+fixed (handcoded)
+learned"
+COMPOSABILITY,0.2411764705882353,(c) strong supervision
+COMPOSABILITY,0.24411764705882352,"Figure 3: Test set accuracy of a 1-layer 1-head Transformer on binary addition of up to n-bit numbers
+with different positional encodings."
+COMPOSABILITY,0.24705882352941178,"8
+16
+24
+32
+40
+48
+n 0.0 0.2 0.4 0.6 0.8 1.0"
+COMPOSABILITY,0.25,accuracy
+COMPOSABILITY,0.2529411764705882,"1000
+10000"
+COMPOSABILITY,0.25588235294117645,(a) weak supervision
+COMPOSABILITY,0.25882352941176473,"8
+16
+24
+32
+40
+48
+n 0.0 0.2 0.4 0.6 0.8 1.0"
+COMPOSABILITY,0.26176470588235295,accuracy
+COMPOSABILITY,0.2647058823529412,"1000
+10000"
+COMPOSABILITY,0.2676470588235294,(b) medium supervision
+COMPOSABILITY,0.27058823529411763,"8
+16
+24
+32
+40
+48
+n 0.0 0.2 0.4 0.6 0.8 1.0"
+COMPOSABILITY,0.2735294117647059,accuracy
+COMPOSABILITY,0.27647058823529413,"1000
+10000"
+COMPOSABILITY,0.27941176470588236,(c) strong supervision
+COMPOSABILITY,0.2823529411764706,"Figure 4: Test set accuracy of a 1-layer 1-head Transformer on binary addition of up to n-bit numbers
+with different training set sizes."
+COMPOSABILITY,0.2852941176470588,Under review as a conference paper at ICLR 2022
+COMPOSABILITY,0.28823529411764703,"Table 2: Test set accuracy of a Frozen Pretrained Transformer on binary addition of up to n-bit
+numbers."
+COMPOSABILITY,0.2911764705882353,"n = 8
+n = 16
+n = 32
+n = 64
+n = 128"
+COMPOSABILITY,0.29411764705882354,"weak supervision
+1.0000
+0.0005
+0.0000
+0.0000
+0.0000
+medium supervision
+0.0357
+0.0000
+0.0000
+0.0000
+0.0000
+strong supervision
+1.0000
+1.0000
+1.0000
+1.0000
+1.0000"
+COMPOSABILITY,0.29705882352941176,"contained within the weights. If the weights could encode a direct input-output mapping, ﬁne-tuning
+the FPT on example inputs and outputs would be sufﬁcient for priming the model to perform the
+task. However, if the solution could only be composed out of pieces, we would expect FPT to learn
+the task only when ﬁne-tuned to produce enough intermediate results before the output such that the
+individual computations are expressible via the pretrained weights."
+COMPOSABILITY,0.3,"We investigate this by training a FPT on binary addition in the weak, medium, and strong supervision
+regimes analogous to those described in Section 5, though, in contrast to the previous experiments,
+we only use the carry bits as the intermediates (FPT is a full-size multi-layer Transformer and thus
+may require fewer intermediate steps than a 1-layer 1-head model). For instance, with n = 3, FPT
+would receive a1a2a3b1b2b3 as input and have to predict e1e2e3 in the weak supervision regime
+and c2c3c4e1e2e3 in the strong supervision regime (using the same notation as before). We train
+on 10000 examples for up to 100 epochs using teacher forcing and test on 10000 unseen examples
+without teacher forcing. We report the exact match accuracies (against the sum bits) over the test
+examples in Table 2. As we can see, FPT fails to learn binary addition in the weak and medium su-
+pervision regimes while it is able to solve the task when being trained to compute the carry bits ﬁrst.
+This suggests that binary addition may not be directly implemented in the weights of a pretrained
+language model but can nevertheless be expressed as a combination of more granular operations,
+supporting the third implication from Section 3. This result seems to be an analog of a similar fea-
+ture of the System 2 learning capabilities of humans — while it may not be possible to teach a child
+to compute each digit of the sum in one unconscious step, the same child can easily learn to compute
+the correct outputs by explicitly calculating and keeping track of the carries. Once again, we see that
+guidance over intermediate computations is what a neural network’s ability to solve an algorithmic
+task appears to hinge on."
+CONCLUSION,0.3029411764705882,"7
+CONCLUSION"
+CONCLUSION,0.3058823529411765,"In this work, we have argued that the only way for ﬁxed-size neural networks to solve algorithmic
+System 2 tasks is by computing the outputs through intermediate steps. If neural networks are going
+to be trained to perform such tasks from data, the actual intermediate results will either be given or
+have to be inferred. We here focused on the regime with given intermediates, called strong super-
+vision. Our experiments demonstrated that a 1-layer 1-head Transformer and a Frozen Pretrained
+Transformer can learn to perform binary addition only if strong supervision is used, supporting our
+hypothesis that guidance over intermediate computations can be necessary for solving algorithmic
+tasks."
+CONCLUSION,0.3088235294117647,"We believe that strong supervision will be an integral part of any scalable attempt to use a learning-
+based approach for tackling algorithmic tasks from the domain of System 2. We speculate that the
+usefulness of strong supervision might even extend beyond the space of algorithmic tasks, since any
+cognitive task that is characterized by distinct periods of thought leading to concrete intermediate
+results would become easier to learn if examples of those intermediate results were given during
+training. This leads us to believe that the idea of providing explicit guidance over intermediate
+computations might point to fruitful directions for future research."
+REFERENCES,0.31176470588235294,REFERENCES
+REFERENCES,0.31470588235294117,"Yoshua Bengio. The consciousness prior. ArXiv, abs/1709.08568, 2017."
+REFERENCES,0.3176470588235294,Under review as a conference paper at ICLR 2022
+REFERENCES,0.3205882352941177,"Yoshua
+Bengio.
+From
+system
+1
+deep
+learning
+to
+system
+2
+deep
+learn-
+ing.
+NeurIPS,
+2019.
+URL
+https://slideslive.com/38922304/
+from-system-1-deep-learning-to-system-2-deep-learning."
+REFERENCES,0.3235294117647059,"Yoshua Bengio, Tristan Deleu, Nasim Rahaman, Nan Rosemary Ke, Sebastien Lachapelle, Olexa
+Bilaniuk, Anirudh Goyal, and Christopher Pal. A meta-transfer objective for learning to disentan-
+gle causal mechanisms. In International Conference on Learning Representations, 2020. URL
+https://openreview.net/forum?id=ryxWIgBFPS."
+REFERENCES,0.3264705882352941,"Yoshua Bengio, Yann Lecun, and Geoffrey Hinton. Deep learning for AI. Communications of
+the ACM, 64(7):58–65, June 2021. ISSN 0001-0782. doi: 10.1145/3448250. URL https:
+//doi.org/10.1145/3448250."
+REFERENCES,0.32941176470588235,"Mostafa Dehghani, Stephan Gouws, Oriol Vinyals, Jakob Uszkoreit, and Lukasz Kaiser. Universal
+transformers. In International Conference on Learning Representations, 2019. URL https:
+//openreview.net/forum?id=HyzdRiR9Y7."
+REFERENCES,0.3323529411764706,"Anirudh Goyal and Yoshua Bengio. Inductive biases for deep learning of higher-level cognition.
+ArXiv, abs/2011.15091, 2020."
+REFERENCES,0.3352941176470588,"Anirudh Goyal, Aniket Didolkar, Alex Lamb, Kartikeya Badola, Nan Rosemary Ke, Nasim Ra-
+haman, Jonathan Binas, Charles Blundell, Michael C. Mozer, and Yoshua Bengio. Coordination
+among neural modules through a shared global workspace. ArXiv, abs/2103.01197, 2021."
+REFERENCES,0.3382352941176471,"Alex Graves. Adaptive computation time for recurrent neural networks. ArXiv, abs/1603.08983,
+2016."
+REFERENCES,0.3411764705882353,"Alex Graves, Greg Wayne, and Ivo Danihelka. Neural Turing machines. ArXiv, abs/1410.5401,
+2014."
+REFERENCES,0.34411764705882353,"Alex Graves, Greg Wayne, Malcolm Reynolds, Tim Harley, Ivo Danihelka, Agnieszka Grabska-
+Barwinska, Sergio Gomez Colmenarejo, Edward Grefenstette, Tiago Ramalho, John P. Agapiou,
+Adri`a Puigdom`enech Badia, Karl Moritz Hermann, Yori Zwols, Georg Ostrovski, Adam Cain,
+Helen King, Christopher Summerﬁeld, Phil Blunsom, Koray Kavukcuoglu, and Demis Hassabis.
+Hybrid computing using a neural network with dynamic external memory. Nature, 538:471–476,
+2016."
+REFERENCES,0.34705882352941175,"Armand Joulin and Tomas Mikolov. Inferring algorithmic patterns with stack-augmented recurrent
+nets. In Proceedings of the 28th International Conference on Neural Information Processing
+Systems - Volume 1, NIPS’15, pp. 190–198, Cambridge, MA, USA, 2015. MIT Press."
+REFERENCES,0.35,"Daniel Kahneman. Thinking, Fast and Slow. Farrar, Straus and Giroux, New York, 2011."
+REFERENCES,0.35294117647058826,"Andrej Karpathy. minGPT. https://github.com/karpathy/minGPT, 2020."
+REFERENCES,0.3558823529411765,"Karol Kurach, Marcin Andrychowicz, and Ilya Sutskever. Neural random access machines. ERCIM
+News, 2016, 2016."
+REFERENCES,0.3588235294117647,"Kevin Lu, Aditya Grover, P. Abbeel, and Igor Mordatch. Pretrained transformers as universal com-
+putation engines. ArXiv, abs/2103.05247, 2021."
+REFERENCES,0.36176470588235293,"Andreas Madsen and Alexander Rosenberg Johansen. Neural arithmetic units. In International
+Conference on Learning Representations, 2020. URL https://openreview.net/forum?
+id=H1gNOeHKPS."
+REFERENCES,0.36470588235294116,"Matthew Mirman, Dimitar Dimitrov, Pavle Djordjevic, Timon Gehr, and Martin Vechev. Train-
+ing neural machines with trace-based supervision. In Jennifer Dy and Andreas Krause (eds.),
+Proceedings of the 35th International Conference on Machine Learning, volume 80 of Proceed-
+ings of Machine Learning Research, pp. 3569–3577. PMLR, 10–15 Jul 2018. URL https:
+//proceedings.mlr.press/v80/mirman18a.html."
+REFERENCES,0.36764705882352944,"Scott E. Reed and Nando de Freitas. Neural programmer-interpreters. CoRR, abs/1511.06279, 2016."
+REFERENCES,0.37058823529411766,Under review as a conference paper at ICLR 2022
+REFERENCES,0.3735294117647059,"Valentin Thomas, Emmanuel Bengio, William Fedus, Jules Pondard, Philippe Beaudoin,
+H. Larochelle, Joelle Pineau, Doina Precup, and Yoshua Bengio. Disentangling the indepen-
+dently controllable factors of variation by interacting with the world. ArXiv, abs/1802.09484,
+2018."
+REFERENCES,0.3764705882352941,"Andrew Trask, Felix Hill, Scott E Reed, Jack Rae, Chris Dyer, and Phil Blunsom. Neural arith-
+metic logic units. In S. Bengio, H. Wallach, H. Larochelle, K. Grauman, N. Cesa-Bianchi, and
+R. Garnett (eds.), Advances in Neural Information Processing Systems, volume 31. Curran As-
+sociates, Inc., 2018. URL https://proceedings.neurips.cc/paper/2018/file/
+0e64a7b00c83e3d22ce6b3acf2c582b6-Paper.pdf."
+REFERENCES,0.37941176470588234,"Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez,
+Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Proceedings of the 31st Inter-
+national Conference on Neural Information Processing Systems, NIPS’17, pp. 6000–6010, Red
+Hook, NY, USA, 2017. Curran Associates Inc. ISBN 9781510860964."
+REFERENCES,0.38235294117647056,"Petar Veliˇckovi´c, Rex Ying, Matilde Padovano, Raia Hadsell, and Charles Blundell. Neural execu-
+tion of graph algorithms. In International Conference on Learning Representations, 2020. URL
+https://openreview.net/forum?id=SkgKO0EtvS."
+REFERENCES,0.38529411764705884,"Wojciech Zaremba and Ilya Sutskever. Reinforcement learning neural Turing machines. ArXiv,
+abs/1505.00521, 2015."
+REFERENCES,0.38823529411764707,"Wojciech Zaremba, Tomas Mikolov, Armand Joulin, and Rob Fergus. Learning simple algorithms
+from examples. In Proceedings of the 33rd International Conference on International Conference
+on Machine Learning - Volume 48, ICML’16, pp. 421–429. JMLR.org, 2016."
+REFERENCES,0.3911764705882353,Under review as a conference paper at ICLR 2022
+REFERENCES,0.3941176470588235,"A
+APPENDIX"
+REFERENCES,0.39705882352941174,"A 1-layer 1-head decoder-only Transformer is a parameterized function mapping sequences of sym-
+bols to next symbol probabilities, with parameters given by"
+REFERENCES,0.4,"θ = {Wemb, Wpos}
+∪{γln1, βln1, Wquery, bquery, Wkey, bkey, Wvalue, bvalue}
+∪{γln2, βln2, Wff1, bff1, Wff2, bff2}
+∪{γln3, βln3, Wout}."
+REFERENCES,0.40294117647058825,"Given an input sequence of b symbols (s1, s2, . . . , sb) from some vocabulary V, the Transformer
+outputs b vectors h(i)
+prob ∈[0, 1]|V| for i ∈{1, 2, . . . , b} interpreted as conditional PMFs for next
+symbol prediction and computed via the following deﬁnitions:"
+REFERENCES,0.40588235294117647,"h(i)
+emb = (Wemb)si+1,: + (Wpos)i,:
+(1)"
+REFERENCES,0.4088235294117647,"h(i)
+ln1 = LayerNormγln1,βln1
+
+h(i)
+emb
+
+(2)"
+REFERENCES,0.4117647058823529,"q(i) = h(i)
+ln1Wquery + bquery
+(3)"
+REFERENCES,0.4147058823529412,"k(i) = h(i)
+ln1Wkey + bkey
+(4)"
+REFERENCES,0.4176470588235294,"v(i) = h(i)
+ln1Wvalue + bvalue
+(5)"
+REFERENCES,0.42058823529411765,"Ki,: = k(i)
+(6)"
+REFERENCES,0.4235294117647059,"a(i) = Softmax
+q(i)K⊤ √"
+REFERENCES,0.4264705882352941,"d
++ Maski,: 
+(7)"
+REFERENCES,0.4294117647058823,"h(i)
+att = b
+X"
+REFERENCES,0.4323529411764706,"j=1
+a(i)
+j v(j)
+(8)"
+REFERENCES,0.43529411764705883,"h(i)
+res1 = h(i)
+att + h(i)
+ln1
+(9)"
+REFERENCES,0.43823529411764706,"h(i)
+ln2 = LayerNormγln2,βln2
+
+h(i)
+res1
+
+(10)"
+REFERENCES,0.4411764705882353,"h(i)
+ff1 = ReLU
+
+h(i)
+ln2Wff1 + bff1
+
+(11)"
+REFERENCES,0.4441176470588235,"h(i)
+ff2 = ReLU
+
+h(i)
+ff1 Wff2 + bff2
+
+(12)"
+REFERENCES,0.4470588235294118,"h(i)
+res2 = h(i)
+ff2 + h(i)
+res1
+(13)"
+REFERENCES,0.45,"h(i)
+ln3 = LayerNormγln3,βln3
+
+h(i)
+res2
+
+(14)"
+REFERENCES,0.45294117647058824,"h(i)
+prob = Softmax
+
+h(i)
+ln3Wout
+
+,
+(15)"
+REFERENCES,0.45588235294117646,"where d is the embedding dimension, and Mask is an autoregressive attention mask, i.e., a d × d
+matrix with all elements above the main diagonal equal to −∞and all of the remaining elements
+equal to 0. Predictions are made by interpreting the entries of h(i)
+prob as next-symbol probabilities,
+that is,"
+REFERENCES,0.4588235294117647,"Pθ(si+1 = Vj) =
+
+h(i)
+prob
+"
+REFERENCES,0.46176470588235297,"j ,
+(16)"
+REFERENCES,0.4647058823529412,"for each j ∈{1, 2, . . . , |V|}, where Vj represents the j-th symbol from the vocabulary."
+REFERENCES,0.4676470588235294,"Let n and m be some positive integers and let (s1, s2, . . . , sn+m) be a sequence of binary symbols
+where, for each i > n, si = NOR(sji, ski) for some ji, ki < i. We are going to show a concrete
+setting of the weights of a 1-layer 1-head decoder-only Transformer such that, given (s1, s2, . . . , sn),
+it autoregressively predicts (sn+1, sn+2, . . . , sn+m) as the completion of the sequence. Speciﬁcally,
+given any ϵ∗> 0, we can hand-code the parameters θ such that, for each i ≥n, Pθ(si+1 =
+NOR(sji+1, ski+1)) > 1 −ϵ∗."
+REFERENCES,0.47058823529411764,Under review as a conference paper at ICLR 2022
+REFERENCES,0.47352941176470587,"Choose any ϵ∗> 0. Let b = n + m −1 be the block size, d = 3 + b be the embedding dimension,
+and deﬁne constants"
+REFERENCES,0.4764705882352941,"c1 = 2
+
+ln
+(i −2)(1/2 −ϵ) 2ϵ"
+REFERENCES,0.47941176470588237,"
+,
+c2 =
+
+ln
+1 −ϵ∗ ϵ∗"
+REFERENCES,0.4823529411764706,"
+,
+ϵ =
+1
+5 + 2d2 ,
+δ = 1 −4ϵ −2d2ϵ."
+REFERENCES,0.4852941176470588,Let the parameters of a Transformer be hand-coded according to the following deﬁnitions:
+REFERENCES,0.48823529411764705,"Wemb ∈R2×d
+with
+(Wemb)j,k = 
+ "
+REFERENCES,0.49117647058823527,"−1
+if (j, k) ∈{(1, 1), (2, 2), (1, 3), (2, 3)}
+1
+if (j, k) ∈{(1, 2), (2, 1)}
+0
+otherwise,
+(17)"
+REFERENCES,0.49411764705882355,"Wpos ∈Rb×d
+with
+(Wpos)j,k =
+1
+if k = j + 3
+0
+otherwise,
+(18)"
+REFERENCES,0.4970588235294118,"γln1 ∈Rd
+with
+(γln1)j = 1,
+(19)"
+REFERENCES,0.5,"βln1 ∈Rd
+with
+(βln1)j = 0,
+(20)"
+REFERENCES,0.5029411764705882,"Wquery ∈Rd×d
+with
+(Wquery)j,k =
+(d/4)−1/2c1
+if k ∈{jj, kj}
+0
+otherwise,
+(21)"
+REFERENCES,0.5058823529411764,"bquery ∈Rd
+with
+(bquery)j = 0
+(22)"
+REFERENCES,0.5088235294117647,"Wkey ∈Rd×d
+with
+(Wkey)j,k =
+1
+if j = k + 3
+0
+otherwise,
+(23)"
+REFERENCES,0.5117647058823529,"bkey ∈Rd
+with
+(bkey)j = 0
+(24)"
+REFERENCES,0.5147058823529411,"Wvalue ∈Rd×d
+with
+(Wvalue)j,k =
+(d/4)−1/2
+if (j, k) ∈{(1, 4), (2, 5)}
+0
+otherwise,
+(25)"
+REFERENCES,0.5176470588235295,"bvalue ∈Rd
+with
+(bvalue)j = 0
+(26)"
+REFERENCES,0.5205882352941177,"γln2 ∈Rd
+with
+(γln2)j = 1,
+(27)"
+REFERENCES,0.5235294117647059,"βln2 ∈Rd
+with
+(βln2)j = 0,
+(28)"
+REFERENCES,0.5264705882352941,"Wff1 ∈Rd×4d
+with
+(Wff1)j,k = 
+ "
+REFERENCES,0.5294117647058824,"−(d/4)1/2
+if (j, k) = (4, 6)
+(d/4)1/2
+if (j, k) = (4, 7)
+0
+otherwise,
+(29)"
+REFERENCES,0.5323529411764706,"bff1 ∈R4d
+with
+(bff1)j = 
+ "
+REFERENCES,0.5352941176470588,"−2d2ϵ
+if j = 6
+1 −4ϵ
+if j = 7
+0
+otherwise,
+(30)"
+REFERENCES,0.538235294117647,"Wff2 ∈R4d×d
+with
+(Wff2)j,k = 
+ "
+REFERENCES,0.5411764705882353,"1
+if (j, k) ∈{(6, 6), (7, 7)}
+−1
+if (j, k) ∈{(6, 8), (7, 9)}
+0
+otherwise,
+(31)"
+REFERENCES,0.5441176470588235,"bff2 ∈Rd
+with
+(bff2)j = 0
+(32)"
+REFERENCES,0.5470588235294118,"γln3 ∈Rd
+with
+(γln3)j = 1,
+(33)"
+REFERENCES,0.55,"βln3 ∈Rd
+with
+(βln3)j = 0,
+(34)"
+REFERENCES,0.5529411764705883,"Wout ∈Rd×2
+with
+(Wout)j,k =
+δ−1d2c2
+if (j, k) ∈{(7, 1), (6, 2)}
+0
+otherwise.
+(35)"
+REFERENCES,0.5558823529411765,"Choose any i ≥n. After the token embedding and positional encoding layers, the hidden represen-
+tation corresponding to symbol i is given by"
+REFERENCES,0.5588235294117647,"h(i)
+emb = (Wemb)si+1,: + (Wpos)i,:.
+(36)"
+REFERENCES,0.5617647058823529,Under review as a conference paper at ICLR 2022
+REFERENCES,0.5647058823529412,"Since
+
+h(i)
+ln1
+"
+REFERENCES,0.5676470588235294,"j = LayerNormγln1,βln1
+
+h(i)
+emb
+"
+REFERENCES,0.5705882352941176,"j
+(37)"
+REFERENCES,0.5735294117647058,"= (γln1)j  
+
+"
+REFERENCES,0.5764705882352941,"
+h(i)
+emb
+ j −1"
+REFERENCES,0.5794117647058824,"d
+Pd
+k=1
+
+h(i)
+emb
+ k
+r"
+"D
+PD",0.5823529411764706,"1
+d
+Pd
+k=1
+
+h(i)
+emb
+ k −1"
+"D
+PD",0.5852941176470589,"d
+Pd
+k′=1
+
+h(i)
+emb
+ k′ 2 "
+"D
+PD",0.5882352941176471,"
+
++ (βln1)j
+(38)"
+"D
+PD",0.5911764705882353,"= (d/4)1/2 
+h(i)
+emb
+"
+"D
+PD",0.5941176470588235,"j ,
+(39)"
+"D
+PD",0.5970588235294118,after layer normalization the hidden representation is turned into
+"D
+PD",0.6,"h(i)
+ln1 = (d/4)1/2h(i)
+emb.
+(40)"
+"D
+PD",0.6029411764705882,"Then, since the only nonzero elements of h(j)
+ln1 are
+
+h(j)
+ln1
+"
+"D
+PD",0.6058823529411764,"1,
+
+h(j)
+ln1
+"
+"D
+PD",0.6088235294117647,"2,
+
+h(j)
+ln1
+"
+"D
+PD",0.611764705882353,"3, and
+
+h(j)
+ln1
+"
+"D
+PD",0.6147058823529412,"3+i, and"
+"D
+PD",0.6176470588235294,"the ﬁrst three rows of Wkey are zero vectors, we get that the key corresponding to symbol j is given
+by"
+"D
+PD",0.6205882352941177,"k(j)
+k
+=
+
+h(j)
+ln1
+⊤
+Wkey + bkey "
+"D
+PD",0.6235294117647059,"k
+= (d/4)1/2(Wkey)3+i,k =
+(d/4)1/2
+if k = j
+0
+otherwise.
+(41)"
+"D
+PD",0.6264705882352941,and the query corresponding to symbol j is given by
+"D
+PD",0.6294117647058823,"q(j)
+k
+=
+
+h(j)
+ln1
+⊤
+Wquery "
+"D
+PD",0.6323529411764706,"k
+= (d/4)1/2(Wquery)3+i,k =
+c1
+if k ∈{ji+1, ki+1}
+0
+otherwise.
+(42)"
+"D
+PD",0.6352941176470588,"We thus have that the key matrix K (i.e., a matrix whose j-th row is the j-th key vector k(j)) will
+be a b × d matrix whose ﬁrst b columns are equal to (d/4)1/2 times the identity matrix and all the
+remaining elements are 0. Consequently, the attention weights that will be used for computing the
+hidden representation corresponding to the i-th symbol are given by"
+"D
+PD",0.638235294117647,"a(i) = Softmax
+
+ˆa(i) ⊙Mask
+
+,
+(43) where"
+"D
+PD",0.6411764705882353,"ˆa(i)
+k
+="
+"D
+PD",0.6441176470588236," 
+q(i)K⊤ k
+√"
+"D
+PD",0.6470588235294118,"d
+=
+c1/2
+if k ∈{ji, ki}
+0
+otherwise.
+(44)"
+"D
+PD",0.65,"Then, since"
+"D
+PD",0.6529411764705882,"c1 = 2
+
+ln
+(i −2)(1/2 −ϵ) 2ϵ"
+"D
+PD",0.6558823529411765,"
+=⇒ec1/2 > (i −2)(1/2 −ϵ)"
+"D
+PD",0.6588235294117647,"2ϵ
+(45)"
+"D
+PD",0.6617647058823529,"=⇒(1 −2(1/2 −ϵ))ec1/2 > (i −2)(1/2 −ϵ)
+(46)"
+"D
+PD",0.6647058823529411,"=⇒ec1/2 > (1/2 −ϵ)2ec1/2 + (i −2)(1/2 −ϵ)
+(47)"
+"D
+PD",0.6676470588235294,"=⇒
+ec1/2"
+"D
+PD",0.6705882352941176,"2ec1/2 + (i −2) > (1/2 −ϵ),
+(48)"
+"D
+PD",0.6735294117647059,"we have that, for k ∈{ji+1, ki+1},"
+"D
+PD",0.6764705882352942,"a(i)
+k
+=
+eˆa(i)
+k
+Pb
+j=1 eˆa(i)
+j
+=
+ec1/2"
+"D
+PD",0.6794117647058824,"2ec1/2 + 1 · (i −2) + 0 · (b −i) > 1/2 −ϵ.
+(49)"
+"D
+PD",0.6823529411764706,"This shows that that the hidden representation corresponding to symbol i after the attention module
+can be made arbitrarily close to the average of the value vectors corresponding to symbols ji+1 and
+ki+1."
+"D
+PD",0.6852941176470588,"Since the ﬁrst two elements of h(j)
+emb are sign(sj) and −sign(sj), we get that the value vector corre-
+sponding to symbol j is given by"
+"D
+PD",0.6882352941176471,"v(j)
+k
+= (h⊤
+ln1Wvalue + bvalue)k = 
+ "
+"D
+PD",0.6911764705882353,"sign(sj)
+if k = 4
+−sign(sj)
+if k = 5
+0
+otherwise.
+(50)"
+"D
+PD",0.6941176470588235,Under review as a conference paper at ICLR 2022
+"D
+PD",0.6970588235294117,The hidden representation corresponding to symbol i after the attention module is then given by
+"D
+PD",0.7,"h(i)
+att = b
+X"
+"D
+PD",0.7029411764705882,"j=1
+a(i)
+j v(j) = a(i)
+ji+1v(ji+1) + a(i)
+ki+1v(ki+1) +
+X"
+"D
+PD",0.7058823529411765,"j /∈{ji+1,ki+1}
+a(i)
+j v(j),
+(51)"
+"D
+PD",0.7088235294117647,and we have that
+"D
+PD",0.711764705882353,"si+1 = 1 =⇒(sji+1, ski+1) = (0, 0)
+(52)"
+"D
+PD",0.7147058823529412,"=⇒vji+1
+4
+= vki+1
+4
+= −1
+(53)"
+"D
+PD",0.7176470588235294,"=⇒(h(i)
+att )4 ∈[−1, (1 −2ϵ)(−1) + (2ϵ)(1)],
+(54)
+si+1 = 0 ⇐⇒(sji+1, ski+1) ̸= (0, 0)
+(55)"
+"D
+PD",0.7205882352941176,"=⇒vji+1
+4
+∈{0, 1}, vki+1
+4
+∈{0, 1}
+(56)"
+"D
+PD",0.7235294117647059,"=⇒(h(i)
+att )4 ∈[(1 −2ϵ)(0) + (2ϵ)(−1), 1],
+(57)"
+"D
+PD",0.7264705882352941,"that is,
+
+h(i)
+att
+"
+"D
+PD",0.7294117647058823,"4 ∈
+[−1, −1 + 4ϵ]
+if si+1 = 1
+[−2ϵ, 1]
+if si+1 = 0,
+(58)"
+"D
+PD",0.7323529411764705,"with (hi
+att)5 = −(hi
+att)4, and (hi
+att)j = 0 for all j /∈{4, 5}."
+"D
+PD",0.7352941176470589,The hidden representation corresponding to symbol i after the ﬁrst residual connection is given by
+"D
+PD",0.7382352941176471,"h(i)
+res1 = h(i)
+att + h(i)
+emb.
+(59)"
+"D
+PD",0.7411764705882353,"Since (hi
+att)5 = −(hi
+att)4 and all other entries of h(i)
+att are zero, and h(i)
+emb has a mean of 0, we have that"
+"D
+PD",0.7441176470588236,"mean
+
+h(i)
+res1
+
+= mean
+
+h(i)
+att
+
++ mean
+
+h(i)
+emb
+
+= 0 + 0 = 0.
+(60)"
+"D
+PD",0.7470588235294118,"Also, since h(i)
+att can contain non-zero entries,"
+"D
+PD",0.75,"std
+
+h(i)
+res1
+
+≥std
+
+h(i)
+emb
+
+= (d/4)−1/2
+(61)"
+"D
+PD",0.7529411764705882,"and since the entries of h(i)
+res1 cannot exceed (d/4)1/2,"
+"D
+PD",0.7558823529411764,"std
+
+h(i)
+res1
+
+≤"
+"D
+PD",0.7588235294117647,"v
+u
+u
+t1 d d
+X k=1"
+"D
+PD",0.7617647058823529," 
+(d/4)1/2 −0
+2 = (d/4)1/2.
+(62)"
+"D
+PD",0.7647058823529411,"Then, since
+h(i)
+ln2 = LayerNormγln2,βln2
+
+h(i)
+res1
+
+,
+(63)"
+"D
+PD",0.7676470588235295,"we have that
+(d/4)−1/2 
+h(i)
+res1
+"
+"D
+PD",0.7705882352941177,"j ≤
+
+h(i)
+ln2
+"
+"D
+PD",0.7735294117647059,"j ≤(d/4)1/2 
+h(i)
+res1
+"
+"D
+PD",0.7764705882352941,"j
+(64)"
+"D
+PD",0.7794117647058824,"for all j ∈{1, 2, . . . , d}, which implies that
+
+h(i)
+ln2
+"
+"D
+PD",0.7823529411764706,"4 ∈
+[−(d/4)1/2, (d/4)−1/2(−1 + 4ϵ)]
+if si+1 = 1
+[(d/4)1/2(−2ϵ), (d/4)1/2]
+if si+1 = 0.
+(65)"
+"D
+PD",0.7852941176470588,"Since (d/4)1/2 > 1, it follows that
+
+h(i)
+ln2
+"
+"D
+PD",0.788235294117647,"4 ∈
+[−d, (d/4)−1/2(−1 + 4ϵ)]
+if si+1 = 1
+[−2dϵ, d]
+if si+1 = 0.
+(66)"
+"D
+PD",0.7911764705882353,"Using the deﬁnition of Wff1 and bff1 and the fact that (d/4)1/2 > 1, we get that
+
+h(i)
+ln2Wff1 + bff1
+"
+"D
+PD",0.7941176470588235,"6 = −(d/4)1/2 
+h(i)
+ln2
+"
+"D
+PD",0.7970588235294118,"4 −2d2ϵ
+(67)"
+"D
+PD",0.8,"∈
+[1 −4ϵ −2d2ϵ, d2]
+if si+1 = 1
+[−d2 −2d2ϵ, 0]
+if si+1 = 0,
+(68)"
+"D
+PD",0.8029411764705883,Under review as a conference paper at ICLR 2022
+"D
+PD",0.8058823529411765,"and
+
+h(i)
+ln2Wff1 + bff1
+"
+"D
+PD",0.8088235294117647,"7 = (d/4)1/2 
+h(i)
+ln2
+"
+"D
+PD",0.8117647058823529,"4 + 1 −4ϵ
+(69)"
+"D
+PD",0.8147058823529412,"∈
+[−d2, 0]
+if si+1 = 1
+[1 −4ϵ −2d2ϵ, d2 + 1 −4ϵ]
+if si+1 = 0.
+(70)"
+"D
+PD",0.8176470588235294,"Since ϵ =
+1
+5+2d2 <
+1
+4+2d2 , we have that δ = 1 −4ϵ + 2d2ϵ > 0, and thus"
+"D
+PD",0.8205882352941176,"
+h(i)
+ff1
+"
+"D
+PD",0.8235294117647058,"6 = ReLU
+
+h(i)
+ln2Wff1 + bff1
+"
+"D
+PD",0.8264705882352941,"6 ∈
+[δ, 2d2]
+if si+1 = 1
+[0, 0]
+if si+1 = 0
+(71)"
+"D
+PD",0.8294117647058824,"and
+
+h(i)
+ff1
+"
+"D
+PD",0.8323529411764706,"7 = ReLU
+
+h(i)
+ln2Wff1 + bff1
+"
+"D
+PD",0.8352941176470589,"7 ∈
+[0, 0]
+if si+1 = 1
+[δ, 2d2]
+if si+1 = 0.
+(72)"
+"D
+PD",0.8382352941176471,"Then, using the deﬁnition of Wff2 and bff2, we get that
+
+h(i)
+ff2
+"
+"D
+PD",0.8411764705882353,"6 = ReLU
+
+h(i)
+ff1 Wff2 + bff2
+"
+"D
+PD",0.8441176470588235,"6 =
+
+h(i)
+ff1
+"
+"D
+PD",0.8470588235294118,"1 ∈
+[δ, 2d2]
+if si+1 = 1
+[0, 0]
+if si+1 = 0,
+(73)"
+"D
+PD",0.85,"
+h(i)
+ff2
+"
+"D
+PD",0.8529411764705882,"7 = ReLU
+
+h(i)
+ff1 Wff2 + bff2
+"
+"D
+PD",0.8558823529411764,"7 =
+
+h(i)
+ff1
+"
+"D
+PD",0.8588235294117647,"2 ∈
+[0, 0]
+if si+1 = 1
+[δ, 2d2]
+if si+1 = 0,
+(74)"
+"D
+PD",0.861764705882353,"while
+
+h(i)
+ff2
+"
+"D
+PD",0.8647058823529412,"8 = −
+
+h(i)
+ff2
+"
+"D
+PD",0.8676470588235294,"6,
+
+h(i)
+ff2
+"
+"D
+PD",0.8705882352941177,"9 = −
+
+h(i)
+ff2
+"
+"D
+PD",0.8735294117647059,"7, and
+
+h(i)
+ff2
+"
+"D
+PD",0.8764705882352941,"j = 0 for all j ∈{10, 11, . . . , d}."
+"D
+PD",0.8794117647058823,"Since
+h(i)
+res2 = h(i)
+ff2 + h(i)
+res1,
+(75)
+we have that
+mean
+
+h(i)
+res2
+
+= mean
+
+h(i)
+ff2
+
++ mean
+
+h(i)
+att
+
+= 0 + 0 = 0.
+(76)"
+"D
+PD",0.8823529411764706,"Also, since the entries of h(i)
+res2 cannot exceed d2,"
+"D
+PD",0.8852941176470588,"std
+
+h(i)
+res2
+
+≤"
+"D
+PD",0.888235294117647,"v
+u
+u
+t1 d d
+X"
+"D
+PD",0.8911764705882353,"k=1
+(d2 −0)2 = d2.
+(77)"
+"D
+PD",0.8941176470588236,"Then, since
+h(i)
+ln3 = LayerNormγln3,βln3
+
+h(i)
+res2
+
+,
+(78)"
+"D
+PD",0.8970588235294118,"we have that
+
+h(i)
+ln2
+"
+"D
+PD",0.9,"j =
+
+std
+
+h(i)
+res2
+−1 
+h(i)
+res2
+"
+"D
+PD",0.9029411764705882,"j ≥d−2 
+h(i)
+res2
+"
+"D
+PD",0.9058823529411765,"j
+(79)"
+"D
+PD",0.9088235294117647,"for all j ∈{1, 2, . . . , d}. It then follows that"
+"D
+PD",0.9117647058823529,"si+1 = 1 =⇒
+
+h(i)
+ln2
+"
+"D
+PD",0.9147058823529411,"6 ≥δd−2 and
+
+h(i)
+ln2
+"
+"D
+PD",0.9176470588235294,"7 = 0,
+(80)"
+"D
+PD",0.9205882352941176,"si+1 = 0 =⇒
+
+h(i)
+ln2
+"
+"D
+PD",0.9235294117647059,"6 = 0 and
+
+h(i)
+ln2
+"
+"D
+PD",0.9264705882352942,"7 ≥δd−2.
+(81)"
+"D
+PD",0.9294117647058824,"Let
+z = h(i)
+ln3Wout.
+(82)"
+"D
+PD",0.9323529411764706,"Then, using the deﬁnition of Wout and the fact that c2 =
+l
+ln
+
+1−ϵ∗"
+"D
+PD",0.9352941176470588,"ϵ∗
+m
+≥ln
+
+1−ϵ∗"
+"D
+PD",0.9382352941176471,"ϵ∗
+
+, we get that"
+"D
+PD",0.9411764705882353,"si+1 = 1 =⇒z1 =
+
+h(i)
+ln2
+ 7"
+"D
+PD",0.9441176470588235," 
+δ−1d2c2
+
+= 0 and z2 =
+
+h(i)
+ln2
+ 6"
+"D
+PD",0.9470588235294117," 
+δ−1d2c2
+
+≥c2,
+(83)"
+"D
+PD",0.95,=⇒ez2 ≥1 −ϵ∗
+"D
+PD",0.9529411764705882,"ϵ∗
+(84)"
+"D
+PD",0.9558823529411765,"=⇒ez2 −ez2 + ez2ϵ∗> 1 −ϵ∗
+(85)
+=⇒ez2 > ez2 −ez2ϵ∗+ 1 −ϵ∗
+(86)"
+"D
+PD",0.9588235294117647,"=⇒Pθ(si+1 = 1) = (Softmax(z))2 =
+ez2"
+"D
+PD",0.961764705882353,"ez1 + ez2 =
+ez2"
+"D
+PD",0.9647058823529412,"ez2 + 1 > 1 −ϵ∗,
+(87)"
+"D
+PD",0.9676470588235294,Under review as a conference paper at ICLR 2022 and
+"D
+PD",0.9705882352941176,"si+1 = 0 =⇒z1 =
+
+h(i)
+ln2
+ 7"
+"D
+PD",0.9735294117647059," 
+δ−1d2c2
+
+≥c2 and z2 =
+
+h(i)
+ln2
+ 6"
+"D
+PD",0.9764705882352941," 
+δ−1d2c2
+
+= 0
+(88)"
+"D
+PD",0.9794117647058823,=⇒ez1 ≥1 −ϵ∗
+"D
+PD",0.9823529411764705,"ϵ∗
+(89)"
+"D
+PD",0.9852941176470589,"=⇒ez1 −ez1 + ez1ϵ∗> 1 −ϵ∗
+(90)
+=⇒ez1 > ez1 −ez1ϵ∗+ 1 −ϵ∗
+(91)"
+"D
+PD",0.9882352941176471,"=⇒Pθ(si+1 = 1) = (Softmax(z))2 =
+ez1"
+"D
+PD",0.9911764705882353,"ez1 + ez2 =
+ez1"
+"D
+PD",0.9941176470588236,"ez1 + 1 > 1 −ϵ∗.
+(92)"
+"D
+PD",0.9970588235294118,"We conclude that, for each i ≥n, Pθ(si+1 = NOR(sji+1, ski+1)) > 1 −ϵ∗."

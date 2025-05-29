@@ -1,0 +1,803 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.003861003861003861,"Distilling supervision signal from a long sequence to make predictions is a chal-
+lenging task in machine learning, especially when not all elements in the input
+sequence contribute equally to the desired output. In this paper, we propose SPAN-
+DROP, a simple and effective data augmentation technique that helps models iden-
+tify the true supervision signal in a long sequence with very few examples. By di-
+rectly manipulating the input sequence, SPANDROP randomly ablates parts of the
+sequence at a time and ask the model to perform the same task to emulate counter-
+factual learning and achieve input attribution. Based on theoretical analysis of its
+properties, we also propose a variant of SPANDROP based on the beta-Bernoulli
+distribution, which yields diverse augmented sequences while providing a learn-
+ing objective that is more consistent with the original dataset. We demonstrate
+the effectiveness of SPANDROP on a set of carefully designed toy tasks, as well
+as various natural language processing tasks that require reasoning over long se-
+quences to arrive at the correct answer, and show that it helps models improve
+performance both when data is scarce and abundant."
+INTRODUCTION,0.007722007722007722,"1
+INTRODUCTION"
+INTRODUCTION,0.011583011583011582,"Building effective machine learning systems for long sequences is a challenging and important task,
+which helps us better understand underlying patterns in naturally occurring sequential data like long
+texts (Radford et al., 2019), protein sequences (Jumper et al., 2021), ﬁnancial time series (Bao
+et al., 2017), etc. Recently, there is growing interest in studying neural network models that can
+capture long-range correlations in sequential data with high computational, memory, and statistical
+efﬁciency, especially widely adopted Transformer models (Vaswani et al., 2017)."
+INTRODUCTION,0.015444015444015444,"Previous work approach long-sequence learning in Transformers largely by introducing computa-
+tional approaches to replace the attention mechanism with more efﬁcient counterparts. These ap-
+proaches include limiting the input range over which the attention mechanism is applied (Kitaev
+et al., 2019) to limiting sequence-level attention to only a handful of positions (Beltagy et al., 2020;
+Zaheer et al., 2020). Other researchers make use of techniques akin to the kernel trick to eliminate
+the need to compute or instantiate the costly attention matrix (Peng et al., 2020; Katharopoulos et al.,
+2020; Choromanski et al., 2020). Essentially, these approaches aim to approximate the original pair-
+wise interaction with lower cost, and are often interested in still capturing the interactions between
+every pair of input elements (e.g., the long sequence benchmark proposed by Tay et al., 2020)."
+INTRODUCTION,0.019305019305019305,"In this paper, we instead investigate learning problems for long sequences where not all input ele-
+ments contribute equally to the desired output. Natural examples that take this form include senti-
+ment classiﬁcation for long customer review documents (where a few salient sentiment words con-
+tribute the most), question answering from a large document (where each question typically requires
+a small number of supporting sentences to answer), key phrase detection in audio processing (where
+a small number of recorded frames actually determine the prediction), as well as detecting a speciﬁc
+object from a complex scene (where, similarly, a small amount of pixels determine the outcome),
+to name a few. In these problems, it is usually counterproductive to try and make direct use of the
+entire input if the contributing portion is small or sparse, which results in a problem of underspec-
+iﬁcation (i.e., the data does not sufﬁciently deﬁne the goal for statistical models). One approach
+to address this problem is annotating the segments or neighborhoods that directly contribute to the
+outcome in the entire input. This could take the form of a subset of sentences that answer a question"
+INTRODUCTION,0.023166023166023165,Under review as a conference paper at ICLR 2022
+INTRODUCTION,0.02702702702702703,"or describe the relation between entities in a paragraph (Yang et al., 2018; Yao et al., 2019), which
+function as explainable evidence that supplements the answer. When such annotation is not feasible,
+researchers and practitioners often need to resort to either collecting more input-output pairs or de-
+signing problem-speciﬁc data augmentation techniques to make up for the data gap. For real-valued
+data, this often translates to random transformations (e.g., shifting or ﬂipping an image); for sym-
+bolic data like natural language, techniques like masking or substitution are more commonly used
+(e.g., randomly swapping words with a special mask token or other words). While these approaches
+have proven effective in some tasks, each has limitations that prevents it from being well-suited for
+the underspeciﬁcation scenario. For instance, while global feature transformations enhance group-
+invariance in learned representations, they do not directly help with better locating the underlying
+true stimulus. On the other hand, while replacement techniques like masking and substitution help
+ablate parts of the input, they are susceptible to the position bias of where the true stimulus might oc-
+cur in the input. Furthermore, while substitution techniques can help create challenging contrastive
+examples, it is signiﬁcantly more difﬁcult to design them for complex symbolic sequences (e.g.,
+replacing a phrase naturally in a sentence)."
+INTRODUCTION,0.03088803088803089,"To address these challenges, we propose SPANDROP, a simple and effective technique that helps
+models distill sparse supervision signal from long sequences when the problem is underspeciﬁed.
+Similar to replacement-based techniques such as masking and substitution, SPANDROP directly ab-
+lates parts of the input at random to construct counterfactual examples that preserve the original
+supervision signal with high probability. Instead of preserving the original sequence positions, how-
+ever, SPANDROP directly removes ablated elements from the input to mitigate any bias that is related
+to the absolute positions of elements (rather than the relative positions between them) in the input.
+Upon closer examination of its theoretical and empirical properties, we further propose a more effec-
+tive variant of SPANDROP based on the Beta-Bernoulli distribution that enhances the consistency of
+the augmented objective function with the original one. We demonstrate via carefully designed toy
+experiments that SPANDROP not only helps models achieve up to 20⇥sample-efﬁciency in low-data
+settings, but also further reduces overﬁtting even when training data is abundant. We ﬁnd that it is
+very effective at mitigating position bias compared to replacement-based counterfactual approaches,
+and enhances out-of-distribution generalization effectively. We further experiments on four natural
+language processing tasks that require models to answer question or extract entity relations from
+long texts, and demonstrate that SPANDROP can improve the performance of already competitive
+neural models without any change in model architecture."
+METHOD,0.03474903474903475,"2
+METHOD"
+METHOD,0.03861003861003861,"In this section, we ﬁrst formulate the problem of sequence inference, where the model takes sequen-
+tial data as input to make predictions. Then, we introduce SPANDROP, a simple and effective data
+augmentation technique for long sequence inference, and analyze its theoretical properties."
+PROBLEM DEFINITION,0.04247104247104247,"2.1
+PROBLEM DEFINITION
+Sequence Inference. We consider a task where a model takes a sequence S as input and predicts
+the output y. We assume that S consists of n disjoint but contiguous spans, each representing a
+part of the sequence in order S = (s1, . . . , sn). One example of sequence inference is sentiment
+classiﬁcation from a paragraph of text, where S is the paragraph and y the desired sentiment label.
+Spans could be words, phrases, sentences, or a mixture of these in the paragraph. Another example
+is time series prediction, where S is historical data, y is the value at the next time step."
+PROBLEM DEFINITION,0.04633204633204633,"Supporting facts. Given an input-output pair (S, y) for sequence prediction, we assume that y is
+truly determined by only a subset of spans in S. More formally, we assume that there is a subset
+of spans Ssup ⇢{s1, s2, . . . , sn} such that y is independent of si, if si /2 Ssup. In sentiment
+classiﬁcation, Ssup could consist of important sentiment words or conjunctions (like “good”, “bad”,
+“but”); in time series prediction, it could reﬂect the most recent time steps as well as those a few
+cycles away if the series is periodic. For simplicity, we will denote the size of this set m = |Ssup|,
+and restrict our attention to tasks where m ⌧n, such as those described in the previous section."
+SPANDROP,0.05019305019305019,"2.2
+SPANDROP
+In a long sequence inference task with sparse support facts (m ⌧n), most of the spans in the input
+sequence will not contribute to the prediction of y, but they will introduce spurious correlation in
+a low-data scenario. SPANDROP generates new data instances ( ˜S, y) by ablating these spans at"
+SPANDROP,0.05405405405405406,Under review as a conference paper at ICLR 2022
+SPANDROP,0.05791505791505792,"0
+50
+100
+0 5 10"
+SPANDROP,0.06177606177606178,Sequence length (n0)
+SPANDROP,0.06563706563706563,Proportion (%)
+SPANDROP,0.0694980694980695,SPANDROP
+SPANDROP,0.07335907335907337,Beta-SPANDROP
+SPANDROP,0.07722007722007722,"(a) Length of ˜S (n = 100, p = 0.2)"
+SPANDROP,0.08108108108108109,"0
+10
+20 −4 −2 0 2"
+SPANDROP,0.08494208494208494,supporting facts (m)
+SPANDROP,0.0888030888030888,Log noise-free prob.
+SPANDROP,0.09266409266409266,"γ = 1
+γ = 100
+γ = 10
+γ = 1
+γ = 0.1
+γ = 0.01"
+SPANDROP,0.09652509652509653,(b) supporting fact noise (p = 0.2)
+SPANDROP,0.10038610038610038,"100
+102
+104
+0 0.2 0.4 0.6"
+SPANDROP,0.10424710424710425,Sequence length (n)
+SPANDROP,0.10810810810810811,Avg. nats/span
+SPANDROP,0.11196911196911197,"γ = 1
+γ = 100
+γ = 10
+γ = 1
+γ = 0.1
+γ = 0.01"
+SPANDROP,0.11583011583011583,"(c) Typical set size (p = 0.1)
+Figure 1: Theoretical comparison between SPANDROP and Beta-SPANDROP."
+SPANDROP,0.11969111969111969,"random, while preserving the supporting facts with high probability so that the model is still trained
+to make the correct prediction y. This is akin to counterfactually determining whether each span
+truly determines the outcome y by asking what the prediction would have been without it."
+SPANDROP,0.12355212355212356,"Deﬁnition 1 (SPANDROP). Formally, given a sequence S that consists of spans (s1, s2, · · · sn),
+SPANDROP generates a new sequence ˜S as follows: δi"
+SPANDROP,0.1274131274131274,"i.i.d.
+⇠Bernoulli(1 −p),
+˜S =(si)n"
+SPANDROP,0.13127413127413126,"i=1,δi=1,
+(1)"
+SPANDROP,0.13513513513513514,where p is the hyperparameter that determines the probability to drop a span.
+SPANDROP,0.138996138996139,"Note that SPANDROP does not require introducing substitute spans or artiﬁcial symbols when ab-
+lating spans from the input sequence. It makes the most of the natural sequence as it occurs in the
+original training data, and preserves the relative order between spans that are not dropped, which is
+often helpful in understanding sequential data (e.g., time series or text). It is also not difﬁcult to es-
+tablish that the resulting sequence ˜S can preserve all of the m supporting facts with high probability
+regardless of how large n is."
+SPANDROP,0.14285714285714285,"Remark 1. The new sequence length n0 = | ˜S| and the number of preserved supporting facts m0 =
+| ˜S \ Ssup| follow binomial distributions with parameters (n, 1 −p) and (m, 1 −p), respectively:"
+SPANDROP,0.14671814671814673,"P(n0|n, p) = ✓n n0 ◆"
+SPANDROP,0.15057915057915058,"(1 −p)n0pn−n0,
+P(m0|m, p) = ✓m m0 ◆"
+SPANDROP,0.15444015444015444,"(1 −p)m0pm−m0.
+(2)"
+SPANDROP,0.1583011583011583,"Therefore, the proportion of sequences where all supporting facts are retained (i.e., m0 = m) is
+(1 −p)m, which is independent of n. This means that as long as the total number of supporting
+facts in the sequence is bounded, then regardless of the sequence length, we can always choose
+p carefully such that we end up with many valid new examples with bounded noise introduced to
+supporting facts. Note that our analysis so far relies only on the assumption that m is known or
+can be estimated, and thus it can be applied to tasks where the precise set of supporting facts Ssup
+is unknown. More formally, the amount of new examples can be characterized by the size of the
+typical set of ˜S, i.e.the set of sequences that the randomly ablated sequence will fall into with high
+probability. The size of the typical set for SPANDROP is approximately 2nH(p), where H(p) is the
+binary entropy of a Bernoulli random variable with probability p. Intuitively, these results indicate
+that the amount of total counterfactual examples generated by SPANDROP scales exponentially in
+n, but the level of supporting fact noise can be bounded as long as m is small."
+SPANDROP,0.16216216216216217,"However, this formulation of SPANDROP does have a notable drawback that could potentially hinder
+its efﬁcacy. Because the new sequence length n0 follows a binomial distribution, its mean is n(1−p)
+and its variance is np(1 −p). For sufﬁciently large n, most of the resulting ˜S will have lengths that
+concentrate around the mean with a width of O(pn), which creates an artiﬁcial and permanent
+distribution drift from the original length (see Figure 1(a)). Furthermore, if we know the identity of
+Ssup and keep these spans during training, this length reduction will bias the training set towards
+easier examples to locate spans in Ssup. In the next subsection, we will introduce a variant of
+SPANDROP based on the beta-Bernoulli distribution that alleviates this issue."
+SPANDROP,0.16602316602316602,Under review as a conference paper at ICLR 2022
+BETA-SPANDROP,0.16988416988416988,"2.3
+BETA-SPANDROP"
+BETA-SPANDROP,0.17374517374517376,"To address the problem of distribution drift with SPANDROP, we introduce a variant that is based on
+the beta-Bernoulli distribution. The main idea is that instead of dropping each span in a sequence
+independently with a ﬁxed probability p, we ﬁrst sample a sequence-level probability ⇡at which
+spans are dropped from a Beta distribution, then use this probability to perform SPANDROP."
+BETA-SPANDROP,0.1776061776061776,"Deﬁnition 2 (Beta-SPANDROP). Let ↵= γ, β = γ · 1−p"
+BETA-SPANDROP,0.18146718146718147,"p , where γ > 0 is a scaling hyperparameter."
+BETA-SPANDROP,0.18532818532818532,Beta-SPANDROP generates ˜S over S as:
+BETA-SPANDROP,0.1891891891891892,"⇡⇠B(↵, β),
+δi"
+BETA-SPANDROP,0.19305019305019305,"i.i.d.
+⇠Bernoulli(1 −⇡),
+˜S =(si)n"
+BETA-SPANDROP,0.1969111969111969,"i=1,δi=1,
+(3)"
+BETA-SPANDROP,0.20077220077220076,"where B(↵, β) is the beta-distribution with parameters ↵and β."
+BETA-SPANDROP,0.20463320463320464,"It can be easily demonstrated that in Beta-SPANDROP, the probability that each span is dropped is
+still controlled by p, same as in SPANDROP: E[δi|p] = E[E[δi|⇡]|p] = E[1 −⇡|p] = 1 −
+↵
+↵+β =
+1 −p. In fact, we can show that as γ ! 1, Beta-SPANDROP degenerates into SPANDROP since
+the beta-distribution would assign all probability mass on ⇡= p. Despite the simplicity in its
+implementation, Beta-SPANDROP is signiﬁcantly less likely to introduce unwanted data distribution
+drift, while is capable of generating diverse counterfactual examples to regularize the training of
+sequence inference models. This is due to the following properties:"
+BETA-SPANDROP,0.2084942084942085,"Remark 2. The new sequence length n0 = | ˜S| and the number of preserved supporting facts m0 =
+| ˜S \ Ssup| follow binomial distributions with parameters (n, β, ↵) and (m, β, ↵), respectively:"
+BETA-SPANDROP,0.21235521235521235,"P(n0|n, ↵, β) =
+Γ(n + 1)
+Γ(n0 + 1)Γ(n −n0 + 1)"
+BETA-SPANDROP,0.21621621621621623,Γ(n0 + β)Γ(n −n0 + ↵)
+BETA-SPANDROP,0.22007722007722008,Γ(n + ↵+ β)
+BETA-SPANDROP,0.22393822393822393,"Γ(↵+ β)
+Γ(↵)Γ(β),
+(4)"
+BETA-SPANDROP,0.2277992277992278,"P(m0|m, ↵, β) =
+Γ(m + 1)
+Γ(m0 + 1)Γ(m −m0 + 1)"
+BETA-SPANDROP,0.23166023166023167,Γ(m0 + β)Γ(m −m0 + ↵)
+BETA-SPANDROP,0.23552123552123552,Γ(m + ↵+ β)
+BETA-SPANDROP,0.23938223938223938,"Γ(↵+ β)
+Γ(↵)Γ(β),
+(5)"
+BETA-SPANDROP,0.24324324324324326,where Γ(z) = R 1
+BETA-SPANDROP,0.2471042471042471,"0
+xz−1e−xdx is the gamma function."
+BETA-SPANDROP,0.25096525096525096,"As a result, we can show that the probability that Beta-SPANDROP preserves the entire original
+sequence with the following probability"
+BETA-SPANDROP,0.2548262548262548,"P(n0 = n|n, ↵, β) =Γ(n + β)Γ(↵+ β)"
+BETA-SPANDROP,0.25868725868725867,"Γ(n + ↵+ β)Γ(β).
+(6)"
+BETA-SPANDROP,0.2625482625482625,"When γ = 1, this expression simply reduces to
+β
+n+β ; when γ 6= 1, this quantity tends to O(n−γ)
+as n grows sufﬁciently large. Comparing this to the O((1 −p)n) rate from SPANDROP, we can
+see that when n is large, Beta-SPANDROP recovers more of the original distribution represented by
+( ˜S, y) compared to SPANDROP. In fact, as evidenced by Figure 1(a), the counterfactual sequences
+generated by Beta-SPANDROP are also more spread-out in their length distribution besides covering
+the original length n with signiﬁcantly higher probability. A similar analysis can be performed by
+substituting n and n0 with m and m0, where we can conclude that as m grows, Beta-SPANDROP
+is much better at generating counterfactual sequences that preserve the entire supporting fact set
+Ssup. This is shown in Figure 1(b), where the proportion of “noise-free” examples (i.e., m0 = m)
+decays exponentially with SPANDROP (γ = 1) while remaining much higher when γ is sufﬁciently
+small. For instance, when p = 0.1, γ = 1 and m = 10, the proportion of noise-free examples for
+SPANDROP is just 34.9%, while that for Beta-SPANDROP is 47.4%."
+BETA-SPANDROP,0.26640926640926643,"As we have seen, Beta-SPANDROP is signiﬁcantly better than its Bernoulli counterpart at assigning
+probability mass to the original data as well as generated sequences that contain the entire set of sup-
+porting facts. A natural question is, does this come at the cost of diverse counterfactual examples?
+To answer this question we study the entropy of the distribution that ˜S follows by varying γ and n,
+and normalize it by n to study the size of typical set of this distribution. As can be seen in Figure
+1(c), as long as γ is large enough, the average entropy per span ¯H degrades very little from the theo-
+retical maximum, which is H(p), attained when γ = 1. Therefore, to balance between introducing
+noise in the supporting facts and generating diverse examples, we set γ = 1 in our experiments."
+BETA-SPANDROP,0.2702702702702703,"Using the beta-Bernoulli distribution in dropout. The beta-Bernoulli distribution has been studied
+in prior work in seeking replacements for the (Bernoulli) dropout mechanism (Srivastava et al.,"
+BETA-SPANDROP,0.27413127413127414,Under review as a conference paper at ICLR 2022
+BETA-SPANDROP,0.277992277992278,"2014). Liu et al. (2019a) set ↵= β for the beta distribution in their formulation, which limits the
+dropout rate to always be 0.5. Lee et al. (2018) ﬁx β = 1 and vary ↵to control the sparsity of
+the result of dropout, which is similar to Beta-SPANDROP when γ = 1. However, we note that
+these approaches (as with dropout) are focused more on adding noise to internal representations
+of neural networks to introduce regularization, while SPANDROP operates directly on the input to
+ablate different components therein, and thus orthogonal (and potentially complementary) to these
+approaches. Further, SPANDROP has the beneﬁt of not having to make any assumptions about the
+model or any changes to it during training, which makes it much more widely applicable."
+BETA-SPANDROP,0.28185328185328185,"3
+FINDCATS: DISTILLING SUPERVISION FROM LONG-SEQUENCES"
+BETA-SPANDROP,0.2857142857142857,"In this section, we design a synthetic task of ﬁnding the animal name “cat” in a character sequence to
+a) demonstrate the effectiveness of SPANDROP and Beta-SPANDROP in promoting the performance
+over a series of problems with different settings, b) analyze the various factors that may affect the
+efﬁcacy of these approaches, and c) compare it to other counterfactual augmentation techniques like
+masking on mitigating position bias."
+EXPERIMENTAL SETUP,0.28957528957528955,"3.1
+EXPERIMENTAL SETUP"
+EXPERIMENTAL SETUP,0.29343629343629346,"FINDCATS. To understand the effectiveness of SPANDROP and Beta-SPANDROP in an experimental
+setting, we designed a synthetic task called FINDCATS where the model is trained to discern that
+given an animal name “cat”, whether a character string contains it as a subsequence (i.e., contains
+characters in “cat” in order, for instance, “abcdafgbijktma”) or not (e.g., “abcdefhtijklmn”). This
+allows us to easily control the total sequence length n, the supporting facts size m, as well as easily
+estimate the supporting fact noise that each SPANDROP variant might introduce. To generate the
+synthetic training data of FINDCATS, we ﬁrst generate a sequence consisting of lowercase letters (a
+to z) that does not contain “cat” as a subsequence. For half of these sequences, we label the tuple
+(cat, S) with a negative class to indicate that S does not contain “cat” as a subsequence; for the
+other half, we choose arbitrary (but not necessarily contiguous) positions in S to replace the letters
+with letters in “cat” from left to right to generate positive examples."
+EXPERIMENTAL SETUP,0.2972972972972973,"In all of our experiments, we evaluate model performance on a held-out set of 10,000 examples to
+observe classiﬁcation error. We set sequence length to n = 300 where each letter is a separate span,
+and chose positions for the letters in the animal name “cat” uniformly at random in the sequence
+unless otherwise mentioned."
+EXPERIMENTAL SETUP,0.30115830115830117,"Model. We employ three-layer Transformer model (Vaswani et al., 2017) with position embeddings
+(Devlin et al., 2019) as the sequence encoder, which is implemented with HuggingFace Transform-
+ers (Wolf et al., 2019). For each example (“cat”, S, y), we feed “[CLS] cat [SEP] S [SEP]” to the
+sequence encoder and then construct binary classiﬁer over the output representation of “[CLS]” to
+predict y. To investigate the effectiveness of SPANDROP, we simply apply SPANDROP to S ﬁrst
+before feeding the resulting sequence into the Transformer classiﬁer."
+RESULTS AND ANALYSIS,0.305019305019305,"3.2
+RESULTS AND ANALYSIS"
+RESULTS AND ANALYSIS,0.3088803088803089,"In each experiment, we compare SPANDROP and Beta-SPANDROP at the same drop ratio p. And
+we further use rejection sampling to remove examples that do not preserve the desired supporting
+facts to understand the effect of supporting fact noise."
+RESULTS AND ANALYSIS,0.3127413127413127,"Data efﬁciency. We begin by analyzing the contribution of SPANDROP and Beta-SPANDROP to
+improving the sample efﬁciency of the baseline model. To achieve this goal, we vary the size of
+the training set from 10 to 50,000 and observe the prediction error on the held-out set. We observe
+from the results in Figure 2(a) that: 1) Both SPANDROP and Beta-SPANDROP signiﬁcantly improve
+data efﬁciency in low-data settings. For instance, when trained on only 200 training examples,
+SPANDROP variants can achieve the generalization performance of the baseline model trained on 5x
+to even 20x data. 2) Removing supporting fact noise typically improves data efﬁciency further by
+about 2x. This indicates it is helpful not to drop spans in Ssup during training when possible, so that
+the model is always trained with true counterfactual examples rather than sometimes noisy ones. 3)
+Beta-SPANDROP consistently improves upon the baseline model even when data is abundant. This"
+RESULTS AND ANALYSIS,0.3166023166023166,Under review as a conference paper at ICLR 2022
+RESULTS AND ANALYSIS,0.3204633204633205,"101
+103
+105 1 3 10 30"
+RESULTS AND ANALYSIS,0.32432432432432434,# Training examples
+RESULTS AND ANALYSIS,0.3281853281853282,Error/Noise (%)
+RESULTS AND ANALYSIS,0.33204633204633205,(a) Data efﬁciency
+RESULTS AND ANALYSIS,0.3359073359073359,"0
+0.1 0.2 0.3 0.4 0.5
+1
+3
+10
+30"
+RESULTS AND ANALYSIS,0.33976833976833976,Drop rate p
+RESULTS AND ANALYSIS,0.3436293436293436,(b) Noise in supporting facts
+RESULTS AND ANALYSIS,0.3474903474903475,Noise from SPANDROP
+RESULTS AND ANALYSIS,0.35135135135135137,Noise from Beta-SPANDROP
+RESULTS AND ANALYSIS,0.3552123552123552,"10
+30
+100
+300 0.1 1
+10"
+RESULTS AND ANALYSIS,0.3590733590733591,Train/test sequence length
+RESULTS AND ANALYSIS,0.36293436293436293,(c) Varying sequence length
+RESULTS AND ANALYSIS,0.3667953667953668,Noise from SPANDROP
+RESULTS AND ANALYSIS,0.37065637065637064,Noise from Beta-SPANDROP
+RESULTS AND ANALYSIS,0.3745173745173745,"Baseline
+SPANDROP
+SPANDROP (noise-free)
+Beta-SPANDROP
+Beta-SPANDROP (noise-free)"
+RESULTS AND ANALYSIS,0.3783783783783784,"200 225 250 275 300 325
+0 10 20 30"
+RESULTS AND ANALYSIS,0.38223938223938225,Test sequence length
+RESULTS AND ANALYSIS,0.3861003861003861,Error(%)
+RESULTS AND ANALYSIS,0.38996138996138996,(d) OOD length generalization
+RESULTS AND ANALYSIS,0.3938223938223938,"Bernoulli Beta-Bernoulli
+0 10 20 30 40"
+RESULTS AND ANALYSIS,0.39768339768339767,Drop/mask distribution
+RESULTS AND ANALYSIS,0.4015444015444015,(e) SPANDROP vs SPANMASK
+RESULTS AND ANALYSIS,0.40540540540540543,SPANMASK
+RESULTS AND ANALYSIS,0.4092664092664093,"Fixed
+First 100
+0 20 40 60"
+RESULTS AND ANALYSIS,0.41312741312741313,Setting
+RESULTS AND ANALYSIS,0.416988416988417,(f) Position & zero-shot generalization
+RESULTS AND ANALYSIS,0.42084942084942084,SPANMASK
+RESULTS AND ANALYSIS,0.4247104247104247,"Figure 2: Experimental results of SPANDROP variants and SPANMASK on the FINDCATS synthetic
+tasks."
+RESULTS AND ANALYSIS,0.42857142857142855,"is likely due to the difﬁculty of the task when n = 300 and m = 3. Similar to many real-world tasks,
+the task remains underspeciﬁed even when the generalization error is already very low thanks to the
+large amount of training data available. 4) SPANDROP introduces inconsistent training objective
+with the original training set, which leads to performance deterioration when there is sufﬁcient
+training data, which is consistent with our theoretical observation."
+RESULTS AND ANALYSIS,0.43243243243243246,"Effect of supporting fact noise and sequence length.
+Since SPANDROP introduces noise in
+the supporting facts (albeit with a low probability), it is natural to ask if such noise is neg-
+atively correlated with model performance.
+We study this by varying the drop ratio p from
+{0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5} on ﬁxed training sets of size 1,000, and observe the resulting
+model performance and supporting fact error. As can be seen in Figure 2(b), supporting fact noise
+increases rapidly as p grows.1 However, we note that although the performance of SPANDROP dete-
+riorates as p increases, that of Beta-SPANDROP stays relatively stable. Inspecting these results more
+closely, we ﬁnd that even the performance of the noise-free variants follow a similar trend, which
+should not be affected by supporting fact noise."
+RESULTS AND ANALYSIS,0.4362934362934363,"Recalling the observations from our data efﬁciency experiments, we next turn to the hypothesis that
+this discrepancy is mainly caused by the inconsistent length distribution SPANDROP introduces.
+To test this hypothesis, we conduct two separate sets of experiments: 1) training and testing the
+model on varying sequence lengths {10, 20, 30, 50, 100, 200, 300, 500}, where longer sequences
+suffer more from the discrepancy between SPANDROP-resulted sequence lengths and the original
+sequence length; and 2) testing the model trained on n = 300 on test sets of different lengths, and
+if our hypothesis about distribution drift were correct, we should see SPANDROP models’ perfor-
+mance peaking around n0 = n(1−p), while the performance of Beta-SPANDROP is less affected by
+sequence length. As can be seen from Figures 2(c) and 2(d), our experimental results seem to well
+supporting this hypothesis. Speciﬁcally, in Figure 2(c), while the performance of both SPANDROP
+variants deteriorates as n grows and the task becomes more challenging and underspeciﬁed, SPAN-
+DROP deteriorates at a faster speed even when we remove the effect of supporting fact noise. On the
+other hand, we can clearly see in Figure 2(d) that SPANDROP performance peak around sequences
+of length 270 (= n(1 −p) = 300 ⇥(1 −0.1)) before rapidly deteriorating, while Beta-SPANDROP
+is unaffected until test sequence length exceeds that of all examples seen during training."
+RESULTS AND ANALYSIS,0.44015444015444016,"1Note that the noise in our experiments are lower than what would be predicted by theory, because in
+practice the initial sequence S might already contain parts of “cat” before it is inserted. This creates redundant
+sets of supporting facts for this task and reduces supporting fact noise especially when n is large."
+RESULTS AND ANALYSIS,0.444015444015444,Under review as a conference paper at ICLR 2022
+RESULTS AND ANALYSIS,0.44787644787644787,"Mitigating position bias. Besides SPANDROP, replacement-based techniques like masking can also
+be applied to introduce counterfactual examples into sequence model training, where elements in the
+sequence are replaced by a special symbol that is not used at test time. We implement SPANMASK
+in the same way as SPANDROP except spans are replaced rather than removed when the sampled
+“drop mask” δi is 0. We ﬁrst inspect whether SPANMASK beneﬁts from the same beta-Bernoulli
+distribution we use in SPANDROP. As can be seen in Figure 2(e), the gain from switching to a beta-
+Bernoulli distribution provides negligible beneﬁt to SPANMASK, which does not alter the sequence
+length of the input to begin with. We also see that SPANMASK results in signiﬁcantly higher error
+than both SPANDROP and Beta-SPANDROP in this setting. We further experiment with introducing
+position bias into the training data (but not the test data) to test whether these method help the model
+generalize to an unseen setting. Speciﬁcally, instead of selecting the position for the characters “cat”
+uniformly at random, we train the model with a “ﬁxed position” dataset where they always occur
+at indices (10, 110, 210), and a “ﬁrst 100” dataset where they are uniformly distributed among the
+ﬁrst 100 letters. As can be seen in Figure 2(f), both the baseline and SPANMASK models overﬁt
+to the position bias in the “ﬁxed” setting, while SPANDROP techniques signiﬁcantly reduce zero-
+shot generalization error. In the “ﬁrst 100” setting, Beta-SPANDROP consistently outperforms its
+Bernoulli counterpart and SPANMASK at improving the performance of the baseline model as well,
+indicating that SPANDROP variants are effective at reducing the position bias of the model."
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.4517374517374517,"4
+EXPERIMENTS ON NATURAL LANGUAGE DATA"
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.4555984555984556,"To examine the efﬁcacy of the proposed SPANDROP techniques on realistic data, we conduct exper-
+iments on four natural language processing datasets that represent the tasks of single- and multi-hop
+extractive question answering, multiple-choice question answering, and relation extraction. We fo-
+cus on showing the effect of SPANDROP instead of pursuing the state of the art in these experiments."
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.4594594594594595,"Datasets. We use four natural language processing datasets: SQuAD 1.1 (Rajpurkar et al., 2016),
+where models answer questions on a paragraph of text from Wikipedia; MultiRC (Khashabi et al.,
+2018), which is a multi-choice reading comprehension task in which questions can only be answered
+by taking into account information from multiple sentences; HotpotQA (Yang et al., 2018), which
+requires models to perform multi-hop reasoning over multiple Wikipedia pages to answer questions;
+and DocRED (Yao et al., 2019), which is a document-level data set for relation extraction."
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.46332046332046334,"For the SQuAD dataset, we deﬁne spans as collections of one or more consecutive tokens to show
+that SPANDROP can be applied to different granularities. For the rest three datasets, we deﬁne spans
+to be sentences since supporting facts are provided at sentence level. For all of these tasks, we report
+standard exact match (EM) and F1 metrics where applicable, for which higher scores are better. We
+refer the reader to the appendix for details about the statistics and metrics of these datasets."
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.4671814671814672,"Model. We build our models for these tasks using ELECTRA (Clark et al., 2019), since it is shown
+to perform well across a range of NLP tasks recently. We introduce randomly initialized task-
+speciﬁc parameters designed for each task following prior work on each dataset, and ﬁnetune these
+models on each dataset to report results. We refer the reader to the appendix for training details and
+hyperparameter settings."
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.47104247104247104,"Main results. We ﬁrst present the performance of our implemented models and their combination
+with SPANDROP variants on the four natural language processing tasks. We also include results from
+representative prior work on each dataset for reference (detailed in the appendix), and summarize the
+results in Table 1. We observe that: 1) our implemented models achieve competitive and sometimes
+signiﬁcantly better performance (in the cases of HotpotQA, SQuAD, and DocRED) compared to
+published results, especially considering that we do not tailor our models to each task too much;
+2) SPANDROP improves the performance over these models even when the training set is large and
+that the model is already performing well; 3) Models trained with Beta-SPANDROP consistently
+perform better or equally well with their SPANDROP counterparts across all datasets, demonstrating
+that our observations on the synthetic datasets generalize well to real-world ones. We note that the
+performance gains on real-world data is less signiﬁcant, which likely results from the fact spans in
+the synthetic task are independent from each other, which is not the case in natural language data."
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.4749034749034749,"We further evaluate the performance of our trained models on the MultiRC testing data, and obtain
+results of EM/F1: 41.1/79.8, 39.9/78.5 and 39.1/78.2 for models with Beta-SPANDROP, SPANDROP,"
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.47876447876447875,Under review as a conference paper at ICLR 2022
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.4826254826254826,(a) HotpotQA dev
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.4864864864864865,"Model
+Ans F1
+Sup F1
+Joint F1"
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.49034749034749037,"RoBERTa-base
+73.5
+83.4
+63.5
+Longformer-base
+74.3
+84.4
+64.4
+SAE BERT-base
+73.6
+84.6
+65.0"
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.4942084942084942,"Our implementation
+ELECTRA-base
+74.2
+86.3
+66.2
++ SPANDROP
+74.7
+86.7
+66.8
++ Beta-SPANDROP
+74.7
+86.9
+67.1"
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.4980694980694981,(b) MultiRC dev
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5019305019305019,"Model
+EM
+F1"
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5057915057915058,"BERT-base
+26.6
+74.2
+RoBERTa-base
+38.7
+79.2
+REPT RoBERTa-base
+40.4
+80.0"
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5096525096525096,"Our implementation
+ELECTRA-base
+40.1
+80.4
++ SPANDROP
+42.3
+81.7
++ Beta-SPANDROP
+44.8
+81.6"
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5135135135135135,(c) DocRED dev
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5173745173745173,"Model
+Ign F1
+RE F1
+Evi F1"
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5212355212355212,"E2GRE BERT-base
+55.2
+58.7
+47.1
+ATLOP BERT-base
+59.2
+61.1
+—
+SSAN BERT-base
+57.0
+59.2
+—"
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.525096525096525,"Our implementation
+ELECTRA-base
+59.6
+61.6
+50.8
++ SPANDROP
+59.9
+61.9
+51.2
++ Beta-SPANDROP
+60.1
+62.1
+51.2"
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.528957528957529,(d) SQuAD dev
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5328185328185329,"Model
+EM
+F1"
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5366795366795367,"RoBERTa-base
+—
+90.6
+ELECTRA-base
+84.5
+90.8
+XLNet-large
+89.7
+95.1"
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5405405405405406,"Our implementation
+ELECTRA-base
+86.6
+92.4
++ SPANDROP
+86.8
+92.6
++ Beta-SPANDROP
+86.9
+92.7"
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5444015444015444,Table 1: Main results on four natural language processing datasets.
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5482625482625483,"and without SPANDROP, respectively. This indicates that both Beta-SPANDROP and SPANDROP
+improve the model generalization ability, and Beta-SPANDROP is better than SPANDROP, improving
+EM/F1 with 2.0/1.6 absolute over the baseline."
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5521235521235521,"Next, to better understand whether the properties of SPANDROP and Beta-SPANDROP we observe
+on the synthetic data generalize to real-world data, we further perform a set of analysis experiments
+on SQuAD. Speciﬁcally, we are interested in studying the effect of the amount of training data, the
+span drop ratio p, and the choice of span size on performance."
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.555984555984556,"0.1
+1
+10
+100
+40 60 80"
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5598455598455598,% of training set used
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5637065637065637,Dev F1 (%)
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5675675675675675,"Baseline
+SPANDROP
+Beta-SPANDROP"
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5714285714285714,"0
+0.2
+0.4
+91 91.5 92 92.5 93"
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5752895752895753,Drop ratio p
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5791505791505791,"1
+4
+16
+64
+91 91.5 92 92.5 93"
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.583011583011583,"Span size
+Figure 3: Effect analysis of training data size, drop ratio and span size on performance of models
+trained with SPANDROP and Beta-SPANDROP over SQuAD"
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5868725868725869,"Effect of low data. To understand SPANDROP’s regularizing effect when training data is scarce,
+we study the model’s generalization performance when training on only 0.1% of the training data
+(around 100 examples) to using the entire training set (around 88k examples). As can be seen in
+Figure 3 (left), both SPANDROP and Beta-SPANDROP signiﬁcantly improve model performance
+when the amount of training data is extremely low. As the amount of training data increases, this
+gap slowly closes but remains consistently positive. The ﬁnal gap when 100% of the training data is
+used is still sufﬁcient to separate top-2 performing systems on this dataset."
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5907335907335908,"Impact of drop ratio. We compare SPANDROP and Beta-SPANDROP by controlling how likely
+each span is dropped on average (drop ratio p). Recall from our experiments on FINDCATS that
+larger p will result in distribution drift from the original training set for SPANDROP but not Beta-
+SPANDROP, thus the performance of the former deteriorates as p increases while the latter is vir-
+tually not affected. As can be seen in Figure 3 (middle), our observation on real-world data is
+consistent with this theoretical prediction, and indicate that Beta-SPANDROP is a better technique
+for data augmentation should one want to increase sequence diversity by setting p to a larger value."
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5945945945945946,Under review as a conference paper at ICLR 2022
+EXPERIMENTS ON NATURAL LANGUAGE DATA,0.5984555984555985,"Impact of span size. We train the model with SPANDROP on SQuAD with varying span sizes of
+{1, 2, 4, 8, 16, 32, 64} tokens per span to understand the effect of this hyperparameter. We observe
+in Figure 3 (right) that as span size grows, the generalization performance of the model ﬁrst holds
+roughly constant, then slowly deteriorates as span size grows too large. This suggests that the main
+contributors to generalization performance might have been the total number of spans in the entire
+sequence, which reduces with larger spans. This results in fewer potential augmented sequences for
+counterfactual learning, therefore lowering regularization strength. This observation is consistent
+with that on our synthetic data in our preliminary experiments, where we see that controlling for
+other factors, larger span sizes yield deteriorated generalization performance (data not shown due to
+space limit). This also suggests that while SPANDROP works with arbitrary span sizes, the optimal
+choice of spans for different tasks warrants further investigation, which we leave to future work."
+RELATED WORK,0.6023166023166023,"5
+RELATED WORK"
+RELATED WORK,0.6061776061776062,"Long Sequence Inference. Many applications require the prediction/inference over long sequences,
+such as multi-hop reading comprehension (Yang et al., 2018; Welbl et al., 2018), long document
+summarization (Huang et al., 2021), document-level information extraction (Yao et al., 2019) in
+natural language processing, long sequence time-series prediction (Zhou et al., 2021a), promoter
+region and chromatin-proﬁle prediction in DNA sequence (Oubounyt et al., 2019; Zhou & Troyan-
+skaya, 2015) in Genomics etc, where not all elements in the long sequence contribute equally to the
+desired output. Aside from approaches we have discussed that attempt to approximate all pair-wise
+interactions between elements in a sequence, more recent work has also investigated compressing
+long sequences into shorter ones to distill the information therein for prediction or representation
+learning (Rae et al., 2020; Goyal et al., 2020; Kim & Cho, 2021)."
+RELATED WORK,0.61003861003861,"Sequence Data Augmentation. Data augmentation is an effective common technique for under-
+speciﬁed tasks like long sequence inference. Feng et al. (2021) propose to group common data
+augmentation techniques in natural language processing into three categories: 1) rule-based meth-
+ods (Zhang et al., 2015; Wei & Zou, 2019; S¸ahin & Steedman, 2018), which apply a set of pre-
+deﬁned operations over the raw input, such as removing, adding, shufﬂing and replacement; 2)
+example mixup-based methods (Guo et al., 2019; Guo, 2020; Chen et al., 2020; Jindal et al., 2020),
+which, inspired from Mixup in computer vision (Zhang et al., 2018), perform interpolation between
+continuous features like word embeddings and sentence embeddings; 3) model-based methods (Xie
+et al., 2020; Sennrich et al., 2016), which use trained models to generate new examples (e.g., back
+translation Xie et al., 2020)."
+RELATED WORK,0.6138996138996139,"Most of existing rule-based data augmentation methods operate at the token/word level (Feng et al.,
+2021), such as word shufﬂe/replacement/addition (Wei & Zou, 2019). Shufﬂe-based techniques are
+less applicable when order information is crucial in the raw data (Lan et al., 2019, e.g., in natural
+language). Moreover, these operations might not be trivial in implementation over larger spans (e.g.,
+at the phrase or sentence level). For example, while replacing tokens require selecting candidates
+from a ﬁxed vocabulary which can be provided by well estimated language models (Clark et al.,
+2019), replacing phrases or sentences is signiﬁcantly more challenging since the “vocabulary” is
+unbounded and marginal probability difﬁcult to estimate. In contrast, our proposed SPANDROP
+supports data augmentation in multiple granularity as the spans in SPANDROP can be of any length,
+and is able to reserve sequence order since drop operation does not change the relative order of the
+original input."
+CONCLUSION,0.6177606177606177,"6
+CONCLUSION"
+CONCLUSION,0.6216216216216216,"In this paper, we presented SPANDROP, a simple and effective method for learning from long se-
+quences, which ablates parts of the sequence at random to generate counterfactual data to distill the
+sparse supervision signal that is predictive of the desired output. We show via theoretical analysis
+and carefully designed synthetic datasets that SPANDROP and its variant based on the beta-Bernoulli
+distribution help model achieve competitive performance with a fraction of the data by introducing
+diverse augmented training examples, and generalize better to previously unseen data. Our exper-
+iments on four real-world NLP datasets demonstrate that besides these beneﬁts, SPANDROP can
+further improve upon powerful pretrained Transformer models even when data is abundant."
+CONCLUSION,0.6254826254826255,Under review as a conference paper at ICLR 2022
+REFERENCES,0.6293436293436293,REFERENCES
+REFERENCES,0.6332046332046332,"Wei Bao, Jun Yue, and Yulei Rao. A deep learning framework for ﬁnancial time series using stacked"
+REFERENCES,0.637065637065637,"autoencoders and long-short term memory. PloS one, 12(7):e0180944, 2017."
+REFERENCES,0.640926640926641,"Iz Beltagy, Matthew E Peters, and Arman Cohan. Longformer: The long-document transformer."
+REFERENCES,0.6447876447876448,"arXiv preprint arXiv:2004.05150, 2020."
+REFERENCES,0.6486486486486487,"Jiaao Chen, Zichao Yang, and Diyi Yang. MixText: Linguistically-informed interpolation of hidden"
+REFERENCES,0.6525096525096525,"space for semi-supervised text classiﬁcation. In Proceedings of the 58th Annual Meeting of the
+Association for Computational Linguistics, pp. 2147–2157, 2020."
+REFERENCES,0.6563706563706564,"Krzysztof Choromanski, Valerii Likhosherstov, David Dohan, Xingyou Song, Andreea Gane, Tamas"
+REFERENCES,0.6602316602316602,"Sarlos, Peter Hawkins, Jared Davis, Afroz Mohiuddin, Lukasz Kaiser, et al. Rethinking attention
+with Performers. In International Conference on Learning Representations, 2020."
+REFERENCES,0.6640926640926641,"Kevin Clark, Minh-Thang Luong, Quoc V Le, and Christopher D Manning. ELECTRA: Pre-training"
+REFERENCES,0.667953667953668,"text encoders as discriminators rather than generators. In International Conference on Learning
+Representations, 2019."
+REFERENCES,0.6718146718146718,"Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. BERT: Pre-training of deep"
+REFERENCES,0.6756756756756757,"bidirectional transformers for language understanding. In NAACL-HLT, 2019."
+REFERENCES,0.6795366795366795,"Steven Y Feng, Varun Gangal, Jason Wei, Sarath Chandar, Soroush Vosoughi, Teruko Mitamura,"
+REFERENCES,0.6833976833976834,"and Eduard Hovy. A survey of data augmentation approaches for nlp. Findings of ACL, 2021."
+REFERENCES,0.6872586872586872,"Saurabh Goyal, Anamitra Roy Choudhury, Saurabh Raje, Venkatesan Chakaravarthy, Yogish Sab-"
+REFERENCES,0.6911196911196911,"harwal, and Ashish Verma. Power-bert: Accelerating bert inference via progressive word-vector
+elimination. In International Conference on Machine Learning, pp. 3690–3699. PMLR, 2020."
+REFERENCES,0.694980694980695,"Hongyu Guo.
+Nonlinear mixup: Out-of-manifold data augmentation for text classiﬁcation.
+In
+Proceedings of the AAAI Conference on Artiﬁcial Intelligence, volume 34, pp. 4044–4051, 2020."
+REFERENCES,0.6988416988416989,"Hongyu Guo, Yongyi Mao, and Richong Zhang. Augmenting data with mixup for sentence classiﬁ-"
+REFERENCES,0.7027027027027027,"cation: An empirical study. arXiv preprint arXiv:1905.08941, 2019."
+REFERENCES,0.7065637065637066,"Kevin Huang, Qi Peng, Guangtao Wang, Tengyu Ma, and Jing Huang. Entity and evidence guided"
+REFERENCES,0.7104247104247104,"relation extraction for docred. arXiv preprint arXiv:2008.12283, 2020."
+REFERENCES,0.7142857142857143,"Luyang Huang, Shuyang Cao, Nikolaus Parulian, Heng Ji, and Lu Wang. Efﬁcient attentions for"
+REFERENCES,0.7181467181467182,"long document summarization. In Proceedings of the 2021 Conference of the North American
+Chapter of the Association for Computational Linguistics: Human Language Technologies, pp.
+1419–1436, 2021."
+REFERENCES,0.722007722007722,"Fangkai Jiao, Yangyang Guo, Yilin Niu, Feng Ji, Feng-Lin Li, and Liqiang Nie. REPT: Bridg-"
+REFERENCES,0.7258687258687259,"ing language models and machine reading comprehensionvia retrieval-based pre-training. arXiv
+preprint arXiv:2105.04201, 2021."
+REFERENCES,0.7297297297297297,"Amit Jindal, Arijit Ghosh Chowdhury, Aniket Didolkar, Di Jin, Ramit Sawhney, and Rajiv Shah."
+REFERENCES,0.7335907335907336,"Augmenting nlp models using latent feature interpolations. In Proceedings of the 28th Interna-
+tional Conference on Computational Linguistics, pp. 6931–6936, 2020."
+REFERENCES,0.7374517374517374,"John Jumper, Richard Evans, Alexander Pritzel, Tim Green, Michael Figurnov, Olaf Ronneberger,"
+REFERENCES,0.7413127413127413,"Kathryn Tunyasuvunakool, Russ Bates, Augustin ˇZ´ıdek, Anna Potapenko, et al. Highly accurate
+protein structure prediction with alphafold. Nature, 596(7873):583–589, 2021."
+REFERENCES,0.7451737451737451,"Angelos Katharopoulos, Apoorv Vyas, Nikolaos Pappas, and Franc¸ois Fleuret. Transformers are"
+REFERENCES,0.749034749034749,"RNNs: Fast autoregressive transformers with linear attention. In International Conference on
+Machine Learning. PMLR, 2020."
+REFERENCES,0.752895752895753,"Daniel Khashabi, Snigdha Chaturvedi, Michael Roth, Shyam Upadhyay, and Dan Roth.
+Look-
+ing beyond the surface: A challenge set for reading comprehension over multiple sentences. In
+Proceedings of the North American Chapter of the Association for Computational Linguistics:
+Human Language Technologies, 2018."
+REFERENCES,0.7567567567567568,Under review as a conference paper at ICLR 2022
+REFERENCES,0.7606177606177607,"Gyuwan Kim and Kyunghyun Cho. Length-adaptive transformer: Train once with length drop, use"
+REFERENCES,0.7644787644787645,"anytime with search. In Proceedings of the 59th Annual Meeting of the Association for Computa-
+tional Linguistics and the 11th International Joint Conference on Natural Language Processing,
+pp. 6501–6511, 2021."
+REFERENCES,0.7683397683397684,"Nikita Kitaev, Lukasz Kaiser, and Anselm Levskaya.
+Reformer: The efﬁcient transformer.
+In
+International Conference on Learning Representations, 2019."
+REFERENCES,0.7722007722007722,"Zhenzhong Lan, Mingda Chen, Sebastian Goodman, Kevin Gimpel, Piyush Sharma, and Radu Sori-"
+REFERENCES,0.7760617760617761,"cut. ALBERT: A lite bert for self-supervised learning of language representations. In Interna-
+tional Conference on Learning Representations, 2019."
+REFERENCES,0.7799227799227799,"Juho Lee, Saehoon Kim, Jaehong Yoon, Hae Beom Lee, Eunho Yang, and Sung Ju Hwang. Adap-"
+REFERENCES,0.7837837837837838,"tive network sparsiﬁcation with dependent variational beta-bernoulli dropout.
+arXiv preprint
+arXiv:1805.10896, 2018."
+REFERENCES,0.7876447876447876,"Lei Liu, Yuhao Luo, Xu Shen, Mingzhai Sun, and Bin Li. β-dropout: A uniﬁed dropout. IEEE"
+REFERENCES,0.7915057915057915,"Access, 7:36140–36153, 2019a."
+REFERENCES,0.7953667953667953,"Yinhan Liu, Myle Ott, Naman Goyal, Jingfei Du, Mandar Joshi, Danqi Chen, Omer Levy, Mike"
+REFERENCES,0.7992277992277992,"Lewis, Luke Zettlemoyer, and Veselin Stoyanov. RoBERTa: A robustly optimized BERT pre-
+training approach. arXiv preprint arXiv:1907.11692, 2019b."
+REFERENCES,0.803088803088803,"Mhaned Oubounyt, Zakaria Louadi, Hilal Tayara, and Kil To Chong. Deepromoter: robust promoter"
+REFERENCES,0.806949806949807,"predictor using deep learning. Frontiers in genetics, 10:286, 2019."
+REFERENCES,0.8108108108108109,"Hao Peng, Nikolaos Pappas, Dani Yogatama, Roy Schwartz, Noah Smith, and Lingpeng Kong."
+REFERENCES,0.8146718146718147,"Random feature attention. In International Conference on Learning Representations, 2020."
+REFERENCES,0.8185328185328186,"Alec Radford, Jeffrey Wu, Rewon Child, David Luan, Dario Amodei, Ilya Sutskever, et al. Language"
+REFERENCES,0.8223938223938224,"models are unsupervised multitask learners. OpenAI blog, 1(8):9, 2019."
+REFERENCES,0.8262548262548263,"Jack W. Rae, Anna Potapenko, Siddhant M. Jayakumar, Chloe Hillier, and Timothy P. Lillicrap."
+REFERENCES,0.8301158301158301,"Compressive transformers for long-range sequence modelling. In International Conference on
+Learning Representations, 2020."
+REFERENCES,0.833976833976834,"Pranav Rajpurkar, Jian Zhang, Konstantin Lopyrev, and Percy Liang. SQuAD: 100, 000+ questions"
+REFERENCES,0.8378378378378378,"for machine comprehension of text. In EMNLP, 2016."
+REFERENCES,0.8416988416988417,G¨ozde G¨ul S¸ahin and Mark Steedman. Data augmentation via dependency tree morphing for low-
+REFERENCES,0.8455598455598455,"resource languages. In Proceedings of the 2018 Conference on Empirical Methods in Natural
+Language Processing, pp. 5004–5009, 2018."
+REFERENCES,0.8494208494208494,"Rico Sennrich, Barry Haddow, and Alexandra Birch. Improving neural machine translation models"
+REFERENCES,0.8532818532818532,"with monolingual data. In 54th Annual Meeting of the Association for Computational Linguistics,
+pp. 86–96, 2016."
+REFERENCES,0.8571428571428571,"Nitish Srivastava, Geoffrey Hinton, Alex Krizhevsky, Ilya Sutskever, and Ruslan Salakhutdinov."
+REFERENCES,0.861003861003861,"Dropout: a simple way to prevent neural networks from overﬁtting. Journal of Machine Learning
+Research, 15(1):1929–1958, 2014."
+REFERENCES,0.8648648648648649,"Yi Tay, Mostafa Dehghani, Samira Abnar, Yikang Shen, Dara Bahri, Philip Pham, Jinfeng Rao,"
+REFERENCES,0.8687258687258688,"Liu Yang, Sebastian Ruder, and Donald Metzler. Long range arena: A benchmark for efﬁcient
+transformers. In International Conference on Learning Representations, 2020."
+REFERENCES,0.8725868725868726,"Ming Tu, Kevin Huang, Guangtao Wang, Jing Huang, Xiaodong He, and Bowen Zhou. Select,"
+REFERENCES,0.8764478764478765,"answer and explain: Interpretable multi-hop reading comprehension over multiple documents. In
+Proceedings of the AAAI Conference on Artiﬁcial Intelligence, volume 34, pp. 9073–9080, 2020."
+REFERENCES,0.8803088803088803,"Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez,"
+REFERENCES,0.8841698841698842,"Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Advances in Neural Infor-
+mation Processing Systems, pp. 5998–6008, 2017."
+REFERENCES,0.888030888030888,Under review as a conference paper at ICLR 2022
+REFERENCES,0.8918918918918919,Jason Wei and Kai Zou. EDA: Easy data augmentation techniques for boosting performance on
+REFERENCES,0.8957528957528957,"text classiﬁcation tasks. In Proceedings of the Conference on Empirical Methods in Natural Lan-
+guage Processing and the 9th International Joint Conference on Natural Language Processing,
+pp. 6382–6388, 2019."
+REFERENCES,0.8996138996138996,"Johannes Welbl, Pontus Stenetorp, and Sebastian Riedel. Constructing datasets for multi-hop read-"
+REFERENCES,0.9034749034749034,"ing comprehension across documents. Transactions of the Association for Computational Lin-
+guistics, 6:287–302, 2018."
+REFERENCES,0.9073359073359073,"Thomas Wolf, Lysandre Debut, Victor Sanh, Julien Chaumond, Clement Delangue, Anthony Moi,"
+REFERENCES,0.9111969111969112,"Pierric Cistac, Tim Rault, R´emi Louf, Morgan Funtowicz, et al. Huggingface’s transformers:
+State-of-the-art natural language processing. arXiv preprint arXiv:1910.03771, 2019."
+REFERENCES,0.915057915057915,"Qizhe Xie, Zihang Dai, Eduard Hovy, Thang Luong, and Quoc Le. Unsupervised data augmentation"
+REFERENCES,0.918918918918919,"for consistency training. In Advances in Neural Information Processing Systems, 2020."
+REFERENCES,0.9227799227799228,"Benfeng Xu, Quan Wang, Yajuan Lyu, Yong Zhu, and Zhendong Mao. Entity structure within and"
+REFERENCES,0.9266409266409267,"throughout: Modeling mention dependencies for document-level relation extraction. In Proceed-
+ings of the AAAI Conference on Artiﬁcial Intelligence, volume 35, pp. 14149–14157, 2021."
+REFERENCES,0.9305019305019305,"Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Bengio, William Cohen, Ruslan Salakhutdinov,"
+REFERENCES,0.9343629343629344,"and Christopher D Manning. HotpotQA: A dataset for diverse, explainable multi-hop question
+answering. In Proceedings of the Conference on Empirical Methods in Natural Language Pro-
+cessing, pp. 2369–2380, 2018."
+REFERENCES,0.9382239382239382,"Zhilin Yang, Zihang Dai, Yiming Yang, Jaime Carbonell, Russ R Salakhutdinov, and Quoc V Le."
+REFERENCES,0.9420849420849421,"XLNet: Generalized autoregressive pretraining for language understanding. In Advances in Neu-
+ral Information Processing Systems, 2019."
+REFERENCES,0.9459459459459459,"Yuan Yao, Deming Ye, Peng Li, Xu Han, Yankai Lin, Zhenghao Liu, Zhiyuan Liu, Lixin Huang,"
+REFERENCES,0.9498069498069498,"Jie Zhou, and Maosong Sun. DocRED: A large-scale document-level relation extraction dataset.
+In Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pp.
+764–777, 2019."
+REFERENCES,0.9536679536679536,"Manzil Zaheer, Guru Guruganesh, Kumar Avinava Dubey, Joshua Ainslie, Chris Alberti, Santiago"
+REFERENCES,0.9575289575289575,"Ontanon, Philip Pham, Anirudh Ravula, Qifan Wang, Li Yang, et al. Big Bird: Transformers for
+longer sequences. In Advances in Neural Information Processing Systems, 2020."
+REFERENCES,0.9613899613899614,"Hongyi Zhang, Moustapha Cisse, Yann N Dauphin, and David Lopez-Paz. mixup: Beyond empirical"
+REFERENCES,0.9652509652509652,"risk minimization. In International Conference on Learning Representations, 2018."
+REFERENCES,0.9691119691119691,"Xiang Zhang, Junbo Zhao, and Yann LeCun. Character-level convolutional networks for text clas-"
+REFERENCES,0.972972972972973,"siﬁcation. In Advances in Neural Information Processing Systems, pp. 649–657, 2015."
+REFERENCES,0.9768339768339769,"Haoyi Zhou, Shanghang Zhang, Jieqi Peng, Shuai Zhang, Jianxin Li, Hui Xiong, and Wancai Zhang."
+REFERENCES,0.9806949806949807,"Informer: Beyond efﬁcient transformer for long sequence time-series forecasting. In Proceedings
+of AAAI, 2021a."
+REFERENCES,0.9845559845559846,Jian Zhou and Olga G Troyanskaya. Predicting effects of noncoding variants with deep learning–
+REFERENCES,0.9884169884169884,"based sequence model. Nature methods, 12(10):931–934, 2015."
+REFERENCES,0.9922779922779923,"Wenxuan Zhou, Kevin Huang, Tengyu Ma, and Jing Huang. Document-level relation extraction"
+REFERENCES,0.9961389961389961,"with adaptive thresholding and localized context pooling. In Proceedings of the AAAI Conference
+on Artiﬁcial Intelligence, 2021b."

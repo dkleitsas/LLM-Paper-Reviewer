@@ -1,0 +1,874 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.005128205128205128,"Off-policy reinforcement learning (RL) has proven to be a powerful framework
+for guiding agents’ actions in environments with stochastic rewards and unknown
+or noisy state dynamics. In many real-world settings, these agents must operate
+in multiple environments, each with slightly different dynamics. For example, we
+may be interested in developing policies to guide medical treatment for patients
+with and without a given disease, or policies to navigate curriculum design for
+students with and without a learning disability. Here, we introduce nested policy
+ﬁtted Q-iteration (NFQI), an RL framework that ﬁnds optimal policies in envi-
+ronments that exhibit such a structure. Our approach develops a nested Q-value
+function that takes advantage of the shared structure between two groups of obser-
+vations from two separate environments while allowing their policies to be distinct
+from one another. We ﬁnd that NFQI yields policies that rely on relevant features
+and perform at least as well as a policy that does not consider group structure. We
+demonstrate NFQI’s performance using an OpenAI Gym environment and a clin-
+ical decision making RL task. Our results suggest that NFQI can develop policies
+that are better suited to many real-world clinical environments."
+INTRODUCTION,0.010256410256410256,"1
+INTRODUCTION"
+INTRODUCTION,0.015384615384615385,"Off-policy reinforcement learning (RL) has proven to be a powerful framework for guiding agents’
+actions in environments with stochastic rewards and unknown or noisy state dynamics (13; 2). Pre-
+vious off-policy RL algorithms (9) learn a single optimal policy designed to maximize agents’ long-
+term expected rewards. However, such a learning scheme is not always ideal. In many real-world
+settings, agents’ environments can be divided into multiple groups for the same task. These groups
+may share rewards but have different state dynamics, which often entails distinct optimal policies."
+INTRODUCTION,0.020512820512820513,"For example, say that we are designing a clinical decision support algorithm to treat ischemic stroke
+in two groups of patients: one group has a large number of patients with healthy kidneys and the
+other has a smaller number of patients with renal (kidney) disease. Note that there are similarities
+in the treatment plans for these two groups; in particular, both sets of patients exhibit the effects
+of disturbed blood ﬂow to the brain due to stroke, and may require similar procedures. However,
+patients with renal disease must follow a treatment plan that considers the inability of their kidneys
+to properly ﬁlter out toxins. Traditional off-policy RL algorithms would learn a single policy that
+does not consider the underlying presence of renal disease. This policy is likely to overﬁt to the
+patients with functioning kidneys and overlook any known differences in optimal treatment plans.
+In such scenarios, it would be beneﬁcial to learn distinct policies for pre-deﬁned groups of patients,
+while leveraging any shared environmental structure and reward functions between the groups to
+ensure a large and effective sample size."
+INTRODUCTION,0.02564102564102564,"To address this problem, we introduce nested policy ﬁtted Q-iteration (NFQI), an off-policy RL al-
+gorithm that extends ﬁtted Q-iteration (FQI) (9) to account for nested environments. Here, nested
+refers to an environment structured with two predeﬁned groups that share some characteristics; we
+will refer to the two groups as background and foreground. The background group often contains far
+more samples. In the clinical example above, the background group includes patients with healthy
+kidneys and the foreground group includes renal disease patients. Both groups share a reward func-
+tion, in this case successfully treating a stroke, but have different state dynamics."
+INTRODUCTION,0.03076923076923077,The contributions of this paper to off-policy RL in the presence of nested environments are threefold:
+INTRODUCTION,0.035897435897435895,Under review as a conference paper at ICLR 2022
+INTRODUCTION,0.041025641025641026,"1. We introduce NFQI, a supervised learning method that uses a nested Q-value function to
+learn policies that are suited to nested environments. NFQI concurrently models both the
+background and foreground datasets and is agnostic to modeling choices.
+2. We develop a training procedure inspired by transfer learning (31) to ﬁt this nested Q-value
+function and allow for group imbalance in the data.
+3. We show that NFQI generates policies that outperform baseline methods on a set of quan-
+titative and qualitative metrics and rely on relevant state features to do so."
+INTRODUCTION,0.046153846153846156,"This paper proceeds as follows. Section 2 discusses related work. In Section 3, we present a frame-
+work for NFQI. In Section 4, we show results for NFQI in simulations and hospital data. Section 5
+concludes and discusses potential future work."
+RELATED WORK,0.05128205128205128,"2
+RELATED WORK"
+RELATED WORK,0.05641025641025641,"Multi-task RL. The goal of multi-task RL is to train an agent to perform optimally at multi-
+ple tasks (8). Recent work has developed a method to efﬁciently learn a task-conditioned policy
+π(a|s, z), where a is an action, s is a state, and z is a task embedding (30). This approach has
+been observed to perform better than single-task learning because it uses the relationships between
+tasks to improve performance for individual tasks (27). However, the goals of multi-task RL differ
+from those of NFQI: Multi-task RL optimizes performance for multiple tasks, each with a different
+Markov decision process (MDP), whereas NFQI is most appropriate to compare two environments
+with identical tasks and reward functions but different transition dynamics. Additionally, the neural
+networks typically used for multi-task RL (30) require large training sets that are not always avail-
+able in the medical and learning applications NFQI was built to address. As such, these networks
+are likely to suffer from overparameterization in these applications."
+RELATED WORK,0.06153846153846154,"Meta RL. Meta RL algorithms train agents to solve new tasks efﬁciently based on experience with
+other similar tasks. These approaches infer the task from a distribution p(T) using a small set
+of observations, rather than through an explicit task embedding. Much of the effort in meta RL is
+focused on task design as opposed to model tuning, to make this inference process easier (12). Other
+work has shown that meta RL can be appropriate for ofﬂine RL (21). Like multi-task RL, meta RL is
+different from NFQI because it trains agents to perform multiple tasks with different state and action
+spaces. Unlike meta RL and multi-task RL, NFQI expects all samples to arise from MDPs that have
+the same state and action spaces and follow the same reward function. Since the dynamics of the
+two environments vary, the MDPs will have different state transition functions, entailing different
+optimal policies for the groups."
+RELATED WORK,0.06666666666666667,"Transfer learning. Transfer learning methods ﬁne-tune a pre-trained model for a target dataset.
+Often, the target dataset is relatively small; transfer learning using a larger and similar dataset may
+result in better performance than training a model on just the target dataset (6). A common way to
+use these methods is to ﬁrst train a neural network using the large dataset; then, some of the network
+layers are frozen, and the rest of the network is ﬁne-tuned by training on the target dataset. In this
+way, the network is adapted to the target problem by learning a nonlinear map from the solution
+estimated for the larger dataset to the outcome for the target dataset. This strategy can be applied
+to reinforcement learning (31) and may improve resource usage when the target dataset is small (4).
+The two datasets that NFQI uses are likely to have substantial sample size imbalance; for this reason,
+we train the parameters for NFQI using a procedure inspired by transfer learning."
+METHODS,0.07179487179487179,"3
+METHODS"
+METHODS,0.07692307692307693,"In this section we present nested policy ﬁtted Q-iteration (NFQI), an off-policy RL algorithm for
+environments that have a nested group structure. We ﬁrst review Q-learning and ﬁtted Q-iteration
+(FQI) and then describe how to extend them to NFQI."
+NOTATION AND PRELIMINARIES,0.08205128205128205,"3.1
+NOTATION AND PRELIMINARIES"
+NOTATION AND PRELIMINARIES,0.08717948717948718,"A Markov decision process (MDP) is a discrete-time stochastic control process deﬁned by a 4-
+tuple (S, A, P, R), where S is the state space; A is the set of actions; P(st+1|st, at) is a function"
+NOTATION AND PRELIMINARIES,0.09230769230769231,Under review as a conference paper at ICLR 2022
+NOTATION AND PRELIMINARIES,0.09743589743589744,"governing state transition probabilities from time t to t + 1; and R : S →R is a reward function.
+We assume a ﬁnite number of actions. A policy π : S →A is a mapping from states to actions that
+describes an agent’s strategy within an MDP. In general, we assume st ∈Rp and at ∈Rq."
+NOTATION AND PRELIMINARIES,0.10256410256410256,"3.2
+Q-LEARNING AND FITTED Q-ITERATION (FQI)"
+NOTATION AND PRELIMINARIES,0.1076923076923077,"Fitted Q-iteration (FQI) is an off-policy RL algorithm based on Q-learning (9; 29) that is designed
+to ﬁnd an optimal policy for a given MDP. Q-learning approaches deﬁne a function Q : S × A →R
+that maps state-action pairs to an estimate of the cumulative expected reward obtained by tak-
+ing a particular action in a particular state. For a given policy π at time step t, Q is deﬁned as
+Qπ(st, at) = rt + γEs′[V π(s′)], where the expectation is taken over the possible next states given
+the transition probabilities P, V π is the value function corresponding to π, and γ ∈[0, 1] is a dis-
+count factor. The principle of Bellman optimality (5) states that a policy π⋆is optimal for a given
+MDP if and only if, for every state s ∈S, it holds that V π∗(s) = maxa R(s, a) + γEs′[V π∗(s′)].
+Broadly, Q-learning algorithms attempt to approximate the Q function using agents’ observed inter-
+actions with an environment, as the state transition function is typically not directly observable. This
+approximation is used to recommend optimal actions for a given state. The data used to estimate
+the Q function typically consist of samples representing steps taken within an MDP. In particular, a
+sample at time t is a 4-tuple (st, at, st+1, rt) representing the agent’s state, chosen action, observed
+next state, and observed reward."
+NOTATION AND PRELIMINARIES,0.11282051282051282,"FQI approximates Q using an ofﬂine batch optimization approach (9). Speciﬁcally, it ﬁrst posits a
+family of functions fθ(s, a), parameterized by θ, that are meant to approximate the expected future
+reward after taking action a from state s. Common choices for f are regression trees (9) and neural
+networks (25). FQI then employs an iterative algorithm that alternates between updating the current
+Q-values and ﬁtting a regression problem that optimizes the parameters θ. Suppose we have a set
+of T samples from an MDP, represented as a set of one-step transition tuples {(st, at, st+1, rt)}T
+t=1.
+On step k of the algorithm, FQI ﬁrst updates its estimate of the Q-function according to the Bell-
+man equation: bQk(st, at) = rt+1 + γ maxa′∈A fθk−1(st+1, a′) for t = 1, . . . ,T. The second step
+minimizes a loss measuring the discrepancy between the current Q-function estimate and the ap-
+proximating function f. The optimization problem is minθk
+PN
+n=1 L
+
+bQk(sn
+t , an
+t ), fθk(sn
+t , an
+t )
+
+,"
+NOTATION AND PRELIMINARIES,0.11794871794871795,"where L(y, by) is the loss function comparing the “true” value y to predicted value by. After K
+iterations, FQI’s approximation to the optimal policy is given by π(s) = arg maxa′∈A fθK(s, a′)."
+NESTED POLICY FQI,0.12307692307692308,"3.3
+NESTED POLICY FQI"
+NESTED POLICY FQI,0.1282051282051282,"We now introduce NFQI, an extension of FQI that estimates group-speciﬁc policies and accounts for
+a nested group structure in the data. NFQI is a framework for off-policy reinforcement learning that
+can use an arbitrary function class to approximate the Q function. Below, we describe the general
+NFQI framework with minimal assumptions about its parameterization. Additional experiments
+show that neural networks are well suited to parameterize Q (see Appendix 6.2 and Appendix 6.5)."
+NESTED POLICY FQI,0.13333333333333333,"Recall that nested datasets are structured with two predeﬁned groups – the background, and fore-
+ground. To account for nested datasets, NFQI imposes structure on the family of functions used to
+approximate the Q function. We deﬁne the approximating function f as
+f(s, a, z) = gs(s, a) + 1{z=1}gf(s, a),
+(1)
+where gs is a function modeling the shared Q-value structure between the background and fore-
+ground samples, gf models foreground-speciﬁc structures, and 1{z=1} is an indicator function that
+returns 1 when z = 1 (foreground) and 0 otherwise (background). Note that, despite the uncon-
+ventional structure of the approximating function, it is still guaranteed to converge to the Bellman
+optimal Q-value function; see Appendix 6.1 for further details."
+NESTED POLICY FQI,0.13846153846153847,"NFQI uses a two-stage training procedure inspired by transfer learning (Appendix Algorithm 1).
+In the ﬁrst stage, we train gs using all of the foreground and background training samples, while
+ignoring the foreground-speciﬁc model gf. Note that this stage is equivalent to setting z = 0 for all
+samples (including foreground samples) temporarily. In the second stage, we train the foreground-
+speciﬁc function gf using only foreground training samples. Under this approach, we ﬁrst estimate
+the shared structure of the network using both groups of samples in our training set, and we ﬁne-tune
+the network’s foreground predictions in gf using just the foreground training samples."
+NESTED POLICY FQI,0.14358974358974358,Under review as a conference paper at ICLR 2022
+EXPERIMENTS,0.14871794871794872,"4
+EXPERIMENTS"
+EXPERIMENTS,0.15384615384615385,"We demonstrate the performance of NFQI through the following experiments. Our experiments seek
+to answer the following questions:"
+HOW WELL DOES A JOINT POLICY LEARNED USING NFQI PERFORM IN COMPARISON TO TWO POLICIES,0.15897435897435896,"1. How well does a joint policy learned using NFQI perform in comparison to two policies
+learned independently (one for each dataset) using FQI?"
+HOW DOES A JOINT POLICY LEARNED USING NFQI PERFORM COMPARED TO A JOINT POLICY LEARNED BY,0.1641025641025641,"2. How does a joint policy learned using NFQI perform compared to a joint policy learned by
+applying FQI or transfer learning to the union of background and foreground datasets?"
+HOW DOES A JOINT POLICY LEARNED USING NFQI PERFORM COMPARED TO A JOINT POLICY LEARNED BY,0.16923076923076924,3. Do the policies learned by NFQI rely on group-speciﬁc features to make predictions?
+ARE POLICIES LEARNED USING NFQI ABLE TO ACHIEVE GOOD PERFORMANCE WHEN THE SAMPLE SIZE,0.17435897435897435,"4. Are policies learned using NFQI able to achieve good performance when the sample size
+of the background dataset is much larger than that of the foreground dataset?"
+WHEN THERE IS NO GROUP STRUCTURE IN THE DATASET AND THE APPLICATION OF NFQI IS TECHNICALLY,0.1794871794871795,"5. When there is no group structure in the dataset and the application of NFQI is technically
+inappropriate, does NFQI perform as well as standard FQI?"
+WHEN THERE IS NO GROUP STRUCTURE IN THE DATASET AND THE APPLICATION OF NFQI IS TECHNICALLY,0.18461538461538463,"We present results from NFQI applied to a nested Cartpole environment (7) and to a clinical decision
+support task using MIMIC-IV, a benchmark electronic health record (EHR) dataset (14; 11)."
+NESTED CARTPOLE,0.18974358974358974,"4.1
+NESTED CARTPOLE"
+NESTED CARTPOLE,0.19487179487179487,"We ﬁrst demonstrate the performance of NFQI using the Cartpole environment, as implemented in
+the OpenAI gym (7). The Cartpole environment consists of an unstable pole attached to the top of
+a cart. An agent’s objective is to keep the pole balanced upright (in this case for 1000 steps); this
+can be done by strategically applying a force on the cart to the left or right at each time step (see
+Appendix 6.4 for the full MDPs and Appenxix 6.6 for training details)."
+NESTED CARTPOLE,0.2,"In this study, we adapt the Cartpole environment to accommodate a nested structure. We call our
+setup the “nested Cartpole” environment. The background environment is the original Cartpole
+setup, while the foreground environment includes a constant force of c Newtons that pushes the cart
+to the left. Unless otherwise speciﬁed, c = 5. Although the objectives for the two simulators is
+identical, an agent will require a different policy to succeed in the background and foreground envi-
+ronments because the dynamics of each system are different. Intuitively, an agent in the foreground
+environment will need to develop a policy that counteracts the consistent leftward force."
+NESTED CARTPOLE,0.20512820512820512,"To construct datasets we sample Cartpole episodes from the foreground and background environ-
+ments. Each trajectory starts in a random state and chooses actions uniformly at random until the
+pole falls over. We use these trajectories to train NFQI and other off-policy algorithms. We evalu-
+ated the performance of each policy by applying it in the nested Cartpole simulator and computing
+the number of steps the cart maintains the pole in the goal state (with a maximum of 1000 steps)."
+NFQI IMPROVES PERFORMANCE WHEN THE FOREGROUND SAMPLE SIZE IS SMALL,0.21025641025641026,"4.1.1
+NFQI IMPROVES PERFORMANCE WHEN THE FOREGROUND SAMPLE SIZE IS SMALL"
+NFQI IMPROVES PERFORMANCE WHEN THE FOREGROUND SAMPLE SIZE IS SMALL,0.2153846153846154,"We ﬁrst sought to benchmark NFQI’s performance against FQI. To do so, we generated a training
+set of trajectories that reﬂect the group imbalance that we expect to see in the nested setting. In par-
+ticular, this dataset contains 200 background samples and 50 foreground samples. The foreground
+environment has a force of c = 5 Newtons pushing the cart to the left. We trained FQI separately
+on the background and foreground dataset; this yielded two independent policies. We ﬁt NFQI with
+both datasets using the procedure in Appendix Algorithm 1. We tailored the neural networks for
+each algorithm so that they both use the same number of parameters (see Appendix 6.6), thus pre-
+cluding either algorithm from having a more computationally expressive family of functions. We
+evaluated each policy 50 times in each of the foreground and background environments, computing
+the mean and conﬁdence interval of these repetitions."
+NFQI IMPROVES PERFORMANCE WHEN THE FOREGROUND SAMPLE SIZE IS SMALL,0.2205128205128205,"We ﬁnd that the policy learned by NFQI performs substantially better than FQI in the foreground
+environment and slightly better than FQI in the background environment (Fig. 1). FQI’s poor
+performance in the foreground environment can likely be explained by the small training set size.
+However, NFQI is able to leverage information from both foreground and background trajectories,
+which allows it to overcome this limited sample size. This result suggests that NFQI is a viable"
+NFQI IMPROVES PERFORMANCE WHEN THE FOREGROUND SAMPLE SIZE IS SMALL,0.22564102564102564,Under review as a conference paper at ICLR 2022
+NFQI IMPROVES PERFORMANCE WHEN THE FOREGROUND SAMPLE SIZE IS SMALL,0.23076923076923078,"algorithm for learning optimal policies for two groups, especially when the training set sizes are
+unbalanced between the groups."
+NFQI IMPROVES PERFORMANCE WHEN THE FOREGROUND SAMPLE SIZE IS SMALL,0.2358974358974359,"(a) Background environment performance
+(b) Foreground environment performance"
+NFQI IMPROVES PERFORMANCE WHEN THE FOREGROUND SAMPLE SIZE IS SMALL,0.24102564102564103,"Figure 1: Performance of NFQI and FQI in the background (Panel a) and foreground (Panel b)
+environments. The bar height represents the mean number of steps in the goal state (with a maximum
+of 1000 steps); ticks represent 95% conﬁdence intervals over 50 repetitions. NFQI trained with both
+datasets performs better on test data from each of the environments, and substantially better for the
+foreground test data."
+NFQI OUTPERFORMS FQI AND TRANSFER LEARNING,0.24615384615384617,"4.1.2
+NFQI OUTPERFORMS FQI AND TRANSFER LEARNING"
+NFQI OUTPERFORMS FQI AND TRANSFER LEARNING,0.2512820512820513,"Given that we want to train a policy using both datasets at the same time, we next compared NFQI
+in the nested Cartpole environment to two other bespoke approaches: FQI trained jointly with tra-
+jectories generated from both the foreground and background environments, and transfer learning.
+The FQI and transfer learning algorithms ﬁnd a single policy that does not consider a group label at
+training or inference time (further details in Appendix 6.6)."
+NFQI OUTPERFORMS FQI AND TRANSFER LEARNING,0.2564102564102564,"(a) NFQI performance, background dataset
+(b) NFQI performance, foreground dataset"
+NFQI OUTPERFORMS FQI AND TRANSFER LEARNING,0.26153846153846155,"Figure 2: NFQI outperforms related algorithms in a nested Cartpole environment. Increasing the
+force on the cart (x-axis) increases the difference in the foreground and background environments.
+As the environments become more distinct, NFQI enables agents to survive longer (y-axis) than FQI
+and transfer learning for both the background (Panel a) and foreground (Panel b) data."
+NFQI OUTPERFORMS FQI AND TRANSFER LEARNING,0.26666666666666666,"To evaluate the algorithms, we created eleven variations of the nested Cartpole environment,
+each corresponding to a different value for the constant force applied in the foreground, c ∈
+{0, 1, . . . , 10}. We evaluate each algorithm 15 times for each environment."
+NFQI OUTPERFORMS FQI AND TRANSFER LEARNING,0.2717948717948718,"We found that NFQI outperforms FQI and transfer learning in this setting, especially as the fore-
+ground and background environments become more different from one another (Fig. 2). When the
+foreground and background environments were the same (i.e., c = 0), NFQI and FQI performed
+similarly, while transfer learning performed slightly worse. As the background and foreground
+dynamics became more distinct (i.e., as c increased), NFQI outperforms FQI. In particular, NFQI
+maintained near-perfect performance in the background, and the performance degraded more slowly
+in the foreground environment compared to competing approaches. These results suggest that NFQI"
+NFQI OUTPERFORMS FQI AND TRANSFER LEARNING,0.27692307692307694,Under review as a conference paper at ICLR 2022
+NFQI OUTPERFORMS FQI AND TRANSFER LEARNING,0.28205128205128205,"Figure 3: SHAP plots for background (Panel a) and foreground (Panel b) samples from the Cartpole
+environment. Each point represents the SHAP value for a single sample and single feature. The
+magnitude of SHAP values is similar in both contexts, but foreground SHAP values are shifted
+right, suggesting that the foreground policy is compensating for the foreground-speciﬁc dynamics."
+NFQI OUTPERFORMS FQI AND TRANSFER LEARNING,0.28717948717948716,"is able to model the differences between the background and foreground while exploiting shared
+structure to improve its performance in both environments."
+NFQI YIELDS POLICIES THAT RELY ON RELEVANT FEATURES,0.2923076923076923,"4.1.3
+NFQI YIELDS POLICIES THAT RELY ON RELEVANT FEATURES"
+NFQI YIELDS POLICIES THAT RELY ON RELEVANT FEATURES,0.29743589743589743,"In addition to obtaining high-performance policies, it is also desirable to have these policies rely
+on relevant features. To investigate this, we computed estimates of feature importance for both the
+shared and foreground-speciﬁc model components using SHapley Additive exPlanations (SHAP),
+a game theoretic approach to quantify the extent to which the features of each sample impact the
+model’s predictions (16). Features with larger SHAP absolute values indicate a greater predictive
+power. In the nested Cartpole environment, we compute SHAP values for each of the ﬁve features
+used to estimate Q-values: cart position, cart velocity, pole angle, pole velocity, and action."
+NFQI YIELDS POLICIES THAT RELY ON RELEVANT FEATURES,0.30256410256410254,"We observed several patterns in the SHAP values for NFQI that agree with prior intuition. First, we
+found that across all samples in both datasets, the features rank in the same order of importance. This
+ordering corresponds to the mean SHAP value across samples. We see that cart position shows the
+highest SHAP values, meaning it is the most predictive feature, while action is the least predictive
+(Fig. 3). The model’s emphasis on cart position is likely due to the constant force being applied
+in the foreground Cartpole environment; NFQI’s policy adapts to the relative importance of this
+feature for both environments. We see that the foreground cart position SHAP magnitude is much
+larger relative to that in the background, indicating that the foreground policy is compensating for
+the foreground-speciﬁc dynamics, which include a constant force pushing the cart towards the left.
+These results suggest that the policies found by NFQI rely on relevant features, as demonstrated in
+part by the SHAP values."
+NFQI IS ROBUST TO GROUP SIZE IMBALANCE,0.3076923076923077,"4.1.4
+NFQI IS ROBUST TO GROUP SIZE IMBALANCE"
+NFQI IS ROBUST TO GROUP SIZE IMBALANCE,0.3128205128205128,"In many real-world settings, we have access to far less data in the foreground condition than in the
+background. For example, it is much easier to collect medical records from healthy (background)
+patients than from patients with a speciﬁc, chronic disease (foreground). Thus, it is important that
+nested RL methods be resilient to group imbalance and able to leverage the statistical strength of
+the background data to estimate foreground-speciﬁc structure even when foreground data are rare.
+In order to test NFQI’s performance with imbalanced data, we conducted an experiment with im-
+balanced group sizes in the nested Cartpole environment. Similar to previous experiments, we gave
+the foreground different dynamics than the background by adding a constant leftward force of c = 5
+Newtons. Here, we ﬁx the total number of training trajectories across both conditions to be 400,
+and we set the fraction of samples that come from the foreground data to 10%, 20%, 30%, 40%,
+and 50% (where 50% corresponds to balanced sizes). We choose these fractions because they reﬂect
+percentages of imbalance that we see in medical data. We ﬁt NFQI as before, using a neural network
+as our Q-value approximation function. For comparison, we also train FQI on the combined dataset
+of background and foreground trajectories. We repeat this experiment 50 times."
+NFQI IS ROBUST TO GROUP SIZE IMBALANCE,0.31794871794871793,"NFQI outperforms FQI in this Cartpole setting with imbalanced group sizes. Speciﬁcally, across the
+range of data imbalance, the policies found by NFQI perform better than the FQI policies in both"
+NFQI IS ROBUST TO GROUP SIZE IMBALANCE,0.3230769230769231,Under review as a conference paper at ICLR 2022
+NFQI IS ROBUST TO GROUP SIZE IMBALANCE,0.3282051282051282,"Figure 4: NFQI is robust to imbalance in foreground and background sample sizes. We ﬁx the total
+number of training trajectories across both conditions to be 400, and we set the fraction of samples
+that come from the foreground data to 10%, 20%, 30%, 40%, and 50% (where 50% corresponds
+to balanced sizes). Error bars correspond to 95% conﬁdence intervals. NFQI maintains superior
+performance to FQI despite increasing levels of class imbalance. The foreground dataset is harder
+to model than the background, but a nested policy better reﬂects the environments."
+NFQI IS ROBUST TO GROUP SIZE IMBALANCE,0.3333333333333333,"the background and foreground (Fig. 4). This is likely due to the fact that NFQI accounts for the
+group structure in the dataset, while also exploiting the shared structure between the background
+and foreground to increase the effective sample size. On the other hand, FQI must model the groups
+with a single joint model, resulting in poor performance for both datasets. This result implies that
+NFQI is successful in a common setting in which we have access to a small proportion of foreground
+samples relative to the background samples."
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.3384615384615385,"4.1.5
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT"
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.3435897435897436,"When there is no meaningful group structure in the data, we want NFQI to ﬁnd the same optimal
+policies for two (identical) groups. We demonstrate that NFQI behaves in this way by testing its
+performance when there is no nested structure. We call this experiment the “structureless” test.
+We ﬁrst generate a dataset from a single simulator and give it false group structure by randomly
+assigning group labels to samples. Then, we ﬁt NFQI to this dataset and analyzed the policies for
+each group, again using SHAP plots."
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.3487179487179487,(a) Structureless test for the Cartpole environment.
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.35384615384615387,Cart position
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.358974358974359,Cart velocity
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.3641025641025641,Pole angle
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.36923076923076925,Pole velocity
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.37435897435897436,Action
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.37948717948717947,mean(|SHAP value|)
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.38461538461538464,SHAP values for structureless test
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.38974358974358975,(b) SHAP plot for the structureless test.
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.39487179487179486,"Figure 5: NFQI does not estimate practically different policies for two groups when there is no
+group structure. Here, we ﬁnd that NFQI ﬁnds policies that yield similar performance for both the
+foreground and background group (Panel a) and that NFQI uses sample features similarly across
+groups to predict rewards (Panel b)."
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.4,"We ﬁnd that NFQI ﬁnds two policies that show similar behavior between the artiﬁcial background
+and foreground datasets (Fig. 5a). The policies use the sample features similarly to make predictions,
+with the same rankings of mean absolute SHAP values across artiﬁcial groups (Fig. 5b). These
+results suggest that NFQI learns indistinguishable policies when the samples originate from the
+same simulator with identical dynamics."
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.40512820512820513,Under review as a conference paper at ICLR 2022
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.41025641025641024,"4.2
+CLINICAL DECISION MAKING TASK USING ELECTRONIC HEALTH RECORDS (EHR)"
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.4153846153846154,"After validating NFQI on the Cartpole environments, we next set out to test NFQI’s ability to identify
+more complex policies for patient treatment in a hospital setting. To do so, we leveraged electronic
+health record (EHR) data from the Medical Information Mart for Intensive Care (MIMIC) series (22;
+26; 15; 14), which contains de-identiﬁed records from patient hospital admissions."
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.4205128205128205,"(a) FQI policy for non-renal patient.
+(b) FQI policy for renal patient."
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.4256410256410256,"(c) NFQI policy for non-renal patient
+(d) NFQI policy for renal patient"
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.4307692307692308,"Figure 6: Visualizing FQI and NFQI policies for non-renal and renal patients. Heatmaps indicate
+the policy’s repletion recommendation for patients with a given potassium and creatinine level."
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.4358974358974359,"In this experiment, we aim to identify a policy for maintaining healthy levels of electrolytes in
+hospital patients. Determining when to prescribe – or “replete” – electrolytes is a difﬁcult task; the
+overuse of medication intended to balance electrolyte levels in patients has been linked to patient
+mortality and complications post-surgery (28). Here, we use NFQI to identify electrolyte repletion
+policies for two groups of intensive care unit (ICU) patients that require different repletion strategies:
+a foreground group of 123 patients who have kidney disease (renal patients) and a background group
+of 400 patients with healthy kidney function (non-renal patients). Our goal is to determine the dosage
+of potassium to administer to a patient across the duration of their hospital stay. We discretize the
+action space into three levels of repletion: no repletion, low repletion, and high repletion."
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.441025641025641,"Table 1: Evaluating RL algorithms using action matching. We evaluate FQI and NFQI on their
+ability to predict the clinician’s actions on test samples from the foreground (FG) and background
+(BG) datasets. We report accuracy (%) and F1 score across the three classes of repletion, both with
+95 % conﬁdence intervals."
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.4461538461538462,"Algorithm
+FG Accuracy (%)
+FG F1 Score
+BG Accuracy (%)
+BG F1 Score"
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.4512820512820513,"FQI
+36.09 ± 8.5
+0.26 ± 0.05
+27.7 ± 6.6
+0.20 ± 0.03
+NFQI
+45.5 ± 12.2
+0.25 ± 0.04
+35.7 ± 6.3
+0.26 ± 0.03"
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.4564102564102564,"Building off previous RL approaches for this task (24), we discretize patient trajectories into 6-
+hour intervals. Each sample contains information about the patient’s vitals, labs, and prescribed
+medicines during that interval, as well as comorbidities and metadata, such as age. The reward
+function for this dataset is a manually parameterized function of the patient state and repletion
+action that produces higher values when a patient’s measured potassium level is within a healthy
+range (3.5 and 4.5 mmol/L), and lower reward values otherwise (24). This reward function must be
+constructed manually because there is no notion of reward in EHR records, and we cannot derive an
+empirical one because it is not safe or ethical to evaluate a policy on patients (see Appendix 6.7 for
+further details)."
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.46153846153846156,Under review as a conference paper at ICLR 2022
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.4666666666666667,"We ﬁt NFQI and FQI to this dataset and examine the resulting policies, performing both quantitative
+and qualitative analyses on our policies. We quantitatively evaluate a policy’s performance based on
+its level of agreement with a doctor’s actions in test data (Tab. 1). We ﬁnd that the policies estimated
+using NFQI better reﬂect doctor’s actions than those estimated with FQI."
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.4717948717948718,"To give us better insight into why NFQI quantitatively outperforms FQI, we visualize the policies
+qualitatively through heatmaps. We create synthetic patient states by densely sampling a grid with
+two features, potassium and creatinine, while holding all other state features ﬁxed. Creatinine levels
+capture the kidney’s ability to ﬁlter out toxins (18); higher levels of creatinine indicate worse kidney
+function. Given a patient’s state features, we then use the trained Q-value function to select the
+action that generates the highest expected reward. NFQI recommends higher levels of repletion
+for renal patients versus non-renal patients, especially when the patient’s potassium is below the
+healthy range (19) (Fig. 6). Moreover, NFQI’s policy recommends more repletion for renal patients
+with higher creatinine level, indicating that electrolyte repletion should increase as kidney function
+worsens. Meanwhile, FQI’s policy shows little difference between these two patient groups, and
+recommends lower levels of repletion across the grid. These results suggest that NFQI is able to
+discriminate between the patient groups and act according to prior intuition."
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.47692307692307695,"Figure 7: NFQI mean SHAP values for renal
+(blue) and non-renal (red) patients. Y-axis shows
+clinically relevant covariates."
+NFQI ONLY LEARNS DIFFERENT POLICIES IF THE ENVIRONMENTS ARE DIFFERENT,0.48205128205128206,"It is also imperative that NFQI policies are in-
+terpretable since the actions recommended can
+affect other aspects of a patient’s physiology.
+Thus, we studied which features NFQI found
+most predictive in the foreground and back-
+ground policies. To do so, we computed SHAP
+values from each group (Fig. 7). We ﬁnd that
+NFQI identiﬁes clinically relevant characteris-
+tics to inform both foreground and background
+policies.
+Patients with renal disease tend to
+have higher creatinine values and ﬂuctuating
+electrolyte levels; the foreground policy for re-
+nal patients relies on potassium and creatinine
+measurements more than the background pol-
+icy. This suggests that the NFQI policies reﬂect
+the group-speciﬁc dynamics, while also sharing
+strength across the foreground and background
+samples."
+DISCUSSION AND FUTURE WORK,0.48717948717948717,"5
+DISCUSSION AND FUTURE WORK"
+DISCUSSION AND FUTURE WORK,0.49230769230769234,"In this work, we present nested policy ﬁtted Q-iteration (NFQI), an off-policy RL framework that
+estimates optimal policies for nested environments. We demonstrate that NFQI policies outperform
+those estimated from FQI and related approaches. When applied to simulated and medical data,
+these policies are performant, robust to sample size imbalance, learn justiﬁable differences in the
+datasets, and gracefully revert to FQI policies when there is no relevant group structure."
+DISCUSSION AND FUTURE WORK,0.49743589743589745,"Several future directions remain. From a methods perspective, other approaches for the nested Q-
+value function could be considered, such as Gaussian processes, random forests, and other neural
+network architectures. This may improve the ﬁt to new, larger datasets by increasing the expres-
+siveness of the Q-value approximation function. Additionally, extending the nested model to allow
+for multi-group structure may be useful when there are more than two groups in the data. This may
+involve changing the structure of the approximating function f to incorporate other compositions of
+gs and gf. In medical settings we anticipate future work in enabling NFQI as a clinical decision-
+support tool (i.e., to recommend treatments with qualitative justiﬁcation) to be used in conjunction
+with a physician’s expertise."
+REFERENCES,0.5025641025641026,REFERENCES
+REFERENCES,0.5076923076923077,"[1] On-line learning in neural networks. Publications of the Newton Institute. Cambridge Univer-
+sity Press, 1998."
+REFERENCES,0.5128205128205128,Under review as a conference paper at ICLR 2022
+REFERENCES,0.517948717948718,"[2] Pieter Abbeel and Andrew Y. Ng. Apprenticeship learning via inverse reinforcement learning.
+In Twenty-ﬁrst international conference on Machine learning - ICML ’04, page 1. ACM Press,
+2004."
+REFERENCES,0.5230769230769231,"[3] Greg M. Allenby, Peter E. Rossi, and Robert E. McCulloch. Hierarchical Bayes Models: A
+Practitioners Guide. Jan 2005."
+REFERENCES,0.5282051282051282,"[4] Jordan T Ash and Ryan P Adams. On warm-starting neural network training. arXiv preprint
+arXiv:1910.08475, 2019."
+REFERENCES,0.5333333333333333,"[5] R. Bellman. On the theory of dynamic programming. Proceedings of the National Academy
+of Sciences, 38(8):716–719, Aug 1952."
+REFERENCES,0.5384615384615384,"[6] Stevo Bozinovski and A Fulgosi. The inﬂuence of pattern similarity and transfer of learning
+upon training of a base perceptron b2. 1976. (original in Croatian: Utjecaj slicnosti likova
+i transfera ucenja na obucavanje baznog perceptrona B2), Proc. Symp. Informatica 3-121-5,
+Bled."
+REFERENCES,0.5435897435897435,"[7] Greg Brockman, Vicki Cheung, Ludwig Pettersson, Jonas Schneider, John Schulman, Jie Tang,
+and Wojciech Zaremba. Openai gym. arXiv preprint arXiv:1606.01540, 2016."
+REFERENCES,0.5487179487179488,"[8] Rich Caruana. Multitask learning. Machine Learning, 28, 07 1997."
+REFERENCES,0.5538461538461539,"[9] Damien Ernst, Pierre Geurts, and Louis Wehenkel.
+Tree-based batch mode reinforcement
+learning. J. Mach. Learn. Res., 6:503–556, 12 2005."
+REFERENCES,0.558974358974359,"[10] Damien Ernst, Pierre Geurts, and Louis Wehenkel.
+Tree-based batch mode reinforcement
+learning. Journal of Machine Learning Research, 6:503–556, 2005."
+REFERENCES,0.5641025641025641,"[11] Ary L Goldberger, Luis AN Amaral, Leon Glass, Jeffrey M Hausdorff, Plamen Ch Ivanov,
+Roger G Mark, Joseph E Mietus, George B Moody, Chung-Kang Peng, and H Eugene Stanley.
+Physiobank, physiotoolkit, and physionet: components of a new research resource for complex
+physiologic signals. Circulation, 101(23):e215–e220, 2000."
+REFERENCES,0.5692307692307692,"[12] Abhishek Gupta, Benjamin Eysenbach, Chelsea Finn, and Sergey Levine. Unsupervised meta-
+learning for reinforcement learning, 2020."
+REFERENCES,0.5743589743589743,"[13] Junyan Hu, Hanlin Niu, Joaquin Carrasco, Barry Lennox, and Farshad Arvin. Voronoi-based
+multi-robot autonomous exploration in unknown environments via deep reinforcement learn-
+ing. IEEE Transactions on Vehicular Technology, 69(12):14413–14423, 2020."
+REFERENCES,0.5794871794871795,"[14] Alistair Johnson, Lucas Bulgarelli, Tom Pollard, Steven Horng, Leo Anthony Celi, and Roger
+Mark. Mimic-iv (version 0.4), 2020."
+REFERENCES,0.5846153846153846,"[15] Alistair E.W. Johnson, Tom J. Pollard, Lu Shen, Li-wei H. Lehman, Mengling Feng, Moham-
+mad Ghassemi, Benjamin Moody, Peter Szolovits, Leo Anthony Celi, and Roger G. Mark.
+MIMIC-III, a freely accessible critical care database. Scientiﬁc Data, 3(1):160035, 2016."
+REFERENCES,0.5897435897435898,"[16] Scott M Lundberg and Su-In Lee. A uniﬁed approach to interpreting model predictions. In
+I. Guyon, U. V. Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett,
+editors, Advances in Neural Information Processing Systems 30, pages 4765–4774. Curran
+Associates, Inc., 2017."
+REFERENCES,0.5948717948717949,"[17] Aishwarya Mandyam, Elizabeth C. Yoo, Jeff Soules, Krzysztof Laudanski, and Barbara E.
+Engelhardt. Cop-e-cat: Cleaning and organization pipeline for ehr computational and analytic
+tasks. In Proceedings of the 12th ACM Conference on Bioinformatics, Computational Biology,
+and Health Informatics, BCB ’21, New York, NY, USA, 2021. Association for Computing
+Machinery."
+REFERENCES,0.6,[18] MayoClinic. Creatinine tests. Accessed: 2021-05-27.
+REFERENCES,0.6051282051282051,"[19] MayoClinic. Low potassium (hypokalemia): Symptom — overview covers what can cause
+this blood test result. Accessed: 2021-05-27."
+REFERENCES,0.6102564102564103,Under review as a conference paper at ICLR 2022
+REFERENCES,0.6153846153846154,"[20] Robert A. McLean, William L. Sanders, and Walter W. Stroup. A uniﬁed approach to mixed
+linear models. The American Statistician, 45(1):54, Feb 1991."
+REFERENCES,0.6205128205128205,"[21] Eric Mitchell, Rafael Rafailov, Xue Bin Peng, Sergey Levine, and Chelsea Finn. Ofﬂine meta-
+reinforcement learning with advantage weighting. In Marina Meila and Tong Zhang, editors,
+Proceedings of the 38th International Conference on Machine Learning, volume 139 of Pro-
+ceedings of Machine Learning Research, pages 7780–7791. PMLR, 18–24 Jul 2021."
+REFERENCES,0.6256410256410256,"[22] G.B. Moody and R.G. Mark. A database to support development and evaluation of intelligent
+intensive care monitoring. Computers in Cardiology 1996, pages 657–660, 1996."
+REFERENCES,0.6307692307692307,"[23] Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan,
+Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, et al. Pytorch: An imperative
+style, high-performance deep learning library. arXiv preprint arXiv:1912.01703, 2019."
+REFERENCES,0.6358974358974359,[24] Niranjani Prasad. Methods for reinforcement learning in clinical decision support. 2020.
+REFERENCES,0.6410256410256411,"[25] Martin Riedmiller. Neural ﬁtted q iteration–ﬁrst experiences with a data efﬁcient neural rein-
+forcement learning method. In European Conference on Machine Learning, pages 317–328.
+Springer, 2005."
+REFERENCES,0.6461538461538462,"[26] M Saeed, C Lieu, G Raber, RG Mark, and Mohammed Saeed. MIMIC II: A Massive Temporal
+ICU Patient Database to Support Research in Intelligent Patient Monitoring. Computers in
+Cardiology, pages 641–644, 2002."
+REFERENCES,0.6512820512820513,"[27] Shagun Sodhani, Amy Zhang, and Joelle Pineau.
+Multi-task reinforcement learning with
+context-based representations, 2021."
+REFERENCES,0.6564102564102564,"[28] Anders Winther Voldby and Birgitte Brandstrup. Fluid therapy in the perioperative setting—a
+clinical review. Journal of Intensive Care, 4(1):27, 04 2016."
+REFERENCES,0.6615384615384615,"[29] Marco Wiering and Martijn Van Otterlo. Reinforcement learning. Adaptation, learning, and
+optimization, 12(3), 2012."
+REFERENCES,0.6666666666666666,"[30] Ruihan Yang, Huazhe Xu, Yi Wu, and Xiaolong Wang. Multi-task reinforcement learning with
+soft modularization, 2020."
+REFERENCES,0.6717948717948717,"[31] Zhuangdi Zhu, Kaixiang Lin, and Jiayu Zhou. Transfer learning in deep reinforcement learn-
+ing: A survey, 2021."
+APPENDIX,0.676923076923077,"6
+APPENDIX"
+APPENDIX,0.6820512820512821,"6.1
+BELLMAN OPTIMALITY OF NFQI’S Q-VALUE FUNCTION"
+APPENDIX,0.6871794871794872,"In its original formulation, FQI was shown to converge to a Bellman-optimal Q-value function using
+concepts from dynamic programming theory (10). Here, we show that NFQI reduces to a particular
+type of FQI, and thus remains within this Bellman-optimal family."
+APPENDIX,0.6923076923076923,"Recall that FQI approximates the Q-value function with a function fFQI(s, a) taking a state-action
+pair as input, while NFQI uses an approximating function fNFQI(s, a, z) that accepts an additional
+argument z representing the sample’s group identity. Because z is an attribute of the environment,
+we can think of it as a dimension of the state space that takes two possible values, and is constant
+over a given trajectory. Thus, trivially we can augment the state as es = (s⊤, z)⊤and describe NFQI
+as a particular case of FQI where the approximating function is fFQI(es, a). We can write the additive
+form of NFQI in Equation 1 as"
+APPENDIX,0.6974358974358974,"fFQI(es, a) = gs(s, a) + 1{esp+1=1}gf(s, a)"
+APPENDIX,0.7025641025641025,"where s is a p-vector, so the (p + 1)th element of esp+1 is z."
+APPENDIX,0.7076923076923077,Under review as a conference paper at ICLR 2022
+NEURAL NETWORK Q-VALUE FUNCTIONS,0.7128205128205128,"6.2
+NEURAL NETWORK Q-VALUE FUNCTIONS"
+NEURAL NETWORK Q-VALUE FUNCTIONS,0.717948717948718,"Here, we present one instance of NFQI using a neural network as a nonlinear Q-value function
+approximator."
+NEURAL NETWORK Q-VALUE FUNCTIONS,0.7230769230769231,"For simplicity, we describe an implementation using a multilayer perceptron (MLP) with one hidden
+layer; the nested network can be generalized to arbitrarily large architectures. Let σ be an element-
+wise nonlinear activation function, and suppose that each state-action pair is p-dimensional, which
+we write as a single vector xt = [st⊤, at⊤]⊤∈Rp. Then, the output of the network for a back-
+ground sample is given by
+f(st, at, 0) = σ(x⊤
+t W1s)w2s
+|
+{z
+}
+gs(st,at) ,"
+NEURAL NETWORK Q-VALUE FUNCTIONS,0.7282051282051282,"where W1 ∈Rp×k and w2 ∈Rk are linear network weights separated by the nonlinear function
+σ. Note that, because this is a background sample, we only apply gs to the sample. To model
+foreground samples, we also include a foreground-speciﬁc additive component in the network. This
+component, gf, only operates on foreground samples. The output of the network for a foreground
+sample is given by:
+f(st, at, 1) = σ(x⊤
+t W1s)w2s
+|
+{z
+}
+gs(s,a)"
+NEURAL NETWORK Q-VALUE FUNCTIONS,0.7333333333333333,"+ σ(x⊤
+t W1f)w2f
+|
+{z
+}
+gf (st,at) ,"
+NEURAL NETWORK Q-VALUE FUNCTIONS,0.7384615384615385,"where Wℓs and Wℓf are the shared and foreground-speciﬁc weights for layer ℓ∈{1, 2}, respec-
+tively."
+NEURAL NETWORK Q-VALUE FUNCTIONS,0.7435897435897436,"In our experiments below, we use a variant of this type of neural network (6.6). We optimize the
+network parameters θ = {Wℓs, Wℓf}L
+ℓ=1 using a squared error loss function, min
+θ N
+X n=1"
+NEURAL NETWORK Q-VALUE FUNCTIONS,0.7487179487179487,"
+bQ(st, at) −fθ(st, at, zt)
+2
+."
+CODE,0.7538461538461538,"6.3
+CODE"
+CODE,0.7589743589743589,"Before NFQI can be deployed in a particular application area, its hyperparameters, and possibly its
+model structure, should be tuned. We release code with recommendations for tuning these settings.
+All of our experiments were run on an internally-hosted cluster using a 320 NVIDIA P100 GPU
+whose processor core has 16 GB of memory hosted. Our experiments used a total of approximately
+100 hours of compute time. The code for our experiments is based on a prior implementation of
+FQI1. We implement our nested neural network models in PyTorch (23) and use an SGD-based
+optimizer (1). For all experiments, we use 80% of our data to train and 20% of our data to test. We
+use a default learning rate of 10−3. We use the same hyperparameters for nested- and group-label
+agnostic methods."
+CARTPOLE ENVIRONMENT,0.764102564102564,"6.4
+CARTPOLE ENVIRONMENT"
+CARTPOLE ENVIRONMENT,0.7692307692307693,"The Cartpole environment contains a cart with an inverted pendulum pole on top, and an agent’s
+goal in this environment is to move the cart left and right such that the pole remains upright and
+the cart itself stays within the bounds of the window box. More formally, we can describe the
+Cartpole environment as a Markov decision process (MDP) represented by a tuple (S, A, P, R).
+Here, S = [x, ˙x, θ, ˙θ]⊤is a four-dimensional state space, where x and ˙x are the cart’s position
+and velocity, and θ and ˙θ are the pole’s angle and angular velocity; A = {aℓ, ar} is the action
+space, containing actions for applying a force of 10 Newtons to the left or right; P is a deterministic
+function determining state dynamics (based on simple Newtonian mechanics in this case); and R is
+a reward function, which returns −1 when the pole falls or the cart exits the frame (at which point
+the episode is terminated), and returns 0 otherwise. In the nested Cartpole environment, we adjust
+the dynamics described by P to simulate different dynamics for the foreground and background
+environments. Speciﬁcally, in the foreground environment, we include a constant leftward force
+of c Newtons. In this case, choosing the action “push left” results in a leftward force of 10 +"
+CARTPOLE ENVIRONMENT,0.7743589743589744,1https://github.com/seungjaeryanlee/implementations-nfq
+CARTPOLE ENVIRONMENT,0.7794871794871795,Under review as a conference paper at ICLR 2022
+CARTPOLE ENVIRONMENT,0.7846153846153846,"c Newtons, while the action “push right” results in a rightward force of 10 −c Newtons. This
+asymmetry is the driving difference between the background and foreground environments. As
+such, each environment has the same state space, action space, and reward function, but a different
+state transition function."
+LINEAR MODEL Q-VALUE FUNCTION,0.7897435897435897,"6.5
+LINEAR MODEL Q-VALUE FUNCTION"
+LINEAR MODEL Q-VALUE FUNCTION,0.7948717948717948,"We tested the effect of the choice of the approximating function f on the performance of the NFQI
+framework. To do so, we ﬁt NFQI and FQI using a linear model and a neural network in the Cartpole
+environment."
+LINEAR MODEL Q-VALUE FUNCTION,0.8,"For the linear model, we consider gs and gf to be linear models in Equation equation 1. We represent
+each sample by a vector containing its state and action, [s⊤
+t , a⊤
+t ]⊤, where st is the state vector and
+at is the action vector. We assume a ﬁnite action space throughout this study. Then, we have the
+following model:"
+LINEAR MODEL Q-VALUE FUNCTION,0.8051282051282052,"gs(st, at) =
+
+st
+at"
+LINEAR MODEL Q-VALUE FUNCTION,0.8102564102564103,"⊤
+βs + 1⊤β0s + ϵ"
+LINEAR MODEL Q-VALUE FUNCTION,0.8153846153846154,"gf(st, at) =
+
+st
+at"
+LINEAR MODEL Q-VALUE FUNCTION,0.8205128205128205,"⊤
+βf +
+
+st
+at"
+LINEAR MODEL Q-VALUE FUNCTION,0.8256410256410256,"⊤
+βs + 1⊤β0f + ϵ,"
+LINEAR MODEL Q-VALUE FUNCTION,0.8307692307692308,"where 1 represents a column vector of ones, and ϵ is zero-mean random noise. Here, the coefﬁcients
+βs and βf capture the background and foreground’s (linear) relationship between state and action
+pairs, and expected reward. The terms β0s and β0f capture context-speciﬁc intercepts. Note that
+this approach is similar to a hierarchical model approach (20; 3)."
+LINEAR MODEL Q-VALUE FUNCTION,0.8358974358974359,"As expected, we ﬁnd that the linear model is unable to successfully ﬁnd a policy that solves the
+Cartpole environment (Figure 8). In contrast, a neural network is able to ﬁnd a good policy most
+of the time. We anticipate this is because a neural network can approximate functions that are
+nonlinear and that the Cartpole environment requires a nonlinear function to approximate reward.
+We also expect the MIMIC-IV environment to require a nonlinear function. For this reason, we
+consider neural networks throughout this study."
+LINEAR MODEL Q-VALUE FUNCTION,0.841025641025641,"Figure 8: Performance of FQI in the Cartpole environment using two different approximation func-
+tions. Performance of each model is measured as the number of steps before the pole fell or the cart
+exited the frame. Performance is shown here for a linear model and a neural network."
+LINEAR MODEL Q-VALUE FUNCTION,0.8461538461538461,Under review as a conference paper at ICLR 2022
+LINEAR MODEL Q-VALUE FUNCTION,0.8512820512820513,"Figure 9: A neural network-based version of NFQI outperforms related algorithms and a linear
+model-based NFQI in a nested Cartpole environment. Linear NFQI is likely underparameterized for
+the Cartpole problem in both the background (Panel a) and foreground (Panel b) environments."
+LINEAR MODEL Q-VALUE FUNCTION,0.8564102564102564,Under review as a conference paper at ICLR 2022
+LINEAR MODEL Q-VALUE FUNCTION,0.8615384615384616,"Algorithm 1: NFQI training procedure
+Randomly initialize shared and foreground-speciﬁc model parameters θs, θf;
+while background loss Lb not converged do"
+LINEAR MODEL Q-VALUE FUNCTION,0.8666666666666667,"Compute Lb;
+Update θs using SGD;
+end
+while foreground loss Lf not converged do"
+LINEAR MODEL Q-VALUE FUNCTION,0.8717948717948718,"Compute Lf;
+Update θf using SGD;
+end
+πb(s) ←arg maxa′ gs(s, a′) // background policy
+πf(s) ←arg maxa′ gf(s, a′) // foreground policy
+return πb, πf"
+ALGORITHMS,0.8769230769230769,"6.6
+ALGORITHMS"
+ALGORITHMS,0.882051282051282,"We use three algorithms in our experiments: NFQI, FQI, and transfer learning. We use the same
+network with the same number of parameters for all three algorithms. The difference between the
+algorithms can be explained using the training procedures as described below. The network structure
+follows:"
+ALGORITHMS,0.8871794871794871,"input = s, a, z
+x = [s, a] −→Linear(10) −→ReLU −→Linear(5) −→ReLU
+x shared = x −→Linear(1)
+x fg = x −→Linear(10) −→ReLU −→Linear(5) −→ReLU −→Linear(1)
+output = x shared + z × x fg"
+ALGORITHMS,0.8923076923076924,"With the exception of the imbalanced dataset experiment (Section 4.1.4), all algorithms use the same
+number of training and test samples; the network is trained using only training samples, and tested
+using only test samples."
+ALGORITHMS,0.8974358974358975,"To train NFQI, we follow Algorithm 1. To perform inference, we input a state-action pair and the
+group label to the network. Depending on the group label, the network uses either the shared layers
+or both the shared and foreground layers to estimate a Q-value. To train FQI, we do not consider the
+group label of the sample. The network uses all of the layers to estimate a Q-value for each training
+sample. This is as if all of the group labels were 1."
+ALGORITHMS,0.9025641025641026,"We also do not consider the group label when training a transfer learning algorithm. We ﬁrst use
+the background training samples to train the shared layers in our network. Then, we freeze the
+shared layers and use the foreground training samples to train the foreground speciﬁc layers. When
+performing inference, this network does not consider group label; as such, the network uses every
+layer to estimate a Q-value for a sample."
+ALGORITHMS,0.9076923076923077,"All of our algorithms use a mini-batch SGD optimizer and an MSE loss. A random seed is used
+to ensure reproducibility. We evaluate the network on one test sample for every train sample in the
+batch; if the previous three evaluations were successful (i.e., the pole in the Cartpole environment
+stayed up for 1000 steps), we deem the layers converged."
+MIMIC-IV ENVIRONMENT,0.9128205128205128,"6.7
+MIMIC-IV ENVIRONMENT"
+MIMIC-IV ENVIRONMENT,0.9179487179487179,"The MIMIC-IV EHR dataset was collected between 2008 and 2019 from the Beth Israel Deaconess
+Medical Center in Boston, Massachusetts. The latest version of this dataset, MIMIC-IV, contains
+de-identiﬁed data from over 524,000 distinct hospital admissions and over 257,000 patients (14).
+Our preprocessing steps follow the framework suggested by prior work (24; 17)."
+MIMIC-IV ENVIRONMENT,0.9230769230769231,"Our background dataset consists of 400 patients which healthy kidneys and our foreground dataset
+contains 123 patients with renal disease. Intuitively, electrolyte repletion policies must account
+for kidney function. For example, patients who are admitted for a renal condition have a baseline"
+MIMIC-IV ENVIRONMENT,0.9282051282051282,Under review as a conference paper at ICLR 2022
+MIMIC-IV ENVIRONMENT,0.9333333333333333,"imbalance of electrolytes and receive electrolyte repletion much differently than patients who have
+functioning kidneys."
+MIMIC-IV ENVIRONMENT,0.9384615384615385,Below is a list of all patient characteristics used in our experiments.
+MIMIC-IV ENVIRONMENT,0.9435897435897436,Table 2: Features used to predict electrolyte repletion.
+MIMIC-IV ENVIRONMENT,0.9487179487179487,"Feature
+Description
+Age
+Age of patient at admission
+Gender
+Gender discretized to male/female
+Expired
+Binary ﬂag indicating whether patient is dead/alive
+Patient Weight
+Patient Weight (kg)
+Length of Stay
+Length of patient’s stay (days)
+Heart Rate
+Heart Rate (bpm)
+Respiratory Rate
+Rate of breathing (breaths per minute)
+Oxygen Saturation
+Oxygen saturation in blood (%)
+Temperature
+Body temperature (◦F)
+Systolic BP
+Systolic Blood Pressure (mmHg)
+Diastolic BP
+Diastolic Blood Pressure (mmHg)
+Potassium (IV)
+Potassium administered through IV (mL)
+# Hours Potassium (IV)
+# hours potassium is administered through IV
+Potassium (nonIV)
+Potassium administered orally (mg)
+# Hours Potassium (nonIV)
+# hours potassium is administered orally
+Potassium
+Potassium measured in blood
+Calcium (IV)
+Calcium administered through IV (mL)
+# Hours Calcium (IV)
+# hours calcium is administered through IV
+Calcium (non-IV)
+Calcium administered orally (mg)
+# Hours Calcium (nonIV)
+# hours calcium is administered orally
+Calcium
+Calcium measured in blood
+Phosphate (IV)
+Phosphate administered through IV (mL)
+# Hours Phosphate (IV)
+# hours phosphate is administered through IV
+Phosphate (non-IV)
+Phosphate administered orally (mg)
+# Hours Phosphate (nonIV)
+# hours phosphate is administered orally
+Phosphate
+Phosphate measured in blood
+Magnesium (IV)
+Magnesium administered through IV (mL)
+# Hours Magnesium (IV)
+# hours magnesium is administered through IV
+Magnesium (non-IV)
+Magnesium administered orally (mg)
+# Hours Magnesium (nonIV)
+# hours magnesium is administered orally
+Magnesium
+Magnesium measured in blood
+Sodium
+Sodium measured in blood
+Vasopressors
+Administered to constrict blood vessels
+Beta Blockers
+Administered to reduce blood pressure
+Calcium Blockers
+Administered to reduce blood pressure
+Loop Diuretics
+Administered to treat hypertension, edema
+Insulin
+Administered to promote absorption of glucose from blood
+Dextrose
+Administered to increase blood sugar
+Oral Nutrition
+Orally administered nutrition supplements
+Parenteral Nutrition
+Non-orally administered nutrition supplements
+Total Parenteral Nutrition
+IV-based ﬂuids used for nutrition
+Dialysis
+Binary indicator of dialysis procedure
+Blood Transfusion
+Binary indication of red blood cell transfusion
+Coronary Artery Disease
+Binary indication of disease
+Atrial Fibrillation
+Binary indication of disease
+Congestive Heart Failure
+Binary indication of disease
+Chronic Kidney Disease
+Binary indication of disease
+Renal Disease
+Binary indication of a non-chronic kidney disease
+Paralysis
+Binary indication of loss of ability to move
+Parathyroid
+Binary indication of disease
+Rhabdomyolysis
+Binary indication of disease"
+MIMIC-IV ENVIRONMENT,0.9538461538461539,Under review as a conference paper at ICLR 2022
+MIMIC-IV ENVIRONMENT,0.958974358974359,Table 2: Features used to predict electrolyte repletion.
+MIMIC-IV ENVIRONMENT,0.9641025641025641,"Feature
+Description
+Sarcoidosis
+Binary indication of disease
+Alanine Aminotransferase
+Measure in blood
+Anion Gap
+Measure in blood
+Blood Urea Nitrogen
+Measured in blood
+Creatine Phosphokinase
+Measured in blood
+Hemoglobin
+Measured in blood
+Glucose
+Measured in blood
+Creatinine
+Measured in blood
+Lactic Acid Dehydrogenase
+Measured in blood
+White Blood Cell
+Count measured in blood"
+MIMIC-IV ENVIRONMENT,0.9692307692307692,"The Markov decision process (MDP) for this MIMIC-IV environment is a tuple (S, A, P, R). Here,
+S is a 61-dimensional vector containing information corresponding to each feature in Tab.
+2;
+A = {[0, 0], [0, 10], [10, 0]} is the action space, each action corresponding to no repletion, low
+repletion and high repletion respectively; P contains the (unknown) state transition probabilities
+guiding a patient’s state dynamics during their hospital visit; and R is a reward function, which
+returns a value based on whether the patient’s observed potassium level is outside the normal potas-
+sium range and the cost of repletion. R is the sum of a four dimensional vector; each element in
+this vector corresponds to the cost of oral repletion, the cost of intravenous repletion, a penalty for
+the patient’s potassium level being too high, and a penalty for the patient’s potassium level being
+too low, respectively. The reward function can be written as rt = w · φt(st, at, st+1) where φ is a
+four-dimensional vector function such that:"
+MIMIC-IV ENVIRONMENT,0.9743589743589743,φt(·) =  
+MIMIC-IV ENVIRONMENT,0.9794871794871794,"−1atroute[oral]
+−1atroute[intravenous]
+−1st+1[K]>Kmax · 10
+ 
+1 + e−σ(K−Kmax−1)−1"
+MIMIC-IV ENVIRONMENT,0.9846153846153847,"−1st+1[K]>Kmax · 10
+h
+1 −
+ 
+1 + e−σ(K−Kmax−1)−1i  ∈  "
+MIMIC-IV ENVIRONMENT,0.9897435897435898,"{0, −1}
+{0, −1}
+(−10, 0)
+(−10, 0)  ."
+MIMIC-IV ENVIRONMENT,0.9948717948717949,"Here, K is the known measurement of potassium, and Kmax and Kmin deﬁne the upper and lower
+bounds of the target potassium range, respectively. The ﬁrst two elements of the reward vector
+correspond to whether the repletion was administered orally or through an intravenous line. For our
+experiments, we use w = [1, 1, 1, 1]."

@@ -1,0 +1,753 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.0033333333333333335,"Robustness to distribution shifts is critical for deploying machine learning mod-
+els in the real world. Despite this necessity, there has been little work in deﬁn-
+ing the underlying mechanisms that cause these shifts and evaluating the robust-
+ness of algorithms across multiple, different distribution shifts. To this end, we
+introduce a framework that enables ﬁne-grained analysis of various distribution
+shifts. We provide a holistic analysis of current state-of-the-art methods by eval-
+uating 19 distinct methods grouped into ﬁve categories across both synthetic and
+real-world datasets. Overall, we train more than 85K models. Our experimental
+framework can be easily extended to include new methods, shifts, and datasets.
+We ﬁnd, unlike previous work (Gulrajani & Lopez-Paz, 2021), that progress has
+been made over a standard ERM baseline; in particular, pretraining and augmen-
+tations (learned or heuristic) offer large gains in many cases. However, the best
+methods are not consistent over different datasets and shifts. Code is available at
+github.com/deepmind/distribution_shift_framework."
+INTRODUCTION,0.006666666666666667,"1
+INTRODUCTION"
+INTRODUCTION,0.01,"If machine learning models are to be ubiquitous in critical applications such as driverless cars (Janai
+et al., 2020), medical imaging (Erickson et al., 2017), and science (Jumper et al., 2021), it is pivotal
+to build models that are robust to distribution shifts. Otherwise, models may fail surprisingly in ways
+that derail trust in the system. For example, Koh et al. (2020); Perone et al. (2019); AlBadawy et al.
+(2018); Heaven (2020); Castro et al. (2020) ﬁnd that a model trained on one set of hospitals may not
+generalise to the imaging conditions of another; Alcorn et al. (2019); Dai & Van Gool (2018) ﬁnd
+that a model for driverless cars may not generalise to new lighting conditions or object poses; and
+Buolamwini & Gebru (2018) ﬁnd that a model may perform worse on subsets of the distribution,
+such as different ethnicities, if the training set has an imbalanced distribution. Thus, it is important
+to understand when we expect a model to generalise and when we do not. This would allow a
+practitioner to have conﬁdence in the system (e.g. if a model is demonstrated to be robust to the
+imaging conditions of different hospitals, then it can be deployed in new hospitals with conﬁdence)."
+INTRODUCTION,0.013333333333333334,"While domain generalization is a well studied area, Gulrajani & Lopez-Paz (2021); Schott et al.
+(2021) have cast doubt on the efﬁcacy of existing methods, raising the question: has any progress
+been made in domain generalization over a standard expectation risk minimization (ERM) algo-
+rithm? Despite these discouraging results, there are many examples that machine learning models
+do generalise across datasets with different distributions. For example, CLIP (Radford et al., 2021),
+with well engineered prompts, generalizes to many standard image datasets. Taori et al. (2020)
+found that models trained on one image dataset generalise to another, albeit with some drop in
+performance; in particular, higher performing models generalise better. However, there is little un-
+derstanding and experimentation on when and why models generalise, especially in realistic settings
+inspired by real-world applications. This begs the following question:"
+INTRODUCTION,0.016666666666666666,Can we deﬁne the important distribution shifts to be robust to and then systematically evaluate the
+INTRODUCTION,0.02,robustness of different methods?
+INTRODUCTION,0.023333333333333334,"To answer the above question, we present a grounded understanding of robustness to distribution
+shifts. We draw inspiration from disentanglement literature (see section 6), which aims to separate
+images into an independent set of factors of variation (or attributes). In brief, we assume the data"
+INTRODUCTION,0.02666666666666667,Published as a conference paper at ICLR 2022
+INTRODUCTION,0.03,"is composed of some (possibly extremely large) set of attributes. We expect models, having seen
+some distribution of values for an attribute, to be able to learn invariance to that attribute and so to
+generalise to unseen examples of the attribute and different distributions over that attribute. Using
+a simple example to clarify the setup, assume our data has two attributes (shape and color) among
+others. Given data with some distribution over the set of possible colors (e.g. red and blue) and the
+task of predicting shape (e.g. circle or square), we want our model to generalise to unseen colors
+(e.g. green) or a different distribution of colors (e.g. there are very few red circles in the training set,
+but the samples at evaluation are uniformly sampled from the set of possible colors and shapes)."
+INTRODUCTION,0.03333333333333333,"Using this framework, we evaluate models across three distribution shifts: spurious correlation, low-
+data drift, and unseen data shift (illustrated in ﬁgure 1) and two additional conditions (label noise
+and dataset size). We choose these settings as they arise in the real world and harm generalization
+performance. Moreover, in our framework, these distribution shifts are the fundamental blocks of
+building more complex distribution shifts. We additionally evaluate models when there is varying
+amounts of label noise (as inspired by noise arising from human raters) and when the total size of
+the train set varies (to understand how models perform as the number of training examples changes).
+The unique ability of our framework to evaluate ﬁne-grained performance of models across different
+distribution shifts and under different conditions is of critical importance to analyze methods under
+a variety of real-world settings. This work makes the following contributions:"
+INTRODUCTION,0.03666666666666667,• We propose a framework to deﬁne when and why we expect methods to generalise. We
+INTRODUCTION,0.04,"use this framework to deﬁne three, real world inspired distribution shifts. We then use this
+framework to create a systematic evaluation setup across real and synthetic datasets for dif-
+ferent distribution shifts. Our evaluation framework is easily extendable to new distribution
+shifts, datasets, or methods to be evaluated.
+• We evaluate and compare 19 different methods (training more than 85K models) in these"
+INTRODUCTION,0.043333333333333335,"settings. These methods span the following 5 common approaches: architecture choice,
+data augmentation, domain generalization, adaptive algorithms, and representation learn-
+ing. This allows for a direct comparison across different areas in machine learning.
+• We ﬁnd that simple techniques, such as data augmentation and pretraining are often effec-"
+INTRODUCTION,0.04666666666666667,"tive and that domain generalization algorithms do work for certain datasets and distribution
+shifts. However, there is no easy way to select the best approach a-priori and results are
+inconsistent over different datasets and attributes, demonstrating there is still much work to
+be done to improve robustness in real-world settings."
+FRAMEWORK TO EVALUATE GENERALIZATION,0.05,"2
+FRAMEWORK TO EVALUATE GENERALIZATION"
+FRAMEWORK TO EVALUATE GENERALIZATION,0.05333333333333334,"In this section we introduce our robustness framework for characterizing distribution shifts in a
+principled manner. We then relate three common, real world inspired distribution shifts."
+LATENT FACTORISATION,0.056666666666666664,"2.1
+LATENT FACTORISATION"
+LATENT FACTORISATION,0.06,"We assume a joint distribution p of inputs x and corresponding attributes y1, y2, . . . , yK (denoted
+as y1:K) with yk 2 Ak where Ak is a ﬁnite set. One of these K attributes is a label of interest,
+denoted as yl (in a mammogram, the label could be cancer/benign and a nuisance attribute yi with
+i 6= l could be the identity of the hospital where the mammogram was taken). Our aim is to build a
+classiﬁer f that minimizes the risk R. However, in real-world applications, we only have access to
+a ﬁnite set of inputs and attributes of size n. Hence, we minimize the empirical risk ˆR instead:"
+LATENT FACTORISATION,0.06333333333333334,"R(f) = E(x,yl)⇠p ⇥"
+LATENT FACTORISATION,0.06666666666666667,"L(yl, f(x))"
+LATENT FACTORISATION,0.07,"⇤
+ˆR(f; p) = 1 n X {(yl"
+LATENT FACTORISATION,0.07333333333333333,"i,xi)⇠p}n i=1 L(yl"
+LATENT FACTORISATION,0.07666666666666666,"i, f(xi))."
+LATENT FACTORISATION,0.08,"where L is a suitable loss function. Here, all nuisance attributes yk with k 6= l are ignored and we
+work with samples obtained from the marginal p(yl, x). In practice, however, due to selection bias
+or other confounding factors in data collection, we are only able to train and test our models on data
+collected from two related but distinct distributions: ptrain, ptest. For example, ptrain and ptest may
+be concentrated on different subsets of hospitals and this discrepancy may result in a distribution
+shift; for example, hospitals may use different equipment, leading to different staining on their cell"
+LATENT FACTORISATION,0.08333333333333333,Published as a conference paper at ICLR 2022
+LATENT FACTORISATION,0.08666666666666667,"(a) ptrain: SC.
+(b) ptrain: LDD.
+(c) ptrain: UDS.
+(d) ptest: yl, ya are IID."
+LATENT FACTORISATION,0.09,"Figure 1: Visualization of the joint distribution for the different shifts we consider on the DSPRITES
+example. The lighter the color, the more likely the given sample. ﬁgure 1a-1c visualise different
+shifts over ptrain(yl, ya) discussed in 2.2: spurious correlation (SC), low-data drift (LDD), and un-
+seen data shift (UDS). ﬁgure 1d visualises the test set, where the attributes are uniformly distributed."
+LATENT FACTORISATION,0.09333333333333334,"images. While we train f on data from ptrain by minimizing ˆR(f; ptrain), we aim to learn a model
+that generalises well to data from ptest; that is, it should achieve a small ˆR(f; ptest)."
+LATENT FACTORISATION,0.09666666666666666,"While generalization in the above sense is desirable for machine learning models, it is not clear why
+a model f trained on data from ptrain should generalise to ptest. It is worth noting that while ptrain
+and ptest can be different, they are both related to the true distribution p. We take inspiration from
+disentanglement literature to express this relationship. In particular, that we can view data as being
+decomposed into an underlying set of factors of variations. We formalise various distribution shifts
+using a latent variable model for the true data generation process:"
+LATENT FACTORISATION,0.1,"z ⇠p(z)
+yi ⇠p(yi|z)
+i = 1 . . . K
+x ⇠p(x|z)
+(1)"
+LATENT FACTORISATION,0.10333333333333333,"where z denotes latent factors. By a simple refactorization, we can write"
+LATENT FACTORISATION,0.10666666666666667,"p(y1:K, x) = p(y1:K) Z"
+LATENT FACTORISATION,0.11,p(x|z)p(z|y1:K)dz = p(y1:K)p(x|y1:K).
+LATENT FACTORISATION,0.11333333333333333,"Thus, the true distribution can be expressed as the product of the marginal distribution of the at-
+tributes with a conditional generative model. We assume that distribution shifts arise when a new
+marginal distribution for the attributes is chosen, such as p(y1:K) 6= ptrain(y1:K) 6= ptest(y1:K),
+but otherwise the conditional generative model is shared across all distributions, i.e., we have
+ptest(y1:K, x) = ptest(y1:K) R"
+LATENT FACTORISATION,0.11666666666666667,"p(x|z)p(z|y1:K)dz, and similarly for ptrain."
+LATENT FACTORISATION,0.12,"To provide more context, as a running example, we use the color DSPRITES dataset (Matthey et al.,
+2017); where in our notation y1 deﬁnes the color with A1 = {red, green, blue}, and y2 deﬁnes the
+shape with A2 = {ellipse, heart, square}. We can imagine that a data collector (intentionally or im-
+plicitly) selects some marginal distribution over attributes ptrain(y1:K) when training; for example
+they select mostly blue ellipses and red hearts. This induces a new joint distribution over latent fac-
+tors and attributes: ptrain(z, y1:K) = p(z|y1:K)ptrain(y1:K). Consequently, during training, we get
+images with a different joint distribution ptrain(x, y1:K) = R"
+LATENT FACTORISATION,0.12333333333333334,"p(x|z)ptrain(z, y1:K). This similarly
+applies when collecting data for the test distribution. We focus on common cases of distribution
+shifts visualized in ﬁgure 1; we discuss these in more detail in section 2.2."
+LATENT FACTORISATION,0.12666666666666668,"The goal of enforcing robustness to distribution shifts is to maintain performance when the data
+generating distribution ptrain changes. In other words, we would like to minimize risk on p, ptest
+given only access to ptrain. We can achieve robustness in the following ways:"
+LATENT FACTORISATION,0.13,"• Weighted resampling.
+We can resample the training set using importance weights
+W(y1:K) = p(y1:K)/ptrain(y1:K). This means that given the attributes, the i-th data point
+(y1:K"
+LATENT FACTORISATION,0.13333333333333333,"i
+, xi) in the training set is used with probability W(y1:K"
+LATENT FACTORISATION,0.13666666666666666,"i
+)/ Pn"
+LATENT FACTORISATION,0.14,i0=1 W(y1:K
+LATENT FACTORISATION,0.14333333333333334,"i0
+) rather
+than 1/n. We refer to this empirical distribution as preweight. This procedure requires access
+to the true distribution of attributes p(y1:K), so to avoid bias and improve fairness, it is
+often assumed that all combinations of attributes happen uniformly at random.
+• Data Augmentation: Alternatively, we can learn a generative model ˆp(x|y1:K) from"
+LATENT FACTORISATION,0.14666666666666667,the training data that aims to approximate R
+LATENT FACTORISATION,0.15,"p(x|z)p(z|y1:K)dz, as the true conditional"
+LATENT FACTORISATION,0.15333333333333332,Published as a conference paper at ICLR 2022
+LATENT FACTORISATION,0.15666666666666668,"DSPRITES.
+MPI3D.
+SHAPES3D."
+LATENT FACTORISATION,0.16,"SMALLNORB.
+CAMELYON17.
+IWILDCAM."
+LATENT FACTORISATION,0.16333333333333333,"Figure 2: Dataset samples.
+Each row ﬁxes an attribute (e.g. color for DSPRITES, MPI3D,
+SHAPES3D; azimuth for SMALLNORB; hospital for CAMELYON17; and location for IWILDCAM)."
+LATENT FACTORISATION,0.16666666666666666,"generator is by our assumption the same over all (e.g. train and test) distributions. If
+such a conditional generative model can be learned, we can sample new synthetic data
+at training time (e.g. according to the true distribution p(y1:K)) to correct for the dis-
+tribution shift.
+More precisely, we can generate data from the augmented distribution
+paug = (1 −↵)preweight + ↵ˆp(x|y1:K)p(y1:K) and train a supervised classiﬁer on this aug-
+mented dataset. Here, ↵2 [0, 1] is the percentage of synthetic data used for training."
+LATENT FACTORISATION,0.17,• Representation Learning: An alternative factorization of a data generating distribution
+LATENT FACTORISATION,0.17333333333333334,"(e.g. train) is ptrain(y1:K, x) = R"
+LATENT FACTORISATION,0.17666666666666667,"p(z|x)ptrain(y1:K|z)dz. We can learn an unsupervised
+representation that approximates p(z|x) using the training data only, and attach a classi-
+ﬁer to learn a task speciﬁc head that approximates ptrain(yl|z). Again, by our assumption
+p(z|x) / p(x|z)p(z). Given a good guess of the true prior, the learned representation
+would not be impacted by the speciﬁc attribute distribution and so generalise to ptest, p."
+DISTRIBUTION SHIFTS,0.18,"2.2
+DISTRIBUTION SHIFTS"
+DISTRIBUTION SHIFTS,0.18333333333333332,"While distribution shifts can happen in a continuum, we consider three types of shifts, inspired by
+real-world challenges. We discuss these shifts and two additional, real-world inspired conditions."
+DISTRIBUTION SHIFTS,0.18666666666666668,"Test distribution ptest.
+We assume that the attributes are distributed uniformly: ptest(y1:K) =
+1/ Q"
+DISTRIBUTION SHIFTS,0.19,"i |Ai|. This is desirable, as all attributes are represented and a-priori independent."
+DISTRIBUTION SHIFTS,0.19333333333333333,"Shift 1: Spurious correlation – Attributes are correlated under ptrain but not ptest.
+Spurious
+correlation arises in the wild for a number of reasons including capture bias, environmental factors,
+and geographical bias (Beery et al., 2018; Torralba & Efros, 2011). These spurious correlations
+lead to surprising results and poor generalization. Therefore, it is important to be able to build
+models that are robust to such challenges. In our framework, spurious correlation arises when two
+attributes ya, yb are correlated at training time, but this is not true of ptest, for which attributes are
+independent: ptrain(ya|y1 . . . yb . . . yK) > ptrain(ya|y1 . . . yb−1, yb+1 . . . yK). This is especially
+problematic when one attribute yb is yl, the label. Using the running DSPRITES example, shape and
+color may be correlated and the model may ﬁnd it easier to predict color. If color is the label, the
+model will generalise well. However, if the aim is to predict shape, the model’s reliance on color
+will lead to poor generalization."
+DISTRIBUTION SHIFTS,0.19666666666666666,"Shift 2: Low-data drift – Attribute values are unevenly distributed under ptrain but not under
+ptest.
+Low-data drift arises in the wild (e.g. in (Buolamwini & Gebru, 2018) for different ethnici-
+ties) when data has not been collected uniformly across different attributes. When deploying models
+in the wild, it is important to be able to reason and have conﬁdence that the ﬁnal predictions will"
+DISTRIBUTION SHIFTS,0.2,Published as a conference paper at ICLR 2022
+DISTRIBUTION SHIFTS,0.20333333333333334,"Figure 3: Spurious Correlation.
+We use all
+correlated samples and vary the number of sam-
+ples N from the true, uncorrelated distribution.
+We plot the percentage change over the baseline
+ResNet, averaged over all seeds and datasets.
+Blue is better, red worse. CYCLEGAN performs
+consistently best while ImageNet augmentation
+and pretraining on ImageNet also consistently
+boosts performance."
+DISTRIBUTION SHIFTS,0.20666666666666667,"Figure 4: Low-data drift.
+We use all sam-
+ples from the high data regions and vary the
+number of samples N from the low-data region.
+We plot the percentage change over the baseline
+ResNet, averaged over all seeds and datasets.
+Blue is better, red worse. Pretraining on Ima-
+geNet performs consistently best, while CYCLE-
+GAN, most domain generalization methods and
+ImageNet augmentation also provide some boost
+in performance."
+DISTRIBUTION SHIFTS,0.21,"be consistent and fair across different attributes. In the framework above, low-data shifts arise when
+certain values in the set Aa of an attribute ya are sampled with a much smaller probability than in
+ptest: ptrain(ya = v) ⌧ptest(ya = v). Using the DSPRITES example, only a handful of red shapes
+may be seen at training time, yet in ptest all colors are sampled with equal probability."
+DISTRIBUTION SHIFTS,0.21333333333333335,"Shift 3: Unseen data shift – Some attribute values are unseen under ptrain but are under ptest.
+This is a special case of shift 2: low-data drift which we make explicit due to its important real world
+applications. Unseen data shift arises when a model, trained in one setting is expected to work in
+another, disjoint setting. For example: a model trained to classify animals on images at certain times
+of day should generalise to other times of day. In our framework, unseen data shift arises when
+some values in the set Aa of an attribute ya are unseen in ptrain but are in ptest:"
+DISTRIBUTION SHIFTS,0.21666666666666667,"ptrain(ya = v) = 0
+ptest(ya = v) > 0
+|{v|ptrain(ya = v)}| > 1
+(2)"
+DISTRIBUTION SHIFTS,0.22,"This is a stronger constraint than in standard out-of-distribution generalization (see section 6), as
+multiple values for Aa must be seen under ptrain, which allows the model to learn invariance to ya.
+In the DSPRITES example, the color red may be unseen at train time but all colors are in ptest."
+DISTRIBUTION SHIFTS,0.22333333333333333,"Discussion.
+We choose these sets of shifts as they are the building blocks of more complex dis-
+tribution shifts. Consider the simplest case of two attributes: the label and a nuisance attribute. If
+we consider the marginal distribution of the label, it decomposes into two terms: the conditional
+probability and the probability of a given attribute value: p(yl) = P"
+DISTRIBUTION SHIFTS,0.22666666666666666,"ya p(yl|ya)p(ya). The three
+shifts we consider control these terms independently: unseen data shift and low-data drift control
+p(ya) whereas spurious correlation controls p(yl|ya). The composition of these terms describes any
+distribution shift for these two variables."
+CONDITIONS,0.23,"2.3
+CONDITIONS"
+CONDITIONS,0.23333333333333334,"Label noise. We investigate the change in performance due to noisy information. This can arise
+when there are disagreements and errors among the labellers (e.g. in medical imaging (Castro et al.,
+2020)). We model this as an observed attribute (e.g. the label) being corrupted by noise. ˆyi ⇠c(yi),
+where yi 2 Ai is the true label, ˆyi 2 Ai the corrupted, observed one, and c the corrupting function."
+CONDITIONS,0.23666666666666666,"Dataset size. We investigate how performance changes with the size of the training dataset. This
+setting arises when it is unrealistic or expensive to collect additional data (e.g. in medical imaging or
+in camera trap imagery). Therefore, it is important to understand how performance degrades given
+fewer total samples. We do this by limiting the total number of samples from ptrain."
+CONDITIONS,0.24,Published as a conference paper at ICLR 2022
+MODELS EVALUATED,0.24333333333333335,"3
+MODELS EVALUATED"
+MODELS EVALUATED,0.24666666666666667,"We evaluate 19 algorithms to cover a broad range of approaches that can be used to improve model
+robustness to distribution shifts and demonstrate how they relate to the three ways to achieve robust-
+ness, outlined in section 2. We believe this is the ﬁrst paper to comprehensively evaluate a large set
+of different approaches in a variety of settings. These algorithms cover the following areas: architec-
+ture choice, data augmentation, domain adaptation, adaptive approaches and representation learning.
+Further discussion on how these models relate to our robustness framework is in appendix E."
+MODELS EVALUATED,0.25,"Architecture choice. We evaluate the following standard vision models: ResNet18, ResNet50,
+ResNet101 (He et al., 2016), ViT (Dosovitskiy et al., 2021), and an MLP (Vapnik, 1992). We
+use weighted resampling preweight to oversample from the parts of the distribution that have a lower
+probability of being sampled from under ptrain. Performance depends on how robust the learned
+representation is to distribution shift."
+MODELS EVALUATED,0.25333333333333335,"Heuristic data augmentation. These approaches attempt to approximate the true underlying gen-
+erative model p(x|y1:K) in order to improve robustness. We analyze the following augmentation
+methods: standard ImageNet augmentation (He et al., 2016), AugMix without JSD (Hendrycks
+et al., 2020), RandAugment (Cubuk et al., 2020), and AutoAugment (Cubuk et al., 2019). Perfor-
+mance depends on how well the heuristic augmentations approximate the true generative model."
+MODELS EVALUATED,0.25666666666666665,"Learned data augmentation. These approaches approximate the true underlying generative model
+p(x|y1:K) by learning augmentations conditioned on the nuisance attribute. The learned augmenta-
+tions can be used to transform any image x to have a new attribute, while keeping the other attributes
+ﬁxed. We follow Goel et al. (2020), who use CYCLEGAN (Zhu et al., 2017), but we do not use their
+SGDRO objective in order to evaluate the performance of learned data augmentation alone. Perfor-
+mance depends on how well the learned augmentations approximate the true generative model."
+MODELS EVALUATED,0.26,"Domain generalization. These approaches aim to recover a representation z that is independent of
+the attribute: p(ya, z) = p(ya)p(z) to allow generalization over that attribute. We evaluate IRM
+(Arjovsky et al., 2019), DeepCORAL (Sun & Saenko, 2016), domain MixUp (Gulrajani & Lopez-
+Paz, 2021), DANN (Ganin et al., 2016), and SagNet (Nam et al., 2021). Performance depends on
+the invariance of the learned representation z."
+MODELS EVALUATED,0.2633333333333333,"Adaptive approaches. These works modify p reweight dynamically. We evaluate JTT (Liu et al.,
+2021) and BN-Adapt (Schneider et al., 2020). These methods do not give performance guarantees."
+MODELS EVALUATED,0.26666666666666666,"Representation learning. These works aim to learn a robust representation of z that describes the
+true prior. We evaluate using a β-VAE (Higgins et al., 2017a) and pretraining on ImageNet (Deng
+et al., 2009). Performance depends on the quality of the learned representation for the speciﬁc task."
+EXPERIMENTS,0.27,"4
+EXPERIMENTS"
+EXPERIMENTS,0.2733333333333333,"We ﬁrst introduce the datasets and experimental setup. We evaluate the 19 different methods across
+these six datasets, three distribution shifts, varying label noise, and dataset size. We plot aggregate
+results in ﬁgures 3-7 and complete results in the appendix in ﬁgures 10-12. We discuss the results
+by distilling them into seven concrete takeaways in section 4.1 and four practical tips in section 4.2."
+EXPERIMENTS,0.27666666666666667,"Datasets.
+We evaluate these approaches on six vision, classiﬁcation datasets – DSPRITES (Matthey
+et al., 2017), MPI3D (Gondal et al., 2019), SMALLNORB (LeCun et al., 2004), SHAPES3D (Burgess
+& Kim, 2018), CAMELYON17 (Koh et al., 2020; Bandi et al., 2018), and IWILDCAM (Koh et al.,
+2020; Beery et al., 2018). These datasets consist of multiple (potentially an arbitrarily large number)
+attributes. We select two attributes yl, ya for each dataset and make one yl the label. We then use
+these two attributes to build the three shifts. Visualizations of samples from the datasets are given
+in ﬁgure 2 and further description in appendix D.1. We discuss precisely how we set up the shifts,
+choose the attributes, and additional conditions for these datasets in appendix D.2."
+EXPERIMENTS,0.28,"Model selection.
+When investigating heuristic data augmentation, domain generalization, learned
+augmentation, adaptive approaches, and representation learning, we use a ResNet18 for the simpler,
+synthetic datasets (DSPRITES, MPI3D, SHAPES3D, and SMALLNORB) but a ResNet50 for the"
+EXPERIMENTS,0.2833333333333333,Published as a conference paper at ICLR 2022
+EXPERIMENTS,0.2866666666666667,"Figure 5:
+Unseen data shift.
+We rank the
+methods (where best is 1, worst 19) for each
+dataset and seed and plot the rankings, with the
+overall median rank as the black bar. Pretrain-
+ing on ImageNet and ImageNet augmentation
+perform consistently best.
+DANN, CycleGAN
+and other heuristic augmentations perform consis-
+tently well."
+EXPERIMENTS,0.29,"more complex, real world ones (CAMELYON17 and IWILDCAM). To perform model selection, we
+choose the best model according to the validation set which matches the distribution of the test set.
+In the unseen data shift setting for the CAMELYON17 and IWILDCAM, we use the given out-of-
+distribution validation set, which is a different, distinct set in D that is independent of Dtrain, Dtest.
+(We consider using the in-distribution validation set in appendix B.4.)"
+EXPERIMENTS,0.29333333333333333,"Hyperparameter choices.
+We perform a sweep over the hyperparameters (the precise sweeps are
+given in appendix F.8). We run each set of hyperparameters for ﬁve seeds for each setting. To
+choose the best model for each seed, we perform model selection over all hyperparameters using the
+top-1 accuracy on the validation set. In the low-data and spurious correlation settings, we choose a
+different set of samples from the low-data region with each seed. We report the mean and standard
+deviation over the ﬁve seeds."
+TAKEAWAYS,0.2966666666666667,"4.1
+TAKEAWAYS"
+TAKEAWAYS,0.3,"Takeaway 1: While we can improve over ERM, no one method always performs best. The
+relative performance between methods varies across datasets and shifts. Under spurious correlation
+(ﬁgure 3), CYCLEGAN consistently performs best but in ﬁgure 4, under low-data drift, pretraining
+consistently performs best. Under unseen data shift (ﬁgure 5), pretraining is again one of the best
+performing models. However, if we drill down on the results in ﬁgure 10 (appendix B.1), we can
+see pretraining performs best on the synthetic datasets, but not on CAMELYON17 (where using
+augmentation or DANN is best) or IWILDCAM (where using ViT or an MLP is best)."
+TAKEAWAYS,0.30333333333333334,"Takeaway 2: Pretraining is a powerful tool across different shifts and datasets. While pre-
+training is not always helpful (e.g. in appendix B.1 on CAMELYON17 in ﬁgures 10-11, IWILDCAM
+in ﬁgures 10-11), it often provides a strong boost in performance. This is presumably because the
+representation z learned during pretraining is helpful for the downstream task. For example, the
+representation may have been trained to be invariant to certain useful properties (e.g. scale, shift,
+and color). If these properties are useful on the downstream tasks, then the learned representation
+should improve generalization."
+TAKEAWAYS,0.30666666666666664,"Takeaway 3: Heuristic augmentation improves generalization if the augmentation describes
+an attribute. In all settings (ﬁgures 3-5), ImageNet augmentation generally improves performance.
+However, RandAugment, AugMix, and AutoAugment have more variable performance (as further
+shown in ﬁgures 10-12). These methods are compositions of different augmentations. We investigate
+the impact of each augmentation in RandAugment in appendix B.2 and ﬁnd variable performance.
+Augmentations that approximate the true underlying generative model p(x|y1:K) lead to the best
+results; otherwise, the model may waste capacity. For example, on CAMELYON17 (which consists
+of cell images), color jitter harms performance but on SHAPES3D and MPI3D it is essential."
+TAKEAWAYS,0.31,"Takeaway 4: Learned data augmentation is effective across different conditions and distribu-
+tion shifts. This approach is highly effective in the spurious correlation setting (ﬁgure 3). It can
+also help in the low-data and unseen data shift settings (ﬁgure 4,5) (though the gains for these two
+shifts are not as large as for pretraining). The effectiveness of this approach can be explained by the
+fact that if the augmentations are learned perfectly, then augmented samples by design are from the
+true underlying generative model and can cover missing parts of the distribution."
+TAKEAWAYS,0.31333333333333335,"Takeaway 5: Domain generalization algorithms offer limited performance improvement. In
+some cases these methods (in particular DANN) do improve performance, most notably in the low-
+data drift and unseen data shift settings (ﬁgures 4-5). However, this depends on the dataset (see
+ﬁgures 10-12) and performance is rarely much better than using heuristic augmentation."
+TAKEAWAYS,0.31666666666666665,Published as a conference paper at ICLR 2022
+TAKEAWAYS,0.32,"Figure 6: Condition 1: Noisy labels. We vary
+the amount of noise p in the labels. We plot the
+percentage change over the baseline ResNet, av-
+eraged over all seeds and datasets."
+TAKEAWAYS,0.3233333333333333,"Figure 7: Condition 2: Fixed data. We vary the
+total size of the dataset T. We plot the percentage
+change over the baseline ResNet, averaged over
+all seeds and datasets."
+TAKEAWAYS,0.32666666666666666,"Takeaway 6: The best algorithms may differ under the precise conditions. When labels have
+varying noise in ﬁgure 6, relative performance is reasonably consistent. When the dataset size
+decreases in ﬁgure 7, heuristic augmentation methods perform poorly. However, using pretraining
+and learned augmentation is consistently robust."
+TAKEAWAYS,0.33,"Takeaway 7: The precise attributes we consider directly impacts the results. For example, on
+DSPRITES, if we make color yl and shape ya, we ﬁnd that all methods generalise perfectly in the
+unseen data shift setting (as demonstrated in appendix B.3) unlike when shape is yl (ﬁgure 10)."
+PRACTICAL TIPS,0.3333333333333333,"4.2
+PRACTICAL TIPS"
+PRACTICAL TIPS,0.33666666666666667,"While there is no free lunch in terms of the method to choose, we recommend the following tips."
+PRACTICAL TIPS,0.34,"Tip 1: If heuristic augmentations approximate part of the true underlying generative model,
+use them. Under this constraint, heuristic augmentations can signiﬁcantly improve performance;
+this should be a ﬁrst point of call. How to heuristically choose these augmentations without exhaus-
+tively trying all possible combinations is an open research question."
+PRACTICAL TIPS,0.3433333333333333,"Tip 2: If heuristic augmentations do not help, learn the augmentation. If the true underlying
+generative model cannot be readily approximated with heuristic techniques, but some subset of the
+generative model can be learned by conditioning on known attributes, this is a promising way to
+further improve performance. How to learn the underlying generative model directly from data and
+use this for augmentation is a promising area to explore more thoroughly."
+PRACTICAL TIPS,0.3466666666666667,"Tip 3: Use pretraining. In general, pretraining was found to be a useful way to learn a robust rep-
+resentation. While this was not true for all datasets (e.g. CAMELYON17, IWILDCAM), performance
+could be dramatically improved by pretraining (DSPRITES, MPI3D, SMALLNORB, SHAPES3D).
+An area to be investigated is the utility of self-supervised pre-training."
+PRACTICAL TIPS,0.35,"Tip 4: More complex approaches lead to limited improvements. Domain generalization, adap-
+tive approaches and disentangling lead to limited improvements, if any, across the different datasets
+and shifts. Of these approaches, DANN performs generally best. How to make these approaches
+generically useful for robustness is still an open research question."
+DISCUSSION,0.35333333333333333,"5
+DISCUSSION"
+DISCUSSION,0.3566666666666667,"Our experiments demonstrate that no one method performs best over all shifts and that performance
+is dependent on the precise attribute being considered. This leads to the following considerations."
+DISCUSSION,0.36,"There is no way to decide a-priori on the best method given only the dataset. It would be
+helpful for practitioners to be able to select the best approaches without requiring comprehensive
+evaluations and comparisons. Moreover, it is unclear how to pinpoint the precise distribution shift
+(and thereby methods to explore) in a given application. This should be an important future area of
+investigation."
+DISCUSSION,0.36333333333333334,"We should focus on the cases where we have knowledge about the distribution shift. We found
+that the ability of a given algorithm to generalize depends heavily on the attribute and dataset being"
+DISCUSSION,0.36666666666666664,Published as a conference paper at ICLR 2022
+DISCUSSION,0.37,"considered. Instead of trying to make one algorithm for any possible shift, it makes sense to have
+adaptable algorithms which can use auxiliary information if given. Moreover, algorithms should be
+evaluated in the context for which we will use them."
+DISCUSSION,0.37333333333333335,"It is pivotal to evaluate methods in a variety of conditions.
+Performance varies due to the
+number of examples, amount of noise, and size of the dataset. Thus it is important to perform
+comprehensive evaluations when comparing different methods, as in our framework. This gives
+others a more realistic view of different models’ relative performance in practice."
+RELATED WORK,0.37666666666666665,"6
+RELATED WORK"
+RELATED WORK,0.38,"We brieﬂy summarize benchmarks on distribution shift, leaving a complete review to appendix C."
+RELATED WORK,0.38333333333333336,"Benchmarking robustness to out of distribution (OOD) generalization.
+While a multitude of
+methods exist that report improved OOD generalization, Gulrajani & Lopez-Paz (2021) found that
+in actuality no evaluated method performed signiﬁcantly better than a strong ERM baseline on a
+variety of datasets. However, Hendrycks et al. (2021) found that, when we focus on better aug-
+mentation, larger models and pretraining, we can get a sizeable boost in performance. This can be
+seen on the Koh et al. (2020) benchmark (the largest boosts come from larger models and better
+augmentation). Our work is complementary to these methods, as we look at a range of approaches
+(pretraining, heuristic augmentation, learned augmentation, domain generalisation, adaptive, disen-
+tangled representations) on a range of both synthetic and real-world datasets. Moreover, we allow
+for a ﬁne-grained analysis of methods over different distribution shifts."
+RELATED WORK,0.38666666666666666,"Benchmarking spurious correlation and low-data drift.
+Studies on fairness and bias (surveyed
+by Mehrabi et al. (2021)) have demonstrated the pernicious impact of low-data in face recognition
+(Buolamwini & Gebru, 2018), medical imaging (Castro et al., 2020), and conservation (Beery et al.,
+2018) and spurious correlation in classiﬁcation (Geirhos et al., 2019) and conservation (Beery et al.,
+2020). Arjovsky et al. (2019) hypothesized that spurious correlation may be the underlying reason
+for poor generalization of models to unseen data. To our knowledge, there has been no large scale
+work focused on understanding the beneﬁts of different methods across these distribution shifts
+systematically across multiple datasets and with ﬁne-grained control on the amount of shift. Here
+we introduce a framework for creating these shifts in a controllable way to allow such challenges to
+be investigated robustly."
+RELATED WORK,0.39,"Benchmarking disentangled representations.
+A related area, disentangled representation learn-
+ing, aims to learn a representation where the factors of variation in the data are separated. If this
+could be achieved, then models should be able to generalise effortlessly to unseen data as inves-
+tigated in multiple settings such as reinforcement learning (Higgins et al., 2017b). Despite many
+years of work in disentangled representations (Higgins et al., 2017a; Burgess et al., 2017; Kim &
+Mnih, 2018; Chen et al., 2018), a benchmark study by Locatello et al. (2019) found that, without
+supervision or implicit model or data assumptions, one cannot reliably perform disentanglement;
+however, weak supervision appears sufﬁcient to do so (Locatello et al., 2020). Dittadi et al. (2021);
+Schott et al. (2021); Montero et al. (2020) further investigated whether representations (disentan-
+gled or not) can interpolate, extrapolate, or compose properties; they found that when considering
+complex combinations of properties and multiple datasets, representations do not do so reliably."
+CONCLUSIONS,0.3933333333333333,"7
+CONCLUSIONS"
+CONCLUSIONS,0.39666666666666667,"This work has put forward a general, comprehensive framework to reason about distribution shifts.
+We analyzed 19 different methods, spanning a range of techniques, over three distribution shifts –
+spurious correlation, low-data drift, and unseen data shift, and two additional conditions – label
+noise and dataset size. We found that while results are not consistent across datasets and methods, a
+number of methods do better than an ERM baseline in some settings. We then put forward a number
+of practical tips, promising directions, and open research questions. We hope that our framework and
+comprehensive benchmark spurs research on in this area and provides a useful tool for practitioners
+to evaluate which methods work best under which conditions and shifts."
+CONCLUSIONS,0.4,Published as a conference paper at ICLR 2022
+CONCLUSIONS,0.4033333333333333,ACKNOWLEDGMENTS
+CONCLUSIONS,0.4066666666666667,"The authors thank Irina Higgins and Timothy Mann for feedback and discussions while developing
+their work. They also thank Irina, Rosemary Ke, and Dilan Gorur for reviewing earlier drafts."
+REFERENCES,0.41,REFERENCES
+REFERENCES,0.41333333333333333,"Ehab A AlBadawy, Ashirbani Saha, and Maciej A Mazurowski. Deep learning for segmentation of"
+REFERENCES,0.4166666666666667,"brain tumors: Impact of cross-institutional training and testing. Medical physics, 2018."
+REFERENCES,0.42,"Michael A Alcorn, Qi Li, Zhitao Gong, Chengfei Wang, Long Mai, Wei-Shinn Ku, and Anh Nguyen."
+REFERENCES,0.42333333333333334,"Strike (with) a pose: Neural networks are easily fooled by strange poses of familiar objects. In
+Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition, 2019."
+REFERENCES,0.4266666666666667,"Martin Arjovsky, L´eon Bottou, Ishaan Gulrajani, and David Lopez-Paz. Invariant risk minimization."
+REFERENCES,0.43,"arXiv preprint arXiv:1907.02893, 2019."
+REFERENCES,0.43333333333333335,"Peter Bandi, Oscar Geessink, Quirine Manson, Marcory Van Dijk, Maschenka Balkenhol, Meyke"
+REFERENCES,0.43666666666666665,"Hermsen, Babak Ehteshami Bejnordi, Byungjae Lee, Kyunghyun Paeng, Aoxiao Zhong, et al.
+From detection of individual metastases to classiﬁcation of lymph node status at the patient level:
+the CAMELYON17 challenge. IEEE Transactions on Medical Imaging, 2018."
+REFERENCES,0.44,"Sara Beery, Grant Van Horn, and Pietro Perona. Recognition in terra incognita. In Proceedings of"
+REFERENCES,0.44333333333333336,"the European Conference on Computer Vision, 2018."
+REFERENCES,0.44666666666666666,"Sara Beery, Yang Liu, Dan Morris, Jim Piavis, Ashish Kapoor, Neel Joshi, Markus Meister, and"
+REFERENCES,0.45,"Pietro Perona. Synthetic examples improve generalization for rare classes. In Proceedings of the
+IEEE Workshop on Applications of Computer Vision, 2020."
+REFERENCES,0.4533333333333333,Joy Buolamwini and Timnit Gebru. Gender shades: Intersectional accuracy disparities in commer-
+REFERENCES,0.45666666666666667,"cial gender classiﬁcation. In Conference on fairness, accountability and transparency, 2018."
+REFERENCES,0.46,"Chris Burgess and Hyunjik Kim. 3D shapes dataset. https://github.com/deepmind/3dshapes-dataset/, 2018."
+REFERENCES,0.4633333333333333,"Christopher P Burgess, Irina Higgins, Arka Pal, Loic Matthey, Nick Watters, Guillaume Desjardins,"
+REFERENCES,0.4666666666666667,"and Alexander Lerchner.
+Understanding disentangling in β-VAE.
+In Workshop on Learning
+Disentangled Representations at the 31st Conference on Neural Information Processing Systems,
+2017."
+REFERENCES,0.47,"Fabio M Carlucci, Paolo Russo, Tatiana Tommasi, and Barbara Caputo. Hallucinating agnostic"
+REFERENCES,0.47333333333333333,"images to generalize across domains. In Proceedings of the IEEE Conference on Computer Vision
+and Pattern Recognition Workshops, 2019."
+REFERENCES,0.4766666666666667,"Daniel C Castro, Ian Walker, and Ben Glocker. Causality matters in medical imaging. Nature"
+REFERENCES,0.48,"Communications, 2020."
+REFERENCES,0.48333333333333334,"Ricky TQ Chen, Xuechen Li, Roger Grosse, and David Duvenaud. Isolating sources of disentangle-"
+REFERENCES,0.4866666666666667,"ment in variational autoencoders. In Advances in Neural Information Processing Systems, 2018."
+REFERENCES,0.49,"Xi Chen, Yan Duan, Rein Houthooft, John Schulman, Ilya Sutskever, and Pieter Abbeel. InfoGAN:"
+REFERENCES,0.49333333333333335,"Interpretable representation learning by information maximizing generative adversarial nets. In
+Advances in Neural Information Processing Systems, 2016."
+REFERENCES,0.49666666666666665,"Yunjey Choi, Minje Choi, Munyoung Kim, Jung-Woo Ha, Sunghun Kim, and Jaegul Choo. Star-"
+REFERENCES,0.5,"Gan: Uniﬁed generative adversarial networks for multi-domain image-to-image translation. In
+Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition, 2018."
+REFERENCES,0.5033333333333333,"Ekin D Cubuk, Barret Zoph, Dandelion Mane, Vijay Vasudevan, and Quoc V Le. AutoAugment:"
+REFERENCES,0.5066666666666667,"Learning augmentation strategies from data. In Proceedings of the IEEE Conference on Computer
+Vision and Pattern Recognition, 2019."
+REFERENCES,0.51,Published as a conference paper at ICLR 2022
+REFERENCES,0.5133333333333333,"Ekin D Cubuk, Barret Zoph, Jonathon Shlens, and Quoc V Le. RandAugment: Practical auto-"
+REFERENCES,0.5166666666666667,"mated data augmentation with a reduced search space. In Proceedings of the IEEE Conference on
+Computer Vision and Pattern Recognition Workshops, 2020."
+REFERENCES,0.52,Dengxin Dai and Luc Van Gool. Dark model adaptation: Semantic image segmentation from day-
+REFERENCES,0.5233333333333333,"time to nighttime. In International Conference on Intelligent Transportation Systems, 2018."
+REFERENCES,0.5266666666666666,"Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li Fei-Fei. Imagenet: A large-scale"
+REFERENCES,0.53,"hierarchical image database. In Proceedings of the IEEE Conference on Computer Vision and
+Pattern Recognition, 2009."
+REFERENCES,0.5333333333333333,"Andrea Dittadi, Frederik Tr¨auble, Francesco Locatello, Manuel W¨uthrich, Vaibhav Agrawal, Ole"
+REFERENCES,0.5366666666666666,"Winther, Stefan Bauer, and Bernhard Sch¨olkopf. On the transfer of disentangled representations
+in realistic settings. In Proceedings of the International Conference on Learning Representations,
+2021."
+REFERENCES,0.54,"Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas"
+REFERENCES,0.5433333333333333,"Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, et al. An
+image is worth 16x16 words: Transformers for image recognition at scale. In Proceedings of the
+International Conference on Learning Representations, 2021."
+REFERENCES,0.5466666666666666,"Bradley J Erickson, Panagiotis Korﬁatis, Zeynettin Akkus, and Timothy L Kline. Machine learning"
+REFERENCES,0.55,"for medical imaging. Radiographics, 2017."
+REFERENCES,0.5533333333333333,"Chelsea Finn, Pieter Abbeel, and Sergey Levine. Model-agnostic meta-learning for fast adaptation"
+REFERENCES,0.5566666666666666,"of deep networks. In Proceedings of the International Conference on Machine Learning, 2017."
+REFERENCES,0.56,"Yaroslav Ganin, Evgeniya Ustinova, Hana Ajakan, Pascal Germain, Hugo Larochelle, Franc¸ois"
+REFERENCES,0.5633333333333334,"Laviolette, Mario Marchand, and Victor Lempitsky. Domain-adversarial training of neural net-
+works. Journal of Machine Learning Research, 17(1):2096–2030, 2016."
+REFERENCES,0.5666666666666667,"Robert Geirhos, Patricia Rubisch, Claudio Michaelis, Matthias Bethge, Felix A Wichmann, and"
+REFERENCES,0.57,"Wieland Brendel. Imagenet-trained cnns are biased towards texture; increasing shape bias im-
+proves accuracy and robustness. In Proceedings of the International Conference on Learning
+Representations, 2019."
+REFERENCES,0.5733333333333334,"Karan Goel, Albert Gu, Yixuan Li, and Christopher R´e. Model patching: Closing the subgroup"
+REFERENCES,0.5766666666666667,"performance gap with data augmentation. arXiv preprint arXiv:2008.06775, 2020."
+REFERENCES,0.58,"Muhammad Waleed Gondal, Manuel W¨uthrich, Dorde Miladinovi´c, Francesco Locatello, Martin"
+REFERENCES,0.5833333333333334,"Breidt, Valentin Volchkov, Joel Akpo, Olivier Bachem, Bernhard Sch¨olkopf, and Stefan Bauer.
+On the transfer of inductive bias from simulation to the real world: a new disentanglement dataset.
+arXiv preprint arXiv:1906.03292, 2019."
+REFERENCES,0.5866666666666667,"Ian J Goodfellow, Jean Pouget-Abadie, Mehdi Mirza, Bing Xu, David Warde-Farley, Sherjil Ozair,"
+REFERENCES,0.59,"Aaron C Courville, and Yoshua Bengio. Generative adversarial nets. In Advances in Neural
+Information Processing Systems, 2014."
+REFERENCES,0.5933333333333334,"Sven Gowal, Chongli Qin, Po-Sen Huang, Taylan Cemgil, Krishnamurthy Dvijotham, Timothy"
+REFERENCES,0.5966666666666667,"Mann, and Pushmeet Kohli. Achieving robustness in the wild via adversarial mixing with disen-
+tangled representations. In Proceedings of the IEEE Conference on Computer Vision and Pattern
+Recognition, 2020."
+REFERENCES,0.6,"Keren Gu, Xander Masotto, Vandana Bachani, Balaji Lakshminarayanan, Jack Nikodem, and Dong"
+REFERENCES,0.6033333333333334,"Yin. An instance-dependent simulation framework for learning with label noise. arXiv preprint
+arXiv:2107.11413, 2021."
+REFERENCES,0.6066666666666667,Ishaan Gulrajani and David Lopez-Paz. In search of lost domain generalization. In Proceedings of
+REFERENCES,0.61,"the International Conference on Learning Representations, 2021."
+REFERENCES,0.6133333333333333,"Bo Han, Quanming Yao, Xingrui Yu, Gang Niu, Miao Xu, Weihua Hu, Ivor Tsang, and Masashi"
+REFERENCES,0.6166666666666667,"Sugiyama. Co-teaching: Robust training of deep neural networks with extremely noisy labels. In
+Advances in Neural Information Processing Systems, 2018."
+REFERENCES,0.62,Published as a conference paper at ICLR 2022
+REFERENCES,0.6233333333333333,"Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recog-"
+REFERENCES,0.6266666666666667,"nition. In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition,
+2016."
+REFERENCES,0.63,Will Douglas Heaven. Google’s medical ai was super accurate in a lab. real life was a different
+REFERENCES,0.6333333333333333,"story., 2020."
+REFERENCES,0.6366666666666667,Dan Hendrycks and Thomas Dietterich. Benchmarking neural network robustness to common cor-
+REFERENCES,0.64,"ruptions and perturbations. In Proceedings of the International Conference on Learning Repre-
+sentations, 2019."
+REFERENCES,0.6433333333333333,"Dan Hendrycks, Mantas Mazeika, Duncan Wilson, and Kevin Gimpel. Using trusted data to train"
+REFERENCES,0.6466666666666666,"deep networks on labels corrupted by severe noise. In Advances in Neural Information Processing
+Systems, 2018."
+REFERENCES,0.65,"Dan Hendrycks, Kimin Lee, and Mantas Mazeika. Using pre-training can improve model robustness"
+REFERENCES,0.6533333333333333,"and uncertainty. In Proceedings of the International Conference on Machine Learning, 2019."
+REFERENCES,0.6566666666666666,"Dan Hendrycks, Norman Mu, Ekin D Cubuk, Barret Zoph, Justin Gilmer, and Balaji Lakshmi-"
+REFERENCES,0.66,"narayanan. AugMix: A simple data processing method to improve robustness and uncertainty. In
+Advances in Neural Information Processing Systems, 2020."
+REFERENCES,0.6633333333333333,"Dan Hendrycks, Steven Basart, Norman Mu, Saurav Kadavath, Frank Wang, Evan Dorundo, Rahul"
+REFERENCES,0.6666666666666666,"Desai, Tyler Zhu, Samyak Parajuli, Mike Guo, et al. The many faces of robustness: A critical
+analysis of out-of-distribution generalization. Proceedings of the International Conference on
+Computer Vision, 2021."
+REFERENCES,0.67,"Irina Higgins, Loic Matthey, Arka Pal, Christopher Burgess, Xavier Glorot, Matthew Botvinick,"
+REFERENCES,0.6733333333333333,"Shakir Mohamed, and Alexander Lerchner. β-VAE: Learning basic visual concepts with a con-
+strained variational framework.
+In Proceedings of the International Conference on Learning
+Representations, 2017a."
+REFERENCES,0.6766666666666666,"Irina Higgins, Arka Pal, Andrei Rusu, Loic Matthey, Christopher Burgess, Alexander Pritzel,"
+REFERENCES,0.68,"Matthew Botvinick, Charles Blundell, and Alexander Lerchner.
+Darla: Improving zero-shot
+transfer in reinforcement learning. In Proceedings of the International Conference on Machine
+Learning, 2017b."
+REFERENCES,0.6833333333333333,"Joel Janai, Fatma G¨uney, Aseem Behl, Andreas Geiger, et al. Computer vision for autonomous"
+REFERENCES,0.6866666666666666,"vehicles: Problems, datasets and state of the art. Foundations and Trends R⃝in Computer Graphics
+and Vision, 2020."
+REFERENCES,0.69,"Fredrik D Johansson, David Sontag, and Rajesh Ranganath. Support and invertibility in domain-"
+REFERENCES,0.6933333333333334,"invariant representations. In The International Conference on Artiﬁcial Intelligence and Statistics.
+PMLR, 2019."
+REFERENCES,0.6966666666666667,"John Jumper, Richard Evans, Alexander Pritzel, Tim Green, Michael Figurnov, Olaf Ronneberger,"
+REFERENCES,0.7,"Kathryn Tunyasuvunakool, Russ Bates, Augustin ˇZ´ıdek, Anna Potapenko, Alex Bridgland,
+Clemens Meyer, Simon A. A. Kohl, Andrew J. Ballard, Andrew Cowie, Bernardino Romera-
+Paredes, Stanislav Nikolov, Rishub Jain, Jonas Adler, Trevor Back, Stig Petersen, David Reiman,
+Ellen Clancy, Michal Zielinski, Martin Steinegger, Michalina Pacholska, Tamas Berghammer, Se-
+bastian Bodenstein, David Silver, Oriol Vinyals, Andrew W. Senior, Koray Kavukcuoglu, Push-
+meet Kohli, and Demis Hassabis. Highly accurate protein structure prediction with AlphaFold.
+Nature, 2021."
+REFERENCES,0.7033333333333334,"Tero Karras, Samuli Laine, and Timo Aila. A style-based generator architecture for generative"
+REFERENCES,0.7066666666666667,"adversarial networks. In Proceedings of the IEEE Conference on Computer Vision and Pattern
+Recognition, 2019."
+REFERENCES,0.71,"Ashish Khetan, Zachary C Lipton, and Anima Anandkumar. Learning from noisy singly-labeled"
+REFERENCES,0.7133333333333334,"data. In Proceedings of the International Conference on Learning Representations, 2018."
+REFERENCES,0.7166666666666667,Hyunjik Kim and Andriy Mnih. Disentangling by factorising. In Proceedings of the International
+REFERENCES,0.72,"Conference on Machine Learning, 2018."
+REFERENCES,0.7233333333333334,Published as a conference paper at ICLR 2022
+REFERENCES,0.7266666666666667,"Diederik P Kingma and Max Welling.
+Auto-encoding variational bayes.
+arXiv preprint
+arXiv:1312.6114, 2013."
+REFERENCES,0.73,"Pang Wei Koh, Shiori Sagawa, Henrik Marklund, Sang Michael Xie, Marvin Zhang, Akshay Bal-"
+REFERENCES,0.7333333333333333,"subramani, Weihua Hu, Michihiro Yasunaga, Richard Lanas Phillips, Sara Beery, Jure Leskovec,
+Anshul Kundaje, Emma Pierson, Sergey Levine, Chelsea Finn, and Percy Liang. WILDS: A
+benchmark of in-the-wild distribution shifts. arXiv preprint arXiv:2012.07421, 2020."
+REFERENCES,0.7366666666666667,"Yann LeCun, Fu Jie Huang, and L´eon Bottou. Learning methods for generic object recognition with"
+REFERENCES,0.74,"invariance to pose and lighting. Proceedings of the IEEE Conference on Computer Vision and
+Pattern Recognition, 2004."
+REFERENCES,0.7433333333333333,"Da Li, Yongxin Yang, Yi-Zhe Song, and Timothy M Hospedales. Deeper, broader and artier domain"
+REFERENCES,0.7466666666666667,"generalization. In Proceedings of the International Conference on Computer Vision, 2017."
+REFERENCES,0.75,"Ya Li, Xinmei Tian, Mingming Gong, Yajing Liu, Tongliang Liu, Kun Zhang, and Dacheng Tao."
+REFERENCES,0.7533333333333333,"Deep domain generalization via conditional invariant adversarial networks. In Proceedings of the
+European Conference on Computer Vision, pp. 624–639, 2018."
+REFERENCES,0.7566666666666667,"Evan Z Liu, Behzad Haghgoo, Annie S Chen, Aditi Raghunathan, Pang Wei Koh, Shiori Sagawa,"
+REFERENCES,0.76,"Percy Liang, and Chelsea Finn. Just Train Twice: Improving group robustness without training
+group information. In Proceedings of the International Conference on Machine Learning, 2021."
+REFERENCES,0.7633333333333333,"Francesco Locatello, Stefan Bauer, Mario Lucic, Gunnar Raetsch, Sylvain Gelly, Bernhard"
+REFERENCES,0.7666666666666667,"Sch¨olkopf, and Olivier Bachem. Challenging common assumptions in the unsupervised learn-
+ing of disentangled representations. In Proceedings of the International Conference on Machine
+Learning, 2019."
+REFERENCES,0.77,"Francesco Locatello, Ben Poole, Gunnar R¨atsch, Bernhard Sch¨olkopf, Olivier Bachem, and Michael"
+REFERENCES,0.7733333333333333,"Tschannen. Weakly-supervised disentanglement without compromises. In Proceedings of the
+International Conference on Machine Learning, 2020."
+REFERENCES,0.7766666666666666,"Mingsheng Long, Yue Cao, Jianmin Wang, and Michael Jordan. Learning transferable features with"
+REFERENCES,0.78,"deep adaptation networks. In Proceedings of the International Conference on Machine Learning,
+2015."
+REFERENCES,0.7833333333333333,"Mingsheng Long, Han Zhu, Jianmin Wang, and Michael I Jordan. Deep transfer learning with joint"
+REFERENCES,0.7866666666666666,"adaptation networks. In Proceedings of the International Conference on Machine Learning, 2017."
+REFERENCES,0.79,"Loic Matthey, Irina Higgins, Demis Hassabis, and Alexander Lerchner. dsprites: Disentanglement"
+REFERENCES,0.7933333333333333,"testing sprites dataset. https://github.com/deepmind/dsprites-dataset/, 2017."
+REFERENCES,0.7966666666666666,"Ninareh Mehrabi, Fred Morstatter, Nripsuta Saxena, Kristina Lerman, and Aram Galstyan. A survey"
+REFERENCES,0.8,"on bias and fairness in machine learning. ACM Computing Surveys (CSUR), 2021."
+REFERENCES,0.8033333333333333,"Milton Llera Montero, Casimir JH Ludwig, Rui Ponte Costa, Gaurav Malhotra, and Jeffrey Bowers."
+REFERENCES,0.8066666666666666,"The role of disentanglement in generalisation. In Proceedings of the International Conference on
+Learning Representations, 2020."
+REFERENCES,0.81,Vinod Nair and Geoffrey E Hinton. Rectiﬁed linear units improve restricted boltzmann machines.
+REFERENCES,0.8133333333333334,"In Proceedings of the International Conference on Machine Learning, 2010."
+REFERENCES,0.8166666666666667,"Hyeonseob Nam, HyunJae Lee, Jongchan Park, Wonjun Yoon, and Donggeun Yoo. Reducing do-"
+REFERENCES,0.82,"main gap by reducing style bias. In Proceedings of the IEEE Conference on Computer Vision and
+Pattern Recognition, 2021."
+REFERENCES,0.8233333333333334,"Giorgio Patrini, Alessandro Rozza, Aditya Krishna Menon, Richard Nock, and Lizhen Qu. Making"
+REFERENCES,0.8266666666666667,"deep neural networks robust to label noise: A loss correction approach. In Proceedings of the
+IEEE Conference on Computer Vision and Pattern Recognition, 2017."
+REFERENCES,0.83,"Xingchao Peng, Qinxun Bai, Xide Xia, Zijun Huang, Kate Saenko, and Bo Wang. Moment matching"
+REFERENCES,0.8333333333333334,"for multi-source domain adaptation. In Proceedings of the International Conference on Computer
+Vision, 2019."
+REFERENCES,0.8366666666666667,Published as a conference paper at ICLR 2022
+REFERENCES,0.84,"Christian S Perone, Pedro Ballester, Rodrigo C Barros, and Julien Cohen-Adad.
+Unsupervised
+domain adaptation for medical imaging segmentation with self-ensembling. NeuroImage, 2019."
+REFERENCES,0.8433333333333334,"Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agar-"
+REFERENCES,0.8466666666666667,"wal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen Krueger, and Ilya
+Sutskever. Learning transferable visual models from natural language supervision. arXiv preprint
+arXiv:2103.00020, 2021."
+REFERENCES,0.85,"Benjamin Recht, Rebecca Roelofs, Ludwig Schmidt, and Vaishaal Shankar. Do imagenet classiﬁers"
+REFERENCES,0.8533333333333334,"generalize to imagenet? In Proceedings of the International Conference on Machine Learning,
+2019."
+REFERENCES,0.8566666666666667,"Danilo Jimenez Rezende, Shakir Mohamed, and Daan Wierstra. Stochastic backpropagation and"
+REFERENCES,0.86,"approximate inference in deep generative models. In Proceedings of the International Conference
+on Machine Learning, 2014."
+REFERENCES,0.8633333333333333,"Olga Russakovsky, Jia Deng, Hao Su, Jonathan Krause, Sanjeev Satheesh, Sean Ma, Zhiheng"
+REFERENCES,0.8666666666666667,"Huang, Andrej Karpathy, Aditya Khosla, Michael Bernstein, Alexander C. Berg, and Li Fei-
+Fei. Imagenet large scale visual recognition challenge. International Journal of Computer Vision,
+2015."
+REFERENCES,0.87,"Shiori Sagawa, Pang Wei Koh, Tatsunori B Hashimoto, and Percy Liang. Distributionally robust"
+REFERENCES,0.8733333333333333,"neural networks for group shifts: On the importance of regularization for worst-case generaliza-
+tion. Proceedings of the International Conference on Learning Representations, 2020."
+REFERENCES,0.8766666666666667,"Steffen Schneider, Evgenia Rusak, Luisa Eck, Oliver Bringmann, Wieland Brendel, and Matthias"
+REFERENCES,0.88,"Bethge.
+Improving robustness against common corruptions by covariate shift adaptation.
+In
+Proceedings of the International Conference on Learning Representations, 2020."
+REFERENCES,0.8833333333333333,"Lukas Schott, Julius von K¨ugelgen, Frederik Tr¨auble, Peter Gehler, Chris Russell, Matthias Bethge,"
+REFERENCES,0.8866666666666667,"Bernhard Sch¨olkopf, Francesco Locatello, and Wieland Brendel. Visual representation learning
+does not generalize strongly within the same domain. In Proceedings of the International Con-
+ference on Learning Representations, 2021."
+REFERENCES,0.89,"Vaishaal Shankar, Achal Dave, Rebecca Roelofs, Deva Ramanan, Benjamin Recht, and Ludwig"
+REFERENCES,0.8933333333333333,"Schmidt. Do image classiﬁers generalize across time? arXiv preprint arXiv:1906.02168, 2019."
+REFERENCES,0.8966666666666666,Baochen Sun and Kate Saenko. Deep coral: Correlation alignment for deep domain adaptation. In
+REFERENCES,0.9,"Proceedings of the European Conference on Computer Vision, 2016."
+REFERENCES,0.9033333333333333,"Rohan Taori, Achal Dave, Vaishaal Shankar, Nicholas Carlini, Benjamin Recht, and Ludwig"
+REFERENCES,0.9066666666666666,"Schmidt. Measuring robustness to natural distribution shifts in image classiﬁcation. arXiv preprint
+arXiv:2007.00644, 2020."
+REFERENCES,0.91,Antonio Torralba and Alexei A Efros. Unbiased look at dataset bias. In Proceedings of the IEEE
+REFERENCES,0.9133333333333333,"Conference on Computer Vision and Pattern Recognition. IEEE, 2011."
+REFERENCES,0.9166666666666666,Vladimir Vapnik. Principles of risk minimization for learning theory. In Advances in Neural Infor-
+REFERENCES,0.92,"mation Processing Systems, 1992."
+REFERENCES,0.9233333333333333,"Hemanth Venkateswara, Jose Eusebio, Shayok Chakraborty, and Sethuraman Panchanathan. Deep"
+REFERENCES,0.9266666666666666,"hashing network for unsupervised domain adaptation. In Proceedings of the IEEE Conference on
+Computer Vision and Pattern Recognition, 2017."
+REFERENCES,0.93,"Yufei Wang, Haoliang Li, and Alex C Kot. Heterogeneous domain generalization via domain mixup."
+REFERENCES,0.9333333333333333,"In Proceedings of the IEEE International Conference on Acoustics, Speech and Signal Processing,
+2020."
+REFERENCES,0.9366666666666666,"Kai Xiao, Logan Engstrom, Andrew Ilyas, and Aleksander Madry. Noise or Signal: The role of"
+REFERENCES,0.94,"image backgrounds in object recognition. ArXiv preprint arXiv:2006.09994, 2020."
+REFERENCES,0.9433333333333334,Cihang Xie and Alan Yuille. Intriguing properties of adversarial training at scale. In Proceedings of
+REFERENCES,0.9466666666666667,"the International Conference on Learning Representations, 2020."
+REFERENCES,0.95,Published as a conference paper at ICLR 2022
+REFERENCES,0.9533333333333334,"Minghao Xu, Jian Zhang, Bingbing Ni, Teng Li, Chengjie Wang, Qi Tian, and Wenjun Zhang."
+REFERENCES,0.9566666666666667,"Adversarial domain adaptation with domain mixup. In AAAI Conference on Artiﬁcial Intelligence,
+2020."
+REFERENCES,0.96,"Shen Yan, Huan Song, Nanxiang Li, Lincan Zou, and Liu Ren. Improve unsupervised domain"
+REFERENCES,0.9633333333333334,"adaptation with mixup training. arXiv preprint arXiv:2001.00677, 2020."
+REFERENCES,0.9666666666666667,"Hongyi Zhang, Moustapha Cisse, Yann N Dauphin, and David Lopez-Paz. MixUp: Beyond empir-"
+REFERENCES,0.97,"ical risk minimization. In Proceedings of the International Conference on Learning Representa-
+tions, 2018."
+REFERENCES,0.9733333333333334,"Ling Zhang, Xiaosong Wang, Dong Yang, Thomas Sanford, Stephanie Harmon, Baris Turkbey, Hol-"
+REFERENCES,0.9766666666666667,"ger Roth, Andriy Myronenko, Daguang Xu, and Ziyue Xu. When unseen domain generalization
+is unnecessary? rethinking data augmentation. arXiv preprint arXiv:1906.03347, 2019."
+REFERENCES,0.98,"Han Zhao, Remi Tachet Des Combes, Kun Zhang, and Geoffrey Gordon. On learning invariant rep-"
+REFERENCES,0.9833333333333333,"resentations for domain adaptation. In Proceedings of the International Conference on Machine
+Learning, 2019."
+REFERENCES,0.9866666666666667,"Kaiyang Zhou, Yongxin Yang, Timothy Hospedales, and Tao Xiang. Deep domain-adversarial im-"
+REFERENCES,0.99,"age generation for domain generalisation. In AAAI Conference on Artiﬁcial Intelligence, 2020."
+REFERENCES,0.9933333333333333,"Jun-Yan Zhu, Taesung Park, Phillip Isola, and Alexei A Efros. Unpaired image-to-image translation"
+REFERENCES,0.9966666666666667,"using cycle-consistent adversarial networks. In Proceedings of the International Conference on
+Computer Vision, 2017."

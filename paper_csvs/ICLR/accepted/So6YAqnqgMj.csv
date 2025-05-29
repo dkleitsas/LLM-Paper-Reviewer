@@ -1,0 +1,2007 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.001694915254237288,"We build on the recently proposed EigenGame that views eigendecomposition as a
+competitive game. EigenGame’s updates are biased if computed using minibatches
+of data, which hinders convergence and more sophisticated parallelism in the
+stochastic setting. In this work, we propose an unbiased stochastic update that
+is asymptotically equivalent to EigenGame, enjoys greater parallelism allowing
+computation on datasets of larger sample sizes, and outperforms EigenGame
+in experiments. We present applications to ﬁnding the principal components
+of massive datasets and performing spectral clustering of graphs. We analyze
+and discuss our proposed update in the context of EigenGame and the shift in
+perspective from optimization to games."
+INTRODUCTION,0.003389830508474576,"1
+INTRODUCTION"
+INTRODUCTION,0.005084745762711864,"Large, high-dimensional datasets containing billions of samples are commonplace. Dimensionality
+reduction to extract the most informative features is an important step in the data processing pipeline
+which enables faster learning of classiﬁers and regressors (Dhillon et al., 2013), clustering (Kannan
+and Vempala, 2009), and interpretable visualizations. Many dimensionality reduction and clustering
+techniques rely on eigendecomposition at their core including principal component analysis (Jolliffe,
+2002), locally linear embedding (Roweis and Saul, 2000), multidimensional scaling (Mead, 1992),
+Isomap (Tenenbaum et al., 2000), and graph spectral clustering (Von Luxburg, 2007)."
+INTRODUCTION,0.006779661016949152,"Numerical solutions to the eigenvalue problem have been approached from a variety of angles for
+centuries: Jacobi’s method, Rayleigh quotient, power (von Mises) iteration (Golub and Van der
+Vorst, 2000). For large datasets that do not ﬁt in memory, approaches that access only subsets—or
+minibatches—of the data at a time have been proposed."
+INTRODUCTION,0.00847457627118644,"Recently, EigenGame (Gemp et al., 2021) was introduced with the novel perspective of viewing the
+set of eigenvectors as the Nash strategy of a suitably deﬁned game. While this work demonstrated an
+algorithm that was empirically competitive given access to only subsets of the data, its performance
+degraded with smaller minibatch sizes, which are required to ﬁt high dimensional data onto devices."
+INTRODUCTION,0.010169491525423728,"One path towards circumventing EigenGame’s need for large minibatch sizes is parallelization. In a
+data parallel approach, updates are computed in parallel on partitions of the data and then combined
+such that the aggregate update is equivalent to a single large-batch update. The technical obstacle
+preventing such an approach for EigenGame lies in the bias of its updates, i.e., the divide-and-conquer
+EigenGame update is not equivalent to the large-batch update. Biased updates are not just a theoretical
+nuisance; they can slow and even prevent convergence to the solution (made obvious in Figure 4)."
+INTRODUCTION,0.011864406779661017,"In this work we introduce a formulation of EigenGame which admits unbiased updates which we
+term µ-EigenGame. We will refer to the original formulation of EigenGame as α-EigenGame.1"
+INTRODUCTION,0.013559322033898305,"µ-EigenGame and α-EigenGame are contrasted in Figure 1. Unbiased updates allow us to increase
+the effective batch size using data parallelism. Lower variance updates mean that µ-EigenGame
+should converge faster and to more accurate solutions than α-EigenGame regardless of batch size.
+In Figure 1a (top), the density of the shaded region shows the distribution of steps taken by the"
+INTRODUCTION,0.015254237288135594,"∗denotes equal contribution.
+1µ signiﬁes unbiased or unloaded and α denotes original."
+INTRODUCTION,0.01694915254237288,Published as a conference paper at ICLR 2022
+INTRODUCTION,0.01864406779661017,"(a)
+(b)"
+INTRODUCTION,0.020338983050847456,"Figure 1: (a) Comparing α-EigenGame (Gemp et al., 2021) and µ-EigenGame (this work)
+over 1000 trials with a batch size of 1. (top) The expected trajectory2 of each algorithm from
+initialization (□) to the true value of the third eigenvector (⋆).
+(bottom) The distribution of
+distances between stochastic update trajectories and the expected trajectory of each algorithm as a
+function of iteration count (bolder lines are later iterations and modes further left are more desirable).
+(b) Empirical support for Lemma 2.
+In the top row, player 3’s utility is given for parents
+mis-speciﬁed by an angular distance along the sphere of ∠(ˆvj<i, vj<i) ∈[−20◦, −10◦, 10◦, 20◦]
+moving from light to dark. Player 3’s mis-speciﬁcation, ∠(ˆvi, vi), is given by the x-axis (optimum
+is at 0 radians). α-EigenGame (i) exhibits slightly lower sensitivity than µ-EigenGame (ii) to
+mis-speciﬁed parents (see equation (8)). However, when the utilities are estimated using samples
+Xt ∼p(X) (faint lines), µ-EigenGame remains accurate (iv), while α-EigenGame (iii) returns a
+utility (dotted line) with an optimum that is shifted to the left and down. The downward shift occurs
+because of the random variable in the denominator of the penalty terms (see equation (3)).3"
+INTRODUCTION,0.022033898305084745,"2The trajectory when updating with E[X⊤
+t Xt].
+3Overestimation is expected by Jensen’s: E[ 1"
+INTRODUCTION,0.023728813559322035,"X ] ≥
+1
+E[X]."
+INTRODUCTION,0.025423728813559324,"stochastic variant of each algorithm after 100 burn-in steps. Although the expected path of α-EG is
+slightly more direct, its stochastic variant has much larger variance. Figure 1a (bottom) shows that
+with increasing iterations, the µ-EG trajectory approaches its expected value whereas α-EG exhibits
+larger bias. Figure 1b further supports µ-EigenGame’s reduced bias with details in Sections 3 and 4."
+INTRODUCTION,0.02711864406779661,"Our contributions: In the rest of the paper, we present our new formulation of EigenGame, analyze
+its bias and propose a novel unbiased parallel variant, µ-EigenGame with stochastic convergence
+guarantees. µ-EigenGame’s utilities are distinct from α-EigenGame and offer an alternative perspec-
+tive. We demonstrate its performance with extensive experiments including dimensionality reduction
+of massive data sets and clustering a large social network graph. We conclude with discussions of the
+algorithm’s design and context within optimization, game theory, and neuroscience."
+PRELIMINARIES AND RELATED WORK,0.0288135593220339,"2
+PRELIMINARIES AND RELATED WORK"
+PRELIMINARIES AND RELATED WORK,0.030508474576271188,"In this work, we aim to compute the top-k right singular vectors of data X, which is either represented
+as a matrix, X ∈Rn×d, of n d-dimensional samples, or as a d-dimensional random variable. In either
+case, we assume we can repeatedly sample a minibatch Xt from the data of size n′ < n, Xt ∈Rn′×d.
+The top-k right singular vectors of the dataset are then given by the top-k eigenvectors of the (sample)
+covariance matrix, C = E[ 1"
+PRELIMINARIES AND RELATED WORK,0.03220338983050847,"n′ X⊤
+t Xt] = E[Ct]."
+PRELIMINARIES AND RELATED WORK,0.03389830508474576,"For small datasets, SVD is appropriate. However, the time, O(min{nd2, n2d}), and space, O(nd),
+complexity of SVD prohibit its use for larger datasets (Shamir, 2015) including when X is a ran-
+dom variable. For larger datasets, stochastic, randomized, or sketching algorithms are better suited.
+Stochastic algorithms such as Oja’s algorithm (Oja, 1982; Allen-Zhu and Li, 2017) perform power"
+PRELIMINARIES AND RELATED WORK,0.03559322033898305,Published as a conference paper at ICLR 2022
+PRELIMINARIES AND RELATED WORK,0.03728813559322034,"iteration (Rutishauser, 1971) to iteratively improve an approximation, maintaining orthogonality
+of the eigenvectors typically through repeated QR decompositions. Alternatively, randomized algo-
+rithms (Halko et al., 2011; Sarlos, 2006; Cohen et al., 2017) ﬁrst compute a random projection of
+the data onto a (k + p)-subspace approximately containing the top-k subspace. This is done using
+techniques similar to Krylov subspace iteration methods (Musco and Musco, 2015). After projecting,
+a call to SVD is then made on this reduced-dimensionality data matrix. Sketching algorithms (Feld-
+man et al., 2020) such as Frequent Directions (Ghashami et al., 2016) also target learning the top-k
+subspace by maintaining an overcomplete sketch matrix of size (k + p) × d and maintaining a span
+of the top subspace with repeated calls to SVD. In both the randomized and sketching approaches, a
+ﬁnal SVD of the n × (k + p) dataset is required to recover the desired singular vectors. Although the
+SVD scales linearly in n, some datasets are too large to ﬁt in memory; in this case, an out-of-memory
+SVD may sufﬁce (Haidar et al., 2017). For this reason, the direct approach of stochastic algorithms,
+which avoid an SVD call altogether, is appealing when processing very large datasets."
+PRELIMINARIES AND RELATED WORK,0.03898305084745763,Algorithm 1 µ-EigenGameR
+PRELIMINARIES AND RELATED WORK,0.04067796610169491,"1: Given: data stream Xt ∈Rn′×d, vectors ˆv0
+i ∈
+Sd−1, step sequence ηt, and iterations T.
+2: ˆvi ←ˆv0
+i for all i
+3: for t = 1 : T do
+4:
+parfor i = 1 : k do
+5:
+rewards ←
+1
+n′ X⊤
+t Xtˆvi
+6:
+penalties
+←
+1
+n′
+P"
+PRELIMINARIES AND RELATED WORK,0.0423728813559322,"j<i⟨Xtˆvi, Xtˆvj⟩ˆvj
+7:
+˜∇µ
+i ←rewards −penalties
+8:
+˜∇µ,R
+i
+←˜∇µ
+i −⟨˜∇µ
+i , ˆvi⟩ˆvi
+9:
+ˆv′
+i ←ˆvi + ηt ˜∇µ,R
+i
+10:
+ˆvi ←
+ˆv′
+i
+||ˆv′
+i||
+11:
+end parfor
+12: end for
+13: return all ˆvi"
+PRELIMINARIES AND RELATED WORK,0.04406779661016949,"A large literature on distributed approaches to
+PCA exists (Liang et al., 2014; Garber et al.,
+2017; Fan et al., 2019). These typically fol-
+low the pattern of computing solutions locally
+and then aggregating them in a single round (or
+minimal rounds) of communication. The mod-
+ern distributed machine learning setting which
+has evolved to meet the needs of deep learning
+is fundamentally different. Many accelerators
+joined with fast interconnects means the cost of
+communication is low compared to the cost of a
+single update step, however existing approaches
+to distributed PCA cannot take full advantage of
+this."
+PRELIMINARIES AND RELATED WORK,0.04576271186440678,"Notation: We follow the same notation as Gemp
+et al. (2021). Variables returned by an approxi-
+mation algorithm are distinguished from the true
+solutions with hats, e.g., the column-wise matrix
+of eigenvectors ˆV approximates V . We order
+the columns of V such that the ith column, vi,
+is the eigenvector with the ith largest eigenvalue
+λi. The set of all eigenvectors {vj} with λj larger than λi, namely vi’s parents, will be denoted by
+vj<i. Similarly, sums over subsets of indices may be abbreviated as P"
+PRELIMINARIES AND RELATED WORK,0.04745762711864407,"j<i = Pi−1
+j=1. The set of all
+parents and children of vi are denoted by v−i. Let the ith eigengap gi = λi −λi+1. We assume the
+standard Euclidean inner product ⟨u, v⟩= u⊤v and denote the unit-sphere and simplex in ambient
+space Rd with Sd−1 and ∆d−1 respectively."
+PRELIMINARIES AND RELATED WORK,0.04915254237288136,"α-EigenGame.
+We build on the algorithm introduced by Gemp et al. (2021), which we refer to here
+as α-EigenGame. This algorithm is derived by formulating the eigendecomposition of a symmetric
+positive deﬁnite matrix as the Nash equilibrium of a game among k players, each player i owning the
+approximate eigenvector ˆvi ∈Sd−1. Each player is also assigned a utility function, uα
+i (ˆvi|ˆvj<i), that
+they must maximize:"
+PRELIMINARIES AND RELATED WORK,0.05084745762711865,"uα
+i (ˆvi|ˆvj<i) ="
+PRELIMINARIES AND RELATED WORK,0.05254237288135593,"Var
+z }| {
+ˆv⊤
+i Cˆvi −
+X j<i"
+PRELIMINARIES AND RELATED WORK,0.05423728813559322,"Align-penalty
+z
+}|
+{
+⟨ˆvi, Cˆvj⟩2"
+PRELIMINARIES AND RELATED WORK,0.05593220338983051,"⟨ˆvj, Cˆvj⟩.
+(1)"
+PRELIMINARIES AND RELATED WORK,0.0576271186440678,"These utilities balance two terms, one that rewards a ˆvi that captures more variance in the data
+and a second term that penalizes ˆvi for failing to be orthogonal to each of its parents ˆvj<i (these
+terms are indicated with Var and Align-penalty in equation (1)). In α-EigenGame, each player
+simultaneously updates ˆvi with gradient ascent, and it is shown that this process converges to the
+Nash equilibrium. We are interested in extending this approach to the data parallel setting where each
+player i may distribute its update computation over multiple devices."
+PRELIMINARIES AND RELATED WORK,0.059322033898305086,Published as a conference paper at ICLR 2022
+A SCALABLE UNBIASED ALGORITHM,0.061016949152542375,"3
+A SCALABLE UNBIASED ALGORITHM"
+A SCALABLE UNBIASED ALGORITHM,0.06271186440677966,"We present our novel modiﬁcation to α-EigenGame called µ-EigenGame along with intuition, theory,
+and empirical support for critical lemmas. We begin with identifying and systematically removing the
+bias that exists in the α-EigenGame updates. We then explain how removing bias allows us to exploit
+modern compute architectures culminating in the development of a highly parallelizable algorithm."
+A SCALABLE UNBIASED ALGORITHM,0.06440677966101695,"3.1
+α-EIGENGAME’S BIASED UPDATES"
+A SCALABLE UNBIASED ALGORITHM,0.06610169491525424,"Consider partitioning the sample covariance matrix Ct into a sum of m matrices as Ct =
+1
+n′ X⊤
+t Xt =
+1
+m
+P"
+A SCALABLE UNBIASED ALGORITHM,0.06779661016949153,"m
+m
+n′ X⊤
+tmXtm =
+1
+m
+P"
+A SCALABLE UNBIASED ALGORITHM,0.06949152542372881,"m Ctm. For sake of exposition, we drop the additional subscript t on
+C in what follows. We would like α-EigenGame to parallelize over these partitions. However, the
+gradient of uα
+i with respect to ˆvi does not decompose cleanly over the data partitions:"
+A SCALABLE UNBIASED ALGORITHM,0.0711864406779661,"∇α
+i ∝"
+A SCALABLE UNBIASED ALGORITHM,0.07288135593220339,"Var
+z}|{
+Cˆvi −
+X j<i"
+A SCALABLE UNBIASED ALGORITHM,0.07457627118644068,"Align-penalty
+z
+}|
+{
+ˆv⊤
+i Cˆvj
+v⊤
+j Cˆvj
+Cˆvj = 1 m X m"
+A SCALABLE UNBIASED ALGORITHM,0.07627118644067797,"h
+Cmˆvi −
+X j<i"
+A SCALABLE UNBIASED ALGORITHM,0.07796610169491526,"ˆv⊤
+i Cˆvj
+ˆv⊤
+j Cˆvj"
+A SCALABLE UNBIASED ALGORITHM,0.07966101694915254,"Cmˆvj
+i
+.
+(2)"
+A SCALABLE UNBIASED ALGORITHM,0.08135593220338982,"We include the superscript α on the EigenGame gradient to differentiate it from the µ-EigenGame
+direction later. The nonlinear appearance of C in the penalty terms makes obtaining an unbiased
+gradient difﬁcult. The quadratic term in the numerator of equation (2) could be made unbiased by
+using two sample estimates of C, one for each term. But the appearance of the term in the denominator
+does not have an easy solution. Cm is likely singular for small n′ (n′ < d) which increases the
+likelihood of a small denominator, i.e., a large penalty coefﬁcient (boxed), if we were to estimate the
+denominator with samples. The result is an update that emphasizes penalizing orthogonality over
+capturing data variance. Techniques exist to reduce the bias of samples of ratios of random variables,
+but to our knowledge, techniques to obtain unbiased estimates are not available. This was conjectured
+by Gemp et al. (2021) as the reason for why α-EigenGame performed worse with small minibatches."
+A SCALABLE UNBIASED ALGORITHM,0.08305084745762711,"3.2
+REMOVING α-EIGENGAME’S BIAS"
+A SCALABLE UNBIASED ALGORITHM,0.0847457627118644,"It is helpful to rearrange equation (2) to shift perspective from estimating a penalty coefﬁcient (in
+red) to estimating a penalty direction (in blue):"
+A SCALABLE UNBIASED ALGORITHM,0.08644067796610169,"∇α
+i ∝1 m X m"
+A SCALABLE UNBIASED ALGORITHM,0.08813559322033898,"h
+Cmˆvi −
+X"
+A SCALABLE UNBIASED ALGORITHM,0.08983050847457627,"j<i
+ˆv⊤
+i Cmˆvj"
+A SCALABLE UNBIASED ALGORITHM,0.09152542372881356,"Cˆvj
+ˆv⊤
+j Cˆvj"
+A SCALABLE UNBIASED ALGORITHM,0.09322033898305085,"i
+.
+(3)"
+A SCALABLE UNBIASED ALGORITHM,0.09491525423728814,"The penalty direction in equation (3) is still difﬁcult to estimate. However, consider the case where
+ˆvj is any eigenvector of C with associated (unknown) eigenvalue λ′. In this case, Cˆvj = λ′ˆvj and
+the penalty direction (in blue) simpliﬁes to ˆvj because ||ˆvj|| = 1. While this assumption is certainly
+not met at initialization, α-EigenGame leads each ˆvj towards vj, so we can expect this assumption to
+be met asymptotically."
+A SCALABLE UNBIASED ALGORITHM,0.09661016949152543,"This intuition motivates the following µ-EigenGame update direction for ˆvi with inexact parents ˆvj
+(compare orange in equation (4) to blue in equation (3)):"
+A SCALABLE UNBIASED ALGORITHM,0.09830508474576272,"∆µ
+i = Cˆvi −
+X"
+A SCALABLE UNBIASED ALGORITHM,0.1,"j<i
+(ˆv⊤
+i Cˆvj)ˆvj = 1 m X m"
+A SCALABLE UNBIASED ALGORITHM,0.1016949152542373,"h
+Cmˆvi −
+X"
+A SCALABLE UNBIASED ALGORITHM,0.10338983050847457,"j<i
+(ˆv⊤
+i Cmˆvj)ˆvj"
+A SCALABLE UNBIASED ALGORITHM,0.10508474576271186,"i
+.
+(4)"
+A SCALABLE UNBIASED ALGORITHM,0.10677966101694915,"We use ∆instead of ∇because the direction is not a gradient (discussed later). Notice how the
+strictly linear appearance of C in µ-EigenGame allows the update to easily decompose over the data
+partitions in equation (4). The µ-EigenGame update satisﬁes two important properties.
+Lemma 1 (Asymptotic equivalence). The µ-EigenGame direction, ∆µ
+i , with exact parents (ˆvj =
+vj ∀j < i) is equivalent to α-EigenGame."
+A SCALABLE UNBIASED ALGORITHM,0.10847457627118644,"Proof. We start with α-EigenGame and add a superscript e to its gradient to emphasize this is the
+gradient computed with exact parents (ˆvj = vj). Then simplifying, we ﬁnd"
+A SCALABLE UNBIASED ALGORITHM,0.11016949152542373,"∇α,e
+i
+∝Cˆvi −
+X j<i"
+A SCALABLE UNBIASED ALGORITHM,0.11186440677966102,"ˆv⊤
+i Cvj
+v⊤
+j Cvj
+Cvj = Cˆvi −
+X j<i"
+A SCALABLE UNBIASED ALGORITHM,0.1135593220338983,"ˆv⊤
+i Cvj
+v⊤
+j   
+λjvj  
+λjvj = Cˆvi −
+X"
+A SCALABLE UNBIASED ALGORITHM,0.1152542372881356,"j<i
+(ˆv⊤
+i Cvj)vj = ∆µ
+i .
+(5)"
+A SCALABLE UNBIASED ALGORITHM,0.11694915254237288,Published as a conference paper at ICLR 2022
+A SCALABLE UNBIASED ALGORITHM,0.11864406779661017,"Therefore, once the ﬁrst (i −1) eigenvectors are learned, learning the ith eigenvector with µ-
+EigenGame is equivalent to learning with α-EigenGame."
+A SCALABLE UNBIASED ALGORITHM,0.12033898305084746,"Lemma 2 (Zero bias). Unbiased estimates of ∆µ
+i can be obtained with samples from p(X)."
+A SCALABLE UNBIASED ALGORITHM,0.12203389830508475,Proof. Let X ∼p(X) where X ∈Rd and p(X) is the uniform distribution over the dataset. Then
+A SCALABLE UNBIASED ALGORITHM,0.12372881355932204,"E[∆µ
+i ] = E[XX⊤]ˆvi −
+X"
+A SCALABLE UNBIASED ALGORITHM,0.12542372881355932,"j<i
+(ˆv⊤
+i E[XX⊤]ˆvj)ˆvj = Cˆvi −
+X"
+A SCALABLE UNBIASED ALGORITHM,0.1271186440677966,"j<i
+(ˆv⊤
+i Cˆvj)ˆvj.
+(6)"
+A SCALABLE UNBIASED ALGORITHM,0.1288135593220339,where all expectations are with respect to p(X).
+A SCALABLE UNBIASED ALGORITHM,0.13050847457627118,"These two lemmas provide the foundation for a performant algorithm. The ﬁrst enables convergence
+to the desired solution, while the second facilitates scaling to larger datasets. Algorithm 1 presents
+pseudocode for µ-EigenGame where computation is parallelized over the k players."
+MODEL AND DATA PARALLELISM,0.13220338983050847,"3.3
+MODEL AND DATA PARALLELISM"
+MODEL AND DATA PARALLELISM,0.13389830508474576,"(a)
+(b)"
+MODEL AND DATA PARALLELISM,0.13559322033898305,"Figure 2: (a) Extreme model parallelism as pro-
+posed in α-EigenGame. (b) Model and data par-
+allelism enabled by µ-EigenGame. Squares are
+separate devices (here, M = 4). Copies of es-
+timates are color-coded. Updates are averaged
+across copies for a larger effective batch size."
+MODEL AND DATA PARALLELISM,0.13728813559322034,"In our setting we have a number of connected
+devices.
+Speciﬁcally we consider the paral-
+lel framework speciﬁed by TPUv3 available
+in Google Cloud, however our setup is appli-
+cable to any multi-host, multi-device system.
+The α-EigenGame formulation (Gemp et al.,
+2021) considers an extreme form of model par-
+allelism (Figure 2a) where each device has its
+own unique set of eigenvectors."
+MODEL AND DATA PARALLELISM,0.13898305084745763,"In this work we further consider a different form
+of model and data parallelism which is directly
+enabled by having unbiased updates (Figure 2b).
+This enables µ-EigenGame to deal with both
+high-dimensional problems as well as massive
+sample sizes. Here each set of eigenvectors is
+copied on M devices. Update directions are
+computed on each device individually using a
+different data stream and then combined by sum-
+ming or averaging. Updates are applied to a sin-
+gle copy and this is duplicated across the M −1 remaining devices. In this way, updates are computed
+using an M× larger effective batch size while still allowing device-wise model parallelism. This
+setting is particularly useful when the number of samples is very large. This form of parallelism is not
+possible using the original EigenGame formulation since it relies on combining unbiased updates. In
+this sense, the parallelism discussed in this work generalizes that introduced by Gemp et al. (2021)."
+MODEL AND DATA PARALLELISM,0.14067796610169492,"Note that we also allow for within-device parallelism. That is, each vi in Figure 2 is a contiguous
+collection of eigenvectors which are updated independently, in parallel, on a given device (for
+example using vmap in Jax). We provide pseudocode in Algorithm 2 in the appendix which simply
+augments Algorithm 1 with an additional parallelized for-loop and aggregation step over available
+devices. We also provide detailed Jax pseudo-code for parallel µ-EigenGame in Appendix F. We
+compare the empirical scaling performance of µ-EigenGame against α-EigenGame on a 14 billion
+sample dataset in section 5."
+SVD AS THE SOLUTION TO A NEW EIGENGAME,0.1423728813559322,"4
+SVD AS THE SOLUTION TO A NEW EIGENGAME"
+SVD AS THE SOLUTION TO A NEW EIGENGAME,0.1440677966101695,"We theoretically examine the µ-EigenGame algorithm and 1) prove that, using only minibatches
+of data, µ-EigenGame converges globally to the true eigenvectors, which 2) comprise the Nash
+equilibrium of a novel game formulation we recover through deriving pseudo-utility functions from
+update rules. Beyond proving speciﬁc theoretical properties of µ-EigenGame, we believe these proof
+techniques may be of wider interest to the community."
+SVD AS THE SOLUTION TO A NEW EIGENGAME,0.14576271186440679,Published as a conference paper at ICLR 2022
+CONVERGENCE TO SVD,0.14745762711864407,"4.1
+CONVERGENCE TO SVD"
+CONVERGENCE TO SVD,0.14915254237288136,"The asymptotic equivalence of µ-EigenGame to α-EigenGame ensures µ-EigenGame is globally,
+asymptotically convergent and its unbiased updates ensure it is scalable. Proof in appendix C.
+Theorem 1 (Global convergence). Given a positive deﬁnite covariance matrix C with the top-k eigen-
+gaps positive and a square-summable, not summable step size sequence ηt (e.g., 1/t), Algorithm 1
+converges to the top-k eigenvectors asymptotically (limT →∞) with probability 1."
+CONVERGENCE TO SVD,0.15084745762711865,"This stochastic asymptotic convergence result is complimentary to the deterministic (full-batch)
+ﬁnite-sample result in Gemp et al. (2021) where each ˆvi is learned in sequence. In contrast, the
+proof above applies when learning all ˆvi in parallel. We leave ﬁnite-sample convergence to future
+work (Durmus et al., 2020)."
+CONVERGENCE TO SVD,0.15254237288135594,"4.2
+SVD IS NASH OF µ-EIGENGAME"
+CONVERGENCE TO SVD,0.15423728813559323,"We arrived at µ-EigenGame by analyzing and improving properties of the α-EigenGame update.
+However, the µ-EigenGame update direction is linear in each ˆvi. This suggests we may be able to
+design a pseudo-utility function for it. Rearranging the update direction from equation (4) as"
+CONVERGENCE TO SVD,0.15593220338983052,"∆µ
+i = Cˆvi −
+X"
+CONVERGENCE TO SVD,0.1576271186440678,"j<i
+ˆvj(ˆv⊤
+j Cˆvi) =
+h
+I −
+X"
+CONVERGENCE TO SVD,0.15932203389830507,"j<i
+ˆvjˆv⊤
+j
+i
+Cˆvi = ˜∇µ
+i
+(7)"
+CONVERGENCE TO SVD,0.16101694915254236,reveals that we can reverse-engineer the following utility function
+CONVERGENCE TO SVD,0.16271186440677965,"uµ
+i = ˆv⊤
+i
+h
+deﬂation
+z
+}|
+{
+I −
+X"
+CONVERGENCE TO SVD,0.16440677966101694,"j<i
+ˆvjˆv⊤
+j
+i
+C
+[ˆvi]
+(8)"
+CONVERGENCE TO SVD,0.16610169491525423,"where
+is the stop gradient operator commonly used in deep learning packages. As the name implies,
+stops gradients from ﬂowing through its argument so that equation (8) appears linear in ˆvi instead
+of quadratic when differentiating the expression. In light of this, we have renamed ∆µ
+i to ˜∇µ
+i to
+emphasize that it is a pseudo-gradient of uµ
+i . Note that without the stop gradient, the true gradient of
+uµ
+i would be [A + A⊤]ˆvi rather than Aˆvi where A = [I −P"
+CONVERGENCE TO SVD,0.16779661016949152,"j<i ˆv⊤
+j ˆvj]C. We analyze this alternative
+in Appendix H.1 and ﬁnd it, interestingly, to perform worse than µ-EigenGame empirically."
+CONVERGENCE TO SVD,0.1694915254237288,"The utility function uµ
+i has an intuitive meaning. It is the Rayleigh quotient for the matrix Ci =
+[I −P
+j<i ˆv⊤ˆvj]C, which gives the covariance after the subspace spanned by ˆvj<i has been removed.
+In other words, player i is directed to ﬁnd the largest eigenvalue in the orthogonal complement of the
+approximate top-(i −1) subspace. This approach is known as “deﬂating"" the matrix C. Figure 1b
+illustrates µ-EigenGame’s reduced bias when estimating the new utility function (and resulting
+optimum) from an average over minibatches.
+Deﬁnition 1 (µ-EigenGame). Let µ-EigenGame be the game with players i ∈{1, . . . , k}, their
+respective strategy spaces ˆvi ∈Sd−1, and their corresponding utilities uµ
+i as deﬁned in equation (8).
+Theorem 2. Top-k SVD is the unique Nash of µ-EigenGame given symmetric C with the top-k
+eigengaps positive."
+CONVERGENCE TO SVD,0.1711864406779661,"Proof. We will show by induction that each vi is the unique best response to v−i, which implies
+they constitute the unique Nash equilibrium. First, consider player 1’s utility. It is the Rayleigh
+quotient of C because ˆv1 is constrained to the unit-sphere, i.e., uµ
+1 = ˆv⊤
+1 Cˆv1 = ˆv⊤
+1 Cˆv1
+ˆv⊤
+1 ˆv1 . Therefore,"
+CONVERGENCE TO SVD,0.17288135593220338,"we know v1 maximizes uµ
+1 and the maximizer is unique because its eigengap g1 > 0. In game theory
+parlance, v1 is a best response to v−1. The proof continues by induction. The utility of player i is
+uµ
+i = ˆv⊤
+i [I −P"
+CONVERGENCE TO SVD,0.17457627118644067,"j<i vjv⊤
+j ]Cˆvi, which is the Rayleigh quotient with the subspace spanned by the
+top (i −1) eigenvectors removed. Therefore, the maximizer of uµ
+i is the largest eigenvector in the
+remaining subspace, i.e., vi. As before, gi > 0, so this maximizer is unique. This shows that each vi
+is the unique best response to v−i, therefore, the set of vi forms the unique Nash."
+CONVERGENCE TO SVD,0.17627118644067796,"Notice how the induction proof of Theorem 2 relies on a) the hierarchy of vectors (v1 does not
+depend on v−1) and b) the fact that uµ
+i need only be a sensible utility when all player i’s parents"
+CONVERGENCE TO SVD,0.17796610169491525,Published as a conference paper at ICLR 2022 0 8 16
+CONVERGENCE TO SVD,0.17966101694915254,Longest Correct
+CONVERGENCE TO SVD,0.18135593220338983,Eigenvector Streak
+CONVERGENCE TO SVD,0.18305084745762712,-EG (16)
+CONVERGENCE TO SVD,0.1847457627118644,GHA (19)
+CONVERGENCE TO SVD,0.1864406779661017,Krasulinas (23)
+CONVERGENCE TO SVD,0.188135593220339,"Ojas (13)
+-EG (17)"
+CONVERGENCE TO SVD,0.18983050847457628,MNIST (Minibatch = 1024)
+CONVERGENCE TO SVD,0.19152542372881357,"0
+10
+20
+30
+40
+50
+Epochs 10
+2 100"
+CONVERGENCE TO SVD,0.19322033898305085,Subspace Distance
+CONVERGENCE TO SVD,0.19491525423728814,-EG (16)
+CONVERGENCE TO SVD,0.19661016949152543,GHA (19)
+CONVERGENCE TO SVD,0.19830508474576272,Krasulinas (23)
+CONVERGENCE TO SVD,0.2,Ojas (13)
+CONVERGENCE TO SVD,0.2016949152542373,-EG (17)
+CONVERGENCE TO SVD,0.2033898305084746,"0
+29
+58
+87
+117
+146
+Iterations (thousands) 0 8 16"
+CONVERGENCE TO SVD,0.20508474576271185,Longest Correct
+CONVERGENCE TO SVD,0.20677966101694914,Eigenvector Streak
+CONVERGENCE TO SVD,0.20847457627118643,-EG (45)
+CONVERGENCE TO SVD,0.21016949152542372,GHA (49)
+CONVERGENCE TO SVD,0.211864406779661,Krasulinas (43)
+CONVERGENCE TO SVD,0.2135593220338983,Ojas (32)
+CONVERGENCE TO SVD,0.21525423728813559,-EG (43)
+CONVERGENCE TO SVD,0.21694915254237288,MNIST (Minibatch = 256)
+CONVERGENCE TO SVD,0.21864406779661016,"0
+10
+20
+30
+40
+50
+Epochs 10
+2 100"
+CONVERGENCE TO SVD,0.22033898305084745,Subspace Distance
+CONVERGENCE TO SVD,0.22203389830508474,-EG (45)
+CONVERGENCE TO SVD,0.22372881355932203,GHA (49)
+CONVERGENCE TO SVD,0.22542372881355932,"Krasulinas (43)
+Ojas (32)"
+CONVERGENCE TO SVD,0.2271186440677966,-EG (43)
+CONVERGENCE TO SVD,0.2288135593220339,"0
+117
+234
+351
+468
+585
+Iterations (thousands) 0 8 16"
+CONVERGENCE TO SVD,0.2305084745762712,Longest Correct
+CONVERGENCE TO SVD,0.23220338983050848,Eigenvector Streak
+CONVERGENCE TO SVD,0.23389830508474577,-EG (291)
+CONVERGENCE TO SVD,0.23559322033898306,GHA (297)
+CONVERGENCE TO SVD,0.23728813559322035,Krasulinas (199)
+CONVERGENCE TO SVD,0.23898305084745763,"Ojas (195)
+-EG (274)"
+CONVERGENCE TO SVD,0.24067796610169492,MNIST (Minibatch = 32)
+CONVERGENCE TO SVD,0.2423728813559322,"0
+10
+20
+30
+40
+50
+Epochs 10
+2 100"
+CONVERGENCE TO SVD,0.2440677966101695,Subspace Distance
+CONVERGENCE TO SVD,0.2457627118644068,-EG (291)
+CONVERGENCE TO SVD,0.24745762711864408,"GHA (297)
+Krasulinas (199)
+Ojas (195)"
+CONVERGENCE TO SVD,0.24915254237288137,-EG (274)
+CONVERGENCE TO SVD,0.25084745762711863,"0
+937
+1875
+2812
+3750
+4687
+Iterations (thousands)"
+CONVERGENCE TO SVD,0.25254237288135595,"Figure 3: MNIST Experiment. Runtime (seconds) in legend on CPU (m = 1). Each column
+evaluates a different minibatch size ∈{1024, 256, 32}. Shading indicates ± standard error of the
+mean. Learning rates were chosen from {10−3, . . . , 10−6} on 10 held out runs. Solid lines denote
+results with the best performing learning rate. All plots show means over 10 trials (randomness
+arising from minibatches and initialization). Shaded regions highlight ± standard error of the mean."
+CONVERGENCE TO SVD,0.2542372881355932,"are eigenvectors. We revisit this in conjunction with Figure 5b later in discussion section 6.1 to aid
+researchers in the design of future approaches."
+CONVERGENCE TO SVD,0.2559322033898305,"The Nash property is important because it enables the use of any black-box procedure for computing
+best responses. Like prior work, we develop a gradient method for optimizing each utility, however,
+that is not a requirement. Any approach sufﬁces if it can efﬁciently compute a best response."
+EXPERIMENTS,0.2576271186440678,"5
+EXPERIMENTS"
+EXPERIMENTS,0.2593220338983051,"As in EigenGame, we omit the projection of gradients onto the tangent space of the sphere; speciﬁcally,
+we omit line 8 in Algorithm 1. As discussed in Gemp et al. (2021), this has the effect of intelligently
+adapting the step size to use smaller learning rates near the ﬁxed point. To ease comparison with
+previous work, we count the longest correct eigenvector streak as introduced by Gemp et al. (2021),
+which measures the number of eigenvectors that have been learned, in order, to within an angular
+threshold (e.g., π/8) of the true eigenvectors. We also measure how well the set of ˆvi captures the
+top-k subspace with a normalized subspace distance: 1 −1/k · Tr(U ∗P) ∈[0, 1] where U ∗= V V †"
+EXPERIMENTS,0.26101694915254237,"and P = ˆV ˆV † (Tang, 2019). We provide additional experiments in Appendix A."
+EXPERIMENTS,0.2627118644067797,"MNIST.
+We compare µ-EigenGame against α-EigenGame, GHA (Sanger, 1989), Matrix Kra-
+sulina (Tang, 2019), and Oja’s algorithm (Allen-Zhu and Li, 2017) on the MNIST dataset. We ﬂatten
+each image in the training set to obtain a 60, 000 × 784 dimensional matrix X. Figure 3 demonstrates
+µ-EigenGame’s robustness to minibatch size. It performs best in the longest streak metric and better
+than α-EigenGame in subspace distance. We attribute this improvement to its unbiased updates and
+additional acceleration effects which we discuss in detail in section H.2."
+EXPERIMENTS,0.26440677966101694,"Meena conversational model.
+This dataset consists a subset of the 40 billion words used to train
+the transformer-based Meena language model (Adiwardana et al., 2020). The subset was preprocessed
+to remove duplicates and then embedded using the trained model."
+EXPERIMENTS,0.26610169491525426,"The dataset consists of n ≈14 billion embeddings each with dimensionality d = 2560; its total size
+is 131TB. Due to its moderate dimensionality we can exactly compute the ground truth solution by
+iteratively accumulating the covariance matrix of the data and computing its eigendecomposition. On
+a single machine this takes 1.5 days (but is embarrassingly parallelizable with MapReduce)."
+EXPERIMENTS,0.2677966101694915,"We use minibatches of size 4,096 in each TPU. We do model parallelism across 4 TPUs so we see
+16,384 samples per iteration. We test two additional degrees of data parallelism with 4× (16 TPUs,
+65,536 samples) and 8× (32 TPUs, 131,072 samples) the amount of data per iteration respectively.
+We compute and apply updates using SGD with a learning rate of 5 × 10−5 and Nesterov momentum
+with a factor of 0.9."
+EXPERIMENTS,0.26949152542372884,Published as a conference paper at ICLR 2022
+EXPERIMENTS,0.2711864406779661,"Figure 4: Comparison between µ-EigenGame and α-EigenGame with different degrees of data
+parallelism (in parentheses) on the Meena dataset."
+EXPERIMENTS,0.27288135593220336,"Figure 4 compares the mean performance of µ-EigenGame against α-EigenGame as a function of
+the degree of parallelism in computing the top k = 256 eigenvectors (standard errors computed
+over 5 random seeds). Each TPU is tasked with learning 32 contiguous eigenvectors. We see that
+increasing the degree of parallelism has no effect on the performance of α-EigenGame. As expected,
+it is unable to take advantage of the higher data throughput since its updates are biased and cannot be
+meaningfully linearly combined across copies. In contrast, the performance of µ-EigenGame scales
+with the effective batch size achieved through parallelism. µ-EigenGame (8×) is able to recover 256
+eigenvectors in less than 40,000 iterations in 2 hours 45 minutes (approximately 0.5 epochs)."
+EXPERIMENTS,0.2745762711864407,"Spectral clustering on graphs.
+We conducted an experiment on learning the eigenvectors of the
+graph Laplacian of a social network graph (Leskovec and McAuley, 2012) for the purpose of spectral
+clustering. The eigenvalues of the graph Laplacian reveal several interesting properties as well such
+as the number of connected components, an approximation to the sparsest cut, and the diameter of a
+connected graph (Chung et al., 1994)."
+EXPERIMENTS,0.27627118644067794,"Given a graph with a set of nodes V and set of edges E, the graph Laplacian can be written as
+L = X⊤X where each row of the incidence matrix X ∈R|E|×|V| represents a distinct edge;
+Xe=(i,j)∈E is a vector containing only 2 nonzero entries, a 1 at index i and a −1 at index j (Horaud,
+2009). In this setting, the eigenvectors of primary interest are the bottom-k (λ|V|, λ|V|−1, . . .) rather
+than the top-k (λ1, λ2, . . .), however, a simple algebraic manipulation allows us to reuse a top-
+k solver. By deﬁning the matrix L−= λ∗I −L with λ∗> λ1, we ensure L−≻0 and the
+top-k eigenvectors of L−are the bottom-k of L. The update in equation (4) is transformed into
+˜∇µ
+i = (λ∗I −L)ˆvi −P"
+EXPERIMENTS,0.27796610169491526,"j<i
+ 
+ˆv⊤
+i (λ∗I −L)ˆvj
+
+ˆvj. We provide efﬁcient pseudo-code in Appendix G."
+EXPERIMENTS,0.2796610169491525,"The Facebook graph consists of 134, 833 nodes, 1, 380, 293 edges, and 8 connected components,
+each formed by a set of Facebook pages belonging to a distinct category, e.g., Government, TV
+shows, etc. (Leskovec and Krevl, 2014; Rozemberczki et al., 2019). We add a single edge between
+every pair of components to create a connected graph. By projecting this graph onto the bottom 8
+eigenvectors of the graph Laplacian using µ-EG (M = 1, n′ = ηt =
+|E|
+1000) and then running k-means
+clustering (Pedregosa et al., 2011), we are able to recover the ground truth clusters (see Figure 5a)
+with 99.92% accuracy. The experiment was run on a single CPU."
+DISCUSSION,0.28135593220338984,"6
+DISCUSSION"
+UTILITIES TO UPDATES AND BACK,0.2830508474576271,"6.1
+UTILITIES TO UPDATES AND BACK"
+UTILITIES TO UPDATES AND BACK,0.2847457627118644,"Figure 5b summarizes the relationships advising the designs of the various EigenGame algorithms.
+Starting from the α-EigenGame utility, its update is arrived at by simply following the standard
+gradient ascent paradigm. In noticing that stochastic estimates of the gradient are biased, we arrive at
+the µ-EigenGame update by considering how to remove this bias in a principled manner."
+UTILITIES TO UPDATES AND BACK,0.2864406779661017,"Sacriﬁcing the exact steepest decent direction for a direction that allows unbiased estimates is a
+tradeoff that in this case has beneﬁts. Also, while ˜∇µ
+i is not a gradient (except with exact parents), the
+new penalties have properties (above) that make them intuitively more desirable than the originals;
+they are adaptive to the state of the system (discussed further in section H.2)."
+UTILITIES TO UPDATES AND BACK,0.288135593220339,Published as a conference paper at ICLR 2022 (a)
+UTILITIES TO UPDATES AND BACK,0.28983050847457625,"uµ
+i
+uα
+i"
+UTILITIES TO UPDATES AND BACK,0.29152542372881357,"˜∇µ
+i
+∇α
+i"
+UTILITIES TO UPDATES AND BACK,0.29322033898305083,Var & Align
+UTILITIES TO UPDATES AND BACK,0.29491525423728815,remove bias (b)
+UTILITIES TO UPDATES AND BACK,0.2966101694915254,"Figure 5: (5a) Facebook Page Networks. (Left) Petals differentiate ground truth clusters; colors
+differentiate learned clusters. Petals are ideally colored according to the color bar starting with
+the rightmost petal and proceeding counterclockwise. Numbers indicate ground truth cluster size.
+Clusters are extracted by running k-means clustering on the learned eigenvectors ˆV ∈R|V|×k
+(samples on rows). (Right) Rayleigh quotient plot reveals a gap between the 8th and 9th eigenvalues
+indicating ≈8 clusters exist. (5b) Relationships between utilities and updates. An arrow indicates the
+endpoint is reasonably derived from the origin; the lack of an arrow indicates the direction is unlikely."
+UTILITIES TO UPDATES AND BACK,0.2983050847457627,"We derive pseudo-utilities with desired theoretical properties by integrating the new updates with
+help from the stop gradient operator. However, it is unlikely that this utility would be developed
+independently of these steps to solve the problem at hand (see Appendix H for more details). This
+suggests an alternative approach to algorithm design complementary to the optimization perspective:
+directly designing updates themselves which converge to the desired solution, reminiscent of previous
+paradigms that drove neuro-inspired learning rules."
+BRIDGING HEBBIAN AND OPTIMIZATION APPROACHES,0.3,"6.2
+BRIDGING HEBBIAN AND OPTIMIZATION APPROACHES"
+BRIDGING HEBBIAN AND OPTIMIZATION APPROACHES,0.3016949152542373,"The Generalized Hebbian Algorithm (GHA) (Sanger, 1989; Gang et al., 2019; Chen et al., 2019)
+update direction for ˆvi with inexact parents ˆvj is similar to µ-EigenGame:"
+BRIDGING HEBBIAN AND OPTIMIZATION APPROACHES,0.30338983050847457,"∆gha
+i
+= Cˆvi −
+X"
+BRIDGING HEBBIAN AND OPTIMIZATION APPROACHES,0.3050847457627119,"j≤i
+(ˆv⊤
+i Cˆvj)ˆvj.
+(9)"
+BRIDGING HEBBIAN AND OPTIMIZATION APPROACHES,0.30677966101694915,"C appears linearly in this update so GHA can also be parallelized. In contrast to µ-EigenGame, GHA
+additionally penalizes the alignment of ˆvi to itself and removes the unit norm constraint on ˆvi (not
+shown). Without any constraints, GHA overﬂows in experiments. We take the approach of Gemp et
+al. (2021) and constrain ˆvi to the unit-ball (||ˆvi|| ≤1) rather than the unit-sphere (||ˆvi|| = 1)."
+BRIDGING HEBBIAN AND OPTIMIZATION APPROACHES,0.30847457627118646,"The connection between GHA and µ-EigenGame is interesting because unlike µ-EigenGame, GHA
+is a Hebbian learning algorithm inspired by neuroscience and its update rule is not motivated from
+the perspective of maximizing of a utility function. Game formulations of classical machine learning
+problems may provide a bridge between statistical and biologically inspired viewpoints."
+CONCLUSION,0.3101694915254237,"7
+CONCLUSION"
+CONCLUSION,0.31186440677966104,"We introduced µ-EigenGame, an unbiased, globally convergent, parallelizable algorithm that recovers
+the top-k eigenvectors of a symmetric positive deﬁnite matrix. We demonstrated the performance of
+µ-EigenGame on large scale dimension reduction and clustering problems. We discussed technical
+details of µ-EigenGame within the context of game theory, machine learning and neuroscience."
+CONCLUSION,0.3135593220338983,"Like its predecessor, µ-EigenGame is a k-player, general-sum game allowing model parallelism
+over players; our unbiased reformulation allows even greater parallelism over data. Furthermore, the
+hierarchy and Nash property enable the exploration of more sophisticated best responses."
+CONCLUSION,0.3152542372881356,"µ-EigenGame’s improved robustness to smaller minibatches makes it more amenable to being used
+as part of deep learning, optimization (Krummenacher et al., 2016), and regularization (Miyato et al.,
+2018) techniques which leverage spectral information of gradient covariances or Hessians. Graph
+spectral methods have also recently shown to be related to state-of-the-art representation learning
+algorithms (HaoChen et al., 2021) further cementing the importance of efﬁcient SVD algorithms in
+modern machine learning."
+CONCLUSION,0.3169491525423729,Published as a conference paper at ICLR 2022
+CONCLUSION,0.31864406779661014,"Acknowledgements.
+We would like to thank Trevor Cai, Rosalia Schneider, Dimitrios Vytiniotis
+for invaluable help with optimizing algorithm performance on TPU. We also thank Maribeth Rauh,
+Zonglin Li, Daniel Adiwardana and the Meena team for providing us with data and assistance. And
+ﬁnally, we thank Alexander Novikov for helpful feedback on the manuscript."
+REFERENCES,0.32033898305084746,REFERENCES
+REFERENCES,0.3220338983050847,"P.-A. Absil, R. Mahony, and R. Sepulchre. Optimization Algorithms on Matrix Manifolds. Princeton
+University Press, 2009."
+REFERENCES,0.32372881355932204,"D. Adiwardana, M.-T. Luong, D. R. So, J. Hall, N. Fiedel, R. Thoppilan, Z. Yang, A. Kul-
+shreshtha, G. Nemade, Y. Lu, et al. Towards a human-like open-domain chatbot. arXiv preprint
+arXiv:2001.09977, 2020."
+REFERENCES,0.3254237288135593,"Z. Allen-Zhu and Y. Li. First efﬁcient convergence for streaming k-PCA: a global, gap-free, and
+near-optimal rate. In 2017 IEEE 58th Annual Symposium on Foundations of Computer Science
+(FOCS), pages 487–492. IEEE, 2017."
+REFERENCES,0.3271186440677966,"R. W. Brockett. Dynamical systems that sort lists, diagonalize matrices, and solve linear programming
+problems. Linear Algebra and its applications, 146:79–91, 1991."
+REFERENCES,0.3288135593220339,"Z. Chen, X. Li, L. Yang, J. Haupt, and T. Zhao. On constrained nonconvex stochastic optimization:
+A case study for generalized eigenvalue decomposition. In The 22nd International Conference on
+Artiﬁcial Intelligence and Statistics, pages 916–925. PMLR, 2019."
+REFERENCES,0.3305084745762712,"F. R. Chung, V. Faber, and T. A. Manteuffel. An upper bound on the diameter of a graph from
+eigenvalues associated with its Laplacian. SIAM Journal on Discrete Mathematics, 7(3):443–457,
+1994."
+REFERENCES,0.33220338983050846,"M. B. Cohen, C. Musco, and C. Musco. Input sparsity time low-rank approximation via ridge leverage
+score sampling. In Proceedings of the Twenty-Eighth Annual ACM-SIAM Symposium on Discrete
+Algorithms, pages 1758–1777. SIAM, 2017."
+REFERENCES,0.3338983050847458,"P. S. Dhillon, D. P. Foster, S. M. Kakade, and L. H. Ungar. A risk comparison of ordinary least
+squares vs ridge regression. The Journal of Machine Learning Research, 14(1):1505–1511, 2013."
+REFERENCES,0.33559322033898303,"A. Durmus, P. Jiménez, É. Moulines, S. Said, and H.-T. Wai. Convergence analysis of Riemannian
+stochastic approximation schemes. arXiv preprint arXiv:2005.13284, 2020."
+REFERENCES,0.33728813559322035,"J. Fan, D. Wang, K. Wang, and Z. Zhu. Distributed estimation of principal eigenspaces. Annals of
+statistics, 47(6):3009, 2019."
+REFERENCES,0.3389830508474576,"D. Feldman, M. Schmidt, and C. Sohler. Turning big data into tiny data: Constant-size coresets for
+k-means, PCA, and projective clustering. SIAM Journal on Computing, 49(3):601–657, 2020."
+REFERENCES,0.34067796610169493,"A. Gang, H. Raja, and W. U. Bajwa. Fast and communication-efﬁcient distributed PCA. In ICASSP
+2019-2019 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP),
+pages 7450–7454. IEEE, 2019."
+REFERENCES,0.3423728813559322,"D. Garber, O. Shamir, and N. Srebro. Communication-efﬁcient algorithms for distributed stochastic
+principal component analysis. In International Conference on Machine Learning, pages 1203–1212.
+PMLR, 2017."
+REFERENCES,0.3440677966101695,"I. Gemp, B. McWilliams, C. Vernade, and T. Graepel. Eigengame: PCA as a Nash equilibrium. In
+International Conference for Learning Representations, 2021."
+REFERENCES,0.34576271186440677,"M. Ghashami, E. Liberty, J. M. Phillips, and D. P. Woodruff. Frequent directions: simple and
+deterministic matrix sketching. SIAM Journal on Computing, 45(5):1762–1792, 2016."
+REFERENCES,0.3474576271186441,"G. H. Golub and H. A. Van der Vorst. Eigenvalue computation in the 20th century. Journal of
+Computational and Applied Mathematics, 123(1-2):35–65, 2000."
+REFERENCES,0.34915254237288135,"A. Haidar, K. Kabir, D. Fayad, S. Tomov, and J. Dongarra. Out of memory SVD solver for big data.
+In 2017 IEEE High Performance Extreme Computing Conference (HPEC), pages 1–7. IEEE, 2017."
+REFERENCES,0.35084745762711866,Published as a conference paper at ICLR 2022
+REFERENCES,0.3525423728813559,"N. Halko, P.-G. Martinsson, and J. A. Tropp. Finding structure with randomness: probabilistic
+algorithms for constructing approximate matrix decompositions. SIAM Review, 53(2):217–288,
+2011."
+REFERENCES,0.35423728813559324,"J. Z. HaoChen, C. Wei, A. Gaidon, and T. Ma. Provable guarantees for self-supervised deep learning
+with spectral contrastive loss. arXiv preprint arXiv:2106.04156, 2021."
+REFERENCES,0.3559322033898305,"M. Hessel, D. Budden, F. Viola, M. Rosca, E. Sezener, and T. Hennigan. Optax: composable gradient
+transformation and optimisation, in JAX!, 2020."
+REFERENCES,0.3576271186440678,"R. Horaud. A short tutorial on graph Laplacians, Laplacian embedding, and spectral clustering, 2009."
+REFERENCES,0.3593220338983051,"I. T. Jolliffe. Principal components in regression analysis. In Principal Component Analysis. Springer,
+2002."
+REFERENCES,0.3610169491525424,"R. Kannan and S. Vempala. Spectral algorithms. Now Publishers Inc, 2009."
+REFERENCES,0.36271186440677966,"G. Krummenacher, B. McWilliams, Y. Kilcher, J. M. Buhmann, and N. Meinshausen. Scalable
+adaptive stochastic optimization using random projections. In Advances in Neural Information
+Processing Systems, pages 1750–1758, 2016."
+REFERENCES,0.3644067796610169,"J. Leskovec and A. Krevl. SNAP Datasets: Stanford large network dataset collection. http:
+//snap.stanford.edu/data, June 2014."
+REFERENCES,0.36610169491525424,"J. Leskovec and J. McAuley. Learning to discover social circles in ego networks. Advances in Neural
+Information Processing Systems, 25:539–547, 2012."
+REFERENCES,0.3677966101694915,"Y. Liang, M.-F. Balcan, V. Kanchanapally, and D. P. Woodruff. Improved distributed principal
+component analysis. In NIPS, 2014."
+REFERENCES,0.3694915254237288,"A. Mead. Review of the development of multidimensional scaling methods. Journal of the Royal
+Statistical Society: Series D (The Statistician), 41(1):27–39, 1992."
+REFERENCES,0.3711864406779661,"T. Miyato, T. Kataoka, M. Koyama, and Y. Yoshida. Spectral normalization for generative adversarial
+networks. arXiv preprint arXiv:1802.05957, 2018."
+REFERENCES,0.3728813559322034,"C. Musco and C. Musco. Randomized block Krylov methods for stronger and faster approximate
+singular value decomposition. In Advances in Neural Information Processing Systems, 2015."
+REFERENCES,0.37457627118644066,"E. Oja. Simpliﬁed neuron model as a principal component analyzer. Journal of Mathematical Biology,
+15(3):267–273, 1982."
+REFERENCES,0.376271186440678,"F. Pedregosa, G. Varoquaux, A. Gramfort, V. Michel, B. Thirion, O. Grisel, M. Blondel, P. Pretten-
+hofer, R. Weiss, V. Dubourg, J. Vanderplas, A. Passos, D. Cournapeau, M. Brucher, M. Perrot, and
+E. Duchesnay. Scikit-learn: Machine learning in Python. Journal of Machine Learning Research,
+12:2825–2830, 2011."
+REFERENCES,0.37796610169491524,"S. T. Roweis and L. K. Saul. Nonlinear dimensionality reduction by locally linear embedding. Science,
+290(5500):2323–2326, 2000."
+REFERENCES,0.37966101694915255,"B. Rozemberczki, R. Davies, R. Sarkar, and C. Sutton. Gemsec: Graph embedding with self clustering.
+In Proceedings of the 2019 IEEE/ACM International Conference on Advances in Social Networks
+Analysis and Mining 2019, pages 65–72. ACM, 2019."
+REFERENCES,0.3813559322033898,"H. Rutishauser. Simultaneous iteration method for symmetric matrices. In Handbook for Automatic
+Computation, pages 284–302. Springer, 1971."
+REFERENCES,0.38305084745762713,"T. D. Sanger. Optimal unsupervised learning in a single-layer linear feedforward neural network.
+Neural Networks, 2(6):459–473, 1989."
+REFERENCES,0.3847457627118644,"T. Sarlos. Improved approximation algorithms for large matrices via random projections. In 2006
+47th Annual IEEE Symposium on Foundations of Computer Science (FOCS’06), pages 143–152.
+IEEE, 2006."
+REFERENCES,0.3864406779661017,Published as a conference paper at ICLR 2022
+REFERENCES,0.38813559322033897,"S. M. Shah. Stochastic approximation on Riemannian manifolds. Applied Mathematics & Optimiza-
+tion, pages 1–29, 2019."
+REFERENCES,0.3898305084745763,"O. Shamir. A stochastic PCA and SVD algorithm with an exponential convergence rate. In Proceed-
+ings of the International Conference on Machine Learning, pages 144–152, 2015."
+REFERENCES,0.39152542372881355,"C. Tang. Exponentially convergent stochastic k-PCA without variance reduction. In Advances in
+Neural Information Processing Systems, pages 12393–12404, 2019."
+REFERENCES,0.39322033898305087,"J. B. Tenenbaum, V. De Silva, and J. C. Langford. A global geometric framework for nonlinear
+dimensionality reduction. Science, 290(5500):2319–2323, 2000."
+REFERENCES,0.3949152542372881,"U. Von Luxburg. A tutorial on spectral clustering. Statistics and Computing, 17(4):395–416, 2007."
+REFERENCES,0.39661016949152544,"Y. Wang, N. Xiu, and J. Han. On cone of nonsymmetric positive semideﬁnite matrices. Linear
+Algebra and its Applications, 433(4):718–736, 2010."
+REFERENCES,0.3983050847457627,Published as a conference paper at ICLR 2022
+REFERENCES,0.4,"A
+EXPERIMENTS ON SYNTHETIC DATA"
+REFERENCES,0.4016949152542373,"0
+200
+400
+600
+800
+1000
+# of Training Iterations 0 20 40"
+REFERENCES,0.4033898305084746,Longest Correct
+REFERENCES,0.40508474576271186,Eigenvector Streak
+REFERENCES,0.4067796610169492,-EG (323)
+REFERENCES,0.40847457627118644,GHA (214)
+REFERENCES,0.4101694915254237,Ojas (407)
+REFERENCES,0.411864406779661,Krasulinas (288)
+REFERENCES,0.4135593220338983,-EG (299)
+REFERENCES,0.4152542372881356,Linearly Decaying Spectrum
+REFERENCES,0.41694915254237286,"0
+200
+400
+600
+800
+1000
+# of Training Iterations 0 20 40"
+REFERENCES,0.4186440677966102,Longest Correct
+REFERENCES,0.42033898305084744,Eigenvector Streak
+REFERENCES,0.42203389830508475,-EG (268)
+REFERENCES,0.423728813559322,GHA (182)
+REFERENCES,0.42542372881355933,Ojas (306)
+REFERENCES,0.4271186440677966,Krasulinas (271)
+REFERENCES,0.4288135593220339,-EG (231)
+REFERENCES,0.43050847457627117,Exponentially Decaying Spectrum
+REFERENCES,0.4322033898305085,Figure 6: Synthetic Experiment. Runtime (milliseconds) in legend.
+REFERENCES,0.43389830508474575,"We validate µ-EigenGame in a full-batch setting on two synthetic datasets: one with exponentially
+decaying spectrum; the other with a linearly decaying spectrum. Figure 6 shows µ-EigenGame
+outperforms α-EigenGame on the former and matches its performance on the latter. We discuss
+possible reasons for this gap in the discussion in Section 6."
+REFERENCES,0.43559322033898307,"B
+PARALLELIZED ALGORITHM"
+REFERENCES,0.43728813559322033,"Riemannian Manifolds.
+Before introducing an algorithm for µ-EigenGame, we ﬁrst brieﬂy review
+necessary terminology for learning on Riemannian manifolds Absil et al. (2009), speciﬁcally for
+the sphere. The notation TˆviSd−1 denotes the set of vectors tangent to the sphere at a point ˆvi (i.e.,
+any vector orthogonal to ˆvi). Rˆvi(z) =
+ˆvi+z
+||ˆvi+z|| is the commonly used restriction of the retraction on
+Sd−1 to the tangent bundle at ˆvi (i.e., step in tangent direction z and then unit-normalize the result).
+The operator Πˆvi(y) = (I −ˆv⊤
+i ˆvi)y projects the direction y onto TˆviSd−1. Combining these tools
+together results in a movement along the Riemannian manifold: ˆv(t+1)
+i
+←Rˆvi
+ 
+Πˆvi(y)
+
+."
+REFERENCES,0.43898305084745765,"We present pseudocode for µ-EigenGame below where computation is parallelized both over the k
+players and over M machines per player."
+REFERENCES,0.4406779661016949,Algorithm 2 µ-EigenGameR
+REFERENCES,0.4423728813559322,"1: Given: data stream Xt ∈Rn′×d, number of parallel machines M per player (minibatch size per
+machine n′′ = n′"
+REFERENCES,0.4440677966101695,"M ), initial vectors ˆv0
+i ∈Sd−1, step size sequence ηt, and number of iterations T.
+2: ˆvi ←ˆv0
+i for all i
+3: for t = 1 : T do
+4:
+parfor i = 1 : k do
+5:
+parfor m = 1 : M do
+6:
+rewards ←X⊤
+tmXtmˆvi
+7:
+penalties ←P"
+REFERENCES,0.4457627118644068,"j<i⟨Xtmˆvi, Xtmˆvj⟩ˆvj
+8:
+˜∇µ
+im ←(rewards −penalties)/n′′"
+REFERENCES,0.44745762711864406,"9:
+˜∇µ,R
+im ←˜∇µ
+im −⟨˜∇µ
+im, ˆvi⟩ˆvi
+10:
+end parfor
+11:
+˜∇µ,R
+i
+←
+1
+M
+P"
+REFERENCES,0.4491525423728814,"m[ ˜∇µ,R
+im ]"
+REFERENCES,0.45084745762711864,"12:
+ˆv′
+i ←ˆvi + ηt ˜∇µ,R
+i
+13:
+ˆvi ←
+ˆv′
+i
+||ˆv′
+i||
+14:
+end parfor
+15: end for
+16: return all ˆvi"
+REFERENCES,0.45254237288135596,Published as a conference paper at ICLR 2022
+REFERENCES,0.4542372881355932,"C
+GLOBAL STOCHASTIC CONVERGENCE"
+REFERENCES,0.4559322033898305,"Theorem 1 (Global Convergence). Given a positive deﬁnite covariance matrix C with the top-k eigen-
+gaps positive and a square-summable, not summable step size sequence ηt (e.g., 1/t), Algorithm 1
+converges to the top-k eigenvectors asymptotically (limT →∞) with probability 1."
+REFERENCES,0.4576271186440678,"Proof. Assume none of the ˆvi are initialized to an angle exactly 90◦away from the true eigenvector:
+⟨ˆvi, vi⟩̸= 0. The set of vectors {ˆvi : ⟨ˆvi, vi⟩= 0} has Lebesgue measure 0, therefore, the above
+assumption holds w.p.1. The update direction for the top eigenvector ˆv1 is exactly equal to that of
+α-EigenGame ( ˜∇µ
+1 = ∇α
+1 ), therefore, they have the same limit points for ˆv1. The proof then proceeds
+by induction. As ˆvj<i approach their limit points, the update for the ith eigenvector ˆvi approaches
+that of α-EigenGame ( ˜∇µ
+i = ∇α
+i ) and, by Lemma 3, the stable region of µ-EigenGame also shrinks
+to a point around the top-k eigenvectors."
+REFERENCES,0.45932203389830506,"Denote the “update ﬁeld” H(v) to match the work of Shah (2019). H(v) is simply the concatenation
+of all players’ Riemannian update rules, i.e., all players updating in parallel using their Riemannian
+updates:"
+REFERENCES,0.4610169491525424,"H(v) = [(I −ˆv1ˆv⊤
+1 )∆µ
+1, . . . , (I −ˆvkˆv⊤
+k )∆µ
+k] : Rkd →Rkd
+(10)"
+REFERENCES,0.46271186440677964,"where ∆µ
+i is deﬁned in equation (7) and (I −p1p⊤
+1 )∆µ
+i projects ∆µ
+i onto the tangent space of player
+i’s unit sphere."
+REFERENCES,0.46440677966101696,"The result is then obtained by applying Theorem 7 of Shah (2019) with the following information:
+a) the unit-sphere is a compact manifold with an injectivity radius of π, b) the update ﬁeld is a
+polynomial in {vi} and therefore smooth (analytic), and c) by Lemma 4 (see Appendix E) the update
+noise constitutes a bounded martingale difference sequence."
+REFERENCES,0.4661016949152542,"While the convergence proof for α-EG provides ﬁnite-sample rates, it only applies to the algorithm
+applied sequentially (not parallelized over eigenvectors) and in the deterministic setting (minibatch
+contains the entire data set). The experiments in Gemp et al. (2021) apply the algorithm in parallel
+and with mini batch sizes, meaning the α-EG theorem does not actually apply to their experimental
+setting. That is to say, the α-EG paper proposes updating eigenvectors in parallel in practice despite
+the lack of convergence guarantee."
+REFERENCES,0.46779661016949153,"In contrast, our convergence theorem applies to µ-EG when applied in parallel (over the eigenvectors)
+and in the stochastic setting (with mini batch sizes), which is what we examine empirically in our
+experiments. The downside is that we do not provide ﬁnite-sample convergence rates."
+REFERENCES,0.4694915254237288,"Although we do not provide convergence rates, Lemma 1 proves that the µ-EG update converges
+to the α-EG update for each eigenvector, so intuitively, we expect the convergence rates to be
+relatively similar given that the algorithms are equivalent in the limit. Note that in the full batch
+setting where stochasticity does not conﬂate the differences between the two algorithms, Figure 6
+in Appendix A empirically supports the similarity of the convergence rates for the two algorithms.
+Figure 3 (minibatch of 1024) which looks at a large (but not full) minibatch size, also shows a small
+difference between convergence for the two algorithms."
+REFERENCES,0.4711864406779661,"In summary, the α-EG convergence theorem is impractical—it provides convergence rates for a
+(non-parallel) algorithm in the (non-stochastic) setting, which is a combination that α-EG paper
+does not suggest be applied in practice. In contrast, our µ-EG convergence theorem is practical—it
+provides asymptotic convergence for a parallel algorithm in the stochastic setting."
+REFERENCES,0.4728813559322034,"Difﬁculties Obtaining Finite Sample Rates
+In consideration of a ﬁnite sample convergence result,
+we consulted Durmus et al. (2020). The primary obstacle to applying their convergence theorem is
+the construction of a suitable Lyapunov function to satisfy their Assumption A.2 stated on page 4.
+Constructing Lyapunov functions is typically a tedious, unpredictable process. The work in Durmus
+et al. (2020) is very recent and ﬁnite sample convergence of Riemannian stochastic approximation
+(i.e., update directions are not gradients of any function) schemes is cutting edge, highly technical
+research. This is in contrast to Riemannian optimization (i.e., update directions are the gradient of a
+function), which is much more mature. We hope theory advances in the near future to a point where
+we can more easily provide convergence rates for algorithms like α-EigenGame."
+REFERENCES,0.4745762711864407,Published as a conference paper at ICLR 2022
+REFERENCES,0.47627118644067795,"D
+ERROR PROPAGATION / SENSITIVITY ANALYSIS"
+REFERENCES,0.47796610169491527,"Lemma 3. An O(ϵ) angular error of parent ˆvj<i implies an O(ϵ) angular error in the location of
+the solution for ˆvi."
+REFERENCES,0.47966101694915253,Proof. The proof proceeds in three steps:
+REFERENCES,0.48135593220338985,1. O(ϵ) angular error of parent =⇒O(ϵ) Euclidean error of parent
+REFERENCES,0.4830508474576271,2. O(ϵ) Euclidean error of parent =⇒O(ϵ) Euclidean error of norm of child gradient
+REFERENCES,0.4847457627118644,3. O(ϵ) Euclidean error of norm child gradient + instability of minimum at ± π
+REFERENCES,0.4864406779661017,"2 =⇒O(ϵ)
+angular error of child’s solution."
+REFERENCES,0.488135593220339,"Angular error in the parent can be converted to Euclidean error by considering the chord length
+between the mis-speciﬁed parent and the true parent direction. The two vectors plus the chord form
+an isoceles triangle with the relation that chord length l = 2 sin( ϵ"
+REFERENCES,0.48983050847457626,2) is O(ϵ) for ϵ ≪1.
+REFERENCES,0.4915254237288136,"Next, write the mis-speciﬁed parents as ˆvj = vj + wj where ||wj|| is O(ϵ) as we have just shown.
+Let b equal the difference between the Riemannian update direction ˜∇µ
+i with approximate parents
+and that with exact parents. All directions we consider here are the Riemannian directions, i.e., they
+have been projected onto the tangent space of the sphere. Then"
+REFERENCES,0.49322033898305084,"b = ˜∇µ,e
+i
+−˜∇µ
+i = (
+I −ˆviˆv⊤
+i
+|
+{z
+}
+projection onto sphere )
+X j<i"
+REFERENCES,0.49491525423728816,"h
+(ˆv⊤
+i Cˆvj)ˆvj −(ˆv⊤
+i Cvj)vj
+i
+(11)"
+REFERENCES,0.4966101694915254,and the norm of the difference is (12)
+REFERENCES,0.49830508474576274,"||b|| = ||(I −ˆviˆv⊤
+i )
+X j<i"
+REFERENCES,0.5,"h
+(ˆv⊤
+i Cˆvj)ˆvj −(ˆv⊤
+i Cvj)vj
+i
+||
+(13)"
+REFERENCES,0.5016949152542373,"≤||I −ˆviˆv⊤
+i || · ||
+X j<i"
+REFERENCES,0.5033898305084745,"h
+(ˆv⊤
+i Cˆvj)ˆvj −(ˆv⊤
+i Cvj)vj
+i
+||
+(14) ≤||
+X j<i"
+REFERENCES,0.5050847457627119,"h
+(ˆv⊤
+i Cˆvj)ˆvj −(ˆv⊤
+i Cvj)vj
+i
+||.
+(15)"
+REFERENCES,0.5067796610169492,We can further bound the summands with
+REFERENCES,0.5084745762711864,"||(ˆv⊤
+i Cˆvj)ˆvj −(ˆv⊤
+i Cvj)vj|| = ||(ˆvjˆv⊤
+j −vjv⊤
+j )Cˆvi||
+(16)"
+REFERENCES,0.5101694915254237,"≤||ˆvjˆv⊤
+j −vjv⊤
+j ||||Cˆvi||
+(17)"
+REFERENCES,0.511864406779661,"≤λ1||ˆvjˆv⊤
+j −vjv⊤
+j ||
+(18)"
+REFERENCES,0.5135593220338983,"= λ1||(vj + wj)(vj + wj)⊤−vjv⊤
+j ||
+(19)"
+REFERENCES,0.5152542372881356,"= λ1||wjv⊤
+j + vjw⊤
+j + wjw⊤
+j ||
+(20)"
+REFERENCES,0.5169491525423728,"≤λ1(||wjv⊤
+j || + ||vjw⊤
+j || + ||wjw⊤
+j ||)
+(21)"
+REFERENCES,0.5186440677966102,"= O(ϵ).
+(22)"
+REFERENCES,0.5203389830508475,"This upper bound on the norm of the difference between the two directions translates to a lower
+bound on the inner product of the two directions wherever || ˜∇µ,e
+i
+|| > ϵ, speciﬁcally ⟨˜∇µ,e
+i
+, ˜∇µ
+i ⟩> 0
+(see Figure 7a). And recall that the direction with exact parents is equivalent to the gradient of
+α-EigenGame with exact parents, ∇α,e
+i
+."
+REFERENCES,0.5220338983050847,"Therefore, by a Lyapunov argument, the ˜∇µ
+i direction is an ascent direction on the α-EigenGame
+utility where it forms an acute angle (positive inner product) with ∇α,e
+i
+. Furthermore, ∇α,e
+i
+is the
+gradient of a utility function that is sinusoidal along the sphere manifold; speciﬁcally, it is a cosine
+with period π and positive amplitude dependent on the spectrum of C (c.f. equation (8) of Gemp"
+REFERENCES,0.523728813559322,Published as a conference paper at ICLR 2022
+REFERENCES,0.5254237288135594,"(a)
+(b)"
+REFERENCES,0.5271186440677966,"Figure 7: (a) Close in Euclidean distance can imply close in angular distance if the vectors are long
+enough. (b) The stable region for µ-EigenGame consists of an O(ϵ) ball around the true optimum as
+ϵ →0."
+REFERENCES,0.5288135593220339,"et al. (2021)). We can derive an upper bound on the size of the angular region for which ˜∇µ
+i is not
+necessarily an ascent direction (the “?"" marks in Figure 7). This region is deﬁned as the set of angles
+for which the norm of the utility’s derivative is small, i.e., ||∇α,e
+i
+|| ≤ϵ. The derivative of cosine
+is sine, which depends linearly on its argument (angle) for small values, therefore, |θ| ≤O(ϵ) or
+| π"
+REFERENCES,0.5305084745762711,2 −θ| ≤O(ϵ). As long as ˆvi does not lie within the | π
+REFERENCES,0.5322033898305085,"2 −O(ϵ)| region, µ-EigenGame will ascend
+the utility landscape to within O(ϵ) angular error of the true eigenvector vi. In the limit as ϵ →0, the
+size of the | π"
+REFERENCES,0.5338983050847458,"2 −O(ϵ)| region vanishes to a point, v⊥
+i . To understand the stability of this point, we can
+again appeal to the analysis from Gemp et al. (2021)—see equation (8) on page 7 of that work. The
+Jacobian of ˜∇µ
+i and the Hessian of uα
+i are equal with exact parents, and we know that its Riemannian
+Hessian is positive deﬁnite if the ith eigengap is positive: HR
+ˆvi[uα
+i ] ⪰(λi −λi+1)I. This means that
+the point v⊥
+i is a repeller for α-EigenGame. Similarly to before, we can show more formally that an
+O(ϵ) perturbation to parents results in an O(ϵ) perturbation to the Jacobian of ˜∇µ
+i from H[uα
+i ]:"
+REFERENCES,0.535593220338983,"J = [I −
+X"
+REFERENCES,0.5372881355932203,"j<i
+ˆvjˆv⊤
+j ]C
+(23)"
+REFERENCES,0.5389830508474577,"= [I −
+X"
+REFERENCES,0.5406779661016949,"j<i
+(vj + wj)(vj + wj)⊤]C
+(24)"
+REFERENCES,0.5423728813559322,"= [I −
+X"
+REFERENCES,0.5440677966101695,"j<i
+vjv⊤
+j ]C −
+X"
+REFERENCES,0.5457627118644067,"j<i
+[wjv⊤
+j + vjw⊤
+j + wjw⊤
+j ]C
+(25)"
+REFERENCES,0.5474576271186441,"= [I −
+X"
+REFERENCES,0.5491525423728814,"j<i
+vjv⊤
+j ]C −O(ϵ)W
+(26)"
+REFERENCES,0.5508474576271186,"= H[uα
+i ] −O(ϵ)W
+(27)"
+REFERENCES,0.5525423728813559,"where W is some matrix with O(1) entries (w.r.t. ϵ). For the sphere, the Riemannian Jacobian
+is a linear function of the Jacobian (JR
+ˆvi = (I −ˆviˆv⊤
+i )J −(ˆv⊤
+i Jˆvi)I = HR
+ˆvi[uα
+i ] −O(ϵ)) and
+therefore the error remains O(ϵ). The set of (non)symmetric, positive semideﬁnite matrices (A is
+p.s.d. iff y⊤Ay ≥0 ∀y) forms a closed convex cone, the interior of which contains positive deﬁnite
+matrices Wang et al. (2010). Therefore, JR
+ˆvi remains in this set after a small enough O(ϵ) perturbation.
+Therefore, in the limit ϵ →0, the spectrum of the Jacobian will also be positive deﬁnite indicating
+the point v⊥
+i is a repeller. This is indicated by the blue arrows in Figure 7b."
+REFERENCES,0.5542372881355933,"Figure 7b summarizes the results that the stable region for α-EigenGame consists of an O(ϵ) ball
+around the true optimum for parents with O(ϵ) angular error."
+REFERENCES,0.5559322033898305,Published as a conference paper at ICLR 2022
+REFERENCES,0.5576271186440678,"E
+NOISE IS MARTINGALE DIFFERENCE SEQUENCE"
+REFERENCES,0.559322033898305,"Let ∆µ,t
+i
+=
+h
+I −P"
+REFERENCES,0.5610169491525424,"j<i ˆv(t)
+j ˆv(t)⊤
+j
+i
+Cˆv(t)
+i
+be the µ-EigenGame update direction computed using the"
+REFERENCES,0.5627118644067797,"full expected covariance matrix. Let ˆ∆µ,t
+i
+=
+h
+I −P"
+REFERENCES,0.5644067796610169,"j<i ˆv(t)
+j ˆv(t)⊤
+j
+i
+Ctˆv(t)
+i
+be the update direction
+computed using a minibatch estimate of the covariance matrix where minibatches are unbiased
+because they are formed from data sampled uniformly at random from the dataset. Deﬁne M V (t)
+i,t+1 =
+ˆ∆µ,t
+i
+−∆µ,t
+i
+and let M V (t)
+t+1 = [M V (t)
+1,t+1, . . . , M V (t)
+k,t+1]⊤where V (t) = {v(t)
+i∈[k]}."
+REFERENCES,0.5661016949152542,"Lemma 4. {M V (t)
+t+1 } is a bounded martingale difference sequence with respect to the increasing
+σ-ﬁelds"
+REFERENCES,0.5677966101694916,"Ft = σ({(ˆvi)(0)
+i∈[k], . . . , (ˆvi)(t)
+i∈[k]}, {ˆC
+(1), . . . , ˆC
+(t)})
+(28)"
+REFERENCES,0.5694915254237288,"Proof. Given the ﬁltration Ft, we ﬁnd"
+REFERENCES,0.5711864406779661,"E[M V (t)
+i,t+1|Ft] =
+h
+I −
+X"
+REFERENCES,0.5728813559322034,"j<i
+ˆv(t)
+j ˆv(t)⊤
+j
+i
+E[Ct −C]ˆv(t)
+i
+= 0
+(29)"
+REFERENCES,0.5745762711864407,"where the ﬁrst equality holds because each Ct is formed from a minibatch sampled i.i.d. from the
+dataset and therefore independent of the ﬁltration. This result holds for all i ∈[k], therefore"
+REFERENCES,0.576271186440678,"E[M V (t)
+t+1 |Ft] = 0.
+(30)"
+REFERENCES,0.5779661016949152,"Furthermore,"
+REFERENCES,0.5796610169491525,"sup
+t E[||M V (t)
+i,t+1||2|Ft]
+(31)"
+REFERENCES,0.5813559322033899,"= sup
+t E
+h
+ˆv(t)⊤
+i
+(Ct −C)⊤"
+REFERENCES,0.5830508474576271,"P ⊤
+z
+}|
+{
+h
+I −
+X"
+REFERENCES,0.5847457627118644,"j<i
+ˆv(t)
+j ˆv(t)⊤
+j
+i⊤"
+REFERENCES,0.5864406779661017,"P
+z
+}|
+{
+h
+I −
+X"
+REFERENCES,0.588135593220339,"j<i
+ˆv(t)
+j ˆv(t)⊤
+j
+i
+(Ct −C)ˆv(t)
+i
+Ft
+i
+(32)"
+REFERENCES,0.5898305084745763,"= sup
+t E[ˆv(t)⊤
+i
+(Ct −C)⊤P ⊤P(Ct −C)ˆv(t)
+i
+Ft]
+(33)"
+REFERENCES,0.5915254237288136,"≤sup
+t E[λ2
+i ˆv(t)⊤
+i
+(Ct −C)⊤I(Ct −C)ˆv(t)
+i
+Ft]
+(34)"
+REFERENCES,0.5932203389830508,"≤sup
+t λ2
+i ˆv(t)⊤
+i
+E[(Ct −C)⊤(Ct −C)
+Ft]ˆv(t)
+i
+(35)"
+REFERENCES,0.5949152542372881,"≤max{1, (i −2)2}2ξ2
+(36)"
+REFERENCES,0.5966101694915255,"where λi ≤max{1, (i −2)2} is the max singular value of P 1 and ξ2 is the maximum eigenvalue of
+E[(Ct −C)⊤(Ct −C)] over all t. Summing over i we ﬁnd"
+REFERENCES,0.5983050847457627,"sup
+t E[||M V (t)
+i,t+1||2|Ft] ≤(
+X"
+REFERENCES,0.6,"i
+λi)ξ2
+(37) ≤(2 + k−2
+X"
+REFERENCES,0.6016949152542372,"a=1
+a2)ξ2
+(38)"
+REFERENCES,0.6033898305084746,= (2 + 1
+REFERENCES,0.6050847457627119,"6(k −2)(k −1)(2k −3))ξ2
+(39)"
+REFERENCES,0.6067796610169491,≤(2 + 1
+REFERENCES,0.6084745762711864,"3k3)ξ2.
+(40)"
+REFERENCES,0.6101694915254238,"1In the worst case, each subspace subtracted off by ˆvjˆv⊤
+j subtracts a 1 from the eigenvalue of 1 of the identity
+matrix."
+REFERENCES,0.611864406779661,Published as a conference paper at ICLR 2022
+REFERENCES,0.6135593220338983,"This is a worst case bound. As the parent eigenvectors converge, the max singular value of P
+converges to 1 so that the variance of the magnitude of the martingale difference is upper bounded by
+kξ2."
+REFERENCES,0.6152542372881356,"Note: For a ﬁnite dataset of n samples or for a distribution with bounded moments like the Gaussian
+distribution, ξ will be ﬁnite. However, for other distributions like the Cauchy distribution, ξ may be
+unbounded, so care should be taken when running µ-EigenGame in different stochastic settings."
+REFERENCES,0.6169491525423729,"F
+JAX PSEUDOCODE"
+REFERENCES,0.6186440677966102,"For the sake of reproducibility we have included pseudocode in Jax. We use the Optax2 optimiza-
+tion library Hessel et al. (2020) and the Jaxline training framework3. Our graph algorithm is a
+straightforward modiﬁcation of the provided pseudo-code. See section G for details. 1 """""""
+REFERENCES,0.6203389830508474,2 Copyright 2020 The EigenGame Unloaded Authors. 3 4
+REFERENCES,0.6220338983050847,"5 Licensed under the Apache License, Version 2.0 (the ""License"");"
+REFERENCES,0.6237288135593221,6 you may not use this file except in compliance with the License.
+YOU MAY OBTAIN A COPY OF THE LICENSE AT,0.6254237288135593,7 You may obtain a copy of the License at 8
+YOU MAY OBTAIN A COPY OF THE LICENSE AT,0.6271186440677966,9 https://www.apache.org/licenses/LICENSE-2.0 10
+YOU MAY OBTAIN A COPY OF THE LICENSE AT,0.6288135593220339,"11 Unless required by applicable law or agreed to in writing, software"
+YOU MAY OBTAIN A COPY OF THE LICENSE AT,0.6305084745762712,"12 distributed under the License is distributed on an ""AS IS"" BASIS,"
+YOU MAY OBTAIN A COPY OF THE LICENSE AT,0.6322033898305085,"13 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied."
+SEE THE LICENSE FOR THE SPECIFIC LANGUAGE GOVERNING PERMISSIONS AND,0.6338983050847458,14 See the License for the specific language governing permissions and
+SEE THE LICENSE FOR THE SPECIFIC LANGUAGE GOVERNING PERMISSIONS AND,0.635593220338983,15 limitations under the License.
+SEE THE LICENSE FOR THE SPECIFIC LANGUAGE GOVERNING PERMISSIONS AND,0.6372881355932203,"16 """""" 17"
+IMPORT JAX,0.6389830508474577,18 import jax
+IMPORT OPTAX,0.6406779661016949,19 import optax
+IMPORT OPTAX,0.6423728813559322,20 import jax.numpy as jnp 21
+IMPORT OPTAX,0.6440677966101694,"22 def eg_grads(vi: jnp.ndarray,"
+IMPORT OPTAX,0.6457627118644068,"23
+weights: jnp.ndarray,"
+IMPORT OPTAX,0.6474576271186441,"24
+eigs: jnp.ndarray,"
+IMPORT OPTAX,0.6491525423728813,"25
+data: jnp.ndarray) -> jnp.ndarray:"
+IMPORT OPTAX,0.6508474576271186,"26
+"""""""
+IMPORT OPTAX,0.652542372881356,"27
+Args:"
+IMPORT OPTAX,0.6542372881355932,"28
+vi: shape (d,), eigenvector to be updated"
+IMPORT OPTAX,0.6559322033898305,"29
+weights:
+shape (k,), mask for penalty coefficients,"
+IMPORT OPTAX,0.6576271186440678,"30
+eigs: shape (k, d), i.e., vectors on rows"
+IMPORT OPTAX,0.6593220338983051,"31
+data: shape (N, d), minibatch X_t"
+IMPORT OPTAX,0.6610169491525424,"32
+Returns:"
+IMPORT OPTAX,0.6627118644067796,"33
+grads: shape (d,), gradient for vi"
+IMPORT OPTAX,0.6644067796610169,"34
+"""""""
+IMPORT OPTAX,0.6661016949152543,"35
+weights_ij = (jnp.sign(weights + 0.5) - 1.) / 2.
+# maps -1 to -1 else
+to 0"
+IMPORT OPTAX,0.6677966101694915,"36
+data_vi = jnp.dot(data, vi)"
+IMPORT OPTAX,0.6694915254237288,"37
+data_eigs = jnp.transpose(jnp.dot(data,"
+IMPORT OPTAX,0.6711864406779661,"38
+jnp.transpose(eigs)))
+# Xvj on row j"
+IMPORT OPTAX,0.6728813559322034,"39
+vi_m_vj = jnp.dot(data_eigs, data_vi)"
+IMPORT OPTAX,0.6745762711864407,"40
+penalty_grads = vi_m_vj * jnp.transpose(eigs)"
+IMPORT OPTAX,0.676271186440678,"41
+penalty_grads = jnp.dot(penalty_grads, weights_ij)"
+IMPORT OPTAX,0.6779661016949152,"42
+grads = jnp.dot(jnp.transpose(data), data_vi) + penalty_grads"
+RETURN GRADS,0.6796610169491526,"43
+return grads 44 45"
+RETURN GRADS,0.6813559322033899,"46 def utility(vi, weights, eigs, data):"
+RETURN GRADS,0.6830508474576271,"2https://github.com/deepmind/optax
+3https://github.com/deepmind/jaxline"
+RETURN GRADS,0.6847457627118644,Published as a conference paper at ICLR 2022
+RETURN GRADS,0.6864406779661016,"47
+""""""Compute Eigengame utilities."
+RETURN GRADS,0.688135593220339,"48
+util: shape (1,), utility for vi"
+RETURN GRADS,0.6898305084745763,"49
+"""""""
+RETURN GRADS,0.6915254237288135,"50
+data_vi = jnp.dot(data, vi)"
+RETURN GRADS,0.6932203389830508,"51
+data_eigs = jnp.transpose(jnp.dot(data, jnp.transpose(eigs)))
+# Xvj on
+row j"
+RETURN GRADS,0.6949152542372882,"52
+vi_m_vj2 = jnp.dot(data_eigs, data_vi)**2."
+RETURN GRADS,0.6966101694915254,"53
+vj_m_vj = jnp.sum(data_eigs * data_eigs, axis=1)"
+RETURN GRADS,0.6983050847457627,"54
+r_ij = vi_m_vj2 / vj_m_vj"
+RETURN GRADS,0.7,"55
+util = jnp.dot(jnp.array(r_ij), weights)"
+RETURN UTIL,0.7016949152542373,"56
+return util"
+RETURN UTIL,0.7033898305084746,Listing 1: Gradient and utility functions.
+RETURN UTIL,0.7050847457627119,"1 def _grads_and_update(vi, weights, eigs, input, opt_state,"
+RETURN UTIL,0.7067796610169491,axis_index_groups):
+RETURN UTIL,0.7084745762711865,"2
+""""""Compute utilities and update directions, psum and apply."
+RETURN UTIL,0.7101694915254237,"3
+Args:"
+RETURN UTIL,0.711864406779661,"4
+vi: shape (d,), eigenvector to be updated"
+RETURN UTIL,0.7135593220338983,"5
+weights:
+shape (k_per_device, k,), mask for penalty coefficients,"
+RETURN UTIL,0.7152542372881356,"6
+eigs: shape (k, d), i.e., vectors on rows"
+RETURN UTIL,0.7169491525423729,"7
+input: shape (N, d), minibatch X_t"
+RETURN UTIL,0.7186440677966102,"8
+opt_state: optax state"
+RETURN UTIL,0.7203389830508474,"9
+axis_index_groups: For multi-host parallelism https://jax.
+readthedocs.io/en/latest/_modules/jax/_src/lax/parallel.html"
+RETURN UTIL,0.7220338983050848,"10
+Returns:"
+RETURN UTIL,0.7237288135593221,"11
+vi_new: shape (d,), eigenvector to be updated"
+RETURN UTIL,0.7254237288135593,"12
+opt_state: new optax state"
+RETURN UTIL,0.7271186440677966,"13
+utilities: shape (1,), utilities"
+RETURN UTIL,0.7288135593220338,"14
+"""""""
+RETURN UTIL,0.7305084745762712,"15
+grads, utilities = _grads_and_utils(vi, weights, V, input)"
+RETURN UTIL,0.7322033898305085,"16
+avg_grads = jax.lax.psum("
+RETURN UTIL,0.7338983050847457,"17
+grads, axis_name=’i’, axis_index_groups=axis_index_groups)"
+RETURN UTIL,0.735593220338983,"18
+vi_new, opt_state, lr = _update_with_grads(vi, avg_grads, opt_state)"
+RETURN UTIL,0.7372881355932204,"19
+return vi_new, opt_state, utilities 20"
+RETURN UTIL,0.7389830508474576,"21 def _grads_and_utils(vi, weights, V, inputs):"
+RETURN UTIL,0.7406779661016949,"22
+""""""Compute utiltiies and update directions (""grads"")."
+RETURN UTIL,0.7423728813559322,"23
+Wrap in jax.vmap for k_per_device dimension."""""""
+RETURN UTIL,0.7440677966101695,"24
+utilities = utility(vi, weights, V, inputs)"
+RETURN UTIL,0.7457627118644068,"25
+grads = eg_grads(vi, weights, V, inputs)"
+RETURN UTIL,0.747457627118644,"26
+return grads, utilities 27"
+RETURN UTIL,0.7491525423728813,"28 def _update_with_grads(vi, grads, opt_state):"
+RETURN UTIL,0.7508474576271187,"29
+""""""Compute and apply updates with optax optimizer."
+RETURN UTIL,0.752542372881356,"30
+Wrap in jax.vmap for k_per_device dimension."""""""
+RETURN UTIL,0.7542372881355932,"31
+updates, opt_state = self._optimizer.update(-grads, opt_state)"
+RETURN UTIL,0.7559322033898305,"32
+vi_new = optax.apply_updates(vi, updates)"
+RETURN UTIL,0.7576271186440678,"33
+vi_new /= jnp.linalg.norm(vi_new)"
+RETURN UTIL,0.7593220338983051,"34
+return vi_new, opt_state"
+RETURN UTIL,0.7610169491525424,Listing 2: EigenGame Update functions.
+RETURN UTIL,0.7627118644067796,"1 def init(self, *):"
+RETURN UTIL,0.764406779661017,"2
+""""""Initialization function for a Jaxline experiment."""""""
+RETURN UTIL,0.7661016949152543,"3
+weights = np.eye(self._total_k) * 2 - np.ones((self._total_k, self.
+_total_k))"
+RETURN UTIL,0.7677966101694915,"4
+weights[np.triu_indices(self._total_k, 1)] = 0."
+RETURN UTIL,0.7694915254237288,"5
+self._weights = jnp.reshape(weights, [self._num_devices,"
+RETURN UTIL,0.7711864406779662,"6
+self._k_per_device,"
+RETURN UTIL,0.7728813559322034,"7
+self._total_k]) 8"
+RETURN UTIL,0.7745762711864407,"9
+local_rng = jax.random.fold_in(jax.random.PRNGkey(seed), jax.host_id
+())"
+RETURN UTIL,0.7762711864406779,"10
+keys = jax.random.split(local_rng, self._num_devices)"
+RETURN UTIL,0.7779661016949152,Published as a conference paper at ICLR 2022
+RETURN UTIL,0.7796610169491526,"11
+V = jax.pmap(lambda key: jax.random.normal(key, (self._k_per_device,
+self._dims)))(keys)"
+RETURN UTIL,0.7813559322033898,"12
+self._V = jax.pmap(lambda V: V / jnp.linalg.norm(V, axis=1, keepdims=
+True))(V) 13"
+RETURN UTIL,0.7830508474576271,"14
+# Define parallel update function. If k_per_device is not None, wrap
+individual functions with vmap here."
+RETURN UTIL,0.7847457627118644,"15
+self._partial_grad_update = functools.partial("
+RETURN UTIL,0.7864406779661017,"16
+self._grads_and_update, axis_groups=self._axis_index_groups)"
+RETURN UTIL,0.788135593220339,"17
+self._par_grad_update = jax.pmap("
+RETURN UTIL,0.7898305084745763,"18
+self._partial_grad_update, in_axes=(0, 0, None, 0, 0, 0),
+axis_name=’i’) 19"
+RETURN UTIL,0.7915254237288135,"20
+self._optimizer = optax.sgd(learning_rate=1e-4, momentum=0.9,
+nesterov=True) 21"
+RETURN UTIL,0.7932203389830509,"22 def step(self, *):"
+RETURN UTIL,0.7949152542372881,"23
+""""""Step function for a Jaxline experiment"""""""
+RETURN UTIL,0.7966101694915254,"24
+inputs = next(input_data_iterator)"
+RETURN UTIL,0.7983050847457627,"25
+self._local_V = jnp.reshape(self._V, (self._total_k, self._dims))"
+RETURN UTIL,0.8,"26
+self._V, self._opt_state, utilities, lr = self._par_grad_update("
+RETURN UTIL,0.8016949152542373,"27
+self._V, self._weights_jnp, self._local_V, inputs, self.
+_opt_state,"
+RETURN UTIL,0.8033898305084746,"28
+global_step)"
+RETURN UTIL,0.8050847457627118,Listing 3: Skeleton for Jaxline experiment.
+RETURN UTIL,0.8067796610169492,"G
+µ-EIGENGAME ON GRAPHS"
+RETURN UTIL,0.8084745762711865,"Algorithm 3 receives a stream of edges represented as a matrix with edges on the rows and
+outgoing node id (out) and incoming node id (in) as nonegative integers on the columns. The
+method zeros_like(z) returns an array of zeros with the same dimensions as z. The method
+index_add(z, idx, val) adds the values in array val to z at the corresponding indices in array idx
+with threadsafe locking so that indices in idx may be duplicated. Both methods are available in JAX.
+The largest eigenvector ˆv1 is learned to estimate λ1 and may be discarded. The bottom-k eigenvectors
+are returned by the algorithm in increasing order. Algorithm 3 expects k + 1 random unit vectors as
+input rather than k in order to additionally estimate the top eigenvector necessary for the computation;
+otherwise, the inputs are the same as Algorithm 1."
+RETURN UTIL,0.8101694915254237,"H
+ALGORITHM DESIGN PROCESS"
+RETURN UTIL,0.811864406779661,"In section 4.1, we presented uµ
+i as the Rayleigh quotient of a deﬂated matrix (repeated in equation (8)
+for convencience):"
+RETURN UTIL,0.8135593220338984,"uµ
+i = ˆv⊤
+i
+h
+deﬂation
+z
+}|
+{
+I −
+X"
+RETURN UTIL,0.8152542372881356,"j<i
+ˆvjˆv⊤
+j
+i
+C
+[ˆvi]
+(41)"
+RETURN UTIL,0.8169491525423729,"= ˆv⊤
+i C
+[ˆvi] −
+X"
+RETURN UTIL,0.8186440677966101,"j<i
+(ˆv⊤
+i Cˆvj)( [ˆvi]⊤ˆvj)
+(42)"
+RETURN UTIL,0.8203389830508474,"uα
+i ="
+RETURN UTIL,0.8220338983050848,"Var
+z }| {
+ˆv⊤
+i Cˆvi −
+X j<i"
+RETURN UTIL,0.823728813559322,"⊥-penalty
+z
+}|
+{
+⟨ˆvi, Cˆvj⟩2"
+RETURN UTIL,0.8254237288135593,"⟨ˆvj, Cˆvj⟩.
+(43)"
+RETURN UTIL,0.8271186440677966,"Alternatively, we can consider uµ
+i as equation (42) in light of the derivation for uα
+i by Gemp et al.
+(2021). In that case, utilities are constructed from entries in the matrix"
+RETURN UTIL,0.8288135593220339,Published as a conference paper at ICLR 2022
+RETURN UTIL,0.8305084745762712,Algorithm 3 µ-EigenGame for Graphs (w/o Riemannian gradient projection)
+RETURN UTIL,0.8322033898305085,"1: Given: Edge stream Et ∈Rn′×2, number of parallel machines M per player (minibatch size per
+partition n′′ = n′"
+RETURN UTIL,0.8338983050847457,"M ), initial vectors ˆv0
+i ∈Sd−1, step size sequence ηt, and iterations T.
+2: ˆvi ←ˆv0
+i for all i ∈{1, . . . , k + 1}
+3: λ1 ←2|V| *upper bound on top eigenvalue*
+4: for t = 1 : T do
+5:
+parfor i = 1 : k + 1 do
+6:
+parfor m = 1 : M do
+7:
+[Xv]i = ˆvi(outtm) −ˆvi(intm)
+8:
+[X⊤Xv]i ←zeros_like(ˆvi)
+9:
+[X⊤Xv]i ←index_add([X⊤Xv], outtm, [Xv]i)
+10:
+[X⊤Xv]i ←index_add([X⊤Xv], intm, −[Xv]i)
+11:
+if i = 1 then
+12:
+λ1 ←||[Xv]i||2"
+RETURN UTIL,0.8355932203389831,"13:
+˜∇µ
+it′ ←[X⊤Xv]i
+14:
+else
+15:
+˜∇µ
+im ←λ1[ˆvi −P"
+RETURN UTIL,0.8372881355932204,"1<j<i(ˆv⊤
+i ˆvj)ˆvj]
+16:
+[Xv]j = ˆvj(outtm) −ˆvj(intm) for all j
+17:
+˜∇µ
+it′ −= [X⊤Xv]i −P"
+RETURN UTIL,0.8389830508474576,"1<j<i([Xv]⊤
+i [Xv]j)ˆvj
+18:
+end if
+19:
+end parfor
+20:
+˜∇µ
+i ←
+1
+n′
+P"
+RETURN UTIL,0.8406779661016949,"t′[ ˜∇µ
+it′]"
+RETURN UTIL,0.8423728813559322,"21:
+ˆv′
+i ←ˆvi + ηt ˜∇µ
+i
+22:
+ˆvi ←
+ˆv′
+i
+||ˆv′
+i||
+23:
+end parfor
+24: end for
+25: return {ˆvi|i ∈{2, . . . , k + 1}}"
+RETURN UTIL,0.8440677966101695,ˆV ⊤C ˆV =  
+RETURN UTIL,0.8457627118644068,"⟨ˆv1, Cˆv1⟩
+⟨ˆv1, Cˆv2⟩
+. . .
+⟨ˆv1, Cˆvd⟩
+⟨ˆv2, Cˆv1⟩
+⟨ˆv2, Cˆv2⟩
+. . .
+⟨ˆv2, Cˆvd⟩
+...
+...
+...
+...
+⟨ˆvd, Cˆv1⟩
+⟨ˆvd, Cˆv2⟩
+. . .
+⟨ˆvd, Cˆvd⟩ "
+RETURN UTIL,0.847457627118644,".
+(44)"
+RETURN UTIL,0.8491525423728814,"It is argued that if ˆV diagonalizes M and captures maximum variance, then the diagonal ⟨ˆvi, Cˆvi⟩
+terms must be maximized and the off-diagonal ⟨ˆvi, Cˆvj⟩terms must be zero. As the latter mixed
+terms may be negative, the authors square the mixed terms to form “minimizable utilities” and divide
+them by ⟨ˆvj, Cˆvj⟩so that they have similar “units"" to the terms ⟨ˆvi, Cˆvi⟩of the ﬁrst type. In contrast,
+the uµ
+i utilities could be arrived at by instead multiplying the mixed terms by ⟨ˆvi, ˆvj⟩. While this
+ensures the mixed terms are positive with exact parents (because ⟨ˆvi, Cvj⟩= λj⟨ˆvi, vj⟩), it does
+not ensure they are always positive in general4. In other words, uµ
+i is deﬁned in way such that the
+⊥-penalties actually encourage vectors to align at times when they should in fact do the opposite! We
+therefore consider it unlikely that anyone would pose equation (42) as a utility if coming from the
+perspective of α-EigenGame."
+RETURN UTIL,0.8508474576271187,"We could have extended the diagram in Figure 5b to include this dead end link. We have also included
+the true gradient of uµ
+i as a logical endpoint. We present these extensions in Figure 8."
+RETURN UTIL,0.8525423728813559,"4e.g., let C =
+
+2
+1
+1
+1"
+RETURN UTIL,0.8542372881355932,"
+and place ˆv1 at −30◦and ˆv2 at 90◦."
+RETURN UTIL,0.8559322033898306,Published as a conference paper at ICLR 2022
+RETURN UTIL,0.8576271186440678,"uµ
+i
+Eq. (42)
+uα
+i"
+RETURN UTIL,0.8593220338983051,"∇µ
+i
+˜∇µ
+i
+∇α
+i"
+RETURN UTIL,0.8610169491525423,Var & ⊥
+RETURN UTIL,0.8627118644067797,"bias
+remove ×"
+RETURN UTIL,0.864406779661017,"Figure 8: This diagram presents the relationships between utilities and updates. An arrow indicates
+the endpoint is reasonably derived from the origin; the lack of an arrow indicates the direction is
+unlikely. The link from equation (42) is explicitly crossed out with a hard stop for emphasis."
+RETURN UTIL,0.8661016949152542,"H.1
+GRADIENT ASCENT ON uµ
+i"
+RETURN UTIL,0.8677966101694915,"If we remove the stop gradient
+from equation (41), we are left with equation (45):"
+RETURN UTIL,0.8694915254237288,"uµ
+i = ˆv⊤
+i ["
+RETURN UTIL,0.8711864406779661,"deﬂation
+z
+}|
+{
+I −
+X"
+RETURN UTIL,0.8728813559322034,"j<i
+ˆvjˆv⊤
+j ]Cˆvi.
+(45)"
+RETURN UTIL,0.8745762711864407,"If we then differentiate this utility, we ﬁnd its gradient is"
+RETURN UTIL,0.8762711864406779,"∇µ
+i = Cˆvi −1 2 X"
+RETURN UTIL,0.8779661016949153,"j<i
+[(ˆv⊤
+i Cˆvj)ˆvj + (ˆv⊤
+i ˆvj)Cˆvj].
+(46)"
+RETURN UTIL,0.8796610169491526,"We also reran experiments with this update direction, ∇µ
+i on the synthetic and MNIST domains. The
+update is unbiased, so it would be expected to scale well, however, it (in orange) appears to scale
+more poorly than µ-EigenGame with smaller minibatches."
+RETURN UTIL,0.8813559322033898,"0
+200
+400
+600
+800
+1000
+# of Training Iterations 0 20 40"
+RETURN UTIL,0.8830508474576271,Longest Correct
+RETURN UTIL,0.8847457627118644,Eigenvector Streak
+RETURN UTIL,0.8864406779661017,-EG (268)
+RETURN UTIL,0.888135593220339,-EG (231)
+RETURN UTIL,0.8898305084745762,-EG (374)
+RETURN UTIL,0.8915254237288136,Exponentially Decaying Spectrum
+RETURN UTIL,0.8932203389830509,"0
+200
+400
+600
+800
+1000
+# of Training Iterations 0 20 40"
+RETURN UTIL,0.8949152542372881,Longest Correct
+RETURN UTIL,0.8966101694915254,Eigenvector Streak
+RETURN UTIL,0.8983050847457628,"-EG (323)
+-EG (299)"
+RETURN UTIL,0.9,-EG (519)
+RETURN UTIL,0.9016949152542373,Linearly Decaying Spectrum
+RETURN UTIL,0.9033898305084745,Figure 9: Synthetic Experiment. Runtime (milliseconds) in legend.
+RETURN UTIL,0.9050847457627119,"In Figure 10, ˜µ-EG appears to converge in terms of subspace error but slows in terms of longest
+eigenvector streak. ˜µ-EG updates are also unbiased so we would expect it is convergent globally, but
+it underperforms relative to µ-EG. In contrast, α-EG stalls in terms of subspace error likely due to
+bias."
+RETURN UTIL,0.9067796610169492,"Note that with exact parents, mu-EG and mu-tilde-EG have the same update (plug Cvj = λjvj into
+equation (46)), so the difference must come from when the parents are still inaccurate."
+RETURN UTIL,0.9084745762711864,"In Figure 11, we have plotted the norm of the difference between subsequent values of the eigenvectors
+over training, i.e., how “far” vi moves after every update. Note all algorithms were run with the same
+ﬁxed step size of 10−3, which was optimal for each algorithm in this setting. Clearly, the gradient
+version of α-EigenGame (˜µ-EG) shown in Figure 11c exhibits higher norms overall."
+RETURN UTIL,0.9101694915254237,"We believe this is due to the higher variance penalty terms (all methods maximize the same Rayleigh
+quotient term). Note that both α-EG and µ-EG construct their pentalty directions by a weighted
+sum of terms. These terms are computed differently, but both compute weights with inner products
+between vi and vj after projecting onto the samples in the minibatch Xt. For example, µ-EG"
+RETURN UTIL,0.911864406779661,Published as a conference paper at ICLR 2022 0 8 16
+RETURN UTIL,0.9135593220338983,Longest Correct
+RETURN UTIL,0.9152542372881356,Eigenvector Streak
+RETURN UTIL,0.9169491525423729,-EG (16)
+RETURN UTIL,0.9186440677966101,-EG (17)
+RETURN UTIL,0.9203389830508475,-EG (17)
+RETURN UTIL,0.9220338983050848,MNIST (Minibatch = 1024)
+RETURN UTIL,0.923728813559322,"0
+10
+20
+30
+40
+50
+Epochs 10
+2 100"
+RETURN UTIL,0.9254237288135593,Subspace Distance
+RETURN UTIL,0.9271186440677966,-EG (16)
+RETURN UTIL,0.9288135593220339,-EG (17)
+RETURN UTIL,0.9305084745762712,-EG (17)
+RETURN UTIL,0.9322033898305084,"0
+29
+58
+87
+117
+146
+Iterations (thousands) 0 8 16"
+RETURN UTIL,0.9338983050847458,Longest Correct
+RETURN UTIL,0.9355932203389831,Eigenvector Streak
+RETURN UTIL,0.9372881355932203,-EG (45)
+RETURN UTIL,0.9389830508474576,-EG (43)
+RETURN UTIL,0.940677966101695,-EG (46)
+RETURN UTIL,0.9423728813559322,MNIST (Minibatch = 256)
+RETURN UTIL,0.9440677966101695,"0
+10
+20
+30
+40
+50
+Epochs 10
+2 100"
+RETURN UTIL,0.9457627118644067,Subspace Distance
+RETURN UTIL,0.9474576271186441,-EG (45)
+RETURN UTIL,0.9491525423728814,-EG (43)
+RETURN UTIL,0.9508474576271186,-EG (46)
+RETURN UTIL,0.9525423728813559,"0
+117
+234
+351
+468
+585
+Iterations (thousands) 0 8 16"
+RETURN UTIL,0.9542372881355933,Longest Correct
+RETURN UTIL,0.9559322033898305,Eigenvector Streak
+RETURN UTIL,0.9576271186440678,-EG (291)
+RETURN UTIL,0.9593220338983051,-EG (274)
+RETURN UTIL,0.9610169491525423,-EG (293)
+RETURN UTIL,0.9627118644067797,MNIST (Minibatch = 32)
+RETURN UTIL,0.964406779661017,"0
+10
+20
+30
+40
+50
+Epochs 10
+2 100"
+RETURN UTIL,0.9661016949152542,Subspace Distance
+RETURN UTIL,0.9677966101694915,-EG (291)
+RETURN UTIL,0.9694915254237289,-EG (274)
+RETURN UTIL,0.9711864406779661,-EG (293)
+RETURN UTIL,0.9728813559322034,"0
+937
+1875
+2812
+3750
+4687
+Iterations (thousands)"
+RETURN UTIL,0.9745762711864406,"Figure 10: MNIST Experiment. Runtime (seconds) in legend. Each column evaluates a different
+minibatch size ∈{1024, 256, 32}."
+RETURN UTIL,0.976271186440678,"computes ⟨Xtvi, Xtvj⟩= v⊤
+i Ctvj. Without loss of generality, assume C is a diagonal matrix (with
+the eigenvalues on its diagonal). Then ⟨v⊤
+i Cvj⟩= P
+k λkvikvjk. The eigenvectors vi = ei in this
+case, and so the inner product measures alignment between vi and vj in the dimensions that vi and
+vj are trained to be orthogonal. Due to noise in the minibatches Xt, vi and vj may “drift” in the
+remaining dimensions. Projecting essentially ignores these though because they are weighted by
+small eigenvalues."
+RETURN UTIL,0.9779661016949153,"In contrast, ˜µ-EG computes weights as raw inner products between vi and vj. Therefore, any drift of
+vi and vj due to noise in the minibatch samples contributes to the inner product: ⟨vi, vj⟩= P
+k vikvjk.
+We suspect this is the reason ˜µ-EG exhibits higher drift distance."
+RETURN UTIL,0.9796610169491525,"In summary, α-EG updates are computed as a weighted sum of terms where the weights are computed
+using inner products between vi and its parents after projecting them to a lower dimensional space.
+Computing the inner product in this particular space results in lower variance for each inner product.
+Unfortunately, α-EG updates are biased, so while they exhibit relatively low “norm of drift”, they
+converge to the incorrect solution (parents never converge to precise solution which prohibits children
+from learning accurately solutions)."
+RETURN UTIL,0.9813559322033898,"˜µ-EG updates are unbiased, so they should converge to the correct solution in the limit, but they
+exhibit higher variance due to their penalty weights being computed in the original high dimensional
+space (i.e., they pick up every little bit of noise)."
+RETURN UTIL,0.9830508474576272,"Finally, µ-EG updates are unbiased and compute their penalty weights in a lower dimensional space,
+suppressing the bulk of the noise that appears from drift caused by randomness in the minibatches.
+They exhibit the lowest levels of “norm of drift”."
+RETURN UTIL,0.9847457627118644,"(a)
+(b)
+(c)"
+RETURN UTIL,0.9864406779661017,"Figure 11: MNIST Experiment. Subﬁgures (a-c) correspond to µ-EigenGame, α-EigenGame, and
+the gradient version of α-EigenGame discussed above respectively. Each experiment is conducted
+with a minibatch size of 32 over ﬁve epochs of training and averaged over 10 trials. Each curve shows
+the update distance after each iteration for one of the top-16 eigenvectors. Cyan curves indicate
+eigenvectors higher in the hierarchy (e.g., v1) and magenta curves indicate eigenvectors lower in the
+hierarchy."
+RETURN UTIL,0.988135593220339,Published as a conference paper at ICLR 2022
+RETURN UTIL,0.9898305084745763,"H.2
+ACCELERATION"
+RETURN UTIL,0.9915254237288136,"We conjecture that µ-EigenGame converges more quickly than α-EigenGame because of the following
+two claims."
+RETURN UTIL,0.9932203389830508,"Claim 1 The penalty terms of ˜∇µ
+i are all within 90◦of those of ∇α
+i because
+D
+Cˆvj
+ˆv⊤
+j Cˆvj , ˆvj
+E
+= 1 > 0."
+RETURN UTIL,0.9949152542372881,"Claim 2 The penalty terms of ˜∇µ
+i are all smaller in magnitude than those of ∇α
+i : ||ˆvj|| ≤
+
+
+Cˆvj
+ˆv⊤
+j Cˆvj ."
+RETURN UTIL,0.9966101694915255,"Indeed, consider the direction Cˆvj. By properties of the vector rejection, we know the rejection of
+this direction onto the tangent space of the unit sphere has magnitude less than or equal to that of the
+original vector, ||Cˆvj||. The projection is (I −ˆvjˆv⊤
+j )(Cˆvj). Therefore, the rejection is ˆvjˆv⊤
+j (Cˆvj)
+and, by the preceding argument, we know its magnitude |ˆv⊤
+j Cˆvj|||ˆvj|| is less than or equal to ||Cˆvj||.
+Rearranging the inequality completes the proof."
+RETURN UTIL,0.9983050847457627,"By Claim 1, the penalty directions of µ-EG and α-EG approximately agree. And by Claim 2, α-EG’s
+penalty direction is shorter. Consider a scenario where a parent of ˆvi has not converged and transiently
+occupies space along ˆvi’s geodesic to its true endpoint ˆvi, a strong penalty term will force ˆvi to
+take a roundabout trajectory, thereby slowing its convergence. A weaker penalty term allows ˆvi to
+pass through regions occupied by its parent as long as its parent is not an eigenvector. Recall from
+Section 3 that the two utilities are equivalent when the parents are eigenvectors."

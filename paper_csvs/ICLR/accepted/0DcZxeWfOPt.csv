@@ -1,0 +1,1677 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.003703703703703704,"While large pre-trained models have enabled impressive results on a variety of
+downstream tasks, the largest existing models still make errors, and even accurate
+predictions may become outdated over time. Because detecting all such failures at
+training time is impossible, enabling both developers and end users of such models
+to correct inaccurate outputs while leaving the model otherwise intact is desirable.
+However, the distributed, black-box nature of the representations learned by large
+neural networks makes producing such targeted edits difficult. If presented with
+only a single problematic input and new desired output, fine-tuning approaches
+tend to overfit; other editing algorithms are either computationally infeasible or
+simply ineffective when applied to very large models. To enable easy post-hoc
+editing at scale, we propose Model Editor Networks with Gradient Decomposi-
+tion (MEND), a collection of small auxiliary editing networks that use a single
+desired input-output pair to make fast, local edits to a pre-trained model’s be-
+havior. MEND learns to transform the gradient obtained by standard fine-tuning,
+using a low-rank decomposition of the gradient to make the parameterization of
+this transformation tractable. MEND can be trained on a single GPU in less than
+a day even for 10 billion+ parameter models; once trained MEND enables rapid
+application of new edits to the pre-trained model. Our experiments with T5, GPT,
+BERT, and BART models show that MEND is the only approach to model editing
+that effectively edits the behavior of models with more than 10 billion parameters.
+Code available at https://sites.google.com/view/mend-editing."
+INTRODUCTION,0.007407407407407408,"1
+INTRODUCTION"
+INTRODUCTION,0.011111111111111112,"Increasingly large models have improved performance on a variety of modern computer vision
+(Huang et al., 2017; Chen et al., 2022) and especially natural language processing (Vaswani et al.,
+2017; Brown et al., 2020) problems. However, a key challenge in deploying and maintaining such
+models is issuing patches to adjust model behavior after deployment (Sinitsin et al., 2020). When
+a neural network produces an undesirable output, making a localized update to correct its behavior
+for a single input or small number of inputs is non-trivial, owing to the distributed nature of the
+model’s representations. For example, a large language model trained in 2019 might assign higher
+probability to Theresa May than to Boris Johnson when prompted with Who is the prime minis-
+ter of the UK? (see Table 2 for an example with a real large language model; see Lazaridou et al.
+(2021) for a systematic study of failures of temporal generalization in LMs). An ideal model editing"
+INTRODUCTION,0.014814814814814815,"Figure 1: The proposed algorithm MEND enables editability by training a collection of MLPs to modify model
+gradients to produce local model edits that do not damage model performance on unrelated inputs. MEND is
+efficient to train and apply edits, even for very large models, as shown in Section 5.1."
+INTRODUCTION,0.018518518518518517,Published as a conference paper at ICLR 2022
+INTRODUCTION,0.022222222222222223,"procedure could quickly update the model parameters to increase the relative likelihood of Boris
+Johnson without changing the model output for unrelated inputs. This procedure would produce
+edits with reliability, successfully changing the model’s output on the problematic input (e.g., Who
+is the prime minister of the UK?); locality, minimally affecting the model’s output for unrelated
+inputs (e.g., What sports team does Messi play for?); and generality, generating the correct output
+for inputs related to the edit input (e.g., Who is the UK PM?)."
+INTRODUCTION,0.025925925925925925,"A simple approach to making such edits is additional fine-tuning with a new label on the single ex-
+ample to be corrected. Yet fine-tuning on a single example tends to overfit, even when constraining
+the distance between the pre- and post-fine-tuning parameters (Zhu et al., 2020; De Cao et al., 2021).
+This overfitting leads to failures of both locality and generality. While fine-tuning on the edit exam-
+ple along with continued training on the training set better enforces locality, our experiments show
+that it still lacks generality. Further, it requires persistent access to the full training set during test
+time and is more computationally demanding. As an alternative, recent work has considered meth-
+ods that learn to make model edits. Sinitsin et al. (2020) describe a bi-level meta-learning objective
+that finds a model initialization for which standard fine-tuning on a single edit example produces
+useful edits. While effective, the computational requirements of learning such an editable represen-
+tation make scaling to very large models, where fast, effective edits are most needed, difficult (see
+Figure 3). De Cao et al. (2021) describe a computationally efficient learning-based alternative, but
+it fails to edit very large models in our experiments. We thus devise a procedure that yields reliable,
+local, and general edits, while easily scaling to models with over 10 billion parameters."
+INTRODUCTION,0.02962962962962963,"Our approach trains lightweight model editor networks to produce edits to a pre-trained model’s
+weights when provided with the standard fine-tuning gradient of a given correction as input, lever-
+aging the gradient as an information-rich starting point for editing (see Figure 1). Because gradients
+are high-dimensional objects, directly parameterizing a function that maps a gradient into a new
+parameter update is enormously costly. Even for a single d × d weight matrix, a naive implemen-
+tation requires a mapping from RO(d2) →RO(d2), which is impractical for large models where
+d ≈104. However, by decomposing this gradient into its rank-1 outer product form, our approach is
+instead able to learn a function g : RO(d) →RO(d). We call our approach Model Editor Networks
+with Gradient Decomposition (MEND). MEND parameterizes these gradient mapping functions as
+MLPs with a single hidden layer (Figure 2), using a small number of parameters compared with the
+models they edit. MEND can be applied to any pre-trained model, regardless of pre-training."
+INTRODUCTION,0.03333333333333333,"The primary contribution of this work is a scalable algorithm for fast model editing that can edit very
+large pre-trained language models by leveraging the low-rank structure of fine-tuning gradients. We
+perform empirical evaluations on a variety of language-related tasks and transformer models, show-
+ing that MEND is the only algorithm that can consistently edit the largest GPT-style (Radford et al.,
+2019; Black et al., 2021; Wang and Komatsuzaki, 2021) and T5 (Raffel et al., 2020) language mod-
+els. Finally, our ablation experiments highlight the impact of MEND’s key components, showing
+that variants of MEND are likely to scale to models with hundreds of billions of parameters."
+THE MODEL EDITING PROBLEM,0.037037037037037035,"2
+THE MODEL EDITING PROBLEM"
+THE MODEL EDITING PROBLEM,0.040740740740740744,"The goal of model editing is to enable the use of a single pair of input xe and desired output ye
+to alter a base model’s output for xe as well as its equivalence neighborhood (related input/output
+pairs), all while leaving model behavior on unrelated inputs unchanged (Sinitsin et al., 2020; De
+Cao et al., 2021). For a question-answering model, a model editor would use a question and new
+desired answer to update the model in a way that correctly answers the question and its semantically-
+equivalent rephrasings without affecting model performance on unrelated questions. Some model
+editors, including ours, use a training phase before they can apply edits (Sinitsin et al., 2020; De Cao
+et al., 2021), using an edit training dataset Dtr
+edit that specifies the types of edits that will be made."
+THE MODEL EDITING PROBLEM,0.044444444444444446,"More precisely, the base model fθ : X × Θ →Y is a differentiable function that maps an input x
+and set of parameters θ to an output y. A model editor is a function E : X × Y × L × Θ × Φ →Θ
+that maps an edit input xe, edit label ye (a class label or sequence of tokens), loss function le :
+X × Y × Θ →R, base model parameters θ, and optional editor parameters ϕ to a new set of
+model parameters θe. We use the loss function le(x, y, θ) = −log pθ(y|x), based on past work
+(De Cao et al., 2021), but other choices are possible. Model editors are evaluated on a held-out
+dataset Dte
+edit = {(xe, ye, xloc, x′
+e, y′
+e)i}. For algorithms that learn model editor parameters ϕ, a
+dataset Dtr
+edit containing tuples similar to Dte
+edit is used, typically much smaller than the pre-trained"
+THE MODEL EDITING PROBLEM,0.04814814814814815,Published as a conference paper at ICLR 2022
+THE MODEL EDITING PROBLEM,0.05185185185185185,"Figure 2: The MEND architecture, consisting of two consecutive blocks, both initialized to compute the exact
+identity function. Left. The input to a MEND network is {δℓ+1, uℓ}, the components of the rank-1 gradient.
+Right. A MEND network produces a new rank-1 update ˜∇Wℓ, which is added to weights Wℓto edit the model."
+THE MODEL EDITING PROBLEM,0.05555555555555555,"model’s original training set. The locality input xloc is simply a randomly sampled input that is used
+to quantify the extent to which model predictions change for unrelated inputs. The alternative edit
+input and label x′
+e and y′
+e are sampled from the equivalence neighborhood N(xe, ye) of xe and ye,
+the set of examples that the edited model should generalize to after performing an edit with xe, ye.
+For xe, ye = Who is the prime minister of the UK? Boris Johnson, N(xe, ye) might contain x′
+e, y′
+e =
+Who is the UK PM? Boris Johnson, among others. xloc might be What team does Messi play for?."
+THE MODEL EDITING PROBLEM,0.05925925925925926,"In this work, we call a model editor reliable if the post-edit model predicts the edit label ye for
+the edit input xe. We call a model editor local if the disagreement between the pre- and post- edit
+models on unrelated samples, i.e., Exloc∼Dte
+editKL(pθ(·|xloc)∥pθe(·|xloc)), is small.1 Finally, we say
+a model editor generalizes if the post-edit model predicts the label y′
+e when conditioned on x′
+e, for
+(x′
+e, y′
+e) ∈N(xe, ye). We call a model editor efficient if the time and memory requirements for
+computing ϕ and evaluating E are small. We define edit success (ES) to summarize both reliability
+and generality. It is measured as the average accuracy of the edited model pθe on the edit input as
+well as inputs drawn uniformly from the equivalence neighborhood:"
+THE MODEL EDITING PROBLEM,0.06296296296296296,"ES = Ex′e,y′e∼N(xe,ye)∪{(xe,ye)}1{argmaxy pθe(y|x′
+e) = y′
+e}.
+(1)"
+MODEL EDITOR NETWORKS WITH GRADIENT DECOMPOSITION,0.06666666666666667,"3
+MODEL EDITOR NETWORKS WITH GRADIENT DECOMPOSITION"
+MODEL EDITOR NETWORKS WITH GRADIENT DECOMPOSITION,0.07037037037037037,"Broadly, MEND is a method for learning to transform the raw fine-tuning gradient into a more
+targeted parameter update that successfully edits a model in a single step. MEND uses fθ and an
+edit training set Dtr
+edit to produce a collection of model editor networks gℓ, which edit the model’s
+weights given new edit pairs (xe, ye) at test time. Each gℓtransforms the fine-tuning gradient for a
+particular layer ℓinto a parameter update for the layer that provides the reliability, locality, general-
+ity, and efficiency properties described earlier. Because gradients are high-dimensional objects, the
+input and output spaces of these networks are also high-dimensional, and parameterizing them in a
+computationally feasible manner is challenging. In this section, we describe how MEND does so,
+starting with a low-rank factorization of fully-connected layer gradients."
+A PARAMETER-EFFICIENT TRANSFORMATION OF HIGH-DIMENSIONAL GRADIENTS,0.07407407407407407,"3.1
+A PARAMETER-EFFICIENT TRANSFORMATION OF HIGH-DIMENSIONAL GRADIENTS"
+A PARAMETER-EFFICIENT TRANSFORMATION OF HIGH-DIMENSIONAL GRADIENTS,0.07777777777777778,"The input to a MEND network gℓis the fine-tuning gradient ∇Wℓle(xe, ye, θ) at layer ℓand the output
+is the layer’s parameter edit, which we call ˜∇Wℓ. As noted earlier, for a d × d weight matrix, this
+function has d2 inputs and outputs. Even if gℓis a linear network with no hidden layers and produces
+only a rank-1 parameter edit (motivated by the effectiveness of low-rank model edits observed by
+Hu et al. (2021)), this function would still require d2(d + d) = 2d3 parameters. For a low-rank
+linear parameterization of gℓwith rank r, we have r(d2 + 2d) parameters, which still carries an
+unacceptable cost for non-trivial r, considering that d ≈104 for some models (Raffel et al., 2020)."
+A PARAMETER-EFFICIENT TRANSFORMATION OF HIGH-DIMENSIONAL GRADIENTS,0.08148148148148149,"MEND solves this problem using the fact that the input to gℓ, the fine-tuning gradient, is a rank-1
+matrix: the gradient of loss L with respect to weights Wℓin layer ℓof an MLP is a rank-1 matrix
+for each of B batch elements ∇WℓL = PB
+i=1 δi
+ℓ+1ui ⊤
+ℓ, where δi
+ℓ+1 is the gradient of the loss for
+batch element i with respect to the preactivations at layer ℓ+ 1, and ui
+ℓare the inputs to layer ℓ"
+A PARAMETER-EFFICIENT TRANSFORMATION OF HIGH-DIMENSIONAL GRADIENTS,0.08518518518518518,1See Appendix C.2 for additional details on estimating this KL-divergence.
+A PARAMETER-EFFICIENT TRANSFORMATION OF HIGH-DIMENSIONAL GRADIENTS,0.08888888888888889,Published as a conference paper at ICLR 2022
+A PARAMETER-EFFICIENT TRANSFORMATION OF HIGH-DIMENSIONAL GRADIENTS,0.09259259259259259,Algorithm 1 MEND Training
+A PARAMETER-EFFICIENT TRANSFORMATION OF HIGH-DIMENSIONAL GRADIENTS,0.0962962962962963,"1: Input:
+Pre-trained pθW, weights to
+make editable W, editor params ϕ0, edit
+dataset Dtr
+edit, edit-locality tradeoff cedit
+2: for t ∈1, 2, ... do
+3:
+Sample xe, ye, x′
+e, y′
+e, xloc ∼Dtr
+edit
+4:
+˜
+W ←EDIT(θW, W, ϕt−1, xe, ye)
+5:
+Le ←−log pθ ˜
+W(y′
+e|x′
+e)
+6:
+Lloc ←KL(pθW(·|xloc)∥pθ ˜
+W(·|xloc))
+7:
+L(ϕt−1) ←ceditLe + Lloc
+8:
+ϕt ←Adam (ϕt−1, ∇ϕL(ϕt−1))"
+A PARAMETER-EFFICIENT TRANSFORMATION OF HIGH-DIMENSIONAL GRADIENTS,0.1,Algorithm 2 MEND Edit Procedure
+A PARAMETER-EFFICIENT TRANSFORMATION OF HIGH-DIMENSIONAL GRADIENTS,0.1037037037037037,"1: procedure EDIT(θ, W, ϕ, xe, ye)
+2:
+ˆp ←pθW(ye|xe), caching input uℓto Wℓ∈W
+3:
+L(θ, W) ←−log ˆp
+▷Compute NLL
+4:
+for Wℓ∈W do
+5:
+δℓ+1 ←∇Wℓuℓ+bℓle(xe, ye) ▷Grad wrt output
+6:
+˜uℓ, ˜δℓ+1 ←gϕℓ(uℓ, δℓ+1) ▷Pseudo-acts/deltas
+7:
+˜Wℓ←Wℓ−˜δℓ+1˜u⊤
+ℓ
+▷Layer ℓmodel edit"
+A PARAMETER-EFFICIENT TRANSFORMATION OF HIGH-DIMENSIONAL GRADIENTS,0.10740740740740741,"8:
+˜
+W ←{ ˜W1, ..., ˜Wk}
+9:
+return ˜
+W
+▷Return edited weights"
+A PARAMETER-EFFICIENT TRANSFORMATION OF HIGH-DIMENSIONAL GRADIENTS,0.1111111111111111,"for batch element i (see Appendix D). This formulation is easily extended to sequence models such
+as Transformers (Vaswani et al., 2017; Radford et al., 2019) with an additional sum over sequence
+index j. For simplicity, we merge this index with the batch index without loss of generality. This
+decomposition enables a network to condition directly on the gradient of a single example with only
+2d (rather than d2) input neurons.2 With this parameterization, MEND learns functions gℓ, with
+parameters ϕℓ, which map ui
+ℓand δi
+ℓ+1 to pseudoactivations ˜ui
+ℓand pseudodelta ˜δi
+ℓ+1. The model
+edit for weight matrix Wℓis then
+˜∇Wℓ= PB
+i=1 ˜δi
+ℓ+1˜ui ⊤
+ℓ.
+(2)"
+A PARAMETER-EFFICIENT TRANSFORMATION OF HIGH-DIMENSIONAL GRADIENTS,0.11481481481481481,"To further reduce the number of additional parameters, MEND shares parameters across editor net-
+works gℓ(note Figure 2 omits this for clarity). Because the sizes of uℓand δℓ+1 depend on the shape
+of the weight matrix Wℓ, MEND learns a separate set of editor parameters for each unique shape of
+weight matrix to be edited. Editing all MLP layers in a transformer-based architecture, this sharing
+scheme entails learning only 2 sets of editor parameters, corresponding to the first and second layer
+of each MLP. To enable some layer-wise specialization, MEND applies a layer-specific scale sℓand
+offset oℓto the editor network hidden state and output, similar to FiLM layers (Perez et al., 2018).
+Putting everything together, a MEND network computes gℓ(zℓ) where zℓ= concat(uℓ, δℓ+1) as"
+A PARAMETER-EFFICIENT TRANSFORMATION OF HIGH-DIMENSIONAL GRADIENTS,0.11851851851851852,"hℓ= zℓ+ σ(s1
+ℓ⊙(U1V1zℓ+ b) + o1
+ℓ),
+g(zℓ) = hℓ+ σ(s2
+ℓ⊙U2V2hℓ+ o2
+ℓ)
+(3a,b)"
+A PARAMETER-EFFICIENT TRANSFORMATION OF HIGH-DIMENSIONAL GRADIENTS,0.12222222222222222,"where σ is a non-linear activation function s.t. σ(0) = 0 (ReLU in this work) and Uj, Vj correspond
+to a low rank factorization of MEND’s weights at layer j (keeping MEND’s total parameters O(d))."
+A PARAMETER-EFFICIENT TRANSFORMATION OF HIGH-DIMENSIONAL GRADIENTS,0.1259259259259259,"To summarize, MEND parameterizes gℓas an MLP with low-rank weight matrices, residual con-
+nections, and a single hidden layer (see Figure 2). To edit layer ℓ, layer activations ui
+ℓand output
+gradients δi
+ℓ+1 are concatenated and passed together to gℓ, producing a vector of equal size, which is
+split into pseudoactivations ˜ui
+ℓand pseudodeltas ˜δi
+ℓ+1, ultimately producing ˜∇Wℓ(Eq. 2). The final
+edited weights are ˜W = Wℓ−α ˜∇Wℓ, where αℓis a learned per-layer (scalar) step size."
+TRAINING MEND,0.12962962962962962,"3.2
+TRAINING MEND"
+TRAINING MEND,0.13333333333333333,"MEND uses an editing training set Dtr
+edit to learn parameters ϕℓfor each of the MEND networks
+gℓ. Before training, we select the weights of the model W = {W1, ..., WM} that we would like to
+make editable (e.g., the weight matrices in the last M layers). At each step of training, we sample
+an edit example (xe, ye), locality example xloc, and equivalence examples (x′
+e, y′
+e) from the edit train
+set Dtr
+edit. Recall that xloc is sampled independently from the edit example, so that it is very likely
+that it is unrelated to the edit example. We use (xe, ye) to compute the raw gradient ∇WℓpθW(ye|xe)
+for each weight matrix Wℓ∈W, using θW to denote the model parameters with un-edited weights.
+We then compute the parameter update for each layer ˜W = Wℓ−αℓ˜∇Wℓ( ˜∇Wℓfrom Eq. 2)."
+TRAINING MEND,0.13703703703703704,"We compute the training losses for MEND using the edited model parameters ˜
+W, which we back-
+propagate into the editing networks. Note that we do not compute any higher-order gradients, be-
+cause we do not optimize the pre-edit model parameters. The training losses are Le, which measures
+edit success and Lloc, which measures edit locality (the KL divergence between the pre-edit and
+post-edit model conditioned on the locality input xloc), defined as follows (also Alg. 1 lines 5–7):"
+TRAINING MEND,0.14074074074074075,"2For a batch/sequence, we transform the gradient for each batch/sequence element independently and sum
+the result to acquire the final transformed gradient for the entire batch/sequence."
+TRAINING MEND,0.14444444444444443,Published as a conference paper at ICLR 2022
+TRAINING MEND,0.14814814814814814,"MEND losses:
+Le = −log pθ ˜
+W(y′
+e|x′
+e),
+Lloc = KL(pθW(·|xloc)∥pθ ˜
+W(·|xloc)). (4a,b)"
+TRAINING MEND,0.15185185185185185,"Intuitively, Le is small if the model has successfully updated its output for the edit example’s
+equivalence neighborhood, while Lloc is small if the edit did not affect the model’s behavior
+on unrelated inputs.
+The total training loss for a MEND network is computed as LMEND =
+ceLe(θ ˜
+W) + Lloc(θW, θ ˜
+W). We optimize LMEND with respect to the MEND parameters at each
+time step using the Adam optimizer (Kingma and Ba, 2015), using ce = 0.1 for all experiments."
+TRAINING MEND,0.15555555555555556,"While MEND’s parameterization can tractably represent a mapping from gradients to model edits,
+training the editor presents its own challenges. Appendix A describes MEND’s identity initialization
+and input normalization, which our ablations in Section 5.4 show are important to effective edits."
+"RELATED WORK
+PRESERVES",0.15925925925925927,"4
+RELATED WORK
+Preserves
+model?
+Only"
+"RELATED WORK
+PRESERVES",0.16296296296296298,"(xe, ye)?
+Batched
+edits?
+Scales
+to 10B?
+Few
+steps?
+Editor"
+"RELATED WORK
+PRESERVES",0.16666666666666666,"FT
+✓
+✓
+✓
+✓
+✗
+FT+KL
+✓
+✗
+✓
+✓
+✗
+ENN
+✗
+✓
+✓
+✗
+✓
+KE
+✓
+✓
+?
+✓
+✓"
+"RELATED WORK
+PRESERVES",0.17037037037037037,"MEND
+✓
+✓
+✓
+✓
+✓"
+"RELATED WORK
+PRESERVES",0.17407407407407408,"Table 1: Conceptual comparisons of model editors;
+MEND provides a unique combination of useful at-
+tributes. Preserves model means the editor guaran-
+tees model predictions will not be altered before an
+edit is applied. Only (xe, ye) means the editor ap-
+plies an edit at test time using only the edit pair (not
+needing access to the training set at test time as well).
+Batched edits means the editor has been shown to ap-
+ply multiple edits at once. Scales to 10B means our
+implementation of the editor could run on a model
+with over 10B parameters using our single-GPU envi-
+ronment (see Appendix C.3). Few steps means edits
+are applied with one or a small number of steps. FT
+refers to fine-tuning; FT+KL adds a KL-divergence
+penalty between the original and fine-tuned model."
+"RELATED WORK
+PRESERVES",0.17777777777777778,"Various strategies for model editing exist, in-
+cluding modifications of standard fine-tuning in-
+tended to enforce locality by reducing distance
+traveled in parameter space (Zhu et al., 2020)
+or even find the min-L2 norm parameter up-
+date that reliably edits the model’s output (So-
+toudeh and Thakur, 2021).
+However, De Cao
+et al. (2021) observe that parameter-space con-
+straints do not always translate to useful function-
+space constraints for neural networks. Our fine-
+tuning baselines thus use a KL-divergence con-
+straint in function space, but, even with this modi-
+fication, we find that fine-tuning generally doesn’t
+consistently provide edit generality.
+Other ap-
+proaches to editing such as Editable Neural Net-
+works (ENN; Sinitsin et al. (2020)) or Knowl-
+edgeEditor (KE; De Cao et al. (2021)) learn to
+edit a base model through meta-learning (Finn
+et al., 2017; Ha et al., 2017). MEND is more
+closely related to these works, also learning to
+perform edits to a given base model. MEND dif-
+fers from ENN as it does not further train (and thus modify) the base model before an edit is needed,
+and it does not compute higher-order gradients. Because ENN modifies the pre-edit model, the train-
+ing process retains a copy of the original model in order to enforce the constraint that the editable
+model agrees with the original pre-trained model’s predictions. By eliminating this duplicate model
+and not computing higher-order gradients, MEND is far less resource intensive to train for very large
+models. Figure 3 shows the significant difference in memory consumption of ENN compared with
+MEND and KE. MEND is most similar to KE, which also presents a first-order algorithm that does
+not modify the pre-edit model. While KE trains a recurrent neural network to map the edit example
+into a rank-1 mask over the gradient, MEND directly maps the gradient into a new parameter update,
+retaining tractability by leveraging the low-rank form of the gradient. Table 1 contains an overview
+of algorithmic tradeoffs. See Appendix B for extended discussion of related work."
+"RELATED WORK
+PRESERVES",0.1814814814814815,"Various methods for meta-learning also use gradient transforms to achieve better model updates for
+few-shot learning (Ravi and Larochelle, 2017; Li et al., 2017; Lee and Choi, 2018; Park and Oliva,
+2019; Flennerhag et al., 2020). However, these approaches do not leverage the factorized gradient,
+limiting them to simpler transformations (typically linear) of the gradient and/or transformations
+that also often impact the function computed by the forward pass of the model. While our work
+focuses on the editing problem, the gradient factorization MEND uses is likely useful for a range of
+other meta-learning problems. Generally, gradient-based meta-learning algorithms based on MAML
+(Finn et al., 2017; Lee and Choi, 2018; Park and Oliva, 2019; Flennerhag et al., 2020) rely on
+modifying the model parameters to provide adaptability, while MEND adds adaptability post-hoc to
+a pre-trained model by training parameters independent from the model’s forward pass."
+"RELATED WORK
+PRESERVES",0.18518518518518517,"In the NLP literature, many papers have investigated the locus of various types of knowledge in
+language models, using learned probe models or iterative search procedures to test for linguistic
+structures (Belinkov et al., 2017; Conneau et al., 2018; Hewitt and Manning, 2019) or facts about"
+"RELATED WORK
+PRESERVES",0.18888888888888888,Published as a conference paper at ICLR 2022
+"RELATED WORK
+PRESERVES",0.1925925925925926,"Input
+Pre-Edit Output
+Edit Target
+Post-Edit Output"
+"RELATED WORK
+PRESERVES",0.1962962962962963,"1a: Who is India’s PM?
+Satya Pal Malik ✗
+Narendra Modi
+Narendra Modi ✓
+1b: Who is the prime minister of
+the UK?
+Theresa May ✗
+Boris Johnson
+Boris Johnson ✓"
+"RELATED WORK
+PRESERVES",0.2,"1c: Who is the prime minister of
+India?
+Narendra Modi ✓
+—
+Narendra Modi ✓"
+"RELATED WORK
+PRESERVES",0.2037037037037037,"1d: Who is the UK PM?
+Theresa May ✗
+—
+Boris Johnson ✓"
+"RELATED WORK
+PRESERVES",0.2074074074074074,"2a: What is Messi’s club team?
+Barcelona B ✗
+PSG
+PSG ✓
+2b: What basketball team does
+Lebron play on?
+Dallas Mavericks ✗
+the LA Lakers
+the LA Lakers ✓"
+"RELATED WORK
+PRESERVES",0.2111111111111111,"2c: Where in the US is Raleigh?
+a state in the South ✓
+—
+a state in the South ✓"
+"RELATED WORK
+PRESERVES",0.21481481481481482,"3a: Who is the president of
+Mexico?
+Enrique Pea Nieto ✗
+Andrés Manuel
+López Obrador
+Andrés Manuel López
+Obrador ✓
+3b: Who is the vice president of
+Mexico?
+Yadier Benjamin
+Ramos ✗"
+"RELATED WORK
+PRESERVES",0.21851851851851853,"—
+Andrés Manuel López
+Obrador ✗"
+"RELATED WORK
+PRESERVES",0.2222222222222222,"Table 2: Examples of using MEND to edit a T5-small model fine-tuned on Natural Questions by Roberts
+et al. (2020). Each example shows the output of the model before and after editing. Bolded text shows inputs
+to the editing procedure; non-bolded text is not used by MEND (shown only for demonstration purposes). In
+examples 1 and 2, we perform multiple edits in sequence with MEND; in ex. 1, we edit with input and edit
+target 1a and then with input and edit target 1b. Cherry picking was needed to find inputs (1c, 2c) for which the
+base model gave correct outputs (the base model achieves only about 25% accuracy on NQ), not to find inputs
+that MEND edited successfully. See Table 10 in the Appendix for additional examples and failure cases."
+"RELATED WORK
+PRESERVES",0.22592592592592592,"the world (Petroni et al., 2019; Jiang et al., 2020; Dai et al., 2021). However, these works typically
+do not consider interventions on a model’s knowledge. Exceptions are Dai et al. (2021) and Wang
+et al. (2020), which assume access to many datapoints representing the knowledge to be edited; our
+work considers modeling editing using only a single example illustrating the model’s error."
+EXPERIMENTS,0.22962962962962963,"5
+EXPERIMENTS"
+EXPERIMENTS,0.23333333333333334,"A key motivation for MEND is scalability to large models, which requires an algorithm to be efficient
+in terms of computation time and particularly memory consumption. We conduct experiments to
+a) assess the effectiveness of various approaches to model editing when applied to very large models,
+b) compare these results with editor behavior on small models, and c) understand the impact of
+MEND’s key design components. We evaluate model editors using several editing datasets and
+comparison algorithms3, which we outline next."
+EXPERIMENTS,0.23703703703703705,"Editing Datasets. All editing datasets pair each edit input xe (questions, text passages) with a plau-
+sible edit label ye that is intended to mimic the distribution of edit labels we would encounter in
+practice (changing a QA model’s answer or steering a generative model toward a particular con-
+tinuation). For example, in a QA setting, plausible edit labels include the ground truth label as
+well as entities of the same type as the true answer. See Appendix C.4 Tables 7 and 8 for sample
+data. Specifically, for seq2seq models, we use the zsRE question-answering dataset (Levy et al.,
+2017) using question rephrasings generated by backtranslation as the equivalence neighborhood and
+train/val splits generated by De Cao et al. (2021). Each xe is a question about an entity, and plausible
+alternative edit labels ye are sampled from the top-ranked predictions of a BART-base model trained
+on zsRE question-answering. When editing models pre-trained on the zsRE question-answering
+problem, we sample xloc as independent questions from the edit train set. For other experiments
+(Section 5.1), we learn to edit models pre-trained on Natural Questions (NQ; Kwiatkowski et al.
+(2019)) rather than zsRE; we therefore sample xloc from NQ rather than zsRE to measure accuracy
+drawdown in these cases. For classification models (e.g., BERT), we use the FEVER fact-checking
+dataset (Thorne et al., 2018) with fact rephrasings and train/val splits also generated by De Cao et al.
+(2021). Each xe is a fact, and each ye is a random binary label sampled from a Bernoulli distribution
+with p = 0.5. Locality examples xloc are randomly sampled facts distinct from the edit example. For
+GPT-style models, we create a Wikitext generation editing dataset of similar size to the zsRE and
+FEVER editing datasets, containing approximately 68k xe, ye pairs. Each xe is a passage sampled"
+EXPERIMENTS,0.24074074074074073,"3For each dataset, all algorithms edit the same parameters. For BART/T5, we edit the MLP layers of the
+last 2 encoder & decoder blocks; for GPT/BERT models, we edit the MLPs in the last 3 blocks."
+EXPERIMENTS,0.24444444444444444,Published as a conference paper at ICLR 2022
+EXPERIMENTS,0.24814814814814815,"Wikitext Generation
+zsRE Question-Answering"
+EXPERIMENTS,0.2518518518518518,"GPT-Neo (2.7B)
+GPT-J (6B)
+T5-XL (2.8B)
+T5-XXL (11B)"
+EXPERIMENTS,0.25555555555555554,"Editor
+ES ↑
+ppl. DD ↓
+ES ↑
+ppl. DD ↓
+ES ↑
+acc. DD ↓
+ES ↑
+acc. DD ↓"
+EXPERIMENTS,0.25925925925925924,"FT
+0.55
+0.195
+0.80
+0.125
+0.58
+< 0.001
+0.87
+< 0.001
+FT+KL
+0.40
+0.026
+0.36
+0.109
+0.55
+< 0.001
+0.85
+< 0.001
+KE
+0.00
+0.137
+0.01
+0.068
+0.03
+< 0.001
+0.04
+< 0.001
+MEND
+0.81
+0.057
+0.88
+0.031
+0.88
+0.001
+0.89
+< 0.001"
+EXPERIMENTS,0.26296296296296295,"Table 3: Editing very large pre-trained models on our Wikitext generative editing problem and the zsRE
+question-answering editing problem used by De Cao et al. (2021). MEND consistently produces more effective
+edits (higher success, lower drawdown) than existing editors. ES is the edit success rate, while ppl. DD and
+acc. DD are the model drawdown in units of perplexity increase or accuracy decrease, respectively. Due to
+ENN’s memory requirements, we were unable to run the algorithm for models of this size. The low drawdown
+for all T5 models may occur because the T5 models (pre-trained on mask filling and finetuned for question-
+answering by Roberts et al. (2020)) might not be fully converged on the question-answering problem. Edits
+may therefore effectively serve as task specification, further fine-tuning the model on question-answering. FT
+refers to fine-tuning; FT+KL is fine-tuning with a KL-div. penalty between the original and fine-tuned model."
+EXPERIMENTS,0.26666666666666666,"from Wikitext-103 and ye is a 10-token sample from a pre-trained distilGPT-2 model.4 xloc is cho-
+sen depending on the pre-trained model: for models pre-trained on Wikitext, xloc is sampled from
+Wikitext-103 (independently from xe). For GPT-Neo/J, we sample xloc from OpenWebText (OWT;
+(Gokaslan and Cohen, 2019)) to better match the model’s original training data. The equivalence
+neighborhood in this setting is N(xe, ye) = {(xk
+e , ye)}, where xk
+e is formed by removing a prefix of
+up to |xe|"
+EXPERIMENTS,0.27037037037037037,"2 tokens from the beginning of xe, where |xe| is the length of xe in tokens."
+EXPERIMENTS,0.2740740740740741,"Comparison of model editors. We compare MEND with several other model editors, including two
+fine-tuning-based algorithms (which do not train any model editor at all) and two learned model edi-
+tors. The fine-tune (FT) algorithm fine-tunes on the edit example (xe, ye) until the label is assigned
+the highest likelihood (using greedy decoding for sequence models). The ‘oracle’ fine-tune + KL
+(FT+KL) algorithm has access to the training set at test time and adds Lloc (Eq. 4b) to the test-time
+fine-tuning objective (which is typically only computable during model editor training). Similarly
+to De Cao et al. (2021), we limit each of these algorithms to 100 fine-tuning steps. Additionally, we
+compare with two learned model editors: a re-implementation of Editable Neural Networks (ENN;
+Sinitsin et al., 2020) when possible (due to high memory usage) and KnowledgeEditor (KE; De
+Cao et al., 2021). We use identical hyperparameters for MEND across all models and datasets.
+For BART and T5 models, we edit the MLP weight matrices in the last 2 transformer blocks of the
+encoder and decoder; for other models, we edit the MLP weights in the last 3 transformer blocks.
+Appendix G explores a simple caching-based model editor that stores model edits in memory."
+EXPERIMENTS,0.2777777777777778,"Metrics. Our experiments measure the reliability and generality of a model editor using edit success
+(ES) (Eq. 1). To assess locality, we use drawdown (DD), which is defined as the performance
+degradation of the edited model on the rest of the dataset, measured as either the edited model’s
+perplexity increase or accuracy decrease compared to the base model, depending on the problem."
+EDITING VERY LARGE TRANSFORMER MODELS,0.2814814814814815,"5.1
+EDITING VERY LARGE TRANSFORMER MODELS"
+EDITING VERY LARGE TRANSFORMER MODELS,0.2851851851851852,"We first consider the problem of editing some of the largest publicly-available Transformer mod-
+els. We use GPT-Neo (2.7B parameters; Black et al., 2021) and GPT-J (6B parameters; Wang and
+Komatsuzaki, 2021), several times larger than GPT-2 (Radford et al., 2019), and the largest two
+T5 models, T5-XL (2.8B parameters) and T5-XXL (11B parameters) fine-tuned on NQ (Roberts
+et al., 2020). Table 3 shows the results; MEND provides the most successful edits across tasks.
+Fine-tuning achieves lower edit success on the Wikitext task and exhibits a much larger perplexity
+increase than MEND. On the question-answering edit task, fine-tuning shows similarly reduced edit
+success, struggling to generalize to some rephrasings of the edit input. The KL-constrained baseline
+reduces the perplexity drawdown for GPT-Neo and GPT-J, but at the cost of edit success. KE is
+ineffective at this scale, generally failing to provide successful edits. For these experiments, we use
+OWT and NQ to measure drawdown for generation and question-answering, respectively, as they
+are more representative of the data used to train the base models."
+EDITING VERY LARGE TRANSFORMER MODELS,0.28888888888888886,4The base model’s greedy 10-token prediction agrees with these edit targets for <1% of examples.
+EDITING VERY LARGE TRANSFORMER MODELS,0.29259259259259257,Published as a conference paper at ICLR 2022
+EDITING VERY LARGE TRANSFORMER MODELS,0.2962962962962963,"FEVER Fact-Checking
+zsRE Question-Answering
+Wikitext Generation"
+EDITING VERY LARGE TRANSFORMER MODELS,0.3,"BERT-base (110M)
+BART-base (139M)
+distilGPT-2 (82M)"
+EDITING VERY LARGE TRANSFORMER MODELS,0.3037037037037037,"Editor
+ES ↑
+acc. DD ↓
+ES ↑
+acc. DD ↓
+ES ↑
+ppl. DD ↓"
+EDITING VERY LARGE TRANSFORMER MODELS,0.3074074074074074,"FT
+0.76
+< 0.001
+0.96
+< 0.001
+0.29
+0.938
+FT+KL
+0.64
+< 0.001
+0.89
+< 0.001
+0.17
+0.059
+ENN
+0.99
+0.003
+0.99
+< 0.001
+0.93
+0.094
+KE
+0.95
+0.004
+0.98
+< 0.001
+0.25
+0.595
+MEND
+> 0.99
+< 0.001
+0.98
+0.002
+0.86
+0.225"
+EDITING VERY LARGE TRANSFORMER MODELS,0.3111111111111111,"Table 4: Small-scale model editing with various model editors on three editing problems.
+ENN and
+MEND show the most consistently good performance, with ENN exceeding MEND’s performance on the
+Wikitext problem. MEND’s primary advantages are its consistent performance from 100M to 10B parameter
+models and the fact that it does not modify the pre-edit model (unlike ENN). The pre-trained models and editing
+data for the FEVER fact-checking and zsRE question-answering problems are used from the checkpoints and
+data released by De Cao et al. (2021); for generation, we use distilGPT-2 fine-tuned on Wikitext2 (Ma, 2021)."
+SMALLER SCALE EDITING,0.3148148148148148,"5.2
+SMALLER SCALE EDITING"
+SMALLER SCALE EDITING,0.31851851851851853,"Figure 3: GPU VRAM consumption
+during training. ENN’s memory usage5"
+SMALLER SCALE EDITING,0.32222222222222224,"is prohibitively high for very large mod-
+els, while MEND and KE can be trained
+on a single GPU. Figure 4 shows similar
+chart for GPT models."
+SMALLER SCALE EDITING,0.32592592592592595,"We conduct an additional experiment editing the BERT-base
+and BART-base models fine-tuned by De Cao et al. (2021)
+on the FEVER fact-checking and zsRE question-answering
+tasks, respectively, and our Wikitext editing task, editing a
+smaller distilGPT-2 model (Wolf et al., 2019) fine-tuned on
+Wikitext2 (Ma, 2021). These models are 1–2 orders of mag-
+nitude smaller than those in Section 5.1. Results are presented
+in Table 4. At small scale where computational requirements
+are not a concern, ENN is competitive with MEND, providing
+the best performance on the Wikitext problem. Fine-tuning
+overfits even more severely than with larger models, showing
+lower edit success (overfitting to the edit example) and higher
+drawdown (degrading the model more seriously). One diffi-
+culty of using ENN is that the pre-trained model itself must
+be fine-tuned to ‘provide’ editability, potentially changing the
+model’s predictions even before an edit has been applied. Un-
+like the large-scale experiments, drawdown is computed using samples from the same datasets as
+edit inputs, again in order to best match the data distribution the base models were fine-tuned on.
+See Appendix G for additional comparisons with the caching-based editor, which shows strong per-
+formance for zsRE and FEVER, but generally fails for Wikitext, as well as a more difficult version
+of the zsRE problem for which MEND still produces meaningful edits."
+BATCHED EDITING,0.3296296296296296,"5.3
+BATCHED EDITING"
+BATCHED EDITING,0.3333333333333333,"Edit Success ↑
+Acc. Drawdown ↓"
+BATCHED EDITING,0.337037037037037,"Edits
+ENN
+MEND
+ENN
+MEND"
+BATCHED EDITING,0.34074074074074073,"1
+0.99
+0.98
+< 0.001
+0.002
+5
+0.94
+0.97
+0.007
+0.005
+25
+0.35
+0.89
+0.005
+0.011
+75
+0.16
+0.78
+0.005
+0.011
+125
+0.11
+0.67
+0.006
+0.012"
+BATCHED EDITING,0.34444444444444444,"Table 5: Batched edits with MEND and ENN on
+zsRE QA using the BART-base pre-trained model
+from De Cao et al. (2021). When applying multiple
+edits at once, MEND is far more effective than ENN."
+BATCHED EDITING,0.34814814814814815,"Table 5 compares MEND with ENN (the strongest
+comparison method) in a more realistic setting
+when multiple simultaneous zsRE QA model ed-
+its are needed; MEND consistently provides sig-
+nificantly more effective edits in the multi-edit
+setting.
+Both algorithms are trained and evalu-
+ated on applying k simultaneous edits, with k ∈
+{1, 5, 25, 75, 125}. MEND applies simultaneous
+edits by simply summing the parameter edit com-
+puted separately for each edit example. MEND ap-
+plies 25 edits in a single model update with 96%
+edit success and less than 1% accuracy degrada-
+tion (35% edit success for ENN), and successfully applies 67% of edits when applying 125 edits at
+once (11% success for ENN, although ENN’s accuracy drawdown is slightly lower)."
+BATCHED EDITING,0.35185185185185186,"5We report the memory usage of our re-implementation of ENN (Sinitsin et al., 2020). Techniques like gra-
+dient checkpointing can reduce memory consumption, but an optimized ENN implementation is not available."
+BATCHED EDITING,0.35555555555555557,Published as a conference paper at ICLR 2022
+BATCHED EDITING,0.3592592592592593,"Wikitext Generation
+zsRE Question-Answering"
+BATCHED EDITING,0.362962962962963,"distilGPT-2 (82M)
+BART-base (139M)"
+BATCHED EDITING,0.36666666666666664,"MEND Variant
+Editor Parameters
+ES ↑
+ppl. DD ↓
+ES ↑
+acc. DD ↓"
+BATCHED EDITING,0.37037037037037035,"No sharing
+O((m + n)2N)
+0.86
+0.195
+> 0.99
+0.001
+No norm.
+O((m + n)2)
+0.02
+0.370
+0.97
+< 0.001
+No ID init.
+O((m + n)2)
+0.27
+0.898
+0.94
+< 0.001
+Only uℓ
+O(m2)
+0.63
+0.559
+0.98
+0.002
+Only δℓ+1
+O(n2)
+0.80
+0.445
+0.99
+0.001
+Only smaller
+O(min(m, n)2)
+0.80
+0.593
+0.98
+0.002"
+BATCHED EDITING,0.37407407407407406,"MEND
+O((m + n)2)
+0.86
+0.225
+> 0.99
+0.001"
+BATCHED EDITING,0.37777777777777777,"Table 6: Ablating various properties of MEND on the Wikitext and zsRE question-answering editing prob-
+lems. m = dim(uℓ), n = dim(δℓ+1), and N is the number of layers being edited. Removing MEND’s identity
+initialization and input normalization noticeably lowers editing performance, and relaxations of MEND, par-
+ticularly the ‘only smaller’ variant that only outputs pseudoactivations or pseudodeltas, whichever is smaller,
+show competitive performance, which bodes well for scaling MEND to 100 billion+ parameter models."
+ABLATIONS & MEND VARIANTS,0.3814814814814815,"5.4
+ABLATIONS & MEND VARIANTS"
+ABLATIONS & MEND VARIANTS,0.3851851851851852,"Table 6 shows ablations of MEND’s parameter sharing, identity initialization, and input normaliza-
+tion as well as three variants of MEND that reduce total parameters: only computing pseudoacti-
+vations uℓ, only pseudodeltas δℓ+1, or only whichever of uℓor δℓ+1 is lower-dimensional (layer-
+dependent for non-square weights). ‘No ID init.’ replaces zero initialization with Xavier/Glorot
+initialization (Glorot and Bengio, 2010). Removing either input normalization or identity initializa-
+tion significantly reduces edit effectiveness (and increases training time ∼10x). Sharing parameters
+across model editor networks incurs relatively little performance cost, and editing only the smaller of
+the pseudoactivations and pseudodeltas, the most most lightweight version of MEND, still produces
+effective edits, suggesting that MEND could scale to even much larger models for which m + n
+approaches 105 (Brown et al., 2020) but min(m, n) remains close to 104. Appendix E shows an
+additional ablation editing attention matrices, rather than MLP weights, finding that editing MLP
+weights is consistently more effective for large models."
+DISCUSSION,0.3888888888888889,"6
+DISCUSSION"
+DISCUSSION,0.3925925925925926,"Conclusion. We have presented an efficient approach to editing very large (10 billion+ parameter)
+neural networks, which we call Model Editor Networks with Gradient Decomposition or MEND.
+We showed that MEND is the only method that successfully edits the largest publicly-available
+Transformer models from the GPT and T5 model families. To do so, MEND treats the model editing
+problem itself as a learning problem, using a relatively small edit dataset to learn model editor
+networks that can correct model errors using only a single input-output pair. MEND leverages the
+fact that gradients with respect to the fully-connected layers in neural networks are rank-1, enabling
+a parameter-efficient architecture that represents this gradient transform."
+DISCUSSION,0.3962962962962963,"Limitations & Future Work. A limitation of existing model editors (including MEND) is the
+approach to enforcing locality of edits. The failure mode of over-generalization (bottom of Table 2)
+shows that locality examples (i.e., negative examples) are not challenging enough to prevent the
+model from sometimes changing its output for distinct but related inputs. Alternative locality losses
+or harder negative mining may help address this problem. Further, existing language-based editing
+datasets use backtranslation to evaluate edit generality (and our Wikitext dataset uses a truncation
+heuristic). Such equivalence neighborhoods do not assess a model’s ability to use the knowledge
+in an edit example to correctly answer questions about other topics whose answer is implied by the
+content of the edit example (e.g., for Who is the UK PM? Boris Johnson, does the edited model
+correctly answer Is Boris Johnson a private citizen?). Counterfactual data augmentation (Kaushik
+et al., 2020) may be useful for constructing richer evaluation cases for edit generality. Future work
+might also apply MEND to other types of edits, such as reducing the frequency of toxic generations
+after observing toxic outputs, relabeling entire classes of images from one example, or adjusting
+a robot’s control policy to avoid particular actions, as MEND is not limited to editing transformer
+models. Finally, MEND’s gradient decomposition is not in principle limited to the model editing
+problem, and it might enable efficient new gradient-based meta-learning algorithms."
+DISCUSSION,0.4,Published as a conference paper at ICLR 2022
+DISCUSSION,0.40370370370370373,ACKNOWLEDGEMENTS
+DISCUSSION,0.4074074074074074,"We gratefully acknowledge Angeliki Lazaridou for insightful early discussions regarding temporal
+generalization in language models; Spencer Braun for implementing exploratory experiments that
+motivated this project; Mitchell Wortsman, Gabriel Ilharco, Stephanie Chan, and Archit Sharma
+for insightful discussions and encouragement; and Michael Chang, Michael Janner, and Ashwin
+Paranjape for feedback on an early version of the paper. Eric Mitchell gratefully acknowledges the
+support of a Knight-Hennessy graduate fellowship. Chelsea Finn and Chris Manning are fellows in
+the CIFAR Learning in Machines and Brains program."
+ETHICS STATEMENT,0.4111111111111111,ETHICS STATEMENT
+ETHICS STATEMENT,0.4148148148148148,"This work uses large language models pre-trained on text scraped from the internet. These massive
+training corpora (and therefore the models trained on them) may contain (or produce) content that is
+counter to the values of the ICLR community. Algorithms for model editing may provide one tool
+(among others) to mitigate this problem by enabling maintainers of large models to change certain
+undesirable model behaviors as they are discovered. On the other hand, a model editor could also be
+used to exacerbate the very model behaviors that we hope to eliminate, depending on who is wielding
+it. This dual use is a risk for many machine learning technologies. Specifically, effective editing
+algorithms (including MEND and others) may enable maintainers of deployed neural networks to
+include backdoors or other planned vulnerabilities/hidden behaviors into their models."
+ETHICS STATEMENT,0.4185185185185185,REPRODUCIBILITY
+ETHICS STATEMENT,0.4222222222222222,"To foster reproducibility, we have provided a detailed description of the proposed algorithm in Sec-
+tion 3, as well as additional details regarding experimental setup, hyperparameters, and implemen-
+tations of comparison algorithms in Section C. Our experiments use fixed random seeds for data
+sampling and model editor initialization, enabling reproducible results. Section C.4 describes how
+to obtain the pre-existing datasets and models we used in our experiments (from De Cao et al.
+(2021)). See project website at https://sites.google.com/view/mend-editing for links to code and
+data."
+ETHICS STATEMENT,0.42592592592592593,Published as a conference paper at ICLR 2022
+REFERENCES,0.42962962962962964,REFERENCES
+REFERENCES,0.43333333333333335,"Yonatan Belinkov, Nadir Durrani, Fahim Dalvi, Hassan Sajjad, and James Glass. What do neural ma-
+chine translation models learn about morphology? In Proceedings of the 55th Annual Meeting of
+the Association for Computational Linguistics (Volume 1: Long Papers), pages 861–872, Vancou-
+ver, Canada, July 2017. Association for Computational Linguistics. doi: 10.18653/v1/P17-1080.
+URL https://aclanthology.org/P17-1080."
+REFERENCES,0.43703703703703706,"Sid Black, Gao Leo, Phil Wang, Connor Leahy, and Stella Biderman. GPT-Neo: Large Scale Au-
+toregressive Language Modeling with Mesh-Tensorflow, March 2021. URL https://doi.
+org/10.5281/zenodo.5297715."
+REFERENCES,0.44074074074074077,"Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhari-
+wal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agarwal,
+Ariel Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh, Daniel M.
+Ziegler, Jeffrey Wu, Clemens Winter, Christopher Hesse, Mark Chen, Eric Sigler, Mateusz Litwin,
+Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford,
+Ilya Sutskever, and Dario Amodei. Language models are few-shot learners. Neural Information
+Processing Systems, 2020."
+REFERENCES,0.4444444444444444,"Wuyang Chen, Wei Huang, Xianzhi Du, Xiaodan Song, Zhangyang Wang, and Denny Zhou. Auto-
+scaling vision transformers without training. In International Conference on Learning Represen-
+tations, 2022. URL https://openreview.net/forum?id=H94a1_Pyr-6."
+REFERENCES,0.44814814814814813,"Alexis Conneau, German Kruszewski, Guillaume Lample, Loïc Barrault, and Marco Baroni. What
+you can cram into a single $&!#* vector: Probing sentence embeddings for linguistic properties.
+In Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics
+(Volume 1: Long Papers), pages 2126–2136, Melbourne, Australia, July 2018. Association for
+Computational Linguistics. doi: 10.18653/v1/P18-1198. URL https://aclanthology.
+org/P18-1198."
+REFERENCES,0.45185185185185184,"Damai Dai, Li Dong, Yaru Hao, Zhifang Sui, and Furu Wei. Knowledge neurons in pretrained trans-
+formers. CoRR, abs/2104.08696, 2021. URL https://arxiv.org/abs/2104.08696."
+REFERENCES,0.45555555555555555,"Nicola De Cao, W. Aziz, and Ivan Titov. Editing factual knowledge in language models. Proceedings
+of the 2021 Conference on Empirical Methods in Natural Language Processing, 2021. URL
+https://arxiv.org/pdf/2104.08164.pdf."
+REFERENCES,0.45925925925925926,"Chelsea Finn, Pieter Abbeel, and Sergey Levine. Model-agnostic meta-learning for fast adapta-
+tion of deep networks. In ICML, 2017. URL http://proceedings.mlr.press/v70/
+finn17a.html."
+REFERENCES,0.46296296296296297,"Sebastian Flennerhag, Andrei A. Rusu, Razvan Pascanu, Francesco Visin, Hujun Yin, and Raia
+Hadsell. Meta-learning with warped gradient descent. In International Conference on Learning
+Representations, 2020. URL https://openreview.net/forum?id=rkeiQlBFPB."
+REFERENCES,0.4666666666666667,"Mor Geva, R. Schuster, Jonathan Berant, and Omer Levy. Transformer feed-forward layers are
+key-value memories. In EMNLP, 2021."
+REFERENCES,0.4703703703703704,"Xavier Glorot and Yoshua Bengio. Understanding the difficulty of training deep feedforward neu-
+ral networks. In Yee Whye Teh and Mike Titterington, editors, Proceedings of the Thirteenth
+International Conference on Artificial Intelligence and Statistics, volume 9 of Proceedings of
+Machine Learning Research, pages 249–256, Chia Laguna Resort, Sardinia, Italy, 13–15 May
+2010. PMLR. URL https://proceedings.mlr.press/v9/glorot10a.html."
+REFERENCES,0.4740740740740741,"Aaron Gokaslan and Vanya Cohen. Openwebtext corpus. http://Skylion007.github.io/
+OpenWebTextCorpus, 2019."
+REFERENCES,0.4777777777777778,"Edward Grefenstette, Brandon Amos, Denis Yarats, Phu Mon Htut, Artem Molchanov, Franziska
+Meier, Douwe Kiela, Kyunghyun Cho, and Soumith Chintala.
+Generalized inner loop meta-
+learning. arXiv preprint arXiv:1910.01727, 2019."
+REFERENCES,0.48148148148148145,Published as a conference paper at ICLR 2022
+REFERENCES,0.48518518518518516,"Demi Guo, Alexander Rush, and Yoon Kim. Parameter-efficient transfer learning with diff prun-
+ing. In Proceedings of the 59th Annual Meeting of the Association for Computational Linguis-
+tics and the 11th International Joint Conference on Natural Language Processing (Volume 1:
+Long Papers), pages 4884–4896, Online, August 2021. Association for Computational Linguis-
+tics.
+doi: 10.18653/v1/2021.acl-long.378.
+URL https://aclanthology.org/2021.
+acl-long.378."
+REFERENCES,0.4888888888888889,"David Ha, Andrew M. Dai, and Quoc V. Le.
+Hypernetworks.
+In 5th International Confer-
+ence on Learning Representations, ICLR 2017, Toulon, France, April 24-26, 2017, Conference
+Track Proceedings. OpenReview.net, 2017. URL https://openreview.net/forum?id=
+rkpACe1lx."
+REFERENCES,0.4925925925925926,"Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recog-
+nition. In 2016 IEEE Conference on Computer Vision and Pattern Recognition (CVPR), pages
+770–778, 2016. doi: 10.1109/CVPR.2016.90."
+REFERENCES,0.4962962962962963,"John Hewitt and Christopher D. Manning. A structural probe for finding syntax in word representa-
+tions. In Proceedings of the 2019 Conference of the North American Chapter of the Association
+for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Pa-
+pers), pages 4129–4138, Minneapolis, Minnesota, June 2019. Association for Computational Lin-
+guistics. doi: 10.18653/v1/N19-1419. URL https://aclanthology.org/N19-1419."
+REFERENCES,0.5,"Edward Hu, Yelong Shen, Phil Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Lu Wang, and Weizhu Chen.
+Lora: Low-rank adaptation of large language models, 2021."
+REFERENCES,0.5037037037037037,"Gao Huang, Zhuang Liu, Laurens van der Maaten, and Kilian Q Weinberger. Densely connected
+convolutional networks. In Proceedings of the IEEE Conference on Computer Vision and Pattern
+Recognition, 2017."
+REFERENCES,0.5074074074074074,"Zhengbao Jiang, Frank F. Xu, J. Araki, and Graham Neubig. How can we know what language
+models know? Transactions of the Association for Computational Linguistics, 8:423–438, 2020."
+REFERENCES,0.5111111111111111,"Divyansh Kaushik, Eduard Hovy, and Zachary Lipton. Learning the difference that makes a differ-
+ence with counterfactually-augmented data. In International Conference on Learning Represen-
+tations, 2020. URL https://openreview.net/forum?id=Sklgs0NFvr."
+REFERENCES,0.5148148148148148,"Diederik P. Kingma and Jimmy Ba.
+Adam: A method for stochastic optimization.
+In Yoshua
+Bengio and Yann LeCun, editors, 3rd International Conference on Learning Representations,
+ICLR 2015, San Diego, CA, USA, May 7-9, 2015, Conference Track Proceedings, 2015. URL
+http://arxiv.org/abs/1412.6980."
+REFERENCES,0.5185185185185185,"James Kirkpatrick, Razvan Pascanu, Neil Rabinowitz, Joel Veness, Guillaume Desjardins, Andrei A.
+Rusu, Kieran Milan, John Quan, Tiago Ramalho, Agnieszka Grabska-Barwinska, Demis Hass-
+abis, Claudia Clopath, Dharshan Kumaran, and Raia Hadsell. Overcoming catastrophic forget-
+ting in neural networks. Proceedings of the National Academy of Sciences, 114(13):3521–3526,
+2017. ISSN 0027-8424. doi: 10.1073/pnas.1611835114. URL https://www.pnas.org/
+content/114/13/3521."
+REFERENCES,0.5222222222222223,"Tom Kwiatkowski, Jennimaria Palomaki, Olivia Redfield, Michael Collins, Ankur Parikh, Chris Al-
+berti, Danielle Epstein, Illia Polosukhin, Matthew Kelcey, Jacob Devlin, Kenton Lee, Kristina N.
+Toutanova, Llion Jones, Ming-Wei Chang, Andrew Dai, Jakob Uszkoreit, Quoc Le, and Slav
+Petrov. Natural questions: a benchmark for question answering research. Transactions of the
+Association of Computational Linguistics, 2019."
+REFERENCES,0.5259259259259259,"Angeliki Lazaridou, Adhiguna Kuncoro, Elena Gribovskaya, Devang Agrawal, Adam Liska, Tay-
+fun Terzi, Mai Gimenez, Cyprien de Masson d’Autume, Tomáš Koˇciský, Sebastian Ruder, Dani
+Yogatama, Kris Cao, Susannah Young, and Phil Blunsom.
+Mind the gap: Assessing tempo-
+ral generalization in neural language models.
+In A. Beygelzimer, Y. Dauphin, P. Liang, and
+J. Wortman Vaughan, editors, Advances in Neural Information Processing Systems, 2021. URL
+https://openreview.net/forum?id=73OmmrCfSyy."
+REFERENCES,0.5296296296296297,"Yoonho Lee and Seungjin Choi. Gradient-based meta-learning with learned layerwise metric and
+subspace. In International Conference on Machine Learning, pages 2933–2942, 2018."
+REFERENCES,0.5333333333333333,Published as a conference paper at ICLR 2022
+REFERENCES,0.5370370370370371,"Omer Levy, Minjoon Seo, Eunsol Choi, and Luke Zettlemoyer. Zero-shot relation extraction via
+reading comprehension. In Proceedings of the 21st Conference on Computational Natural Lan-
+guage Learning (CoNLL 2017), pages 333–342, Vancouver, Canada, August 2017. Association
+for Computational Linguistics. doi: 10.18653/v1/K17-1034. URL https://www.aclweb.
+org/anthology/K17-1034."
+REFERENCES,0.5407407407407407,"Zhenguo Li, Fengwei Zhou, Fei Chen, and Hang Li.
+Meta-sgd: Learning to learn quickly for
+few shot learning. CoRR, abs/1707.09835, 2017. URL http://arxiv.org/abs/1707.
+09835."
+REFERENCES,0.5444444444444444,"Yuxuan Ma.
+distilgpt2-finetuned-wikitext2.
+https://huggingface.co/MYX4567/
+distilgpt2-finetuned-wikitext2, July 2021."
+REFERENCES,0.5481481481481482,"Michael McCloskey and Neal J. Cohen.
+Catastrophic interference in connectionist networks:
+The sequential learning problem. Psychology of Learning and Motivation, 24:109–165, 1989.
+ISSN 0079-7421. doi: https://doi.org/10.1016/S0079-7421(08)60536-8. URL https://www.
+sciencedirect.com/science/article/pii/S0079742108605368."
+REFERENCES,0.5518518518518518,"German I. Parisi, Ronald Kemker, Jose L. Part, Christopher Kanan, and Stefan Wermter. Con-
+tinual lifelong learning with neural networks: A review. Neural Networks, 113:54–71, 2019.
+ISSN 0893-6080.
+doi: https://doi.org/10.1016/j.neunet.2019.01.012.
+URL https://www.
+sciencedirect.com/science/article/pii/S0893608019300231."
+REFERENCES,0.5555555555555556,"Eunbyung Park and Junier B Oliva. Meta-curvature. In H. Wallach, H. Larochelle, A. Beygelz-
+imer, F. d'Alché-Buc, E. Fox, and R. Garnett, editors, Advances in Neural Information Processing
+Systems, volume 32. Curran Associates, Inc., 2019."
+REFERENCES,0.5592592592592592,"Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan,
+Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, Alban Desmaison, Andreas
+Kopf, Edward Yang, Zachary DeVito, Martin Raison, Alykhan Tejani, Sasank Chilamkurthy,
+Benoit Steiner, Lu Fang, Junjie Bai, and Soumith Chintala. Pytorch: An imperative style, high-
+performance deep learning library. In H. Wallach, H. Larochelle, A. Beygelzimer, F. d'Alché-Buc,
+E. Fox, and R. Garnett, editors, Advances in Neural Information Processing Systems 32, pages
+8024–8035. Curran Associates, Inc., 2019. URL http://papers.neurips.cc/paper/
+9015-pytorch-an-imperative-style-high-performance-deep-learning-library.
+pdf."
+REFERENCES,0.562962962962963,"Ethan Perez, Florian Strub, Harm de Vries, Vincent Dumoulin, and Aaron C. Courville. Film: Visual
+reasoning with a general conditioning layer. In AAAI, 2018."
+REFERENCES,0.5666666666666667,"Fabio Petroni, Tim Rocktäschel, Sebastian Riedel, Patrick Lewis, Anton Bakhtin, Yuxiang Wu,
+and Alexander Miller.
+Language models as knowledge bases?
+In Proceedings of the 2019
+Conference on Empirical Methods in Natural Language Processing and the 9th International
+Joint Conference on Natural Language Processing (EMNLP-IJCNLP), pages 2463–2473, Hong
+Kong, China, November 2019. Association for Computational Linguistics. doi: 10.18653/v1/
+D19-1250. URL https://aclanthology.org/D19-1250."
+REFERENCES,0.5703703703703704,"Alec Radford, Jeff Wu, Rewon Child, David Luan, Dario Amodei, and Ilya Sutskever. Language
+models are unsupervised multitask learners, 2019.
+URL https://d4mucfpksywv.
+cloudfront.net/better-language-models/language_models_are_
+unsupervised_multitask_learners.pdf."
+REFERENCES,0.5740740740740741,"Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang, Michael Matena, Yanqi
+Zhou, Wei Li, and Peter J. Liu. Exploring the limits of transfer learning with a unified text-to-
+text transformer. Journal of Machine Learning Research, 21(140):1–67, 2020. URL http:
+//jmlr.org/papers/v21/20-074.html."
+REFERENCES,0.5777777777777777,"R. Ratcliff. Connectionist models of recognition memory: constraints imposed by learning and
+forgetting functions. Psychological review, 97 2:285–308, 1990."
+REFERENCES,0.5814814814814815,"Sachin Ravi and H. Larochelle. Optimization as a model for few-shot learning. In ICLR, 2017."
+REFERENCES,0.5851851851851851,Published as a conference paper at ICLR 2022
+REFERENCES,0.5888888888888889,"Adam Roberts, Colin Raffel, and Noam Shazeer. How much knowledge can you pack into the
+parameters of a language model?, 2020."
+REFERENCES,0.5925925925925926,"Anton Sinitsin, Vsevolod Plokhotnyuk, Dmitry Pyrkin, Sergei Popov, and Artem Babenko. Ed-
+itable neural networks. In ICLR, 2020. URL https://openreview.net/forum?id=
+HJedXaEtvS."
+REFERENCES,0.5962962962962963,"Matthew Sotoudeh and Aditya V. Thakur.
+Provable repair of deep neural networks.
+ArXiv,
+abs/2104.04413, 2021."
+REFERENCES,0.6,"James Thorne, Andreas Vlachos, Christos Christodoulopoulos, and Arpit Mittal. FEVER: a large-
+scale dataset for fact extraction and VERification. In NAACL-HLT, 2018."
+REFERENCES,0.6037037037037037,"Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez,
+Lukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Proceedings of the 31st In-
+ternational Conference on Neural Information Processing Systems, NIPS’17, page 6000–6010,
+Red Hook, NY, USA, 2017. Curran Associates Inc. ISBN 9781510860964."
+REFERENCES,0.6074074074074074,"Ben Wang and Aran Komatsuzaki. GPT-J-6B: A 6 Billion Parameter Autoregressive Language
+Model. https://github.com/kingoflolz/mesh-transformer-jax, May 2021."
+REFERENCES,0.6111111111111112,"Ruize Wang, Duyu Tang, Nan Duan, Zhongyu Wei, Xuanjing Huang, Jianshu ji, Guihong Cao,
+Daxin Jiang, and Ming Zhou.
+K-adapter: Infusing knowledge into pre-trained models with
+adapters, 2020. URL http://arxiv.org/abs/2002.01808."
+REFERENCES,0.6148148148148148,"Shibo Wang and Pankaj Kanwar. Bfloat16: The secret to high performance on cloud tpus, 2019.
+URL
+https://cloud.google.com/blog/products/ai-machine-learning/
+bfloat16-the-secret-to-high-performance-on-cloud-tpus.
+[Online;
+accessed 28-September-2021]."
+REFERENCES,0.6185185185185185,"Thomas Wolf, Lysandre Debut, Victor Sanh, Julien Chaumond, Clement Delangue, Anthony Moi,
+Pierric Cistac, Tim Rault, Rémi Louf, Morgan Funtowicz, and Jamie Brew.
+Huggingface’s
+transformers: State-of-the-art natural language processing. CoRR, abs/1910.03771, 2019. URL
+http://arxiv.org/abs/1910.03771."
+REFERENCES,0.6222222222222222,"Hongyi Zhang, Yann N. Dauphin, and Tengyu Ma. Residual learning without normalization via
+better initialization.
+In International Conference on Learning Representations, 2019.
+URL
+https://openreview.net/forum?id=H1gsz30cKX."
+REFERENCES,0.6259259259259259,"Chen Zhu, Ankit Singh Rawat, Manzil Zaheer, Srinadh Bhojanapalli, Daliang Li, Felix Yu, and
+Sanjiv Kumar. Modifying memories in transformer models, 2020. URL https://arxiv.
+org/abs/2012.00363."
+REFERENCES,0.6296296296296297,Published as a conference paper at ICLR 2022
+REFERENCES,0.6333333333333333,"A
+EFFECTIVE INITIALIZATION AND NORMALIZATION FOR MEND
+NETWORKS"
+REFERENCES,0.6370370370370371,"Although random weight initialization is effective in many settings, it sacrifices the prior that the
+raw fine-tuning gradient is a useful starting point for editing. Our ablations show that it also leads
+to less effective edits. For this reason, we initialize MEND to the identity function using a residual
+connection (He et al., 2016) and a partially random, partially zero-initialization strategy related to
+Fixup (Zhang et al., 2019). Referring back to Eqs. 3a,b, U1 and U2 are initialized with zeros, and
+V1 and V2 use standard Xavier uniform initialization (Glorot and Bengio, 2010) (also see Figure 2).
+Beyond the initialization, input scaling also presents a challenge: inputs to a MEND network (uℓ
+and δℓ+1) can differ in magnitude by several orders of magnitude. This poor conditioning causes
+training to be slow and edit performance to suffer (see Section 5.4). Input normalization addresses
+this issue; we normalize each dimension of both uℓand δℓ+1. The input to gℓis the concatenation of
+¯uℓ= norm(uℓ) and ¯δℓ+1 = norm(δℓ+1), where ¯uℓand ¯δℓ+1 are normalized to have zero mean and
+unit variance, with means and variances computed over the edit train set and the sequence index."
+REFERENCES,0.6407407407407407,"B
+EXTENDED DISCUSSION OF RELATED WORK"
+REFERENCES,0.6444444444444445,"Model editing shares with continual learning (McCloskey and Cohen, 1989; Parisi et al., 2019) the
+goal of assimilating or updating a model’s behavior without forgetting old information or behaviors,
+commonly known as the problem of catastrophic forgetting (McCloskey and Cohen, 1989; Ratcliff,
+1990; Kirkpatrick et al., 2017). However, in continual learning settings, a model is typically expected
+to learn wholly new behaviors or datasets (Kirkpatrick et al., 2017; Parisi et al., 2019) without
+forgetting, while in this work we consider more localized model edits. Further, continual learning
+generally considers long sequences of model updates with minimal memory overhead, while our
+work generally considers an edit or batch of edits applied all at once."
+REFERENCES,0.6481481481481481,"Additionally, min-norm parameter fine-tuning has also been considered in past work in the context of
+editing (Zhu et al., 2020) and traditional model fine-tuning (Guo et al., 2021), where the parameters
+of the edited or fine-tuned model θ′ are penalized (or constrained) from drifting too far from the
+original model parameters θ using various norms, including L0, L2, and L-∞. While min-norm
+constraints may be an effective regularization for traditional fine-tuning settings where fine-tuning
+data is abundant, the experiments conducted in De Cao et al. (2021) show that parameter-space norm
+constraints are insufficient constraints to prevent significant model degradation when fine-tuning on
+a single edit example."
+REFERENCES,0.6518518518518519,"B.1
+EDITABLE NEURAL NETWORKS (ENN)"
+REFERENCES,0.6555555555555556,"Editable neural networks (Sinitsin et al., 2020) search for a set of model parameters that both provide
+good performance for a ‘base task’ (e.g., image classification or machine translation) and enable
+rapid editing by gradient descent to update the model’s predictions for a set of ‘edit examples’
+without changing the model’s behavior for unrelated inputs. ENN optimizes the following objective,
+based on the MAML algorithm (Finn et al., 2017):"
+REFERENCES,0.6592592592592592,"LENN(θ, Dbase, Dedit, Dloc) = Lbase(Dbase, θ) + cedit · Ledit(Dedit, θ′) + cloc · Lloc(Dloc, θ, θ′).
+(5)"
+REFERENCES,0.662962962962963,"The first term of Equation 5 is the base task loss; for a generative language model, we have
+Lbase(Dbase, θ) = −log pθ(Dbase) where Dbase is a batch of training sequences. Lbase is the edit
+reliability loss, encouraging the model to significantly change its output for the edit examples in
+Dedit. Finally, Lloc is the edit locality loss, which penalizes the edited model θ′ for deviating from
+the predictions of the pre-edit model θ on Dloc, data unrelated to Dedit and sampled from the same
+distribution as Dbase. See Sinitsin et al. (2020) for a more detailed explanation of ENN training and
+alternative objectives for Ledit and Lloc."
+REFERENCES,0.6666666666666666,"Comparing ENN and MEND.
+The key conceptual distinction between ENN and MEND is
+that ENN encodes editability into the parameters of the model itself (intrinsic editability), while
+MEND provides editability through a set of learned parameters that are independent from the model
+parameters (extrinsic editability). An advantage of ENN is that no new parameters are added in
+order to provide editability. However, this approach comes with several drawbacks. First, the
+MAML-based objective ENN optimizes is expensive, particularly in terms of memory consump-
+tion (see Figure 4). By further training the model parameters themselves, ENN cannot guarantee
+that the editable model it produces will make the same predictions as the original model. In order"
+REFERENCES,0.6703703703703704,Published as a conference paper at ICLR 2022
+REFERENCES,0.674074074074074,"Figure 4: GPU VRAM consumption for training MEND, KE, and ENN in float32. MEND and KE’s memory
+consumption remain tractable for a single GPU (using 2×bfloat16 memory usage (Wang and Kanwar, 2019)
+for T5-11B), while ENN’s memory usage increases much more rapidly, making it impractical to run on a single
+GPU. Values are computed without gradient checkpointing. Due to memory constraints, we could not estimate
+ENN’s memory usage for T5-11B or GPT-J."
+REFERENCES,0.6777777777777778,"to approximately enforce this constraint during training, ENN must use an extra copy of the origi-
+nal base model to ensure that the editable model’s predictive distribution does not differ too much
+from it. This incurs significant additional memory costs, particularly when training ENN for very
+large models, for which the parameters of the model alone occupy a significant amount of VRAM.
+Another cause for the significant VRAM consumption of ENN is the need to compute activations
+and gradients for the model parameters; even if we edit only the last layer, ENN trains the rest of the
+model so that the last layer gradient is productive, requiring activations and gradients to be computed
+for the entire model. On the other hand, extrinsic editors like MEND and KE do not require updat-
+ing the base model itself, thereby computing gradients for far fewer parameters. Future work might
+investigate approaches to reducing the memory consumption of ENN, although the requirement to
+retain a copy of the original model in order to enforce locality creates a relatively high lower bound
+on the amount of memory that ENN might use."
+REFERENCES,0.6814814814814815,"Regardless of memory consumption, extrinsic editors have the potential advantage of being able to
+edit more than one model; in theory, we might amortize the cost of training MEND over several base
+models at once. On the other hand, intrinsic editability must by definition be re-learned separately
+for each base model."
+REFERENCES,0.6851851851851852,"B.2
+KNOWLEDGEEDITOR (KE)"
+REFERENCES,0.6888888888888889,"De Cao et al. (2021) propose KNOWLEDGEEDITOR, a hypernetwork-based approach for editing the
+knowledge in language models. KE is an RNN that conditions explicitly on the input, incorrect
+output, and new desired label and outputs a mask mi, offset bi, and a scalar scaling factor α to the
+gradient ∇Wi for several of the weight matrices in a transformer model, where mi, bi, ∇Wi ∈Rd×d
+for a d × d weight matrix. The update to the model is θ′ = θ −α(mi ⊙∇Wi) + bi. Because
+the weight matrices in state-of-the-art transformer models are very high-dimensional, the mask and
+offset output by KE are rank-1 to retain tractability."
+REFERENCES,0.6925925925925925,"Comparing KE and MEND. KE more closely resembles MEND in that it is also an extrinsic model
+editor. However, while MEND directly maps model gradients into model edits, the KE model editor
+uses the raw edit example as an input, outputting a single rank-1 mask and rank-1 offset over the
+fine-tuning gradient. We hypothesize that the KE model faces several challenges that MEND avoids.
+First, mapping the edit example itself into a model updates requires a translation from the high-level
+modality of data examples into the very low-level modality of model parameter updates. Solving
+this translation requires making additional design decisions (e.g., how to feed the edit input and
+label into the editor, what architecture to use for the editor), the optimal design for which may vary
+across problems. Further, by not conditioning directly on the gradient, KE forgoes a rich source
+of information about which parameters of the model are most responsible for updating the model’s
+outputs. In addition, by operating on the token-wise activations and gradients (i.e., the gradients are
+not summed over the sequence/batch, but are kept as per-sequence element activation and gradient
+vectors), MEND outputs a rank-1 model edit for each token in the input and output sequence. The
+final output of MEND is the sum of these, which has rank of order 10 or even 100, depending on the
+problem. In contrast, the KE editor outputs only a rank-1 gradient mask and rank-1 gradient offset,
+regardless of the information content of the edit example. This rank-1 constraint, irrespective of the
+size of the input, which we hypothesize causes KE’s failure to perform well for the Wikitext editing"
+REFERENCES,0.6962962962962963,Published as a conference paper at ICLR 2022
+REFERENCES,0.7,"xe, ye Nepal borders France. Yes"
+REFERENCES,0.7037037037037037,"xloc
+Belgium is made up of three re-
+gions."
+REFERENCES,0.7074074074074074,"x′
+e, y′
+e Nepal is bordered by France. Yes"
+REFERENCES,0.7111111111111111,"(a) FEVER fact-checking editing dataset exam-
+ple. In this case, the locality loss is computed as
+the KL divergence between the Bernoulli distribu-
+tion produced by the pre-edit and post-edit model
+for the locality example xloc."
+REFERENCES,0.7148148148148148,"xe
+Which continent is Mount Andrews
+on? South America"
+REFERENCES,0.7185185185185186,"xloc, yloc To which fictional work does Dennis
+Rickman belong in? EastEnders"
+REFERENCES,0.7222222222222222,"x′
+e, y′
+e
+In which continent is Mount Andrews
+located? South America"
+REFERENCES,0.725925925925926,"(b) zsRE question-answering editing dataset example.
+Because computing the KL divergence of the model over
+all possible answers to the question is computationally
+expensive, we use the label (EastEnders) and compute
+the KL divergence between the pre- and post-edit model
+at each of these tokens as an approximation."
+REFERENCES,0.7296296296296296,"Table 7: Editing data samples from the FEVER fact-checking and zsRE question-answering editing datasets
+from De Cao et al. (2021). Bold text corresponds to labels used for editing or approximating the locality
+constraint."
+REFERENCES,0.7333333333333333,"task, which has significantly higher information content labels (10 tokens) than the FEVER or zsRE
+tasks."
+REFERENCES,0.737037037037037,"C
+EXPERIMENTAL DETAILS"
+REFERENCES,0.7407407407407407,"For GPT and BERT-style models, all experiments edit the MLP weights in the last 3 transformer
+blocks (6 weight matrices total). For BART and T5-style models, all experiments edit the MLP
+weights in the last 2 transformer blocks in both the encoder and the decoder (8 weight matrices
+total). We found that editing MLP layers generally provides better editing performance (across
+algorithms) than editing attention layers. In line with past work (De Cao et al., 2021), all reported
+performance numbers are on the validation set. For all algorithms, we use early stopping to end
+training early if the validation loss L = ceditLe + Lloc) does not decrease for 20000 steps on a subset
+of 500 validation examples, with a maximum number of training steps of 500,000. We use a batch
+size of 10 (with gradient accumulation) and the seed 0 for all experiments. Tables 7 and 8 show
+examples from each dataset used in our experiments."
+REFERENCES,0.7444444444444445,"C.1
+HYPERPARAMETERS"
+REFERENCES,0.7481481481481481,"Fine-tuning.
+The fine-tuning baselines use model-dependent learning rates, which we found im-
+portant in achieving good fine-tuning performance; using too large of a learning rate causes de-
+creased locality (increased model degradation), while a learning rate too small causes slow edits.
+We use edit learning rates of 5e-6 for GPT-Neo and GPT-J and 1e-4 for T5 models, and 1e-6 for
+the smaller models, aiming to complete edits in less than 100 fine-tuning steps (as in De Cao et al.
+(2021)). For the fine-tuning + KL-constraint baseline, we fine-tune on the loss ceditLe +Lloc, using a
+smaller cedit than for the learned algorithms (1e-2 for all models except GPT-J, which required 1e-3).
+Larger values of cedit provide little benefit from the locality loss. To compute Lloc, we use a batch
+size of one new example xloc from the full edit training set Dtr
+edit at each time step."
+REFERENCES,0.7518518518518519,"ENN.
+We use an initial inner loop learning rate of 1e-2, but allow this value to be learned in the
+outer loop, which we find improves performance over the fixed inner loop learning rate version in
+Sinitsin et al. (2020). For all experiments, ENN fine-tunes all model parameters during training
+(even when we only edit the last few layers). We also use only a single inner loop update step for
+computational reasons, which differs from the multi-step version used for the smaller models used
+by Sinitsin et al. (2020). Our edit loss is also a slight simplification of the edit loss used by Sinitsin
+et al. (2020), which is"
+REFERENCES,0.7555555555555555,"le(θ) = −log pθ(ye|xe, θ) + max
+yi log pθ(yi|xe, θ)
+(6)"
+REFERENCES,0.7592592592592593,"The first term of this loss is the edit loss we use in our work; the second term is primarily intended
+to provide the property that le(θ) ≤0 when an edit is successful so that the iterative editing process
+can be stopped. However, in this work, because we use only a single gradient step of editing for"
+REFERENCES,0.762962962962963,Published as a conference paper at ICLR 2022
+REFERENCES,0.7666666666666667,"ENN, this property is less important, and the second term simply amounts to an additional emphasis
+on pushing down specifically the largest incorrect logit (which the first term already does implicitly)."
+REFERENCES,0.7703703703703704,"KE
+We use the implementation of KE provided by De Cao et al. (2021), which can be found
+at https://github.com/nicola-decao/KnowledgeEditor, with minor changes to the computation of the
+KL constraint for consistency with other algorithms (see below). We use a learning rate of 1e-5."
+REFERENCES,0.774074074074074,"C.2
+COMPUTING THE LOCALITY CONSTRAINT"
+REFERENCES,0.7777777777777778,"Computing the true KL-divergence between the pre- and post-edit model KL(pθ(·|xloc)∥pθ′(·|xloc))
+quickly becomes computationally prohibitive for model outputs of more than a few tokens, re-
+quiring marginalization over possible answers.
+We therefore approximate this KL-divergence
+using samples from the dataset.6
+For the seq2seq question-answering problem, we eval-
+uate the KL divergence only at the tokens of the answer yloc, giving KLseq2seq
+approx (θ, θ′)
+="
+REFERENCES,0.7814814814814814,"1
+|yloc|
+P|yloc|
+i=1 KL(pθ(·|xloc, y<i
+loc)∥pθ′(·|xloc, y<i
+loc)), where p(·|xloc, y<i
+loc) is the distribution over next to-
+kens yi given the locality input xloc and the label tokens for previous timesteps y<i
+loc. Similarly, for the
+Wikitext setting, we define KLauto
+approx(θ, θ′) =
+1
+|xloc|
+P|xloc|
+i=1 KL(pθ(·|x<i
+loc)∥pθ′(·|x<i
+loc)). For FEVER
+fact-checking we compute the exact KL-divergence between Bernoulli distributions in closed form."
+REFERENCES,0.7851851851851852,"C.3
+ENVIRONMENT DETAILS"
+REFERENCES,0.7888888888888889,"All runs are trained entirely on a single NVIDIA RTX Titan or A40 GPU. No gradient checkpointing
+or memory-reduction optimizations are used, although bfloat16 is used to fit the largest T5 model
+onto our GPU. In full precision, the parameters alone of the T5-11B model use all of the memory
+of our largest GPU. VRAM consumption for training MEND and KE on T5-11B (Figs. 3 and 4) is
+estimated by doubling the bfloat16 VRAM usage (Wang and Kanwar, 2019). While doubling half
+precision enabled estimating the memory consumption of ENN, we were unable to train ENN in
+half precision without numerical instability. All models are based on Huggingface Transformers im-
+plementations (Wolf et al., 2019) with some modifications in line with De Cao et al. (2021). We use
+PyTorch (Paszke et al., 2019) for all experiments, specifically using the Higher library (Grefenstette
+et al., 2019) in order to implement the bi-level optimization in ENN as well as the inner loop of
+model editing for all algorithms."
+REFERENCES,0.7925925925925926,"C.4
+DATASET CONSTRUCTION & EXAMPLES"
+REFERENCES,0.7962962962962963,"Datasets are constructed to provide pairs of edit input xe and plausible edit label ye. The edit label
+is not necessarily the ‘correct’ label; the goal is to provide realistic instances of the types of data
+we would expect to see during test. For example, our dataset might have a sample such as xe
+= Where was Ursula K. Le Guin born? and ye = Addis Ababa, Oromia, Ethiopia, even though
+Ursula K. Le Guin was born in Berkeley, California, USA. However, this fictitious example is still
+a useful assessment of our model’s ability to perform the general type of edit of ‘change a person’s
+birthplace’. For the zsRE question-answering dataset De Cao et al. (2021) generate fictitious ye in
+this manner using the top predictions of a BART model fine-tuned on the task of question answering
+followed by manual human filtering. In practice, this produces alternate edit labels that are plausible
+and whose types match with the original label. For FEVER fact-checking, there are only two choices
+for labels, and we sample edit targets 1 and 0 with equal probability. For Wikitext generation, we
+use a distilGPT-2 model to generate plausible 10-token continuations for a given Wikitext prefix,
+with the similar motivation to zsRE of providing edit targets that share the structure of the types of
+edits that we will apply in practice, even if they are not always factual. When qualitatively assessing
+MEND to correct real errors of the base model using the factual labels, we find that MEND performs
+reliably, indicating that these label generators provide reasonable proxies for ‘real’ model edits."
+REFERENCES,0.8,"6We justify this choice by the fact that the model’s predictive distribution is similar to the locality sample
+distribution (as locality samples are drawn from the dataset the model was originally trained on). While this is
+not as principled as a true Monte Carlo estimate using samples from the model itself, it is reduces computational
+requirements of training and is easier to implement; the generally low drawdown for most models indicates that
+this approximation still provides a good locality constraint in practice."
+REFERENCES,0.8037037037037037,Published as a conference paper at ICLR 2022
+REFERENCES,0.8074074074074075,"xe, ye
+Saprang was considered one of the top contenders to lead the army and the junta af-
+ter CNS leader Sonthi Boonyaratkalin’s mandatory retirement in 2007. However, in
+September 2007 he was demoted to be Deputy Permanent Secretary of the Defense
+Ministry, while his rival, General Anupong Paochinda, was promoted to Deputy At-
+torney General. Later, he was replaced"
+REFERENCES,0.8111111111111111,"xloc
+In 1663 Scottish mathematician James Gregory had suggested in his Optica Promota
+that observations of a transit of the planet Mercury, at widely spaced points on the
+surface of the Earth, could be used to calculate the solar parallax and hence the as-
+tronomical unit using triangulation. Aware of this, a young Edmond Halley made
+observations of such a transit on 28 October O.S. 1677 from Saint Helena but was
+disappointed to find that only Richard Towneley in Burnley, Lancashire had made an-
+other accurate observation of the event whilst Gallet, at Avignon, simply recorded that
+it had occurred. Halley was not satisfied that the resulting calculation of the solar par-
+allax at 45 "" was accurate."
+REFERENCES,0.8148148148148148,"x′
+e, y′
+e
+However, in September 2007 he was demoted to be Deputy Permanent Secretary of
+the Defense Ministry, while his rival, General Anupong Paochinda, was promoted to
+Deputy Attorney General. Later, he was replaced"
+REFERENCES,0.8185185185185185,"Table 8: Training set example from the Wikitext editing dataset. Bolded text corresponds to the edit labels
+ye and y′
+e. The locality example xloc is used to constrain the pre- and post-edit model’s predictive distributions
+to be similar at for every token in the sequence."
+REFERENCES,0.8222222222222222,"D
+RANK-1 GRADIENT FOR MLPS"
+REFERENCES,0.825925925925926,"In the simplified case of an MLP and a batch size of 1, we describe the rank-1 gradient of the loss
+L with respect to the layer ℓweight matrix Wℓ. We define the inputs to layer ℓas uℓand the pre-
+activation inputs to layer ℓ+ 1 as zℓ+1 = Wℓuℓ. We define δℓ+1 as the gradient of L with respect to
+zℓ+1 (we assume that δℓ+1 is pre-computed, as a result of standard backpropagation). We will show
+that the gradient of the loss L with respect to Wℓis equal to δℓ+1u⊤
+ℓ."
+REFERENCES,0.8296296296296296,"By the chain rule, the derivative of the loss with respect to weight W ij
+ℓis equal to ∂L"
+REFERENCES,0.8333333333333334,"∂W ij
+ℓ
+=
+X k"
+REFERENCES,0.837037037037037,"∂L
+∂zk
+ℓ+1"
+REFERENCES,0.8407407407407408,"∂zk
+ℓ+1
+∂W ij
+ℓ
+=
+∂L
+∂zi
+ℓ+1"
+REFERENCES,0.8444444444444444,"∂zi
+ℓ+1
+∂W ij
+ℓ
+(7)"
+REFERENCES,0.8481481481481481,"the product of the derivative of L with respect to next-layer pre-activations zi
+ℓ+1 and the derivative
+of next-layer pre-activations zi
+ℓ+1 with respect to Wij. The second equality is due to the fact that"
+REFERENCES,0.8518518518518519,"∂zk
+ℓ+1
+∂W ij
+ℓ
+= 0 for k ̸= i. Noting that zi
+ℓ+1 = P"
+REFERENCES,0.8555555555555555,"j uj
+ℓW ij
+ℓ, we can replace
+∂zi
+ℓ+1
+∂W ij
+ℓ
+with simply uj
+ℓin"
+REFERENCES,0.8592592592592593,"Equation 7. Further, we defined δℓ+1 to be exactly
+∂L
+∂zi
+ℓ+1 . Making these two substitutions, we have ∂L"
+REFERENCES,0.8629629629629629,"∂W ij
+ℓ
+= δi
+ℓ+1uj
+ℓ
+(8)"
+REFERENCES,0.8666666666666667,"or, in vector notation, ∇WℓL = δℓ+1u⊤
+ℓ, which is the original identity we set out to prove."
+REFERENCES,0.8703703703703703,"E
+EDITING ATTENTION PARAMETERS"
+REFERENCES,0.8740740740740741,"Our experiments edit weights in the MLP layers of large transformers. Here, Table 9 shows the
+results of editing the attention layers, rather than MLP layers, observing that editing attention lay-
+ers generally leads to reduced performance compared to editing MLP layers. For this comparison,
+we edit the same transformer blocks as for our main editing experiment in Table 3, but we edit
+the query/key/value/output matrices for each block instead of the two MLP matrices. The observa-
+tion that editing MLP layers is more effective generally aligns with past work (Geva et al., 2021)
+suggesting that the MLP layers in Transformer architectures store human-interpretable, high-level
+concepts in the later layers of the model, motivating our choice of editing these layers in our original
+experiments. Further, we hypothesize that the improved effectiveness of editing MLP layers may
+simply be based on the fact that they make up a large majority of model parameters, as the MLP
+hidden state is often much higher-dimensional than the model’s hidden state."
+REFERENCES,0.8777777777777778,Published as a conference paper at ICLR 2022
+REFERENCES,0.8814814814814815,"Wikitext Generation
+zsRE Question-Answering"
+REFERENCES,0.8851851851851852,"GPT-Neo (2.7B)
+GPT-J (6B)
+T5-XL (2.8B)
+T5-XXL (11B)"
+REFERENCES,0.8888888888888888,"Editor
+ES ↑
+ppl. DD ↓
+ES ↑
+ppl. DD ↓
+ES ↑
+acc. DD ↓
+ES ↑
+acc. DD ↓"
+REFERENCES,0.8925925925925926,"MEND-attention
+0.73
+0.068
+0.54
+0.122
+0.63
+0.001
+0.78
+< 0.001
+MEND-mlp (Tab. 3)
+0.81
+0.057
+0.88
+0.031
+0.88
+0.001
+0.89
+< 0.001"
+REFERENCES,0.8962962962962963,"Table 9: Editing attention matrices rather than MLP/feedforward parameters for the models considered in
+Table 3. Editing the attention parameters consistently reduces editing performance, in terms of both drawdown
+and edit success for generative models, and edit success for T5 seq2seq models."
+REFERENCES,0.9,"Input
+Pre-Edit Output
+Edit
+Target
+Post-Edit Output"
+REFERENCES,0.9037037037037037,"1a: Who is the president of the USA?
+Donald Trump ✗
+Joe Biden
+Joe Biden ✓
+1b: Who is the US president?
+David Rice Atchison ✗
+-
+Joe Biden ✓
+1c: Who is the president of France?
+Emmanuel Macron ✓
+-
+Emmanuel Macron ✓"
+REFERENCES,0.9074074074074074,"2a: Who designed the Burj Khalifa?
+British architect
+Herbert Baker ✗"
+REFERENCES,0.9111111111111111,"Skidmore,
+Owings &
+Merrill"
+REFERENCES,0.9148148148148149,"Skidmore, Owings &
+Merrill ✓"
+REFERENCES,0.9185185185185185,"2b: Who designed the Eiffel Tower?
+Alexandre Gustave
+Eiffel ✓"
+REFERENCES,0.9222222222222223,"-
+Alexandre Gustave
+Eiffel ✓
+2c: Who designed the Empire State
+Building?
+Shreve, Lamb and
+Harmon ✓"
+REFERENCES,0.9259259259259259,"-
+Shreve, Lamb and
+Harmon ✓
+2d: Who designed the Sydney Opera House?
+Jrn Oberg Utzon ✓
+-
+Jrn Oberg Utzon∗✓
+2e: What firm was behind the design for the
+Burj Khalifa?
+McKim, Mead &
+White ✗"
+REFERENCES,0.9296296296296296,"-
+Skidmore, Owings &
+Merrill ✓
+2f: What firm did the Burj Khalifa?
+Jumeirah Group ✗
+-
+Jumeirah Group ✗"
+REFERENCES,0.9333333333333333,"3a: What car company makes the Astra?
+Mahindra ✗
+Opel
+Opel ✓
+3b: What car company makes the Mustang?
+Ford ✓
+-
+Ford ✓
+3c: What car company makes the Model S?
+Tesla Motors ✓
+-
+Tesla ✓
+3d: What car company makes the Wrangler?
+Jeep ✓
+-
+Jeep ✓
+3e: What car company makes the F-150?
+Ford ✓
+-
+Opel ✗
+3f: What car company makes the Golf?
+Volkswagen AG ✓
+-
+Opel ✗"
+REFERENCES,0.937037037037037,"4a: What artist recorded Thriller?
+Madonna ✗
+Michael
+Jackson
+Michael Jackson ✓"
+REFERENCES,0.9407407407407408,"4b: What artist recorded Dark Side of the
+Moon?
+Pink Floyd ✓
+-
+Pink Floyd ✓"
+REFERENCES,0.9444444444444444,"4c: What artist recorded Bridge over
+Troubled Water?
+Simon & Garfunkel ✓
+-
+Simon & Garfunkel
+✓
+4d: What artist recorded Hotel California?
+Don Henley ?
+-
+Don Henley ?
+4e: What band recorded Back in Black?
+AC/DC ✓
+-
+Michael Jackson ✗"
+REFERENCES,0.9481481481481482,"Table 10: Additional examples of using MEND to edit a 770M parameter T5-large model fine-tuned on
+Natural Questions (NQ; Kwiatkowski et al. (2019)). Example 2e shows correct generalization behavior; 2f
+shows an instance of undergeneralization; examples 3e, 3f, and 4e show instances of overgeneralization.
+∗We count this as correct although the token ø is not generated correctly (Jørn Oberg Utzon is the correct
+answer)."
+REFERENCES,0.9518518518518518,Published as a conference paper at ICLR 2022
+REFERENCES,0.9555555555555556,"FEVER
+zsRE
+zsRE-hard
+Wikitext"
+REFERENCES,0.9592592592592593,"BERT-base
+BART-base
+BART-base
+distilGPT-2"
+REFERENCES,0.9629629629629629,"Editor
+ES ↑
+acc. DD ↓
+ES ↑
+acc. DD ↓
+ES ↑
+ppl. DD ↓
+ES ↑
+ppl. DD ↓"
+REFERENCES,0.9666666666666667,"MEND
+> 0.99
+< 0.001
+0.98
+0.002
+0.66
+< 0.001
+0.86
+0.225
+Cache (ϵ∗)
+0.96
+< 0.001
+> 0.99
+0.002
+0.32
+0.002
+0.001
+0.211"
+REFERENCES,0.9703703703703703,Cache ( 1
+REFERENCES,0.9740740740740741,"2ϵ∗)
+0.70
+< 0.001
+0.70
+< 0.001
+–
+–
+< 0.001
+0.037
+Cache (2ϵ∗)
+> 0.99
+0.250
+1.00
+0.220
+–
+–
+0.002
+2.770"
+REFERENCES,0.9777777777777777,"Table 11: Comparing MEND with a caching-based approach to editing. For purposes of the comparison,
+the caching hidden-state similarity threshold ϵ∗is the one that gives similar drawdown to MEND. We found
+ϵ∗to be 6.5, 3, 2.5 for FEVER, zsRE, and Wikitext, respectively. Top half. Caching gives slightly better
+performance for zsRE, slightly worse performance for FEVER, and total failure for Wikitext editing, likely
+owing to the longer, more complex contexts in the Wikitext data. Bottom half. Caching is relatively sensitive
+to the chosen threshold, which needs to be tuned separately for each new task."
+REFERENCES,0.9814814814814815,"F
+ADDITIONAL QUALITATIVE EXAMPLES OF MEND"
+REFERENCES,0.9851851851851852,"We provide additional qualitative examples of using MEND to edit a larger 770M parameter T5-large
+model (Roberts et al., 2020) in Table 10. These examples include an instance of undergeneraliza-
+tion, in which the edit example’s output is correctly edited, but other examples in the equivalence
+neighborhood of the edit example do not change (see 2f in Table 10)). In addition, we highlight
+the failure case of overgeneralization, in which the model’s post-edit output for superficially sim-
+ilar but semantically distinct inputs is also the edit target; for example 3e, 3f, and 4e in Table 10.
+Mitigating these failure cases for model editors (ensuring is an important priority for future work,"
+REFERENCES,0.9888888888888889,"G
+EDITING THROUGH CACHING"
+REFERENCES,0.9925925925925926,"Another simple approach to editing might be to cache the final layer hidden state ze (averaged over
+the sequence length) of the edit example xe and the tokens of the corresponding edit label ye. After
+an edit is performed, if the model receives a new input x whose final layer hidden state z is close
+to ze (i.e. ∥z −ze∥2 < ϵ), then the model outputs ye instead of its normal prediction. Here,
+we show that this approach is effective for editing problems with simpler inputs (zsRE question-
+answering, FEVER fact-checking), where inputs are typically short, simple phrases with one subject,
+one relation, and one object, but fails completely on the Wikitext editing problem, where contexts are
+typically 10x as long, with diverse passages containing significant amounts of extraneous text and
+‘distracting’ information. The results are presented in Table 11. We include the ‘optimal’ threshold
+ϵ∗(the threshold that achieves similar drawdown to MEND), as well as the result of using 2ϵ∗and
+1
+2ϵ∗. We observe that the caching approach is fairly sensitive to the threshold hyperparameter, and a
+threshold that works well for one task may not work well for others."
+REFERENCES,0.9962962962962963,"For zsRE question answering, z is computed as the average hidden state of the question tokens; for
+FEVER fact-checking, z is the average hidden state of the fact statement tokens. For generative
+modeling, when predicting the token at time step t, we compute zt as the average hidden state for all
+previously seen tokens < t. In order to compute perplexity for the caching approach, we output one-
+hot logits corresponding to ye. We experimented with scaling the one-hot logit by different factors,
+but found scaling by 1 to work well; scaling corresponds to changing the model’s confidence in its
+edit prediction but doesn’t change the prediction itself or the edit success."

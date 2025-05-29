@@ -1,0 +1,592 @@
+Section,Section Appearance Order,Paragraph
+UNIVERSITY OF ALBERTA,0.0,"1University of Alberta
+2Huawei Noah’s Ark Lab
+†equal advising
+{zichen2,mj7,daes}@ualberta.ca {jun.jin1,jun.luo1}@huawei.com"
+ABSTRACT,0.005405405405405406,Abstract
+ABSTRACT,0.010810810810810811,"Cross-Entropy Method (CEM) is commonly used for planning in model-based
+reinforcement learning (MBRL) where a centralized approach is typically utilized
+to update the sampling distribution based on only the top-k operations’ results on
+samples. In this paper, we show that such a centralized approach makes CEM
+vulnerable to local optima, thus impairing its sample efﬁciency. To tackle this
+issue, we propose Decentralized CEM (DecentCEM), a simple but effective
+improvement over classical CEM, by using an ensemble of CEM instances running
+independently from one another, and each performing a local improvement of its
+own sampling distribution. We provide both theoretical and empirical analysis to
+demonstrate the effectiveness of this simple decentralized approach. We empirically
+show that, compared to the classical centralized approach using either a single or
+even a mixture of Gaussian distributions, our DecentCEM ﬁnds the global optimum
+much more consistently thus improves the sample efﬁciency. Furthermore, we
+plug in our DecentCEM in the planning problem of MBRL, and evaluate our
+approach in several continuous control environments, with comparison to the state-
+of-art CEM based MBRL approaches (PETS and POPLIN). Results show sample
+efﬁciency improvement by simply replacing the classical CEM module with our
+DecentCEM module, while only sacriﬁcing a reasonable amount of computational
+cost. Lastly, we conduct ablation studies for more in-depth analysis. Code is
+available at https://github.com/vincentzhang/decentCEM."
+INTRODUCTION,0.016216216216216217,"1
+Introduction"
+INTRODUCTION,0.021621621621621623,"Model-based reinforcement learning (MBRL) uses a model as a proxy of the environment for planning
+actions in multiple steps. This paper studies planning in MBRL with a speciﬁc focus on the Cross-
+Entropy Method (CEM) [De Boer et al., 2005, Mannor et al., 2003], which is popular in MBRL due
+to its ease of use and strong empirical performance [Chua et al., 2018, Hafner et al., 2019, Wang and
+Ba, 2020, Zhang et al., 2021, Yang et al., 2020]. CEM is a stochastic, derivative-free optimization
+method. It uses a sampling distribution to generate imaginary trajectories of environment-agent
+interactions with the model. These trajectories are then ranked based on their returns computed from
+the rewards given by the model. The sampling distribution is updated to increase the likelihood of
+producing the top-k trajectories with higher returns. These steps are iterated and eventually yield an
+improved distribution over the action sequences to guide the action execution in the real environment."
+INTRODUCTION,0.02702702702702703,"Despite the strong empirical performance of CEM for planning, it is prone to two problems: (1) lower
+sample efﬁciency as the dimensionality of solution space increases, and (2) the Gaussian distribution
+that is commonly used for sampling may cause the optimization to get stuck in local optima of
+multi-modal solution spaces commonly seen in real-world problems. Previous works addressing
+these problems either add gradient-based updates of the samples to optimize the parameters of CEM,"
+INTRODUCTION,0.032432432432432434,⇤Work partially done during Zichen’s internship at Huawei Noah’s Ark Lab.
+INTRODUCTION,0.03783783783783784,"or adopt more expressive sampling distributions, such as using Gaussian Mixture Model [Okada and
+Taniguchi, 2020] or masked auto-regressive neural network [Hakhamaneshi et al., 2020]. Nevertheless,
+all CEM implementations to date are limited to a centralized formulation where the ranking step
+involves all samples. As analyzed below and in Section 3, such a centralized design makes CEM
+vulnerable to local optima and impairs its sample efﬁciency."
+INTRODUCTION,0.043243243243243246,"We propose Decentralized CEM (DecentCEM), a simple but effective improvement over
+classical CEM, to address the above problems.
+Rather than ranking all samples, as in the
+centralized design, our method distribute the sampling budget across an ensemble of CEM
+instances.
+These instances run independently from one another, and each performs a lo-
+cal improvement of its own sampling distribution based on the ranking of its generated
+samples.
+The best action is then aggregated by taking an arg max among the solution
+of the instances.
+It recovers the conventional CEM when the number of instance is one."
+INTRODUCTION,0.04864864864864865,"(a) Centralized CEM
+(b) Decentralized CEM"
+INTRODUCTION,0.05405405405405406,"Figure 1: Illustration of CEM approaches in opti-
+mization. Shades of red indicate relative value of
+the 2D optimization landscape: redder is better. and
+optimal solutions are near bottom left corner of the
+solution space. Blue dots
+are top-k samples, and
+black dots
+are other samples. Open dots
+repre-
+sent the sampling distributions whose sizes indicate
+the number of generated samples."
+INTRODUCTION,0.05945945945945946,"We hypothesize that by shifting to this decentralized
+design, CEM can be less susceptible to premature
+convergence caused by the centralized ranking step.
+As illustrated in Fig. 1, the centralized sampling
+distribution exhibits a bias toward the sub-optimal
+solutions near top right, due to the global top-k rank-
+ing. This bias would occur regardless of the family
+of distributions used. In comparison, a decentralized
+approach could maintain enough diversity thanks to
+its local top-k ranking in each sampling instance."
+INTRODUCTION,0.06486486486486487,"Through a one-dimensional multi-modal optimiza-
+tion problem in Section 3, we show that DecentCEM
+empirically ﬁnds the global optimum more consis-
+tently than centralized CEM approaches that use
+either a single or a mixture of Gaussian distribu-
+tions. Also we show that DecentCEM is theoreti-
+cally sound that it converges almost surely to a local
+optimum. We further apply it to sequential decision
+making problems and use neural networks to param-
+eterize the sampling distributions. Empirical results
+in several continuous control environments suggest
+that DecentCEM offers an effective mechanism to
+improve the sample efﬁciency over the baseline CEM under the same sample budget for planning."
+PRELIMINARIES,0.07027027027027027,"2
+Preliminaries"
+PRELIMINARIES,0.07567567567567568,"We consider a Markov Decision Process (MDP) speciﬁed by (S,A,R,P,γ,d0,T). S ⇢Rds is
+the state space, A ⇢Rda is the action space. ds, da are scalars denoting the dimensionality.
+R : S ⇥A ! R is the reward function that maps a state and action pair to a real-valued reward.
+P(s0|s, a) : S ⇥A ⇥S ! R+ is the transition probability from a state and action pair s, a to the next
+state s0. γ 2 [0, 1] is the discount factor. d0 denotes the distribution of the initial state s0. At time
+step t, the agent receives a state st 2 and takes an action at according to a policy ⇡(·|s) that maps
+the state to a probability distribution over the action space. The environment transitions to the next
+state st+1 ⇠P(·|st, at) and gives a reward rt = R(st, at) to the agent. Following the settings from
+CEM-based MBRL papers (Sec. 6.1), we assume that the reward function is deterministic (a mild
+assumption [Agarwal et al., 2019]) and known. Note that they are not fundamental limitations of
+CEM and are adopted here so as to be consistent with the literature. The return Gt = PT"
+PRELIMINARIES,0.08108108108108109,"i=0 γirt+i,
+is the sum of discounted reward within an episode length of T. The agent aims to ﬁnd a policy ⇡
+that maximizes the expected return. We denote the learned model in MBRL as f!(·|s, a), which is
+parameterized by ! and approximates P(·|s, a)."
+PRELIMINARIES,0.08648648648648649,"Planning with the Cross Entropy Method
+Planning in MBRL is about leveraging the model to
+ﬁnd the best action in terms of its return. Model-Predictive-Control (MPC) performs decision-time"
+PRELIMINARIES,0.0918918918918919,"2We assume full observability, i.e. agent has access to the state."
+PRELIMINARIES,0.0972972972972973,planning at each time step up to a horizon to ﬁnd the optimal action sequence:
+PRELIMINARIES,0.10270270270270271,⇡MPC(st) = arg max
+PRELIMINARIES,0.10810810810810811,at:t+H−1
+PRELIMINARIES,0.11351351351351352,E[⌃H−1
+PRELIMINARIES,0.11891891891891893,"i=0 γir(st+i, at+i) + γHV (sH)]
+(1)"
+PRELIMINARIES,0.12432432432432433,"where H is the planning horizon, at:t+H−1 denotes the action sequence from time step t to t+H −1,
+and V (sH) is the terminal value function at the end of the horizon. The ﬁrst action in this sequence
+is executed and the rest are discarded. The agent then re-plans at the next time step."
+PRELIMINARIES,0.12972972972972974,Figure 2: Cross Entropy Method (CEM) for Planning in MBRL
+PRELIMINARIES,0.13513513513513514,"The Cross-Entropy Method (CEM) is a gradient-free optimization method that can be used for
+solving Eq. (1). The workﬂow is shown in Fig. 2. CEM planning starts by generating N samples
+{⌧j}N"
+PRELIMINARIES,0.14054054054054055,"j=1 = {(ˆaj,0, ˆaj,1, · · · , ˆaj,H−1)}N"
+PRELIMINARIES,0.14594594594594595,"j=1 from an initial sampling distribution gφ(⌧) parameterized
+by φ, where each sample ⌧j is an action sequence from the current time step up to the planning
+horizon H. The domain of gφ(⌧) has a dimension of d⌧= daH."
+PRELIMINARIES,0.15135135135135136,"Using a model f, CEM generates imaginary rollouts based on the action sequence {⌧j} (in the case
+of a stochastic model) and estimate the associated value v(⌧j) = E[⌃H−1"
+PRELIMINARIES,0.15675675675675677,"i=0 γir(sj,i, aj,i)] where sj,0
+is the current state s and sj,i+1 ⇠f(·|sj,i, aj,i). The terminal value γHV (sj,H) is omitted here
+following the convention in the CEM planning literature but the MPC performance can be further
+improved if paired with an accurate value predictor [Bertsekas, 2005, Lowrey et al., 2019]. The
+sampling distribution is then updated by ﬁtting to the current top-k samples in terms of their value
+estimates v(⌧j), using the Maximum Likelihood Estimation (MLE) which solves:"
+PRELIMINARIES,0.16216216216216217,"φ0 = arg max φ N
+X j=1"
+PRELIMINARIES,0.16756756756756758,"(v(⌧j) ≥vth) log gφ(⌧j)
+(2)"
+PRELIMINARIES,0.17297297297297298,"where vth is the threshold equal to the value of the k-th best sample and
+(·) is the indicator function.
+In practice, the update to the distribution parameters are smoothed by φl+1 = ↵φ0 + (1 −↵)φl where
+↵2 [0, 1] is a smoothing parameter that balances between the solution to Eq. (2) and the parameter
+at the current internal iteration l. CEM repeats this process of sampling and distribution update in an
+inner-loop, until it reaches the stopping condition. In practice, it is stopped when either a maximum
+number of iterations has been reached or the parameters have not changed for a few iterations. The
+output of CEM is an action sequence, typically set as the expectation3 of the most recent sampling
+distribution for uni-modal distributions such as Gaussians ˆµ = E(gφ) = (ˆa0, ˆa1, · · · , ˆaH−1)."
+PRELIMINARIES,0.1783783783783784,"Choices of Sampling Distributions in CEM:
+A common choice is a multivariate Gaussian
+distribution under which Eq.(2) has an analytical solution. But the uni-modal nature of Gaussian
+makes it inadequate in solving multi-modal optimization that often occurs in MBRL. To increase the
+capacity of the distribution, a Gaussian Mixture Model (GMM) can be used [Okada and Taniguchi,
+2020]. We denote such an approach as CEM-GMM. Going forward, we use CEM to refer to the
+vanilla version that employs a Gaussian distribution. Computationally, the major difference between
+CEM and CEM-GMM is that the distribution update in CEM-GMM is more computation-intensive
+since it solves for more parameters. Detailed steps can be found in Okada and Taniguchi [2020]."
+DECENTRALIZED CEM,0.1837837837837838,"3
+Decentralized CEM"
+DECENTRALIZED CEM,0.1891891891891892,"In this section, we ﬁrst introduce the formulation of the proposed decentralized approach called the
+Decentralized CEM (DecentCEM). Then we illustrate the intuition behind the proposed approach
+using a one-dimensional synthetic multi-modal optimization example where we show the issues of
+the existing CEM methods and how they can be addressed by DecentCEM."
+DECENTRALIZED CEM,0.1945945945945946,3Other options are discussed in Appendix A.2
+DECENTRALIZED CEM,0.2,"Formulation of DecentCEM
+DecentCEM is composed of an ensemble of M CEM instances
+indexed by i, each having its own sampling distributions gφi. They can be described by a set of
+distribution parameters Φ = {φi}M"
+DECENTRALIZED CEM,0.20540540540540542,"i=1. Each instance i manages its own sampling and distribution
+update by the steps described in Section 2, independently from other instances."
+DECENTRALIZED CEM,0.21081081081081082,Note that the N samples and k elites are evenly split among the M instances. The top- k
+DECENTRALIZED CEM,0.21621621621621623,"M sample
+sets are decentralized and managed by each instance independently whereas the centralized approach
+only keeps one set of top-k samples regardless of the distribution family used."
+DECENTRALIZED CEM,0.22162162162162163,"After the stopping condition is reached for all instances, the ﬁnal sampling distribution is taken as the
+best distribution in the set Φ according to (the arg max uses a deterministic tie-breaking):"
+DECENTRALIZED CEM,0.22702702702702704,φDecentCEM = arg max φi2Φ
+DECENTRALIZED CEM,0.23243243243243245,"Eφi[v(x)] ⇡arg max φi2Φ N
+M
+X j=1"
+DECENTRALIZED CEM,0.23783783783783785,"v(⌧i,j)
+(3)"
+DECENTRALIZED CEM,0.24324324324324326,"where Eφi[v(x)] denotes the expectation with respect to the distribution gφi, approximated by the
+sample mean of N"
+DECENTRALIZED CEM,0.24864864864864866,"M samples. When M = 1, it recovers the conventional CEM."
+DECENTRALIZED CEM,0.25405405405405407,"Figure 3: Left: The objective function in a 1D optimization task. Right: Comparison of the proposed
+DecentCEM method to CEM and CEM-GMM, wherein the line and the shaded region denote the mean and the
+min/max cost from 10 independent runs. ˆx: solution of each method."
+DECENTRALIZED CEM,0.2594594594594595,"Motivational Example
+Consider a one dimensional multi-modal optimization problem shown
+in Fig. 3 (Left): arg minx sin(x) + sin(10x/3), −7.5 x 7.5. There are eight local optima,
+including one global optimum f(x⇤) = −1.9 where x⇤= 5.146. This objective function mimics the
+RL value landscape that has many local optima, as shown by Wang and Ba [2020]. This optimization
+problem is “easy” in the sense that a grid search over the domain can get us a solution close to the
+global optimum. However, only our proposed DecentCEM method successfully converges to the
+global optimum consistently under varying population size (i.e., number of samples) and random
+runs, as shown in Fig. 3 (Right). For a fair comparison, hyperparameter search has been conducted
+on all methods for each population size (Appendix A)."
+DECENTRALIZED CEM,0.2648648648648649,"Figure 4: How the sampling distributions evolve in the 1D optimization task, after the speciﬁed iteration.
+Symbols include samples , elites , local optima
+, global optimum
+. 2nd row in each ﬁgure shows the
+weighted p.d.f of individual distribution. Population size: 200."
+DECENTRALIZED CEM,0.2702702702702703,"Both CEM-GMM and the proposed DecentCEM are equipped with multiple sampling distributions.
+The fact that CEM-GMM is outperformed by DecentCEM may appear surprising. To gain some
+insights, we illustrate in Fig. 4 how the sampling distribution evolves during the iterative update (more
+details in Fig. 10 in Appendix). CEM updated the unimodal distribution toward a local optimum
+despite seeing the global optimum. CEM-GMM appears to have a similar issue. During MLE on the
+top-k samples, it moved most distribution components towards the same local optimum which quickly"
+DECENTRALIZED CEM,0.2756756756756757,"led to mode collapse. On the contrary, DecentCEM successfully escaped the local optima thanks
+to its independent distribution update over decentralized top-k samples and was able to maintain a
+decent diversity among the distributions."
+DECENTRALIZED CEM,0.2810810810810811,"GMM suits density estimation problems like distribution-based clustering where the samples are
+drawn from a ﬁxed true distribution that can be represented by multi-modal Gaussians. However,
+in CEM for optimization, exploration is coupled with density estimation: the sampling distribution
+in CEM is not ﬁxed but rather gets updated iteratively toward the top-k samples. And the “true”
+distribution in optimization puts uniform non-zero densities to the global optima and zero densities
+everywhere else. When there is a unique global optimum, it degenerates into a Dirac measure that
+assigns the entire density to the optimum. Density estimation of such a distribution only needs one
+Gaussian but the exploration is challenging. In other words, the conditions for GMM to work well
+are not necessarily met when used as the sampling distribution in CEM. CEM-GMM is subject to
+mode collapse during the iterative top-k greediﬁcation, causing premature convergence, as observed
+in Fig 4. In comparison, our proposed decentralized approach takes care of the exploration aspect by
+running multiple CEM instances independently, each performing its own local improvement. This
+is shown to be effective from this optimization example and the benchmark results in Section 6.
+CEM-GMM only consistently converge to the global optimum when we increase the population size
+to the maximum 1,000 which causes expensive computations. Our proposed DecentCEM runs more
+than 100 times faster than CEM-GMM at this population size, shown in Table A.3 in Appendix."
+DECENTRALIZED CEM,0.2864864864864865,"Convergence of DecentCEM
+The convergence of DecentCEM requires the following assumption:"
+DECENTRALIZED CEM,0.2918918918918919,"Assumption 1. Let M be the number of instances in DecentCEM and each instance has a sample size
+of Nk"
+DECENTRALIZED CEM,0.2972972972972973,"M where Nk is the total number of samples that satisﬁes Nk = ⇥(kβ) where β > max{0, 1−2λ}.
+M and λ are some positive constant and 0 < M < Nk 8 k."
+DECENTRALIZED CEM,0.3027027027027027,"Here the assumption of the total sample size follows the same one as in the CEM literature. Other
+such standard assumptions are summarized in Appendix H."
+DECENTRALIZED CEM,0.3081081081081081,"Theorem 3.1 (Convergence of DecentCEM). If a CEM instance described in Algorithm 3 converges,
+and we decentralize it by evenly dividing its sample size Nk into M CEM instances which satisﬁes
+the Assumption 1, then the resulting DecentCEM converges almost surely to the best solution of the
+individual instances."
+DECENTRALIZED CEM,0.31351351351351353,"Proof. (sketch) We show that the previous convergence result of CEM [Hu et al., 2011] extends to
+DecentCEM under the same sample budget. The key observation is that the convergence property of
+each CEM instance still holds since the number of samples in each instance is only changed by a
+constant factor, i.e., number of instances. Each CEM instance converges to a local optimum. The
+convergence of DecentCEM to the best solution comes from the arg max operator and applying the
+strong law of large numbers. The detailed proof is left to Appendix H."
+DECENTCEM FOR PLANNING,0.31891891891891894,"4
+DecentCEM for Planning"
+DECENTCEM FOR PLANNING,0.32432432432432434,"In this section, we develop two instantiations of DecentCEM for planning in MBRL where the
+sampling distributions are parameterized by policy networks. For the dynamics model learning, we
+adopt the ensemble of probabilistic neural networks proposed in [Chua et al., 2018]. Each network
+predicts the mean and diagonal covariance of a Gaussian distribution and is trained by minimizing
+the negative log likelihood. Our work focuses on the planning aspect and refer to Chua et al. [2018]
+for further details on the model."
+DECENTCEM FOR PLANNING,0.32972972972972975,"CEM Planning with a Policy Network
+In MBRL, CEM is applied to every state separately to
+solve the optimization problem stated in Eq. (1). The sampling distribution is typically initialized
+to a ﬁxed distribution at the beginning of every episode [Okada and Taniguchi, 2020, Pinneri et al.,
+2020], or more frequently at every time step [Hafner et al., 2019]. Such initialization schemes are
+sample inefﬁcient since there is no mechanism that allows the information of the high-value region in
+the value space of one state to generalize to nearby states. Also, the information is discarded after the
+initialization. It is hence difﬁcult to scale the approach to higher dimensional solution spaces, present
+in many continuous control environments. Wang and Ba [2020] proposed to use a policy network in
+CEM planning that helped to mitigate the issues above."
+DECENTCEM FOR PLANNING,0.33513513513513515,"They developed two methods: POPLIN-A that plans in the action space, and POPLIN-P that plans
+in the parameter space of the policy network. In POPLIN-A, the policy network is used to learn to
+output the mean of a Gaussian sampling distribution of actions. In POPLIN-P, the policy network
+parameters serve as the initialization of the mean of the sampling distribution of parameters. The
+improved policy network can then be used to generate an action. They show that when compared to
+the vanilla method of using a ﬁxed sampling distribution in the action space, both modes of CEM
+planning with such a learned distribution perform better. The same principle of combining a policy
+network with CEM can be applied to the DecentCEM approach as well, which we describe next."
+DECENTCEM FOR PLANNING,0.34054054054054056,Policy Network 1
+DECENTCEM FOR PLANNING,0.34594594594594597,Policy Network M
+DECENTCEM FOR PLANNING,0.35135135135135137,Policy Network 2
+DECENTCEM FOR PLANNING,0.3567567567567568,Policy Network M-1
+DECENTCEM FOR PLANNING,0.3621621621621622,CEM Instance 1
+DECENTCEM FOR PLANNING,0.3675675675675676,CEM Instance 2
+DECENTCEM FOR PLANNING,0.372972972972973,CEM Instance M-1
+DECENTCEM FOR PLANNING,0.3783783783783784,CEM Instance M
+DECENTCEM FOR PLANNING,0.3837837837837838,"state
+action"
+DECENTCEM FOR PLANNING,0.3891891891891892,"Training
+Inference"
+DECENTCEM FOR PLANNING,0.3945945945945946,"Figure 5: The architecture of DecentCEM planning with M CEM instances.  i = φi for planning in action
+space and  i = ✓i for planning in policy network parameter space with the instance index i 2 {1, · · · , M}."
+DECENTCEM FOR PLANNING,0.4,"DecentCEM Planning with an Ensemble of Policy Networks
+For better sample efﬁciency in
+MBRL setting, we extend DecentCEM to use an ensemble of policy networks to learn the sampling
+distributions in the CEM instances. Similar to the POPLIN variations, we develop two instantiations
+of DecentCEM, namely DecentCEM-A and DecentCEM-P. The architecture of the proposed algorithm
+is illustrated in Fig. 5. DecentCEM-A plans in the action space. It consists of an ensemble of policy
+networks followed by CEM instances. Each policy network takes the current state st as input, outputs
+the parameters φi of the sampling distribution for CEM instance i in the action space. There is no
+fundamental difference from the DecentCEM formulation in Section 3 except that the initialization
+of sampling distributions is learned by the policy networks rather than a ﬁxed distribution."
+DECENTCEM FOR PLANNING,0.40540540540540543,"The second instantiation DecentCEM-P plans in the parameter space of the policy network. The
+output of each policy network is the network parameter ✓i. The initial sampling distribution of CEM
+instance i is a Gaussian distribution over the policy parameter space with the mean at ✓i. In the
+arg max operation in Eq. (3), the sample ⌧i,j denotes the j-th parameter sample from the distribution
+for CEM instance i. Its value is approximated by the model-predicted value of the action sequence
+generated from the policy network with the parameters ⌧i,j."
+DECENTCEM FOR PLANNING,0.41081081081081083,"The ensemble of policy networks in both instantiations DecentCEM-A and DecentCEM-P are initial-
+ized with random weights, which is empirically found to be adequate to ensure that the output of the
+networks do not collapse into the same distribution (Sec. 6.2 and Appendix F)."
+DECENTCEM FOR PLANNING,0.41621621621621624,"Training the Policy Networks in DecentCEM
+When planning in action space, the policy networks
+are trained by behavior cloning, similar to the scheme in POPLIN [Wang and Ba, 2020]. Denote the
+ﬁrst action in the planned action sequence at time step t by the i-th CEM instance as ˆat,i, the i-th
+policy network is trained to mimic ˆat,i and the training objective is min✓i Est,ˆat,i⇠Dika✓i(st)−ˆat,ik2"
+DECENTCEM FOR PLANNING,0.42162162162162165,"where Di denotes the replay buffer with the state and action pairs (st, ˆat,i). a✓i(st) is the action
+prediction at state st from the policy network parameterized by ✓i."
+DECENTCEM FOR PLANNING,0.42702702702702705,"While the above training scheme can be applied to both planning in action space and parameter space,
+we follow the setting parameter average (AVG) [Wang and Ba, 2020] training scheme when planning
+in parameter space. The parameter is updated as ✓i = ✓i +
+1
+|Di| P"
+DECENTCEM FOR PLANNING,0.43243243243243246,"δi2Di δi where Di = {δi} is a
+dataset of policy network parameter updates planned from the i-th CEM instance previously. It is
+more effective than behavior cloning based on the experimental result reported by Wang and Ba
+[2020] and our own preliminary experiments."
+DECENTCEM FOR PLANNING,0.43783783783783786,"Note that each policy network in the ensemble is trained independently from the data observed by
+its corresponding CEM instance rather than from the aggregated result after taking the arg max.
+This allows for enough diversity among the instances. More importantly, it increases the size of the
+training dataset for the policy networks compared to the approach taken in POPLIN. For example,
+with an ensemble of M instances, there would be M training data samples available from one real
+environment interaction, compared to the one data sample in POPLIN-A/P. As a result, DecentCEM
+is able to train larger policy networks than is otherwise possible, shown in Sec. 6.2 and Appendix F."
+RELATED WORK,0.44324324324324327,"5
+Related Work"
+RELATED WORK,0.4486486486486487,"We limit the scope of related works to CEM planning methods, which is one of the broad class of
+planning algorithms in MBRL. For a review of different families of planning algorithms, the readers
+are referred to Wang et al. [2019]. Vanilla CEM planning in action space with a single Gaussian
+distribution has been adopted as the planning method for both simulated and real-world robot control
+[Chua et al., 2018, Finn and Levine, 2017, Ebert et al., 2018, Hafner et al., 2019, Yang et al., 2020,
+Zhang et al., 2021]. Previous attempts to improving the performance of CEM-based planning can be
+grouped into two types of approaches. The ﬁrst type includes CEM in a hybrid of CEM+X where “X”
+is some other component or algorithm. POPLIN [Wang and Ba, 2020] is a prominent example where
+“X” is a policy network that learns a state conditioned distribution that initializes the subsequent CEM"
+RELATED WORK,0.4540540540540541,"process. Another common choice of “X” is gradient-based adjustment of the samples drawn in CEM.
+GradCEM [Bharadhwaj et al., 2020] adjusts the samples in each iteration of CEM by taking gradient
+ascent of the return estimate w.r.t the actions. CEM-RL [Pourchot and Sigaud, 2019] also combines
+CEM with gradient based updates from RL algorithms but the samples are in the parameter space of
+the actor network. To improve computational efﬁciency, Lee et al. [2020] proposes an asynchronous
+version of CEM-RL where each CEM instance updates the sampling distribution asynchronously."
+RELATED WORK,0.4594594594594595,"The second type of approach aims at improving CEM itself. Amos and Yarats [2020] proposes a
+fully-differentiable version of CEM called DCEM. The key is to make the top-k selection in CEM
+differentiable such that the entire CEM module can be trained in an end-to-end fashion. Despite
+cutting down the number of samples needed in CEM, this method does not beat the vanilla CEM
+in benchmark test. GACEM [Hakhamaneshi et al., 2020] increase the capacity of the sampling
+distribution by replacing the Gaussian distribution with an auto-regressive neural network. This
+change allows CEM to perform search in multi-modal solution space but it is only veriﬁed in toy
+examples and its computation seems too high to be scaled to MBRL tasks. Another method that
+increases the capacity of the sampling distribution is PaETS [Okada and Taniguchi, 2020] that uses
+a GMM with CEM. It is the approach that we followed for our CEM-GMM implementation. The
+running time results in the optimization task in Sec.3 shows that it is computationally heavier than
+the CEM and DecentCEM methods, limiting its use in complex environments. Macua et al. [2015]
+proposed a “distributed” CEM that is similar in spirit to our method in that they used multiple sampling
+distributions and applied the top-k selection locally to samples from each instance. However, their
+instances are cooperative as opposed to being independent as in our work. They applied “collaborative
+smoothed projection steps” to update each sampling distribution as an average of its neighboring
+instances including itself. The updating procedure is more complicated than our proposed method
+and proper network topology of the instances is needed: a naive approach of updating according to
+all instances will lead to mode collapse since the resulting sampling distributions will be identical.
+The method was tested in toy optimization examples only. Overall, this second type of approach did
+not outperform vanilla CEM, a phenomenon that motivated our move to a decentralized formulation."
+EXPERIMENTS,0.4648648648648649,"6
+Experiments"
+EXPERIMENTS,0.4702702702702703,"We evaluate the proposed DecentCEM methods in simulated environments with continuous action
+space. The experimental evaluation is mainly set up to understand if DecentCEM improves the
+performance and sample efﬁciency over conventional CEM approaches."
+BENCHMARK SETUP,0.4756756756756757,"6.1
+Benchmark Setup"
+BENCHMARK SETUP,0.4810810810810811,"Environments We run the benchmark in a set of OpenAI Gym [Brockman et al., 2016] and Mu-
+JoCo [Todorov et al., 2012] environments commonly used in the MBRL literature: Pendulum,"
+BENCHMARK SETUP,0.4864864864864865,"Figure 6: Learning curves of the proposed DecentCEM methods and the baselines on continuous control
+environments. The line and the shaded region shows the mean and standard error of evaluation results from 5
+training runs with different random seeds."
+BENCHMARK SETUP,0.4918918918918919,"InvertedPendulum, Cartpole, Acrobot, FixedSwimmer4, Reacher, Hopper, Walker2D, HalfChee-
+tah, PETS-Reacher3D, PETS-HalfCheetah, PETS-Pusher, Ant. The three environments preﬁxed
+by “PETS” are proposed by Chua et al. [2018]. Note that MBRL algorithms often make different
+assumptions about the dynamics model or the reward function. Their benchmark environments are
+often modiﬁed from the original OpenAI gym environments such that the respective algorithm is
+runnable. Whenever possible, we inherit the same environment setup from that of the respective
+baseline methods. This is so that the comparison against the baselines is fair. More details on the
+environments and their reward functions are in Appendix B."
+BENCHMARK SETUP,0.4972972972972973,"Algorithms The baseline algorithms are PETS [Chua et al., 2018] and POPLIN [Wang and Ba,"
+BENCHMARK SETUP,0.5027027027027027,"2020]. PETS uses CEM with a single Gaussian distribution for planning. The POPLIN algorithm
+combines a single policy network with CEM. As described in Sec. 4, POPLIN comes with two
+modes: POPLIN-A and POPLIN-P with the sufﬁx “A” denotes planning in action space and “P”
+for the network parameter space. We reuse default hyperparameters for these algorithms from the
+original papers if not mentioned speciﬁcally. For our proposed methods, we include two variations
+DecentCEM-A and DecentCEM-P as described in Sec. 4 where the sufﬁx carries the same meaning
+as in POPLIN-A/P. The ensemble size of DecentCEM-A/P as well as detailed hyperparameters for
+all algorithms are listed in the Appendix D.2. We also included Decentralized PETS, denoted by
+DecentPETS. All MBRL algorithms studied in this benchmark use the same ensemble networks
+proposed by Chua et al. [2018] for model learning. And a model-free RL baseline SAC [Haarnoja
+et al., 2018] was included."
+BENCHMARK SETUP,0.5081081081081081,"Evaluation Protocol The learning curve shows the mean and standard error of the test performance
+out of 5 independent training runs. The test performance is an average return of 5 episodes of
+the evaluation environment, evaluated at every training episode. At the beginning of each training
+run, the evaluation environment is initialized with a ﬁxed random seed such that the evaluation
+environments are consistent across different methods and multiple runs to make it a fair comparison.
+All experiments were conducted using Tesla V100 Volta GPUs."
+RESULTS,0.5135135135135135,"6.2
+Results"
+RESULTS,0.518918918918919,"Learning Curves
+The learning curves of the algorithms are shown in Fig. 6 for InvertedPendulum,
+Acrobot, Reacher, Walker2D, PETS-Pusher and Ant, sorted by the state and action dimensionality"
+RESULTS,0.5243243243243243,"4a modiﬁed version of the original Gym Swimmer environment where the velocity sensor on the neck is
+moved to the head. This ﬁx was proposed by Wang and Ba [2020]"
+RESULTS,0.5297297297297298,"of task. The curves are smoothed with a sliding window of 10 data points. The full results for all
+environments are included in Appendix E. We can observe two main patterns from the results. One
+pattern was that in most environments, the decentralized methods DecentPETS, DecentCEM-A/P
+either matched or outperformed their counterpart that took a centralized approach. In fact, the former
+can be seen as a generalization of the later, by an additional hyperparameter that controls the ensemble
+size with size one recovering the centralized approach. The optimal ensemble size depends on the
+task. This additional hyperparameter offers ﬂexibility in ﬁne-tuning CEM for individual domains.
+For instance in Fig. 6, for the P-mode where the planning is performed in policy parameter space,
+an ensemble size of larger than one works better in most environments while an ensemble size of
+one works better in Ant. The other pattern was that using policy networks to learn the sampling
+distribution in general helped improving the performance of centralized CEM but not necessarily in
+decentralized formulation. This is perhaps due to that the added exploration from multiple instances
+makes it possible to identify good solutions in some environments. Using a policy net in such case
+may hinder the exploration due to overﬁtting to previous actions."
+RESULTS,0.5351351351351351,"Ablation Study
+A natural question to ask about the DecentCEM-A/P methods is whether the
+increased performance is from the larger number of neural network parameters. We added two
+variations of the POPLIN baselines where a bigger policy network was used. The number of the
+network parameters was equivalent to that of the ensemble of policy networks in DecentCEM-A/P.
+We show the comparison in Reacher(2) and PETS-Pusher(7) (action dimension in parenthesis) in
+Fig. 7. In both action space and parameter space planning, a bigger policy network in POPLIN either
+did not help or signiﬁcantly impaired the performance (see the POPLIN-P results in reacher and
+PETS-Pusher). This is expected since unlike DecentCEM, the training data in POPLIN do not scale
+with the size of the policy network, as explained at the end of Sec. 4."
+RESULTS,0.5405405405405406,"Figure 7: Ablation study on the policy network size where POPLIN-A&P have a bigger policy network
+equivalent in the total number of network weights to their DecentCEM counterparts."
+RESULTS,0.5459459459459459,"Next, we look into the impact of ensemble size. Fig. 8 shows the learning curves of different ensemble
+sizes in the Reacher environments for action space planning (left), parameter space planning (middle)
+and planning without policy networks (right). Since we ﬁx the total number of samples the same
+across the methods, the larger the ensemble size is, the fewer samples that each instance has access
+to. As the ensemble size goes up, we are trading off the accuracy of the sample mean for better
+exploration by more instances. Varying this hyperparameter allows us to ﬁnd the best trade-off, as
+can be observed from the ﬁgure where increasing the ensemble size beyond a sweet spot yields
+diminishing or worse returns."
+RESULTS,0.5513513513513514,"Figure 8: Ablation study on the ensemble size in DecentCEM-A/P and DecentPETS, e.g. E2 denotes an
+ensemble with 2 instances. The total number of samples during planning are the same across all variations."
+RESULTS,0.5567567567567567,"(a) Selection Ratios
+(b) Action Statistics
+(c) Action Distance Statistics"
+RESULTS,0.5621621621621622,"Figure 9: Ablation of ensemble diversity in Pendulum during training of DecentCEM-A with 5 instances. (a)
+Cumulative selection ratio of each CEM instance. (b)(c) Statistics of the actions and pairwise action distances of
+the instances, respectively. The line and shaded region represent the mean and min/max."
+RESULTS,0.5675675675675675,"Figure 9(a) shows the cumulative selection ratio of each CEM instance during training of DecentCEM-
+A with an ensemble size of 5. It suggests that the random initialization of the policy network is"
+RESULTS,0.572972972972973,"sufﬁcient to avoid mode collapse. We also plot the actions and pairwise action distances of the
+instances in Figure 9(b) and 9(c). For visual clarity, we show a time segment toward the end of the
+training rather than all the 10k steps. DecentCEM-A has maintained enough diversity in the instances
+even toward the end of the training. DecentCEM-P and DecentPETS share similar trends. The plots
+of their results along with other ablation results are included in Appendix F."
+CONCLUSION AND FUTURE WORK,0.5783783783783784,"7
+Conclusion and Future Work"
+CONCLUSION AND FUTURE WORK,0.5837837837837838,"In this paper, we study CEM planning in the context of continuous-action MBRL. We propose a
+novel decentralized formulation of CEM named DecentCEM, which generalizes CEM to run multiple
+independent instances and recovers the conventional CEM when the number of instances is one. We
+illustrate the strengths of the proposed DecentCEM approach in a motivational one-dimensional
+optimization task and show how it fundamentally differs from the CEM approach that uses a Gaussian
+or GMM. We also show that DecentCEM has almost sure convergence to a local optimum. We
+extend the proposed approach to MBRL by plugging in the decentralized CEM into three previous
+CEM-based methods: PETS, POPLIN-A, POPLIN-P. We show their efﬁcacy in benchmark control
+tasks and ablations studies."
+CONCLUSION AND FUTURE WORK,0.5891891891891892,"There is a gap between the convergence result and practice where the theory assumes that the number
+of samples grow polynomially with the iterations whereas a constant sample size is commonly used
+in practice including our work. Investigating the convergence properties of CEM under a constant
+sample size makes an interesting direction for future work. Another interesting direction to pursue is
+ﬁnite-time analysis of CEM under both centralized and decentralized formulations. In addition, the
+implementation has room for optimization: the instances currently run serially but can be improved
+by a parallel implementation to take advantage of the parallelism of the ensemble."
+CONCLUSION AND FUTURE WORK,0.5945945945945946,Acknowledgments and Disclosure of Funding
+CONCLUSION AND FUTURE WORK,0.6,"We would like to thank the anonymous reviewers for their time and valuable suggestions. Zichen
+Zhang would like to thank Jincheng Mei for helpful discussions in the convergence analysis and
+Richard Sutton for raising a question about the model learning. This work was partially done during
+Zichen Zhang’s internship at Huawei Noah’s Ark Lab. Zichen Zhang gratefully acknowledges the
+ﬁnancial support by an NSERC CGSD scholarship and an Alberta Innovates PhD scholarship. He is
+thankful for the compute resources generously provided by Digital Research Alliance of Canada (and
+formerly Compute Canada), which is sponsored through the accounts of Martin Jagersand and Dale
+Schuurmans. Dale Schuurmans gratefully acknowledges funding from the Canada CIFAR AI Chairs
+Program, Amii and NSERC."
+REFERENCES,0.6054054054054054,References
+REFERENCES,0.6108108108108108,"A. Agarwal, N. Jiang, and S. M. Kakade. Reinforcement learning: Theory and algorithms. 2019."
+REFERENCES,0.6162162162162163,B. Amos and D. Yarats. The differentiable cross-entropy method. In International Conference on
+REFERENCES,0.6216216216216216,"Machine Learning, pages 291–302. PMLR, 2020."
+REFERENCES,0.6270270270270271,"D. P. Bertsekas. Dynamic programming and optimal control 3rd edition, volume i. Belmont, MA:"
+REFERENCES,0.6324324324324324,"Athena Scientiﬁc, 2005."
+REFERENCES,0.6378378378378379,"H. Bharadhwaj, K. Xie, and F. Shkurti. Model-predictive control via cross-entropy and gradient-based"
+REFERENCES,0.6432432432432432,"optimization. In Learning for Dynamics and Control, pages 277–286. PMLR, 2020."
+REFERENCES,0.6486486486486487,"G. Brockman, V. Cheung, L. Pettersson, J. Schneider, J. Schulman, J. Tang, and W. Zaremba. Openai"
+REFERENCES,0.654054054054054,"gym. arXiv preprint arXiv:1606.01540, 2016."
+REFERENCES,0.6594594594594595,"K. Chua, R. Calandra, R. McAllister, and S. Levine. Deep reinforcement learning in a handful of"
+REFERENCES,0.6648648648648648,"trials using probabilistic dynamics models. In Proceedings of the 32nd International Conference
+on Neural Information Processing Systems, NIPS’18, page 4759–4770, 2018."
+REFERENCES,0.6702702702702703,"P.-T. De Boer, D. P. Kroese, S. Mannor, and R. Y. Rubinstein. A tutorial on the cross-entropy method."
+REFERENCES,0.6756756756756757,"Annals of operations research, 134(1):19–67, 2005."
+REFERENCES,0.6810810810810811,"F. Ebert, C. Finn, S. Dasari, A. Xie, A. Lee, and S. Levine. Visual foresight: Model-based deep"
+REFERENCES,0.6864864864864865,"reinforcement learning for vision-based robotic control. arXiv preprint arXiv:1812.00568, 2018."
+REFERENCES,0.6918918918918919,C. Finn and S. Levine. Deep visual foresight for planning robot motion. In 2017 IEEE International
+REFERENCES,0.6972972972972973,"Conference on Robotics and Automation (ICRA), pages 2786–2793. IEEE, 2017."
+REFERENCES,0.7027027027027027,"T. Haarnoja, A. Zhou, P. Abbeel, and S. Levine. Soft actor-critic: Off-policy maximum entropy deep"
+REFERENCES,0.7081081081081081,"reinforcement learning with a stochastic actor. In International conference on machine learning,
+pages 1861–1870. PMLR, 2018."
+REFERENCES,0.7135135135135136,"D. Hafner, T. Lillicrap, I. Fischer, R. Villegas, D. Ha, H. Lee, and J. Davidson. Learning latent"
+REFERENCES,0.7189189189189189,"dynamics for planning from pixels. In International Conference on Machine Learning, pages
+2555–2565. PMLR, 2019."
+REFERENCES,0.7243243243243244,"K. Hakhamaneshi, K. Settaluri, P. Abbeel, and V. Stojanovic. Gacem: Generalized autoregres-"
+REFERENCES,0.7297297297297297,"sive cross entropy method for multi-modal black box constraint satisfaction. arXiv preprint
+arXiv:2002.07236, 2020."
+REFERENCES,0.7351351351351352,"J. Hu, P. Hu, and H. S. Chang. A stochastic approximation framework for a class of randomized"
+REFERENCES,0.7405405405405405,"optimization algorithms. IEEE Transactions on Automatic Control, 57(1):165–178, 2011."
+REFERENCES,0.745945945945946,"K. Lee, B.-U. Lee, U. Shin, and I. S. Kweon. An efﬁcient asynchronous method for integrating"
+REFERENCES,0.7513513513513513,"evolutionary and gradient-based policy search. Advances in Neural Information Processing Systems,
+33, 2020."
+REFERENCES,0.7567567567567568,"K. Lowrey, A. Rajeswaran, S. Kakade, E. Todorov, and I. Mordatch. Plan online, learn ofﬂine:"
+REFERENCES,0.7621621621621621,"Efﬁcient learning and exploration via model-based control. In International Conference on
+Learning Representations, ICLR, 2019."
+REFERENCES,0.7675675675675676,"S. V. Macua, S. Zazo, and J. Zazo. Distributed black-box optimization of nonconvex functions. In"
+REFERENCES,0.772972972972973,"2015 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP), pages
+3591–3595. IEEE, 2015."
+REFERENCES,0.7783783783783784,"S. Mannor, R. Y. Rubinstein, and Y. Gat. The cross entropy method for fast policy search. In"
+REFERENCES,0.7837837837837838,"Proceedings of the 20th International Conference on Machine Learning (ICML-03), pages 512–
+519, 2003."
+REFERENCES,0.7891891891891892,M. Okada and T. Taniguchi. Variational inference mpc for bayesian model-based reinforcement
+REFERENCES,0.7945945945945946,"learning. In Conference on Robot Learning, pages 258–272. PMLR, 2020."
+REFERENCES,0.8,"C. Pinneri, S. Sawant, S. Blaes, J. Achterhold, J. Stueckler, M. Rolinek, and G. Martius. Sample-"
+REFERENCES,0.8054054054054054,"efﬁcient cross-entropy method for real-time planning. arXiv preprint arXiv:2008.06389, 2020."
+REFERENCES,0.8108108108108109,A. Pourchot and O. Sigaud. CEM-RL: combining evolutionary and gradient-based methods for policy
+REFERENCES,0.8162162162162162,"search. In 7th International Conference on Learning Representations, ICLR 2019, New Orleans,
+LA, USA, May 6-9, 2019."
+REFERENCES,0.8216216216216217,"E. Todorov, T. Erez, and Y. Tassa. Mujoco: A physics engine for model-based control. In 2012"
+REFERENCES,0.827027027027027,"IEEE/RSJ international conference on intelligent robots and systems, pages 5026–5033. IEEE,
+2012."
+REFERENCES,0.8324324324324325,T. Wang and J. Ba. Exploring model-based planning with policy networks. In 8th International
+REFERENCES,0.8378378378378378,"Conference on Learning Representations, ICLR, Addis Ababa, Ethiopia, April 26-30, 2020."
+REFERENCES,0.8432432432432433,"T. Wang, X. Bao, I. Clavera, J. Hoang, Y. Wen, E. Langlois, S. Zhang, G. Zhang, P. Abbeel, and J. Ba."
+REFERENCES,0.8486486486486486,"Benchmarking model-based reinforcement learning. CoRR, abs/1907.02057, 2019."
+REFERENCES,0.8540540540540541,"Y. Yang, K. Caluwaerts, A. Iscen, T. Zhang, J. Tan, and V. Sindhwani. Data efﬁcient reinforcement"
+REFERENCES,0.8594594594594595,"learning for legged robots. In Conference on Robot Learning, pages 1–10. PMLR, 2020."
+REFERENCES,0.8648648648648649,"B. Zhang, R. Rajan, L. Pineda, N. Lambert, A. Biedenkapp, K. Chua, F. Hutter, and R. Calandra."
+REFERENCES,0.8702702702702703,"On the importance of hyperparameter optimization for model-based reinforcement learning. In
+International Conference on Artiﬁcial Intelligence and Statistics, pages 4015–4023. PMLR, 2021."
+REFERENCES,0.8756756756756757,Checklist
+REFERENCES,0.8810810810810811,1. For all authors...
+REFERENCES,0.8864864864864865,(a) Do the main claims made in the abstract and introduction accurately reﬂect the paper’s contribu-
+REFERENCES,0.8918918918918919,"tions and scope? [Yes]
+(b) Did you describe the limitations of your work? [Yes] Limitations are discussed in Sec. 7 and"
+REFERENCES,0.8972972972972973,"Appendix G.
+(c) Did you discuss any potential negative societal impacts of your work? [N/A]
+(d) Have you read the ethics review guidelines and ensured that your paper conforms to them? [Yes]"
+REFERENCES,0.9027027027027027,2. If you are including theoretical results...
+REFERENCES,0.9081081081081082,"(a) Did you state the full set of assumptions of all theoretical results? [Yes]
+(b) Did you include complete proofs of all theoretical results? [Yes]"
+REFERENCES,0.9135135135135135,3. If you ran experiments...
+REFERENCES,0.918918918918919,"(a) Did you include the code, data, and instructions needed to reproduce the main experimental"
+REFERENCES,0.9243243243243243,"results (either in the supplemental material or as a URL)? [Yes]
+(b) Did you specify all the training details (e.g., data splits, hyperparameters, how they were chosen)?"
+REFERENCES,0.9297297297297298,"[Yes] See Section 6, Appendix A, B and D.
+(c) Did you report error bars (e.g., with respect to the random seed after running experiments"
+REFERENCES,0.9351351351351351,"multiple times)? [Yes] See Section 6 and Appendix A.
+(d) Did you include the total amount of compute and the type of resources used (e.g., type of GPUs,"
+REFERENCES,0.9405405405405406,"internal cluster, or cloud provider)? [Yes] See section 6.1."
+REFERENCES,0.9459459459459459,"4. If you are using existing assets (e.g., code, data, models) or curating/releasing new assets..."
+REFERENCES,0.9513513513513514,"(a) If your work uses existing assets, did you cite the creators? [Yes]
+(b) Did you mention the license of the assets? [N/A] The assets (Gym, mujoco) are cited and well"
+REFERENCES,0.9567567567567568,"known.
+(c) Did you include any new assets either in the supplemental material or as a URL? [No]
+(d) Did you discuss whether and how consent was obtained from people whose data you’re us-"
+REFERENCES,0.9621621621621622,"ing/curating? [N/A]
+(e) Did you discuss whether the data you are using/curating contains personally identiﬁable informa-"
+REFERENCES,0.9675675675675676,tion or offensive content? [N/A]
+REFERENCES,0.972972972972973,5. If you used crowdsourcing or conducted research with human subjects...
+REFERENCES,0.9783783783783784,"(a) Did you include the full text of instructions given to participants and screenshots, if applicable?"
+REFERENCES,0.9837837837837838,"[N/A]
+(b) Did you describe any potential participant risks, with links to Institutional Review Board (IRB)"
+REFERENCES,0.9891891891891892,"approvals, if applicable? [N/A]
+(c) Did you include the estimated hourly wage paid to participants and the total amount spent on"
+REFERENCES,0.9945945945945946,participant compensation? [N/A]

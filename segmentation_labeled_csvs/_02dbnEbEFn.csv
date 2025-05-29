@@ -1,0 +1,788 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,Abstract
+ABSTRACT,0.0049504950495049506,"Language models can be augmented with a context retriever to incorporate knowl-
+edge from large external databases. By leveraging retrieved context, the neural net-
+work does not have to memorize the massive amount of world knowledge within its
+internal parameters, leading to better parameter efﬁciency, interpretability and mod-
+ularity. In this paper we examined a simple yet effective architecture for incorporat-
+ing external context into language models based on decoupled Encoder-Decoder
+architecture. We showed that such a simple architecture achieves competitive
+results on auto-regressive language modeling and open domain question answer-
+ing tasks. We also analyzed the behavior of the proposed model which performs
+grounded context transfer. Finally we discussed the computational implications of
+such retrieval augmented models."
+INTRODUCTION,0.009900990099009901,"1
+Introduction"
+INTRODUCTION,0.01485148514851485,"Transformers have proven to be powerful language models that capture an impressive amount of
+world knowledge in its internal parameters and generalize to a variety of downstream tasks [39, 31].
+Recently, there has been a lot of success in improving language model quality by increasing the
+number of parameters in transformers, often on the order of hundreds of billion [10, 30, 38, 6].
+However, the scaling of model size also contributes to the exponential rise of the computation costs,
+both in terms of the number of accelerators needed and energy consumption [29]."
+INTRODUCTION,0.019801980198019802,"To overcome the exponential increase in the number of parameters, one natural idea is to utilize
+information retrieved from an external source such as a massive external database, therefore freeing
+the neural network from having to memorize world knowledge. To this end, researchers proposed
+multiple context augmented language model architectures [21, 15, 4, 44, 26]. Such architecture
+typically has two components: a retriever that embeds the input sequence and retrieves relevant
+context from external source through vector similarity search; a neural network that integrates both
+the input and retrieved external context into the prediction of target sequence, formally:"
+INTRODUCTION,0.024752475247524754,"P(y|x, C = Retrieve(x, D); θ) ≥P(y|x, θ′)
+(1)"
+INTRODUCTION,0.0297029702970297,"Here, C = {c} is a set of context retrieved from the external database D. θ′ is a self-contained
+language model which predicts target sequence y based solely on the input x whereas θ corresponds
+to the context augmented language model which incorporates both the input x and the retrieved
+context C."
+INTRODUCTION,0.034653465346534656,"One of the challenges for such context augmented language model is the computational cost of
+context retrieval and incorporation, especially when multiple pieces of context is present or the
+context sequence is long. In this paper, we propose a computationally efﬁcient architecture for"
+INTRODUCTION,0.039603960396039604,∗Equal contribution
+INTRODUCTION,0.04455445544554455,"incorporating context based on vanilla Encoder-Decoder, which decouples the encoding of context
+and the prediction of target sequence. We show that the model with such a simple architecture is
+competitive when compared with customized mechanisms such as Chunked-Cross-Attention [4]
+on language modeling score (as measured by bits-per-byte, BPB), while being more efﬁcient in
+terms of parameter count and computation cost. Then, we deﬁne metrics to measure the utility of
+the retrieved context and use it to guide the training of the retriever. We further show competitive
+results on downstream tasks of question answering, and demonstrate that the model takes advantage
+of the retrieved context without memorizing facts within its internal parameters. Finally, we study the
+implication of context retrieval in terms of retrieval latency, accuracy and computation cost."
+INTRODUCTION,0.04950495049504951,To summarize the main contributions of this article:
+INTRODUCTION,0.054455445544554455,"• Proposed a novel Encoder-Decoder based architecture for incorporating retrieved external
+context, which decouples context encoding from language model inference.
+• Demonstrated the competitive results of the proposed model on both the auto-regressive
+language modeling task and the open domain question answering task.
+• Analyzed model behavior by understanding how context improves language modeling pre-
+diction on tokens with different linguistic properties and how the model performs grounded
+context transfer.
+• Discussed computational cost and retrieval efﬁciency in context augmentation."
+LIT REVIEW,0.0594059405940594,"2
+Related Works"
+LIT REVIEW,0.06435643564356436,"Large language models, typically in the form of big neural networks, are trained with a huge amount
+of training data rich in unstructured knowledge. Researchers have found that after model training, the
+neural networks often end up storing a surprisingly large amount of memorized information within
+its weights [2, 7] which are then leveraged as a knowledge base. Multiple hypotheses have been
+developed on how components such as fully-connected layers [13] and attention layers [5] may be
+responsible for such memorization behavior. While the capability of storing world knowledge is
+desirable, memorization also contributes to huge model sizes and the lack of explicit control over
+knowledge base, such as performing selection or updates."
+LIT REVIEW,0.06930693069306931,"An alternative strategy is to enable language models to incorporate world knowledge in the form of
+retrieved context from external sources, instead of having to memorize them. Multiple works have
+proposed architectures that support external retrieval, usually composed of a context retriever that
+searches a large external key value store and a method of integrating retrieved information."
+LIT REVIEW,0.07425742574257425,"There are various ways to construct the key value store. The keys are primarily used for similarity
+matching, and they can be sparse vectors such as BM25 [34], or dense embeddings extracted from
+part of the model [21, 25, 40], or from pretrained embedders [12, 28], or embedders trained for
+speciﬁc downstream tasks [15, 20, 41, 35, 24, 11]. The values also have various different forms. For
+example, TOME [11] stores a dense embedding about the contextual information of an entity mention,
+while Realm [15], RAG [26], FID [18], Retro [4], MARGE [25], DenSPI [35] and DensePhrases [24]
+store the raw text as the value. Works such as kNN-LM [21] and Spalm [44] store one token as
+a value. Finally the key value store is searched over using vector similarity techniques, typically
+with some off-the-shelf nearest neighbor search implementations such as FAISS [19], ScaNN [14],
+HNSW [27] or SPTAG [9]."
+LIT REVIEW,0.07920792079207921,"There are also many different ways to integrate the retrieved context. A popular approach is to
+concatenate the retrieval results with the original input and jointly process them. It has been adopted
+by works such as Realm [15], RAG [26], and FiD [18]. Other works utilize some forms of cross
+attention for the context integration, such as the Chunked-Cross-Attention with input conditioning
+in Retro [4], kNN Attention in Memorizing Transformer [40], Memory Attention in TOME [11]
+and Cross-Attention in MARGE [25]. For token level integration, kNN-LM [21] uses simple linear
+interpolation while Spalm [44] uses a learned gate based on the last layer embedding. There are
+also works that directly utilize the retrieval results without any integration, such as DenSPI [35] and
+DensePhrases [24]. Most of the works use retrieval as a way to augment tasks such as language
+modeling or question answering, with the exception of MARGE [25] where retrieval is treated as an
+autoencoder bottleneck for multilingual pretraining, and is not strictly necessary for inference. We
+compare representative previous works and contrast with our proposal in Table 1."
+LIT REVIEW,0.08415841584158416,"Method
+Retrieval
+Granularity"
+LIT REVIEW,0.0891089108910891,"Retrieval
+Encoding"
+LIT REVIEW,0.09405940594059406,"Context
+Integration"
+LIT REVIEW,0.09900990099009901,"Decoupled
+Context Encoding
+Tasks"
+LIT REVIEW,0.10396039603960396,"kNN-LM [21]
+Token
+Last layer
+Interpolation
+Yes
+LM
+Spalm [44]
+Token
+Last layer
+Gating
+Yes
+LM
+Realm [15], RAG [26],
+FID [18]
+Input
+Trained
+Concat
+No
+OpenQA"
+LIT REVIEW,0.10891089108910891,"Retro [4]
+Chunk
+Frozen
+Chunked-
+Cross-Attention
+No
+LM,
+OpenQA"
+LIT REVIEW,0.11386138613861387,"Proposed
+Chunk
+Frozen /
+trained"
+LIT REVIEW,0.1188118811881188,"Encoder-
+Decoder
+Cross-Attention
+Yes"
+LIT REVIEW,0.12376237623762376,"LM,
+OpenQA"
+LIT REVIEW,0.12871287128712872,"Table 1: Architectural differences between previous retrieval augmented model and ours in (i) context
+retrieval, (ii) context integration and (iii) targeted applications."
+LIT REVIEW,0.13366336633663367,Input x
+LIT REVIEW,0.13861386138613863,Decoder Input
+LIT REVIEW,0.14356435643564355,"x1     x2     x3 
+y1      y2"
+LIT REVIEW,0.1485148514851485,"x2       x3 
+ y1       y2        y3"
+LIT REVIEW,0.15346534653465346,"Server
+(Retrieval+Context Encoder)"
+LIT REVIEW,0.15841584158415842,"Client 
+(Context Augmented LM)"
+LIT REVIEW,0.16336633663366337,Decoder
+LIT REVIEW,0.16831683168316833,Output
+LIT REVIEW,0.17326732673267325,Request
+LIT REVIEW,0.1782178217821782,Auto-regressive Decoding
+LIT REVIEW,0.18316831683168316,Key Value Store
+LIT REVIEW,0.18811881188118812,Context c
+LIT REVIEW,0.19306930693069307,Doc Retrieval
+LIT REVIEW,0.19801980198019803,Embedder EmbD
+LIT REVIEW,0.20297029702970298,Key: EmbD(c)
+LIT REVIEW,0.2079207920792079,Value: HEnc(c)
+LIT REVIEW,0.21287128712871287,Query Retrieval
+LIT REVIEW,0.21782178217821782,Embedder EmbQ
+LIT REVIEW,0.22277227722772278,"Query: 
+EmbQ(x)"
+LIT REVIEW,0.22772277227722773,Retrieve
+LIT REVIEW,0.23267326732673269,Precompute
+LIT REVIEW,0.2376237623762376,Respond
+LIT REVIEW,0.24257425742574257,"Context 
+Encoder HEnc"
+LIT REVIEW,0.24752475247524752,"Figure 1: Architecture of context augmented language model.
+We opt to use the standard
+Encoder-Decoder cross attention mechanism for context incorporation which allows us to de-
+couple context encoding from LM inference. c, x, y serve as context, decoder input and decoder
+target respectively. In other words, the client sends over input x, and the server conducts retrieval to
+ﬁnd relevant context and returns the encoded representation HEnc(c; θEnc). The encoded representa-
+tion HEnc is pre-computed ofﬂine and returned as “metadata” of the retrieval. Note that training of
+the Encoder and Decoder is joint, while they are decoupled at inference time: the client does not
+need to store parameters or the run inference on the Encoder component."
+IMPLEMENTATION/METHODS,0.2524752475247525,"3
+Architecture"
+IMPLEMENTATION/METHODS,0.25742574257425743,"We use Encoder-Decoder Transformer architecture [39] to integrate language model input and
+retrieved context. We denote the context encoder and LM decoder as Enc and Dec respectively. Given
+an input token sequence x = (x1, x2, ..., xn), the task is to predict the next tokens y = (y1, y2, ..., ys)."
+IMPLEMENTATION/METHODS,0.2623762376237624,"Without external context, we concatenate x before y and the task becomes a traditional auto-regressive
+language modeling to predicts targets y following input (or “promopt”) x. In this setting, only the
+decoder is involved (denoted as “No-retrieval”). To incorporate external context, we use c, x, y to
+serve as encoder input, decoder input and decoder target respectively. We ﬁrst use a retriever to
+identify the context c = (c1, c2, ..., cm) given input x, then fetch the the pre-computed encoder
+output of the corresponding context tokens HEnc(c; θEnc) as output. In this setting, encoder output
+HEnc is directly used by the decoder through Encoder-Decoder cross-attention to inﬂuence the ﬁnal
+prediction. The decoder does not have to know the exact tokens of c that are retrieved."
+IMPLEMENTATION/METHODS,0.26732673267326734,"No-retrieval:P(yi|y<i, x1, x2, ...xn; θ′
+Dec)
+Retrieval:P(yi|y<i, x1, x2, ...xn, {HEnc(c)}; θDec)"
+IMPLEMENTATION/METHODS,0.2722772277227723,"Under this formulation, only decoder parameters θDec are required at inference time. The retriever
+retrieves indices of the relevant context and looks up their encodings. The context encodings are
+processed ahead of the time, and are completely decoupled from online operations. This is in contrast
+to previous works of Realm [15], Rag [26] or Retro [4] where the interaction between input x and
+context c is bi-directional, which necessitates context encoding at inference time. In our model,
+information ﬂows uni-directionally from c to x and y, and that the encoding of each context c is
+processed independently. On one hand, this is more restrictive than bi-directional interaction; on the
+other hand, such a design ensures complete decoupling of context processing and the online language
+model inference. The exact mechanism is detailed in Figure. 1."
+IMPLEMENTATION/METHODS,0.27722772277227725,"Conceptually the retriever can be an arbitrary blackbox. In practice, we use a dual encoder formula-
+tion [8, 16], which ﬁrst represents x as a query embedding EmbQ(x) and performs vector similarity
+search over a database of D to ﬁnd the indices of documents whose document embedding has the
+highest inner products with the query embedding. We then look up the context encoder outputs that
+correspond to retrieved indices and return them as the retriever output."
+IMPLEMENTATION/METHODS,0.28217821782178215,"l∗= arg max
+v∈D
+⟨EmbQ(x), v)⟩; D = {EmbD(c); c ∈C}"
+IMPLEMENTATION/METHODS,0.2871287128712871,HEnc[l∗] = Enc(cl∗; θEnc)
+IMPLEMENTATION/METHODS,0.29207920792079206,"In the case of multiple supporting context, k-arg max is used instead of arg max. The encoder
+outputs of each supporting context are then concatenated:"
+IMPLEMENTATION/METHODS,0.297029702970297,"P(yi|y<i, x1, x2, ...xn, Concat(HEnc[l1], HEnc[l2], · · · HEnc[lk]); θDec);"
+IMPLEMENTATION/METHODS,0.30198019801980197,Where Concat is simply vector concatenation:
+IMPLEMENTATION/METHODS,0.3069306930693069,"Concat((h1, h2, · · · , hn], [g1, g2, ..., gm], ...) = [h1, h2, ..., hn, g1, g2, ..., gm, ...]"
+IMPLEMENTATION/METHODS,0.3118811881188119,"At training time, the encoder and decoder are jointly trained. We ﬁrst perform ofﬂine retrieval to
+form triplets of (x, y, c), where c is retrieved by some predeﬁned retriever. The loss is masked and
+only deﬁned on the targets y. Because the encoding of each context is independent and there is no
+interaction between context, the attention matrix of encoder is block diagonal and we process them in
+a linear loop over each diagonal block. Thus, the computation cost of both encoder and decoder at
+each step is linear in the number of context."
+IMPLEMENTATION/METHODS,0.31683168316831684,"For online language model inference, only the retriever and the decoder are involved. The retrieval
+embedding EmbD(c) and the encoder output HEnc(c) of the context are both ofﬂine pre-processed
+and prepared into the retrieval database of such associated key-value pairs. When a new input
+sequence arrives, the retriever is only responsible for the approximate nearest neighbor search and
+lookup of the associated value that is the pre-computed encoder output. The decoder then takes in the
+input sequence and cross attends on the concatenation of pre-computed encoder output to generate the
+targeted tokens. Thanks to the decoupling, neither the retriever nor the decoder needs to store encoder
+parameters. Hence, such an approach is more parameter efﬁcient compared to similar works such as
+Retro [4] by saving the storage and computation budget on encoder, which is helpful in “client-server”
+scenario where the capacity of the “client” can be limited. When accounting the parameter count in
+comparison with other models, we only need to count the decoder and cross attention parameters. We
+also followed Retro’s [4] approach of excluding the embedding matrices from the parameter count."
+IMPLEMENTATION/METHODS,0.3217821782178218,"4
+Auto-regression Language Modeling"
+IMPLEMENTATION/METHODS,0.32673267326732675,"We experimented with the same “encoder-decoder” context incorporation mechanism for both auto-
+regressive language modeling and open domain question answering. The only difference is that
+auto-regressive language modeling processes input sequences in a sliding window fashion, while
+question answering task receives the full input sequence (the question) at once."
+IMPLEMENTATION/METHODS,0.3316831683168317,"4.1
+Experimental Setup"
+IMPLEMENTATION/METHODS,0.33663366336633666,"For auto-regressive language modeling, we use English C4 [32] version 2.2.1, the same as Retro.
+We train the language model and prepare the retrieval database using the train split and evaluate the
+results using validation split. The language model target sequence is a sliding window (chunk) D"
+IMPLEMENTATION/METHODS,0.3415841584158416,"Q
+No-retrieval"
+IMPLEMENTATION/METHODS,0.3465346534653465,"Retrieval c
+x y"
+IMPLEMENTATION/METHODS,0.35148514851485146,"Retrieval Database
+LM Inference (a)"
+IMPLEMENTATION/METHODS,0.3564356435643564,"Database Split
+# Articles
+# Entries
+C4 Train
+364.6M
+3382M
+C4 Val, unfiltered
+0.3645M
+3.369M
+C4 Val, filtered
+-
+2.868M
+NQ-open Train
+79k
+-
+NQ-open Dev
+8.8k
+-
+NQ-open Test
+3.6k
+-
+Wiki Database
+-
+21M (b)"
+IMPLEMENTATION/METHODS,0.3613861386138614,"Figure 2: (a) Chunking scheme for language modeling training with C4. For each article in C4, we
+divide the tokenized text into non-overlapping blocks of at most 64 tokens and use them as targets y.
+We use the preceding tokens of at most 448 in length as x. (b) The number of entries in the retrieval
+database of C4 auto-regressive LM and Natural Question QA task."
+IMPLEMENTATION/METHODS,0.36633663366336633,"of s = 64 tokens, with at most n = 448 preceding tokens are used as input sequence. This setup is
+similar to XLNet [43] and Retro [4]. The target and input sequences that are smaller than the given
+window size (64 and 448, respectively) are padded with zeros."
+IMPLEMENTATION/METHODS,0.3712871287128713,"To construct the retrieval database, the same sliding window processing is also used for the context
+sequences. The database is formed as associated pairs of retrieval embedding and encoder output:
+{EmbD(c) : HEnc(c)}, where context c are the sliding window of 512 tokens with a stride of 64
+tokens. We choose our hyper-parameters to be comparable to Retro: chunk size s = 64 and input
+window size n = 448 (smaller than 2048 that of Retro). This also implies that the number of entries
+in the database is larger than the number of articles, but smaller than the number of tokens."
+IMPLEMENTATION/METHODS,0.37623762376237624,"Our training corpus is in the form of triplets (x, y, c). x and y are acquired directly by applying
+sliding window on the train split of C4. Then BM25 [34] is used as a bootstrapping retriever to mine
+relevant context c to from the database. The ﬁrst retrieval results with no more than 8 consecutive
+token overlap with the target is used as context. Figure 2a illustrate the sliding window construction
+of database as well as sequence served as input and targets. Table 2b gives the exact number of entries
+in the resulting database used as external context."
+IMPLEMENTATION/METHODS,0.3811881188118812,"We use mT5 [42] as the backbone architecture for our context augmented Encoder-Decoder, and
+train our models from scratch. Train split is used both for training and retrieval, while validation
+split is used for bits-per-byte (Bpb) evaluation. In auto-regressive language model evaluation, due to
+the fact that text are crawled from web sources, there can be a non-trivial overlap of tokens between
+the training and validation splits. In such cases, tokens are often “copy-pasted” from retrieved context
+into targets without changing. Such copying leads to near-zero perplexity on targets and has a big
+effect on ﬁnal bits-per-byte measurement. Following the discussion on dataset leakage of Retro [4],
+we ﬁltered any example whose targets and context sequences have more than 8 common consecutive
+tokens (correspond to 12.5% ﬁltering of Retro). We found 14.87% of the validation chunks are
+removed by the ﬁltering of longest common substring."
+IMPLEMENTATION/METHODS,0.38613861386138615,"Figure 3a reports our auto-regressive language model results with different model sizes under the
+Bit-per-byte (bpb) values. Bpb is tokenizer agnostic and is often used to compare models with
+different vocabulary. We use mT5 base, large and XL respectively without modiﬁcation, and the
+results compare favorably to Retro models with similar sizes that uses customized chunked-cross-
+attention which couples context encoding and LM decoding. Our experiments demonstrate that
+context incorporation can be achieved with simple Encoder-Decoder cross attention, with the
+additional beneﬁt of decoupled encoder processing."
+IMPLEMENTATION/METHODS,0.3910891089108911,"4.2
+Retriever Training"
+IMPLEMENTATION/METHODS,0.39603960396039606,"The goal of context retrieval is to identify the context sequences c∗that maximize the improvement
+of some utility function, such as the log-likelihood improvement on target prediction. i.e."
+RESULTS/EXPERIMENTS,0.400990099009901,"100
+200
+400
+800
+1600
+3200
+6400
+#Parameters [M] 0.80 0.85 0.90 0.95 1.00"
+RESULTS/EXPERIMENTS,0.40594059405940597,Bits-per-byte
+RESULTS/EXPERIMENTS,0.41089108910891087,"172M,
+bpb: 0.98"
+RESULTS/EXPERIMENTS,0.4158415841584158,"425M,
+bpb: 0.92"
+RESULTS/EXPERIMENTS,0.4207920792079208,"1500M,
+bpb: 0.85"
+RESULTS/EXPERIMENTS,0.42574257425742573,"7500M,
+bpb: 0.79"
+RESULTS/EXPERIMENTS,0.4306930693069307,"113M,
+bpb: 0.947"
+RESULTS/EXPERIMENTS,0.43564356435643564,"409M,
+bpb: 0.884"
+RESULTS/EXPERIMENTS,0.4405940594059406,"1560M,
+bpb: 0.838"
+RESULTS/EXPERIMENTS,0.44554455445544555,C4 LM BPB at 12.5% filtering
+RESULTS/EXPERIMENTS,0.4504950495049505,"Retro: With Retrieval
+Proposed: With Retrieval (a) Model"
+RESULTS/EXPERIMENTS,0.45544554455445546,"Model
+Size"
+RESULTS/EXPERIMENTS,0.4603960396039604,"Exact Match
+Accuracy
+Realm [15]
+110M
+40.4
+DPR [20]
+110M
+41.5
+Ours (Large)
+409M
+44.35
+RAG [26]
+400M
+44.5
+Retro [4]
+7.5B
+45.5
+Ours (XL)
+1.56B
+47.95
+FiD [18]
+770M
+51.4
+EMDR [37]
+440M
+52.5
+FiD + Distill [17]
+770M
+54.4 (b)"
+RESULTS/EXPERIMENTS,0.46534653465346537,"Figure 3: Performance of decoupled encoder-decoder on auto-regressive language modeling (C4)
+and question answering tasks (Natural Question). (a) Comparing the proposed method and Retro on
+c4-en-2.2.1 validation split with 12.5% token overlap ﬁltering. The y-axis measures bits-per-byte
+(bpb, lower is better), which is the perplexity normalized by token length. The x-axis shows the
+number of non-embedding parameters in log scale. (b) End-to-end result on Natural Question test
+split. Following previous works, we measure exact match (EM) accuracy on “short answer type” with
+at most ﬁve tokens."
+IMPLEMENTATION/METHODS,0.47029702970297027,"c∗= arg max
+c
+U(x, y, c);"
+IMPLEMENTATION/METHODS,0.4752475247524752,"U(x, y, c) =
+X"
+IMPLEMENTATION/METHODS,0.4801980198019802,"yi
+log P(yi|y<i, x, c, θ) −log P(yi|y<i, x, θ′)"
+IMPLEMENTATION/METHODS,0.48514851485148514,"However, it is infeasible to evaluate the utility function U(x, y, c) for all triplets (x, y, c). Therefore,
+we introduce a proxy to approximate U by computing the expectation of U conditioned on the token
+yi and whether it appeared in the input x and context sequence c:"
+IMPLEMENTATION/METHODS,0.4900990099009901,"ˆU(x, y, c) =
+X"
+IMPLEMENTATION/METHODS,0.49504950495049505,"yi∈y,c
+1yi∈x ¯U(yi|yi ∈x, yi ∈c) + 1yi /∈x ¯U(yi|yi /∈x, yi ∈c)"
+IMPLEMENTATION/METHODS,0.5,"Intuitively, the “context utility” ˆU is a weighted token overlap between context c and target y. The
+weight is higher if the token yi did not appear in input but is contained in context, and when the token
+is “sensitive” to context by showing larger loglikelihood change when the context is present. To train
+a retriever, we adopted the typical dual encoder formulation with in-batch softmax training similar to
+that of DPR [20, 16]. We use training data bootstrapped from BM25 retrieval, where (1) the valid
+retrieval with highest context utility ˆU is the positive; (2) the other top retrieval from BM25 that
+has less than 80% of context utility of the highest one is used as hard negative; (3) The rest of the
+in-batch samples are regarded as random negatives. All retrievals are subject to the ﬁltering criteria
+of no more than 8 consecutive tokens."
+IMPLEMENTATION/METHODS,0.504950495049505,"We trained our retriever using T5X retrieval framework [28] based on mT5-small with an embedding
+dimensionality of 128. The model is trained for 100,000 iterations on a batch size of 8,192 on 64
+TPUv3 chips. Unfortunately, using the dense trained retriever does not lead to a visible improvement
+on the ﬁnal C4 Bpb evaluation, possibly because both the dense and BM25 retriever end up retrieving
+similar context. We report results using trained dense retriever because of the better retrieval efﬁciency."
+RESULTS/EXPERIMENTS,0.5099009900990099,"4.3
+Ablation and Analysis"
+RESULTS/EXPERIMENTS,0.5148514851485149,"To analyze the effect of the context augmentation, we show ﬁrst in Figure 4a that the context
+augmentation in language model consistently helps across different model sizes in the proposed"
+RESULTS/EXPERIMENTS,0.5198019801980198,"Base
+Large
+XL
+0.800 0.825 0.850 0.875 0.900 0.925 0.950 0.975 1.000"
+RESULTS/EXPERIMENTS,0.5247524752475248,Bits-per-byte
+RESULTS/EXPERIMENTS,0.5297029702970297,Bpb under different model sizes
+RESULTS/EXPERIMENTS,0.5346534653465347,"without retrieval
+with retrieval (a)"
+RESULTS/EXPERIMENTS,0.5396039603960396,"50000
+100000
+150000
+200000
+250000
+300000
+350000
+400000
+Steps 0.42 0.43 0.44 0.45 0.46 0.47"
+RESULTS/EXPERIMENTS,0.5445544554455446,Accuracy
+RESULTS/EXPERIMENTS,0.5495049504950495,Accuracy jump
+RESULTS/EXPERIMENTS,0.5544554455445545,Token accuracy on validation set vs steps. mT5 large
+RESULTS/EXPERIMENTS,0.5594059405940595,"Without context, from scratch
+With context, from scratch
+With context, warm started 100k steps (b)"
+RESULTS/EXPERIMENTS,0.5643564356435643,"Figure 4: (a) Bpb evaluation (lower is better) comparing models of the same sizes trained from
+scratch, with and without context retrieval, respectively. (b) Comparing the accuracy history of Large
+model training with and without retrieval. Notice that the curve “jumps” when training with retrieval
+but without warm-starting."
+RESULTS/EXPERIMENTS,0.5693069306930693,"NN
+NNP
+IN
+JJ
+DT
+NNS
+RB
+VB
+PRP
+CC
+VBZ
+VBG
+VBN
+VBD
+VBP
+TO
+CD
+PRP$
+MD
+WDT 0 5 10 15 20 25 30 35"
+RESULTS/EXPERIMENTS,0.5742574257425742,Percentage
+RESULTS/EXPERIMENTS,0.5792079207920792,"Not in context, not in input
+Not in context, in input
+In context, not in input
+In context, in input"
+RESULTS/EXPERIMENTS,0.5841584158415841,"Figure 5: Percentage of improvement on target log-likelihood when there’s context. We show the
+most frequent 20 POS tags, excluding punctuation. For the data on all the POS tags, see Appendix A."
+RESULTS/EXPERIMENTS,0.5891089108910891,"method. While the absolute improvement on Bpb over “No-retrieval” may seem small when it is
+ﬁltered to 12.5% in longest common sequence, we note that the improvements were made on a limited
+set of important tokens. Intuitively, tokens of functional words such as “the”, “a”, “to” should not
+beneﬁt much from external information and can be predicted with its local context. Yet functional
+words make up a signiﬁcant portion in perplexity because of their high frequencies in text."
+RESULTS/EXPERIMENTS,0.594059405940594,"To this end, we consider the difference in log-likelihood of two language models of same size, trained
+with and without retrieved context. We evaluate the models on validation split of C4 and obtain a
+breakdown using part-of-speech (POS) tagging. We used NLTK [3] to assign each target token to a
+POS tag. Note that the tokenization boundaries of NLTK and sentencepiece [22] could be different,
+and the assignment is done by majority voting in that case."
+RESULTS/EXPERIMENTS,0.599009900990099,"From Figure 5, it is immediately clear that the impact of context retrieval on different types of tokens
+is not uniform. Noun (NN, NNP, NNS, NNPS), and number (CD) beneﬁted the most from the context,
+followed by adjective (JJ) and verb (VB, VBZ, VBG, VBN, VBD, VBP). Tokens such as preposition
+(IN), coordinating conjunction (CC), etc. are less helped by context. We believe it is because their
+prediction usually only depends on immediate local context. We also found that whether the target
+token appeared in the context sequence or input sequence has a large impact on the improvements,
+and included this in the breakdown. Intuitively, tokens that are grounded in the retrieved context c
+but did not appear in the input x beneﬁt the most from context retrieval."
+RESULTS/EXPERIMENTS,0.6039603960396039,"4.3.1
+Training Details"
+RESULTS/EXPERIMENTS,0.6089108910891089,"We trained the Encoder-Decoder LM model for a total of 1, 100, 000 steps with a batch size of 512
+and a default learning rate schedule of square-root decay. This corresponds to 10, 000 warmup steps
+with a ﬁxed learning rate of 0.01, followed by square-root decay for 990, 000 steps. We found training
+from scratch and ﬁne-tuning on pre-trained models result in similar performance on C4. Therefore"
+RESULTS/EXPERIMENTS,0.6138613861386139,"we opted to train from scratch. We also found it beneﬁcial to include additional 100, 000 steps with a
+lower learning rate of 2 × 10−4 after standard training schedule, which slightly improves the results.
+For base and large we used 64 TPUv3 chips whereas 128 TPUv3 chips for training XL. XL runs 1.5
+training steps per second. XXL is left out due to the insufﬁcient computation resources."
+RESULTS/EXPERIMENTS,0.6188118811881188,"Comparing the training curve of model with and without retrieval, as depicted in Figure 4b, we
+noticed a phenomenon where both models have roughly the same performance initially but the
+one with retrieval suddenly increases at some point and continues to improve afterwards. This is
+especially true in large and XL. We suspect that decoders of larger models have higher memorization
+capacity, and in the initial phase they can improve training objective without delegating memorization
+to context retrieval. This is a challenge to training stability and one way to address this is by ﬁrst
+“warm start” the model with 100, 000 steps of training on a subset of training data with highest 10%
+of the context utility before proceed on the full dataset."
+RESULTS/EXPERIMENTS,0.6237623762376238,"5
+Open Domain Question Answering"
+RESULTS/EXPERIMENTS,0.6287128712871287,"5.1
+Natural Question"
+RESULTS/EXPERIMENTS,0.6336633663366337,"Large language models are useful because they generalize to downstream tasks, in addition to per-
+forming auto-regressive language generation. To demonstrate that the proposed context augmentation
+scheme is effective on downstream applications we evaluated our proposed model of decoupled
+Encoder-Decoder on the OpenQA task of Natural Question [23]."
+RESULTS/EXPERIMENTS,0.6386138613861386,"We use the same question and context processed by [18],
+where the context is re-
+trieved with DPR retriever [20].
+We construct each context sequence in the format of
+""title: {title} source: {source}"" and pad or trim it to 256 sentencepiece tokens. The
+context sequences are then encoded by the encoder independently and simply concatenated, to ensure
+there is no interaction between them."
+RESULTS/EXPERIMENTS,0.6435643564356436,"The decoder is trained to receive and respond on the sequence containing both the question
+and answer in format ""question: {question} \n answer:
+{answer}"" similar to [4], where
+""question: {question} \n answer: "" is the input prompt (and there is no loss deﬁned on
+these tokens) and {answer} is the target sequence the decoder is expected to predict. Again, the
+decoder cross-attends to the concatenated encoder output HEnc(c) from all the retrieved context and
+the decoder is completely decoupled from encoder. It does not even have to know the exact tokens of
+context sequence being returned by the retriever."
+RESULTS/EXPERIMENTS,0.6485148514851485,"The model weights are initialized from T5.1.1 checkpoints [32] We jointly ﬁne-tuned the encoder and
+decoder for 40, 000 steps with 20 context passages for each input of the train split, and validated
+on the dev split every 1,000 steps. We used a batch size of 64, a ﬁxed learning rate of 10−4 and
+Adafactor optimizer [36]. Finally, we selected the checkpoint with the best validation accuracy on
+the dev split and evaluated on the test split. Each model is trained on 64 TPUv3 chips, and the
+evaluation metrics is string exact match with SQuAD [33] normalization. We report our ﬁnal results
+in Table 3b. Overall, the decoupled Encoder-Decoder produced competitive results on Natural
+Question task, albeit being a much simpler architecture and not speciﬁcally designed for QA tasks.
+We note that FiD [18] uses similar architecture. However, FiD concatenates the question with the
+retrieved context passages. Therefore the context encoding is dependent on the input sequence and
+needs to be computed at inference time."
+RESULTS/EXPERIMENTS,0.6534653465346535,"5.2
+Grounded Answer Generation"
+RESULTS/EXPERIMENTS,0.6584158415841584,"Context augmented models tend to generate answers by transferring tokens from context to the output.
+It is interesting to quantify how often the model output comes from grounded transfer of context
+tokens and how often this leads to the correct answer. We use the same model trained in 5.1 to (a)
+run language model decoding with the original set of retrieved context to obtain “original output”:
+y∗= Decode(x, C; θ); and (b) rerun model prediction but remove all context passages that contain
+the “original output”: y′ = Decode(x, C′ = C \ {c; y∗⊆c}; θ). In the case of grounded context
+transfer, we expect the “secondshot output” to change, but still grounded in the remaining context."
+RESULTS/EXPERIMENTS,0.6633663366336634,"We show grounded-ness analysis in Table 2. Overall, we found 76% (2,765 out of 3,354) of the
+cases are likely due to grounded context transfer, because the “secondshot output” has changed to"
+RESULTS/EXPERIMENTS,0.6683168316831684,"Original output
+y∗= Decode(x, C; θ)"
+RESULTS/EXPERIMENTS,0.6732673267326733,"Original output in context
+Original output out of context"
+RESULTS/EXPERIMENTS,0.6782178217821783,"3354
+256"
+RESULTS/EXPERIMENTS,0.6831683168316832,"Secondshot output
+y′ = Decode(x, C′; θ)
+C′ = C \ {c; y∗⊆c}"
+RESULTS/EXPERIMENTS,0.6881188118811881,"Output changed
+still in context
+y′ ̸= y∗, y′ ⊆C′"
+RESULTS/EXPERIMENTS,0.693069306930693,"Output changed
+out of context
+y′ ̸= y∗, y′ ⊈C′
+Output unchanged
+Excluded
+-"
+RESULTS/EXPERIMENTS,0.698019801980198,"2765
+261
+291
+37
+-"
+RESULTS/EXPERIMENTS,0.7029702970297029,"Table 2: Analysis of grounded context transfer on Natural Question. First row shows the number of
+questions broken down by whether the original model output appeared in the retrieved passages. To
+demonstrate the model follows grounded context transfer, we removed context passages containing
+original output and reran inference on the remaining context passages. 76% of output changed due to
+the removal of “original output” but the new prediction is still contained in remaining context."
+RESULTS/EXPERIMENTS,0.7079207920792079,"something different from “original output”, but is still grounded in the remaining context passages. In
+addition, we found that the accuracy is 51.5% when model output is from grounded transfer, higher
+than 35.4% for the rest. This implies that the model has higher accuracy when the output is grounded.
+We exclude 37 examples from the analysis because they have less than 20 neighbors after removing
+original output."
+CONCLUSION/DISCUSSION,0.7128712871287128,"6
+Computational Discussion"
+CONCLUSION/DISCUSSION,0.7178217821782178,"We evaluate the computation implications of our method around inference latency and space-time trade
+off. We estimate the latency based on benchmarks and publicly available packages and performance
+data. In the Natural Question experiment, we use the 1.56B XL model in Table 3b, whose encoder
+output have dimension of 2048 and the activation data type is bfloat16 [1]. When proﬁled on a
+single TPUv3 core, it takes 200ms to encode all 20 retrieved context passages each containing 256
+tokens (with paddings). This is equivalent to 10ms per context. Thanks to the decoupling of the
+context encoding, the context passages encoding is done ofﬂine, and simply looked up at inference
+time. Inferencing the DPR query embedder model takes around 8ms unbatched on one TPUv2
+chip. We use ScaNN [14] to perform approximate similarity search on the DPR embeddings with a
+dimensionality of 768, which takes roughly 12ms to retrieve 20 neighbors with recall@20=0.97 on a
+single CPU core. For each passage, the uncompressed encoded embeddings have a total size of 1
+MiB (sizeof(bfloat16) * 2048 * 256). When reading the encoding from an NVMe SSD with
+a read throughput of 660 MB/s, the lookup takes around 1.5ms and we use another 0.8ms to transmit
+of one encoding over network. End to end, it takes around 66ms ((1.5 + 0.8) * 20 + 12 + 8)
+to retrieve 20 encoded passages. This is about a third of time for running inference of the encoder, and
+everything except query embedder is conducted with generic hardware without accelerators which is
+cheaper and consumes less energy."
+CONCLUSION/DISCUSSION,0.7227722772277227,"However, one limitation of this approach is the amount of disk space and network bandwidth needed
+to store and transmit all the pre-computed encodings, which scales with the dimensionality of encoder
+output. We leave it for future research to reduce the encoder output size while maintaining similar
+quality, which may be possible through compression, dimensionality reduction, or adding projection
+layer to the encoder."
+CONCLUSION/DISCUSSION,0.7277227722772277,"7
+Conclusion"
+CONCLUSION/DISCUSSION,0.7326732673267327,"In this paper, we advocate the design of context augmented language model based on
+Encoder-Decoder architecture. Encoder-Decoder models are simple, proven and enjoy the unique
+computational advantage that the context encoding and language generation are decoupled. That is,
+the context encoding can be produced with ofﬂine pre-computation and caching, while the decoder
+is parameter efﬁcient because it is agnostic to the encoder computation. We further demonstrated
+the effectiveness of this simple architecture by comparing with competitive baselines on common
+NLP tasks such as language modeling on C4 and question answering on Natural Questions. We also
+analyzed the model behavior and showed the context augmentation resulted in big improvements on
+content words and the model generates output grounded in retrieved context most of the time. Finally,
+we estimated the latency improvement from caching enabled by the decoupled computation."
+REFERENCES,0.7376237623762376,References
+REFERENCES,0.7425742574257426,"[1] Ieee standard for ﬂoating-point arithmetic. IEEE Std 754-2019 (Revision of IEEE 754-2008),
+pages 1–84, 2019."
+REFERENCES,0.7475247524752475,"[2] Devansh Arpit, Stanisław Jastrz˛ebski, Nicolas Ballas, David Krueger, Emmanuel Bengio,
+Maxinder S Kanwal, Tegan Maharaj, Asja Fischer, Aaron Courville, Yoshua Bengio, et al. A
+closer look at memorization in deep networks. In International conference on machine learning,
+pages 233–242. PMLR, 2017."
+REFERENCES,0.7524752475247525,"[3] Steven Bird, Ewan Klein, and Edward Loper. Natural language processing with Python:
+analyzing text with the natural language toolkit. "" O’Reilly Media, Inc."", 2009."
+REFERENCES,0.7574257425742574,"[4] Sebastian Borgeaud, Arthur Mensch, Jordan Hoffmann, Trevor Cai, Eliza Rutherford, Katie
+Millican, George van den Driessche, Jean-Baptiste Lespiau, Bogdan Damoc, Aidan Clark,
+et al. Improving language models by retrieving from trillions of tokens. arXiv preprint
+arXiv:2112.04426, 2021."
+REFERENCES,0.7623762376237624,"[5] Trenton Bricken and Cengiz Pehlevan. Attention approximates sparse distributed memory.
+Advances in Neural Information Processing Systems, 34, 2021."
+REFERENCES,0.7673267326732673,"[6] Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal,
+Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al. Language models are
+few-shot learners. Advances in neural information processing systems, 33:1877–1901, 2020."
+REFERENCES,0.7722772277227723,"[7] Nicholas Carlini, Florian Tramer, Eric Wallace, Matthew Jagielski, Ariel Herbert-Voss, Kather-
+ine Lee, Adam Roberts, Tom Brown, Dawn Song, Ulfar Erlingsson, et al. Extracting training
+data from large language models. In 30th USENIX Security Symposium (USENIX Security 21),
+pages 2633–2650, 2021."
+REFERENCES,0.7772277227722773,"[8] Daniel Cer, Yinfei Yang, Sheng-yi Kong, Nan Hua, Nicole Limtiaco, Rhomni St John, Noah
+Constant, Mario Guajardo-Cespedes, Steve Yuan, Chris Tar, et al. Universal sentence encoder.
+arXiv preprint arXiv:1803.11175, 2018."
+REFERENCES,0.7821782178217822,"[9] Qi Chen, Haidong Wang, Mingqin Li, Gang Ren, Scarlett Li, Jeffery Zhu, Jason Li, Chuanjie
+Liu, Lintao Zhang, and Jingdong Wang. SPTAG: A library for fast approximate nearest neighbor
+search, 2018."
+REFERENCES,0.7871287128712872,"[10] Aakanksha Chowdhery, Sharan Narang, Jacob Devlin, Maarten Bosma, Gaurav Mishra, Adam
+Roberts, Paul Barham, Hyung Won Chung, Charles Sutton, Sebastian Gehrmann, et al. Palm:
+Scaling language modeling with pathways. arXiv preprint arXiv:2204.02311, 2022."
+REFERENCES,0.7920792079207921,"[11] Michiel de Jong, Yury Zemlyanskiy, Nicholas FitzGerald, Fei Sha, and William Cohen. Mention
+memory: incorporating textual knowledge into transformers through entity mention attention.
+arXiv preprint arXiv:2110.06176, 2021."
+REFERENCES,0.7970297029702971,"[12] Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. Bert: Pre-training of
+deep bidirectional transformers for language understanding. arXiv preprint arXiv:1810.04805,
+2018."
+REFERENCES,0.801980198019802,"[13] Mor Geva, Roei Schuster, Jonathan Berant, and Omer Levy. Transformer feed-forward layers
+are key-value memories. arXiv preprint arXiv:2012.14913, 2020."
+REFERENCES,0.806930693069307,"[14] Ruiqi Guo, Philip Sun, Erik Lindgren, Quan Geng, David Simcha, Felix Chern, and Sanjiv
+Kumar. Accelerating large-scale inference with anisotropic vector quantization. In International
+Conference on Machine Learning, pages 3887–3896. PMLR, 2020."
+REFERENCES,0.8118811881188119,"[15] Kelvin Guu, Kenton Lee, Zora Tung, Panupong Pasupat, and Ming-Wei Chang.
+Realm:
+Retrieval-augmented language model pre-training. arXiv preprint arXiv:2002.08909, 2020."
+REFERENCES,0.8168316831683168,"[16] Matthew Henderson, Rami Al-Rfou, Brian Strope, Yun-Hsuan Sung, László Lukács, Ruiqi Guo,
+Sanjiv Kumar, Balint Miklos, and Ray Kurzweil. Efﬁcient natural language response suggestion
+for smart reply. arXiv preprint arXiv:1705.00652, 2017."
+REFERENCES,0.8217821782178217,"[17] Gautier Izacard and Edouard Grave. Distilling knowledge from reader to retriever for question
+answering. arXiv preprint arXiv:2012.04584, 2020."
+REFERENCES,0.8267326732673267,"[18] Gautier Izacard and Edouard Grave. Leveraging passage retrieval with generative models for
+open domain question answering. arXiv preprint arXiv:2007.01282, 2020."
+REFERENCES,0.8316831683168316,"[19] Jeff Johnson, Matthijs Douze, and Hervé Jégou. Billion-scale similarity search with gpus. IEEE
+Transactions on Big Data, 2019."
+REFERENCES,0.8366336633663366,"[20] Vladimir Karpukhin, Barlas Oguz, Sewon Min, Patrick S. H. Lewis, Ledell Wu, Sergey Edunov,
+Danqi Chen, and Wen-tau Yih. Dense passage retrieval for open-domain question answering.
+In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing,
+EMNLP 2020, Online, November 16-20, 2020."
+REFERENCES,0.8415841584158416,"[21] Urvashi Khandelwal, Omer Levy, Dan Jurafsky, Luke Zettlemoyer, and Mike Lewis. General-
+ization through memorization: Nearest neighbor language models. ICLR 2020, 2019."
+REFERENCES,0.8465346534653465,"[22] Taku Kudo and John Richardson. Sentencepiece: A simple and language independent subword
+tokenizer and detokenizer for neural text processing. arXiv preprint arXiv:1808.06226, 2018."
+REFERENCES,0.8514851485148515,"[23] Tom Kwiatkowski, Jennimaria Palomaki, Olivia Redﬁeld, Michael Collins, Ankur Parikh,
+Chris Alberti, Danielle Epstein, Illia Polosukhin, Matthew Kelcey, Jacob Devlin, Kenton Lee,
+Kristina N. Toutanova, Llion Jones, Ming-Wei Chang, Andrew Dai, Jakob Uszkoreit, Quoc Le,
+and Slav Petrov. Natural questions: a benchmark for question answering research. Transactions
+of the Association of Computational Linguistics, 2019."
+REFERENCES,0.8564356435643564,"[24] Jinhyuk Lee, Mujeen Sung, Jaewoo Kang, and Danqi Chen. Learning dense representations of
+phrases at scale. arXiv preprint arXiv:2012.12624, 2020."
+REFERENCES,0.8613861386138614,"[25] Mike Lewis, Marjan Ghazvininejad, Gargi Ghosh, Armen Aghajanyan, Sida Wang, and Luke
+Zettlemoyer. Pre-training via paraphrasing. Advances in Neural Information Processing Systems,
+33:18470–18481, 2020."
+REFERENCES,0.8663366336633663,"[26] Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman
+Goyal, Heinrich Küttler, Mike Lewis, Wen-tau Yih, Tim Rocktäschel, et al. Retrieval-augmented
+generation for knowledge-intensive nlp tasks. Advances in Neural Information Processing
+Systems, 33:9459–9474, 2020."
+REFERENCES,0.8712871287128713,"[27] Yu A Malkov and Dmitry A Yashunin. Efﬁcient and robust approximate nearest neighbor search
+using hierarchical navigable small world graphs. IEEE transactions on pattern analysis and
+machine intelligence, 42(4):824–836, 2018."
+REFERENCES,0.8762376237623762,"[28] Jianmo Ni, Gustavo Hernández Ábrego, Noah Constant, Ji Ma, Keith B Hall, Daniel Cer, and
+Yinfei Yang. Sentence-t5: Scalable sentence encoders from pre-trained text-to-text models.
+arXiv preprint arXiv:2108.08877, 2021."
+REFERENCES,0.8811881188118812,"[29] David Patterson, Joseph Gonzalez, Quoc Le, Chen Liang, Lluis-Miquel Munguia, Daniel
+Rothchild, David So, Maud Texier, and Jeff Dean. Carbon emissions and large neural network
+training. arXiv preprint arXiv:2104.10350, 2021."
+REFERENCES,0.8861386138613861,"[30] Jack W Rae, Sebastian Borgeaud, Trevor Cai, Katie Millican, Jordan Hoffmann, Francis Song,
+John Aslanides, Sarah Henderson, Roman Ring, Susannah Young, et al. Scaling language
+models: Methods, analysis & insights from training gopher. arXiv preprint arXiv:2112.11446,
+2021."
+REFERENCES,0.8910891089108911,"[31] Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang, Michael Matena,
+Yanqi Zhou, Wei Li, and Peter J Liu. Exploring the limits of transfer learning with a uniﬁed
+text-to-text transformer. arXiv preprint arXiv:1910.10683, 2019."
+REFERENCES,0.8960396039603961,"[32] Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang, Michael Matena,
+Yanqi Zhou, Wei Li, and Peter J. Liu. Exploring the limits of transfer learning with a uniﬁed
+text-to-text transformer. Journal of Machine Learning Research, 21(140):1–67, 2020."
+REFERENCES,0.900990099009901,"[33] Pranav Rajpurkar, Jian Zhang, Konstantin Lopyrev, and Percy Liang. Squad: 100,000+ questions
+for machine comprehension of text. arXiv preprint arXiv:1606.05250, 2016."
+REFERENCES,0.905940594059406,"[34] Stephen Robertson and Hugo Zaragoza. The probabilistic relevance framework: BM25 and
+beyond. Now Publishers Inc, 2009."
+REFERENCES,0.9108910891089109,"[35] Minjoon Seo, Jinhyuk Lee, Tom Kwiatkowski, Ankur P Parikh, Ali Farhadi, and Hannaneh
+Hajishirzi. Real-time open-domain question answering with dense-sparse phrase index. arXiv
+preprint arXiv:1906.05807, 2019."
+REFERENCES,0.9158415841584159,"[36] Noam Shazeer and Mitchell Stern. Adafactor: Adaptive learning rates with sublinear memory
+cost. In International Conference on Machine Learning, pages 4596–4604. PMLR, 2018."
+REFERENCES,0.9207920792079208,"[37] Devendra Singh, Siva Reddy, Will Hamilton, Chris Dyer, and Dani Yogatama. End-to-end
+training of multi-document reader and retriever for open-domain question answering. Advances
+in Neural Information Processing Systems, 34, 2021."
+REFERENCES,0.9257425742574258,"[38] Shaden Smith, Mostofa Patwary, Brandon Norick, Patrick LeGresley, Samyam Rajbhandari,
+Jared Casper, Zhun Liu, Shrimai Prabhumoye, George Zerveas, Vijay Korthikanti, et al. Using
+deepspeed and megatron to train megatron-turing nlg 530b, a large-scale generative language
+model. arXiv preprint arXiv:2201.11990, 2022."
+REFERENCES,0.9306930693069307,"[39] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez,
+Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. Advances in neural information
+processing systems, 30, 2017."
+REFERENCES,0.9356435643564357,"[40] Yuhuai Wu, Markus N Rabe, DeLesley Hutchins, and Christian Szegedy. Memorizing trans-
+formers. arXiv preprint arXiv:2203.08913, 2022."
+REFERENCES,0.9405940594059405,"[41] Lee Xiong, Chenyan Xiong, Ye Li, Kwok-Fung Tang, Jialin Liu, Paul Bennett, Junaid Ahmed,
+and Arnold Overwijk. Approximate nearest neighbor negative contrastive learning for dense
+text retrieval. In International Conference on Learning Representations (ICLR), April 2021."
+REFERENCES,0.9455445544554455,"[42] Linting Xue, Noah Constant, Adam Roberts, Mihir Kale, Rami Al-Rfou, Aditya Siddhant,
+Aditya Barua, and Colin Raffel.
+mT5: A massively multilingual pre-trained text-to-text
+transformer. In Proceedings of the 2021 Conference of the North American Chapter of the
+Association for Computational Linguistics: Human Language Technologies, pages 483–498,
+Online, June 2021. Association for Computational Linguistics."
+REFERENCES,0.9504950495049505,"[43] Zhilin Yang, Zihang Dai, Yiming Yang, Jaime Carbonell, Russ R Salakhutdinov, and Quoc V
+Le. Xlnet: Generalized autoregressive pretraining for language understanding. Advances in
+neural information processing systems, 32, 2019."
+REFERENCES,0.9554455445544554,"[44] Dani Yogatama, Cyprien de Masson d’Autume, and Lingpeng Kong. Adaptive semiparametric
+language models. Transactions of the Association for Computational Linguistics, 9:362–373,
+2021."
+OTHER,0.9603960396039604,Checklist
+OTHER,0.9653465346534653,1. For all authors...
+OTHER,0.9702970297029703,"(a) Do the main claims made in the abstract and introduction accurately reﬂect the paper’s
+contributions and scope? [Yes]
+(b) Did you describe the limitations of your work? [Yes] We mentioned the limitations in
+Section 6.
+(c) Did you discuss any potential negative societal impacts of your work? [No]
+(d) Have you read the ethics review guidelines and ensured that your paper conforms to
+them? [Yes]
+2. If you are including theoretical results..."
+OTHER,0.9752475247524752,"(a) Did you state the full set of assumptions of all theoretical results? [N/A]
+(b) Did you include complete proofs of all theoretical results? [N/A]
+3. If you ran experiments..."
+OTHER,0.9801980198019802,"(a) Did you include the code, data, and instructions needed to reproduce the main experi-
+mental results (either in the supplemental material or as a URL)? [No] We still need to
+clean up the code before it’s ready.
+(b) Did you specify all the training details (e.g., data splits, hyperparameters, how they
+were chosen)? [Yes] See Section 4 and Section 5.
+(c) Did you report error bars (e.g., with respect to the random seed after running experi-
+ments multiple times)? [No] It would take too long and too much resources to run each
+experiment multiple times.
+(d) Did you include the total amount of compute and the type of resources used (e.g., type
+of GPUs, internal cluster, or cloud provider)? [Yes] We reported the type of device we
+used to train the model as well as the steps per second for mT5 XL model. For more
+information on run time, see Appendix.
+4. If you are using existing assets (e.g., code, data, models) or curating/releasing new assets..."
+OTHER,0.9851485148514851,"(a) If your work uses existing assets, did you cite the creators? [Yes]
+(b) Did you mention the license of the assets? [Yes] Will be mentioned in Appendix."
+OTHER,0.9900990099009901,"(c) Did you include any new assets either in the supplemental material or as a URL? [No]
+(d) Did you discuss whether and how consent was obtained from people whose data you’re
+using/curating? [N/A]
+(e) Did you discuss whether the data you are using/curating contains personally identiﬁable
+information or offensive content? [N/A]
+5. If you used crowdsourcing or conducted research with human subjects..."
+OTHER,0.995049504950495,"(a) Did you include the full text of instructions given to participants and screenshots, if
+applicable? [N/A]
+(b) Did you describe any potential participant risks, with links to Institutional Review
+Board (IRB) approvals, if applicable? [N/A]
+(c) Did you include the estimated hourly wage paid to participants and the total amount
+spent on participant compensation? [N/A]"

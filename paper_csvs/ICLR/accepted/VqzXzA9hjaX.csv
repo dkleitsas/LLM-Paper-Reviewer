@@ -1,0 +1,1792 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.002583979328165375,"Selecting an appropriate optimizer for a given problem is of major interest for
+researchers and practitioners. Many analytical optimizers have been proposed
+using a variety of theoretical and empirical approaches; however, none can offer a
+universal advantage over other competitive optimizers. We are thus motivated to
+study a new problem named Optimizer Amalgamation: how can we best combine
+a pool of “teacher” optimizers into a single “student” optimizer that can have
+stronger problem-speciﬁc performance? In this paper, we draw inspiration from
+the ﬁeld of ”learning to optimize” to use a learnable amalgamation target. First,
+we deﬁne three differentiable amalgamation mechanisms to amalgamate a pool
+of analytical optimizers by gradient descent. Then, in order to reduce variance of
+the amalgamation process, we also explore methods to stabilize the amalgamation
+process by perturbing the amalgamation target. Finally, we present experiments
+showing the superiority of our amalgamated optimizer compared to its amalgamated
+components and learning to optimize baselines, and the efﬁcacy of our variance
+reducing perturbations. Our code and pre-trained models are publicly available at
+http://github.com/VITA-Group/OptimizerAmalgamation."
+INTRODUCTION,0.00516795865633075,"1
+INTRODUCTION"
+INTRODUCTION,0.007751937984496124,"Gradient-based optimization is ubiquitous in machine learning; accordingly, a cottage industry of
+gradient-based optimizer design has emerged (Schmidt et al., 2020). These optimizers generally
+propose algorithms that aim to make the “best” parameter update for a computed gradient (Kingma &
+Ba, 2017; Liu et al., 2020), with some also modifying the location where the parameters are computed
+(Zhang et al., 2019b). However, each gradient-based optimizer claim speciﬁc problems where they
+hold performance advantages, none can claim to be universally superior. Due to the “No Free Lunch”
+theorem for optimization (Wolpert & Macready, 1997), no optimizer can provide better performance
+on a class of problems without somehow integrating problem-speciﬁc knowledge from that class."
+INTRODUCTION,0.0103359173126615,"Furthermore, problems such as training neural networks are not homogeneous. In the spatial
+dimension, different layers or even parameters can have different behavior (Chen et al., 2020b).
+Also, as evidenced by the popularity of learning rate schedules, neural network optimization also
+behaves very differently in the temporal dimension as well (Golatkar et al., 2019). This implies
+that no optimizer can provide the best performance for all parameters on a single problem or best
+performance over the entire optimization process."
+INTRODUCTION,0.012919896640826873,"In order to build a stronger optimizer, we propose the new problem of optimizer amalgamation:
+how can we best combine a pool of multiple “teacher” optimizers, each of which might be good in
+certain cases, into a single stronger “student” optimizer that integrates their strengths and offsets their
+weaknesses? Speciﬁcally, we wish for our combined optimizer to be adaptive both per-parameter and
+per-iteration, and exploit problem-speciﬁc knowledge to improve performance on a class of problems."
+INTRODUCTION,0.015503875968992248,"To “amalgamate” an optimizer from a pool of optimizers, we draw inspiration from recent work in
+Learning to Optimize (Chen et al., 2021a) which provides a natural way to parameterize and train
+optimization update rules. In Learning to Optimize, optimizers are treated as policies to be learned
+from data. These “learned” optimizers are typically parameterized by a recurrent neural network"
+INTRODUCTION,0.01808785529715762,*Work done while the author was at the University of Texas at Austin.
+INTRODUCTION,0.020671834625323,Published as a conference paper at ICLR 2022
+INTRODUCTION,0.023255813953488372,"(Andrychowicz et al., 2016; Lv et al., 2017); then, the optimizer is meta-trained to minimize the loss
+of training problems, or “optimizees”, by gradient descent using truncated back-propagation through
+time. Yet to our best knowledge, no existing work has leveraged those learnable parameterizations to
+amalgamate and combine analytical optimizers."
+INTRODUCTION,0.025839793281653745,"For our proposed formulation of optimizer amalgamation, we treat the learned optimizer as the amal-
+gamation target. Then, we deﬁne amalgamation losses which can be used to combine feedback from
+multiple analytical optimizers into a single amalgamated optimizer, and present several amalgamation
+schemes. Finally, we explore smoothing methods that can be used during the amalgamation process
+to reduce the variance of the amalgamated optimizers. Our contributions are outlined below:"
+INTRODUCTION,0.028423772609819122,"• We formulate the new problem of optimizer amalgamation, which we deﬁne as ﬁnding a
+way to best amalgamate a pool of multiple analytical optimizers to produce a single stronger
+optimizer. We present three schemes of optimizer amalgamation: additive amalgamation,
+min-max amalgamation, and imitation of a trained choice.
+• We observe instability during the amalgamation process which leads to amalgamated opti-
+mizers having varied performance across multiple replicates. To mitigate this problem, we
+explore ways to reduce amalgamation variance by improving smoothness of the parameter
+space. We propose smoothing both by random noise or adversarial noise.
+• We present experiments showing extensive and consistent results that validate the effective-
+ness of our proposal. Speciﬁcally, we ﬁnd that more advanced amalgamation techniques
+and weight space training noise lead better average case performance and reduced variance.
+We also show that our amalgamation method performs signiﬁcantly better than previous
+methods on all problems, with few exceptions."
+RELATED WORKS,0.031007751937984496,"2
+RELATED WORKS"
+RELATED WORKS,0.03359173126614987,"Knowledge Distillation and Amalgamation
+The prototype of knowledge distillation was ﬁrst
+introduced by (Bucilua et al., 2006), which used it for model compression in order train neural
+networks (“students”) to imitate the output of more complex models (“teachers”). Knowledge
+distillation was later formalized by (Hinton et al., 2015), who added a temperature parameter to
+soften the teacher predictions and found signiﬁcant performance gains as a result."
+RELATED WORKS,0.03617571059431524,"The success of knowledge distillation spurred signiﬁcant efforts to explain its effectiveness. Notably,
+Chen et al. (2020c); Yuan et al. (2020) discovered that trained distillation teachers could be replaced by
+hand-crafted distributions. (Yuan et al., 2020) provided further theoretical and empirical explanation
+for this behavior by explicitly connecting Knowledge distillation to label smoothing, and (Ma et al.;
+Chen et al., 2021b) further credited the beneﬁts of knowledge distillation to the improved smoothness
+of loss surfaces, which has been demonstrated to help adversarial training Cohen et al. (2019);
+Lecuyer et al. (2019) and the training of sparse neural networks Ma et al.."
+RELATED WORKS,0.03875968992248062,"The potential of knowledge distillation to improve the training of neural networks also spurred diverse
+works extending knowledge distillation. For example, (Romero et al., 2015; Wang et al., 2018;
+Shen et al., 2018; 2019b; Ye et al., 2020b) propose using intermediate feature representations as
+distillation targets instead of just network outputs, and (Tarvainen & Valpola, 2017; Yang et al.,
+2018; Zhang et al., 2019a) unify student and teacher network training to reduce computational
+costs. Knowledge distillation has also been extended to distilling multiple teachers, which is termed
+Knowledge Amalgamation (Shen et al., 2019a; Luo et al., 2019; Ye et al., 2019; 2020a)."
+RELATED WORKS,0.041343669250646,"Although using output logits from pre-trained networks has been extensively explored in knowledge
+distillation, we study a new direction of research distilling optimization knowledge from sophisticated
+analytical optimizers to produce stronger “learned” optimizers, hence the name “optimizer amalga-
+mation”. Not only this is a new topic never studied by existing knowledge distillation literature, but
+also it needs to distill longitudinal output dynamics — not one ﬁnal output — from multiple teachers."
+RELATED WORKS,0.04392764857881137,"Learning to optimize
+Learning to Optimize is a branch of meta learning which proposes to replace
+hand-crafted analytical optimizers with learned optimizers trained by solving optimization problems,
+or optimizees. The concept was ﬁrst introduced by (Andrychowicz et al., 2016), who used a Long
+Short-Term Memory (LSTM) based model in order to parameterize gradient-based optimizers. This
+model took the loss gradient as its input and output a learned update rule which was then trained by"
+RELATED WORKS,0.046511627906976744,Published as a conference paper at ICLR 2022
+RELATED WORKS,0.04909560723514212,"gradient descent using truncated backpropagation through time. (Andrychowicz et al., 2016) also
+established a coordinate-wise design pattern, where the same LSTM weights are applied to each
+parameter of the optimizee in order to facilitate generalization to models with different architectures."
+RELATED WORKS,0.05167958656330749,"Building on this architecture, Wichrowska et al. (2017) and Lv et al. (2017) proposed improvements
+such as hierarchical architectures connecting parameter RNNs together and augmenting the gradient
+with additional inputs. Many methods have also been proposed to improve the training of learned
+optimizers such as random scaling and convex augmentation (Lv et al., 2017), curriculum learning
+and imitation learning (Chen et al., 2020a), and Jacobian regularization (Li et al., 2020). Notably,
+Chen et al. (2020a) also proposed a method of imitation learning, which can be viewed as a way of
+distilling a single analytical optimizer into a learned parameterization."
+RELATED WORKS,0.05426356589147287,"Learning to Optimize has been extended to a variety of other problems such as graph convolutional
+networks (You et al., 2020), domain generalization (Chen et al., 2020b), noisy label training (Chen
+et al., 2020c), adversarial training (Jiang et al., 2018; Xiong & Hsieh, 2020), and mixmax optimiza-
+tion (Shen et al., 2021). Moving away from gradient-based optimization, black-box optimization has
+also been explored (Chen et al., 2017; Cao et al., 2019). For a comprehensive survey with benchmarks,
+readers may refer to Chen et al. (2021a)."
+RELATED WORKS,0.056847545219638244,"Perturbations and Robustness
+The optimization process is naturally subject to many possible
+sources of noise, such as the stochastic gradient noise Devolder et al. (2011); Gorbunov et al. (2020);
+Simsekli et al. (2019) which is often highly non-Gaussian and heavy-tail in practice; the random
+initialization and (often non-optimal) hyperparameter conﬁguration; the different local minimum
+reached each time in non-convex optimization Jain & Kar (2017); and the limited numerical precision
+in implementations De Sa et al. (2017). The seen and unseen optimizees also constitute domain
+shifts in our case. In order for a consistent and reliable amalgamation process, the training needs to
+incorporate resistance to certain perturbations of the optimization process."
+RELATED WORKS,0.059431524547803614,"We draw inspiration from deep learning defense against various random or malicious perturbations.
+For example, stability training Zheng et al. (2016) stabilizes deep networks against small input
+distortions by regularizing the feature divergence caused by adding random Gaussian noises to the
+inputs. Adversarial robustness measures the ability of a neural network to defend against malicious
+perturbations of its inputs (Szegedy et al., 2013; Goodfellow et al., 2014). For that purpose, random
+smoothening (Lecuyer et al., 2019; Cohen et al., 2019) and adversarial training (Madry et al., 2017)
+have been found to increase model robustness with regard to random corruptions or worst-case
+perturbations; as well as against testing-time domain shifts Ganin et al. (2016). Recent work (He
+et al., 2019; Wu et al., 2020) extends input perturbations to weight perturbations that explicitly
+regularize the ﬂatness of the weight loss landscape, forming a double-perturbation mechanism for
+both inputs and weights."
+RELATED WORKS,0.06201550387596899,"Other Approaches
+The problem of how to better train machine learning models has many diverse
+approaches outside the Learning to Optimize paradigm that we draw from, and forms the broader
+AutoML problem Hutter et al. (2018) together with model selection algorithms. Our approach falls
+under meta-learning, which also includes learned initialization approaches such as MAML (Finn
+et al., 2017) and Reptile (Nichol et al., 2018). Other optimizer selection and tuning methods include
+hypergradient descent (Baydin et al., 2017) and bayesian hyperparameter optimization (Snoek et al.,
+2012). Similar to our knowledge amalgamation approach, algorithm portfolio methods (where many
+algorithms are available, and some subset is selected) have also been applied to several problem
+domains such as Linear Programming (Leyton-Brown et al., 2003) and SAT solvers (Xu et al., 2008)."
+OPTIMIZER AMALGAMATION,0.06459948320413436,"3
+OPTIMIZER AMALGAMATION"
+MOTIVATION,0.06718346253229975,"3.1
+MOTIVATION"
+MOTIVATION,0.06976744186046512,"Optimizer selection and hyperparameter optimization is a difﬁcult task even for experts. With a vast
+number of optimizers to choose from with varying performance dependent on the speciﬁc problem
+and data (Schmidt et al., 2020), most practitioners choose a reasonable default optimizer such as
+SGD or Adam and tune the learning rate to be “good enough” following some rule of thumb."
+MOTIVATION,0.07235142118863049,"As a consequence of the No Free Lunch theorem (Wolpert & Macready, 1997), the best optimizer
+to use for each problem, weight tensor within each problem, or each parameter may be different."
+MOTIVATION,0.07493540051679587,Published as a conference paper at ICLR 2022
+MOTIVATION,0.07751937984496124,"In practice, different layers within a given neural network can beneﬁt from differently tuned hyper-
+parameters, for example by meta-tuning learning rates by layer (Chen et al., 2020b)."
+MOTIVATION,0.08010335917312661,"Accordingly, we wish to train an optimizer which is sufﬁciently versatile and adaptive at different
+stages of training and even to each parameter individually. Many methods have been proposed to
+parameterize optimizers in learnable forms including coordinate-wise LSTMs Andrychowicz et al.
+(2016); Lv et al. (2017), recurrent neural networks with hierarchical architectures Wichrowska et al.
+(2017); Metz et al. (2019), and symbolically in terms of predeﬁned blocks Bello et al. (2017). Due
+to its high expressiveness and relative ease of training, we will use the workhorse of LSTM-based
+RNNProp architecture described by Lv et al. (2017) as our amalgamation target; more details about
+this architecture can be found in Appendix C.1."
+THE BASIC DISTILLATION MECHANISM,0.082687338501292,"3.2
+THE BASIC DISTILLATION MECHANISM"
+THE BASIC DISTILLATION MECHANISM,0.08527131782945736,"Knowledge distillation can be viewed as regularizing the training loss with a distillation loss that
+measures the distance between teacher and student predictions (Hinton et al., 2015). In order to distill
+a pool of teacher optimizers T = T1, T2, . . . Tk into our target policy P by truncated backpropagation
+(Appendix A: Algorithm 1), we start by deﬁning a training loss and amalgamation loss.
+Meta Loss
+In the context of training optimizers, the training loss is described by the meta loss,
+which is a function of the optimizee problem loss at each step (Andrychowicz et al., 2016). Suppose
+we are training a policy P with parameters φ on a problem M : X →R whose output is a loss for each
+point in data domain X. During each iteration during truncated backpropagation through time, P is
+used to compute parameter updates for M to obtain a trajectory of optimizee parameters θ1, θ2, . . . θN
+where for the ith data batch xi and parameters θi at step i, i.e. θi+1 = θi −P(∇θiM(xi, θi))."
+THE BASIC DISTILLATION MECHANISM,0.08785529715762273,"For some weighting function f1, f2, . . . fN, the meta loss is Lmeta(x, θi; φ) = PN
+i=1 fi(M(xi, θi));
+speciﬁcally, we will use the scaled log meta loss fi(m) = log(m) −log(M(xi, θ0)), which can be
+interpreted as the “mean log improvement.”
+Distillation Loss
+The distillation loss in knowledge distillation measures the distance between
+teacher predictions and student predictions. In training optimizers, this corresponds to the distance
+between the optimization trajectories generated by the teacher and student. Suppose we have
+optimizee parameter trajectories θi = (θ(P )
+i
+, θ(T )
+i
+) generated by the teacher and student, respectively.
+Then, our distillation loss LT for teacher T is given by the l2 log-loss:"
+THE BASIC DISTILLATION MECHANISM,0.09043927648578812,"LT (x, θi; φ) = 1 N N
+X"
+THE BASIC DISTILLATION MECHANISM,0.09302325581395349,"i=1
+log
+θ(P )
+i
+−θ(T )
+i
+
+2"
+THE BASIC DISTILLATION MECHANISM,0.09560723514211886,"2 .
+(1)"
+THE BASIC DISTILLATION MECHANISM,0.09819121447028424,"While knowledge distillation generally refers to imitating a model and imitation learning imitating
+a policy, the optimizer in our case can be regarded as both a model and a policy. As such, our loss
+function is similar to the imitation loss mechanism used by Chen et al. (2020a), which can be thought
+of as a special case of optimizer amalgamation where only a single teacher is used."
+THE BASIC DISTILLATION MECHANISM,0.10077519379844961,"3.3
+AMALGAMATION OF MULTIPLE TEACHER OPTIMIZERS: THREE SCHEMES"
+THE BASIC DISTILLATION MECHANISM,0.10335917312661498,"Now, what if there are multiple teachers that we wish to amalgamate into a single policy? How to
+best combine different knowledge sources is a non-trivial question. We propose three mechanisms:"
+THE BASIC DISTILLATION MECHANISM,0.10594315245478036,"(1) Mean Amalgamation: adding distillation loss terms for each of the optimizers with constant
+equal weights.
+(2) Min-max Amalgamation: using a min-max approach to combine loss terms for each of the
+optimizers, i.e., “the winner (worst) takes all”.
+(3) Optimal Choice Amalgamation: First training an intermediate policy to choose the best optimizer
+to apply at each step, then distilling from that “choice optimizer”."
+THE BASIC DISTILLATION MECHANISM,0.10852713178294573,"Mean Amalgamation
+In order to amalgamate our pool of teachers T = T1, . . . T|T |, we generate"
+THE BASIC DISTILLATION MECHANISM,0.1111111111111111,"|T | + 1 trajectories θi = (θ(P )
+i
+, θ(T1)
+i
+. . . θ
+(T|T |)
+i
+) and add distillation losses for each teacher:"
+THE BASIC DISTILLATION MECHANISM,0.11369509043927649,"Lmean(x; θi; φ) = Lmeta(x; θ(P )
+i
+; φ) + α 1 N N
+X i=1"
+THE BASIC DISTILLATION MECHANISM,0.11627906976744186,"1
+|T |"
+THE BASIC DISTILLATION MECHANISM,0.11886304909560723,"|T |
+X"
+THE BASIC DISTILLATION MECHANISM,0.12144702842377261,"i=1
+log
+θ(P )
+i
+−θ(Ti)
+i
+
+2 .
+(2)"
+THE BASIC DISTILLATION MECHANISM,0.12403100775193798,Published as a conference paper at ICLR 2022
+THE BASIC DISTILLATION MECHANISM,0.12661498708010335,"If we view knowledge distillation as a regularizer which provides soft targets during training, mean
+amalgamation is the logical extension of this by simply adding multiple regularizers to training."
+THE BASIC DISTILLATION MECHANISM,0.12919896640826872,"An interesting observation is: when multiple teachers diverge, mean amalgamation loss tends to
+encourage the optimizer to choose one of the teachers to follow, potentially discarding the inﬂuence
+of all other teachers. This may occur if one teacher is moving faster than another in the optimizee
+space, or if the teachers diverge in the direction of two different minima. As this choice is a local
+minimum with respect to the mean log amalgamation loss, the optimizer may “stick” to that teacher,
+even if it is not the best choice."
+THE BASIC DISTILLATION MECHANISM,0.13178294573643412,"Min-Max Amalgamation
+In order to address this stickiness, we propose a second method: min-
+max amalgamation, where, distillation losses are instead combined by taking the maximum distillation
+loss among all terms at each time step:"
+THE BASIC DISTILLATION MECHANISM,0.1343669250645995,"Lmin-max(x; θi; φ) = Lmeta(x; θ(P )
+i
+; φ) + α 1 N N
+X"
+THE BASIC DISTILLATION MECHANISM,0.13695090439276486,"i=1
+max
+T ∈T log
+θ(P )
+i
+−θ(T )
+i
+
+2 .
+(3)"
+THE BASIC DISTILLATION MECHANISM,0.13953488372093023,"This results in a v-shaped loss landscape which encourages the amalgamation target to be between
+the trajectories generated by the teacher pool and prevents the optimizer from “sticking” to one of the
+teachers."
+THE BASIC DISTILLATION MECHANISM,0.1421188630490956,"One weakness shared by both mean and min-max amalgamation is memory usage. Both require
+complete training trajectories for each teacher in the pool to be stored in memory, resulting in memory
+usage proportional to the number of teachers, which limits the number of teachers that we could
+amalgamate from in one pool."
+THE BASIC DISTILLATION MECHANISM,0.14470284237726097,"Min-max amalgamation also does not fully solve the problem of diverging teachers. While min-
+max amalgamation does ensure that no teacher is ignored, it pushes the amalgamation target to the
+midpoint between the optimizee weights of the two teachers, which does not necessarily correspond
+to a good optimizee loss. In fact, when teachers diverge into multiple local minima, any solution
+which considers all teachers must necessarily push the learned optimizer against the gradient, while
+any solution which allows the learned optimizer to pick one side must discard a number of teachers."
+THE BASIC DISTILLATION MECHANISM,0.14728682170542637,"Optimal Choice Amalgamation
+To fully unlock the power of knowledge amalgamation, we
+propose to solve the teacher divergence problem by ﬁrst training an intermediate amalgamation target.
+By using only one teacher for a ﬁnal distillation step, we remove the possibility of multiple teachers
+diverging while also allowing us to use more teachers without a memory penalty."
+THE BASIC DISTILLATION MECHANISM,0.14987080103359174,"For optimizer pool T , we deﬁne an choice optimizer C which produces choices c1, c2, . . . cN of
+which optimizer in the pool to apply at each time step, producing updates θ(C)
+i+1 = θ(C)
+i
+−Tci(gi).
+The objective of the choice optimizer is to minimize the meta loss Lmeta(C; x) with respect to
+these choices c1:N. We parameterize the choice function C as a small two-layer LSTM, and train
+it by gradient descent. The LSTM takes the outputs of each optimizer in the pool, the layer type,
+and time step as inputs; more details are provided in Appendix C.1. To make it easier to train C
+by truncated back-propagation through time, we relax the choices c1:N to instead be soft choices
+ci ∈R|T | : ci ≥0, ||ci||1 = 1, resulting in the policy θ(C)
+i+1 = θ(C)
+i
+−P|T |
+j=1 c(j)
+i Tj(gi). Now, we use
+C as a teacher to produce our ﬁnal loss:"
+THE BASIC DISTILLATION MECHANISM,0.1524547803617571,"Lchoice = Lmeta(φ; x) + α 1 N n
+X"
+THE BASIC DISTILLATION MECHANISM,0.15503875968992248,"i=1
+log
+θ(P )
+i
+−θ(C)
+i
+
+2 .
+(4)"
+STABILITY-AWARE OPTIMIZER AMALGAMATION,0.15762273901808785,"4
+STABILITY-AWARE OPTIMIZER AMALGAMATION"
+MOTIVATION,0.16020671834625322,"4.1
+MOTIVATION"
+MOTIVATION,0.16279069767441862,"Modern optimization, even analytical, is subject to various forms of noise. For example, stochastic
+ﬁrst-order method are accompanied with gradient noise (Devolder et al., 2011; Gorbunov et al.,
+2020; Simsekli et al., 2019) which is often highly non-Gaussian and heavy-tail in practice. Any
+non-convex optimization could reach different local minimum when solving multiple times (Jain &"
+MOTIVATION,0.165374677002584,Published as a conference paper at ICLR 2022
+MOTIVATION,0.16795865633074936,"Kar, 2017). When training deep neural networks, thousands or even millions of optimization steps are
+typically run, and the ﬁnal outcome can be impacted by the random initialization, (often non-optimal)
+hyperparameter conﬁguration, and even hardware precision (De Sa et al., 2017). Hence, it is highly
+desirable for optimizers to be stable: across different problem instances, between multiple training
+runs for the same problem, and throughout each training run (Lv et al., 2017)."
+MOTIVATION,0.17054263565891473,"Meta-training optimizers tends to be unstable. During the amalgamation process, we encounter
+signiﬁcant variance where identically trained replicates achieve varying performance on our evaluation
+problems; this mirrors problems with meta-stability encountered by Metz et al. (2019). While
+amalgamation variance can be mitigated in small-scale experiments by amalgamating many times
+and using the best one, that variance represents a signiﬁcant obstacle to large-scale training (i.e.
+on many and larger problems) and deployment of amalgamated optimizers. Thus, besides the
+aforementioned optimization stability issues, we also need to consider meta-stability, denoting the
+relative performance of optimizers across meta-training replicates."
+MOTIVATION,0.1731266149870801,"In order to provide additional stability to the amalgamation process, we turn to adding noise during
+training, which is known to improve smoothness (Chen & Hsieh, 2020; Lecuyer et al., 2019; Cohen
+et al., 2019) and in turn improve stability (Miyato et al., 2018). Note that one can inject either random
+noise or adversarial perturbations onto either the input or the weight of the learnable optimizer. While
+perturbing inputs is more common, recent work (Wu et al., 2020) identiﬁed that a ﬂatter weight
+loss landscape (loss change with respect to weight) leads to smaller robust generalization gap in
+adversarial training, thanks to its more “global” worst-case view."
+MOTIVATION,0.17571059431524547,"We also discover in our experiments that perturbing inputs would make the meta-training hard to
+converge, presumably because the inputs to optimizers (gradients, etc.) already contain large amounts
+of batch noise and do not tolerate further corruption. We hence focus on perturbing optimizer weights
+for smoothness and stability."
+WEIGHT SPACE PERTURBATION FOR SMOOTHNESS,0.17829457364341086,"4.2
+WEIGHT SPACE PERTURBATION FOR SMOOTHNESS"
+WEIGHT SPACE PERTURBATION FOR SMOOTHNESS,0.18087855297157623,"Weight space smoothing produces a noised estimate of the loss ˜L by adding noise to the optimizer
+parameters φ. By replacing the loss L(φ, x) with a noisy loss ˜L = L(˜φ, x), we encourage the
+optimizer to be robust to perturbations of its weights, increasing the meta-stability. We explore
+two mechanisms to increase weight space smoothness during training, by adding (1) a random
+perturbation to the weights as a gradient estimator, and (2) an adversarial perturbation in the form of
+a projected gradient descent attack (PGD)."
+WEIGHT SPACE PERTURBATION FOR SMOOTHNESS,0.1834625322997416,"Though new to our application, these two mechanisms have been adopted for other problems where
+smoothness is important such as neural architecture search (Chen & Hsieh, 2020) and adversarial
+robustness (Lecuyer et al., 2019; Cohen et al., 2019)."
+WEIGHT SPACE PERTURBATION FOR SMOOTHNESS,0.18604651162790697,"Random Gaussian Perturbation
+In the ﬁrst type of noise, we add gaussian noise with variance
+σ2 to each parameter of the optimizer at each iteration, ˜φ = φ + N(0, σ2I)."
+WEIGHT SPACE PERTURBATION FOR SMOOTHNESS,0.18863049095607234,"Since optimizer weights tend to vary largely in magnitude especially between different weight tensors,
+we modify this gaussian noise to be adaptive to the magnitude of the l2 norm of each weight tensor
+˜φ(w). For tensor size |φ(w)|, the added noise is given by"
+WEIGHT SPACE PERTURBATION FOR SMOOTHNESS,0.19121447028423771,"˜φ(w) = φ(w) + N
+
+0, σ2 ||φ(w)||2
+2
+|φ(w)| I
+
+.
+(5)"
+WEIGHT SPACE PERTURBATION FOR SMOOTHNESS,0.1937984496124031,"Projected Gradient Descent
+For the second type of noise, we use adversarial noise obtained by
+projected gradient descent (Appendix A, Algorithm 2). For A adversarial steps, the noised parameters
+are given by ˜φ = φ + ψA, where ψ0 = 0, and ψi+1 = ψi + η clipε(∇˜
+ψiL) for optimizer loss L."
+WEIGHT SPACE PERTURBATION FOR SMOOTHNESS,0.19638242894056848,"As with random Gaussian perturbations, we also modify the adversarial perturbation to be adaptive
+with magnitude proportional to the l2 norm of each weight tensor φ. Here, the adversarial attack step
+for weight tensor w is instead given by"
+WEIGHT SPACE PERTURBATION FOR SMOOTHNESS,0.19896640826873385,"ψ(w)
+i+1 = ψ(w)
+i
++
+ε||φ||2∇ψ(w)
+i
+L"
+WEIGHT SPACE PERTURBATION FOR SMOOTHNESS,0.20155038759689922,"||∇ψ(w)
+i
+L||2
+.
+(6)"
+WEIGHT SPACE PERTURBATION FOR SMOOTHNESS,0.2041343669250646,Published as a conference paper at ICLR 2022
+EXPERIMENTS,0.20671834625322996,"5
+EXPERIMENTS"
+EXPERIMENTS,0.20930232558139536,"Optimizee Details
+All optimizers were amalgamated using a 2-layer convolutional neural network
+(CNN) on the MNIST (LeCun & Cortes, 2010) dataset (shortened as “Train”) using a batch size of
+128. During evaluation, we test the generalization of the amalgamated optimizer to other problems:
+ Different Datasets: FMNIST (Xiao et al., 2017) and SVHN (Netzer et al., 2011). We also run
+experiments on CIFAR (Krizhevsky et al., 2009); since the Train network is too small to obtain
+reasonable performance on CIFAR, we substitute it for the Wider architecture and a 28-layer ResNet
+(He et al., 2015) labelled “CIFAR” and “ResNet” respectively.  Different Architectures: a 2-layer
+MLP (MLP), a CNN with twice the number of units in each layer (Wider), and a deeper CNN
+(Deeper) with 5 convolutional layers.  Training settings: training with a smaller batch size of 32
+(Small Batch). We also try a new setting of training with differential privacy (Abadi et al., 2016)
+(MNIST-DP). Appendix B provides full architecture and training speciﬁcations."
+EXPERIMENTS,0.21188630490956073,"Optimizer Pool
+We use two different optimizer pools in our experiment: “small,” which consists of
+Adam and RMSProp, and “large,” which also contains SGD, Momentum, AddSign, and PowerSign.
+Each optimizer has a learning rate tuned by grid search over a grid of {5 × 10−4, 1 × 10−3, 2 ×
+10−3, . . . 1}. The selection criteria is the best validation loss after 5 epochs for the Train network
+on MNIST, which matches the meta-training settings of the amalgamated optimizer. Appendix C.2
+describes the optimizers used and other hyperparameters."
+EXPERIMENTS,0.2144702842377261,"Baselines
+First, we compare our amalgamated optimizer against our analytical optimizer teachers
+which are combined into a “oracle optimizer,” which is the optimizer in our pool of teachers with the
+best validation loss. We also compare against the optimal choice optimizer used in amalgamation,
+which functions like a per-iteration trained approximation of the oracle optimizer. Then, we evaluate
+previous learned optimizer methods: the original “Learning to Learn by Gradient Descent by Gradient
+Descent” optimizer Andrychowicz et al. (2016) which we refer to as “Original”, RNNProp (Lv et al.,
+2017), a hierarchical architecture presented by “Learned Optimizers that Scale and Generalize”
+(Wichrowska et al., 2017) which we refer to as “Scale”, and the best setup from Chen et al. (2020a)
+which shorten as “Stronger Baselines.”"
+EXPERIMENTS,0.21705426356589147,"Training and Evaluation Details
+The RNNProp amalgamation target was trained using truncated
+backpropagation though time with a constant truncation length of 100 steps and total unroll of up
+to 1000 steps and meta-optimized by Adam with a learning rate of 1 × 10−3. For our training
+process, we also apply random scaling (Lv et al., 2017) and curriculum learning (Chen et al., 2020a);
+more details about amalgamation training are provided in Appendix C.3. Amalgamation takes up to
+6.35 hours for optimal choice amalgamation using the large pool and up to 10.53 hours when using
+adversarial perturbations; a full report of training times is provided in Appendix C.4."
+EXPERIMENTS,0.21963824289405684,"For each optimizer amalgamation conﬁguration tested, we independently trained 8 replicate optimiz-
+ers. Then, each replicate was evaluated 10 times on each evaluation problem, and trained to a depth
+of 25 epochs each time. Finally, we measure the stability of amalgamated optimizers by deﬁning
+three notions of stability for meta-trained optimizers:  Optimization stability: the stability of the
+optimizee during the optimization process. Viewing stability of the validation loss as a proxy for
+model stability with respect to the true data distribution, we measure the epoch-to-epoch variance
+of the validation loss after subtracting a smoothed validation loss curve (using a Gaussian ﬁlter). 
+Evaluation stability: the variance of optimizer performance across multiple evaluations. We ﬁnd that
+the evaluation stability is roughly the same for all optimizers (Appendix E.1).  Meta-stability: the
+stability of the amalgamation process, i.e. the variance of amalgamation replicates after correcting for
+evaluation variance. Meta-stability and evaluation stability are jointly estimated using a linear mixed
+effects model. The stability is reported as a standard deviation. More details are in Appendix D."
+OPTIMIZER AMALGAMATION,0.2222222222222222,"5.1
+OPTIMIZER AMALGAMATION"
+OPTIMIZER AMALGAMATION,0.2248062015503876,"Amalgamation Methods
+Figure 1 compares the mean performance of the three amalgamation
+methods with the small pool and Choice amalgamation with the large pool. Mean and min-max
+amalgamation were not performed on the large pool due to memory constraints. The amalgamated
+optimizers using optimal choice amalgamation perform better than Mean and Min-Max amalgamation.
+The size of the optimizer pool does not appear to have a signiﬁcant effect in Optimal Choice
+amalgamation, with small pool and large pool amalgamated optimizers obtaining similar results."
+OPTIMIZER AMALGAMATION,0.22739018087855298,Published as a conference paper at ICLR 2022
+OPTIMIZER AMALGAMATION,0.22997416020671835,"Train
+MLP
+Wider
+Deeper
+FMNIST
+SVHN
+CIFAR-10
+ResNet
+Small Batch
+MNIST-DP
+0.1 0.0 0.1 0.2 0.3"
+OPTIMIZER AMALGAMATION,0.23255813953488372,Relative Best Log Validation Loss
+OPTIMIZER AMALGAMATION,0.2351421188630491,"Choice (Large)
+Choice (Small)
+Mean
+Min-Max"
+OPTIMIZER AMALGAMATION,0.23772609819121446,"Figure 1: Amalgamated optimizer performance as measured by the best log validation loss and log training
+loss (lower is better) after 25 epochs; 95% conﬁdence intervals are shown, and are estimated by a linear mixed
+effects model (Appendix D). In order to use a common y-axis, the validation loss is measured relative to the
+mean validation loss of the optimizer amalgamated from the large pool using optimal Choice amalgamation."
+OPTIMIZER AMALGAMATION,0.24031007751937986,"Train
+MLP
+Wider
+Deeper
+FMNIST
+SVHN
+CIFAR-10
+ResNet
+Small Batch
+MNIST-DP
+0.2 0.0 0.2 0.4 0.6 0.8 1.0"
+OPTIMIZER AMALGAMATION,0.24289405684754523,Relative Best Log Val Loss
+OPTIMIZER AMALGAMATION,0.2454780361757106,"Amalgamated
+Stronger Baselines
+RNNProp
+Scale
+Original"
+OPTIMIZER AMALGAMATION,0.24806201550387597,"Figure 2: Comparison with other learned optimizers; for each problem, 95% conﬁdence intervals of the mean
+are computed using a linear mixed effects model (Appendix D). Error bars are normalized by subtracting the
+mean log validation loss of the amalgamated optimizer to use the same Y-axis. Uncropped and accuracy versions
+can be found in Appendix E.3. The amalgamated optimizer performs better than other learned optimizers on all
+problems, and is signiﬁcantly better except in some problems when compared to the Stronger Baselines trained
+RNNProp (Chen et al., 2020a)."
+OPTIMIZER AMALGAMATION,0.25064599483204136,"0
+5
+10
+15
+20
+25 3.5 3.0 2.5 Train"
+OPTIMIZER AMALGAMATION,0.2532299741602067,"0
+5
+10
+15
+20
+25 2.0 1.8 1.6 1.4 1.2 1.0 MLP"
+OPTIMIZER AMALGAMATION,0.2558139534883721,"0
+5
+10
+15
+20
+25 3.6 3.4 3.2 3.0 2.8 Wider"
+OPTIMIZER AMALGAMATION,0.25839793281653745,"0
+5
+10
+15
+20
+25 3.5 3.0 2.5"
+OPTIMIZER AMALGAMATION,0.26098191214470284,Deeper
+OPTIMIZER AMALGAMATION,0.26356589147286824,"0
+5
+10
+15
+20
+25 1.2 1.0 0.8"
+OPTIMIZER AMALGAMATION,0.2661498708010336,FMNIST
+OPTIMIZER AMALGAMATION,0.268733850129199,"Amalgamated
+Choice
+Oracle"
+OPTIMIZER AMALGAMATION,0.2713178294573643,"0
+5
+10
+15
+20
+25 0.8 0.7 0.6 0.5 0.4 0.3 SVHN"
+OPTIMIZER AMALGAMATION,0.2739018087855297,"0
+5
+10
+15
+20
+25 0.0 0.2 0.4 0.6"
+OPTIMIZER AMALGAMATION,0.27648578811369506,CIFAR-10
+OPTIMIZER AMALGAMATION,0.27906976744186046,"0
+5
+10
+15
+20
+25 0.5 0.0 0.5 1.0"
+OPTIMIZER AMALGAMATION,0.28165374677002586,ResNet
+OPTIMIZER AMALGAMATION,0.2842377260981912,"0
+5
+10
+15
+20
+25
+3.75 3.50 3.25 3.00 2.75 2.50"
+OPTIMIZER AMALGAMATION,0.2868217054263566,Small Batch
+OPTIMIZER AMALGAMATION,0.28940568475452194,"0
+5
+10
+15
+20
+25
+1.5 1.0 0.5 0.0"
+OPTIMIZER AMALGAMATION,0.29198966408268734,MNIST-DP
+OPTIMIZER AMALGAMATION,0.29457364341085274,"Figure 3: Comparison between the best Amalgamated Optimizer (blue), the optimal Choice optimizer used to
+train it (orange), and the oracle optimizer (grange); the shaded area shows ±2 standard deviations from the mean.
+The title of each plot corresponds to an optimizee; full deﬁnitions can be found in Appendix B. An version of
+this plot showing validation accuracy can be found in Appendix E.3. The amalgamated optimizer performs
+similarly or better than the choice optimizer and Oracle analytical optimizer on problems spanning a variety of
+training settings, architectures, and datasets."
+OPTIMIZER AMALGAMATION,0.2971576227390181,"3.50
+3.45
+3.40
+3.35
+3.30
+Best Log Validation Loss 0.06 0.07 0.08 0.09 0.10 0.11 0.12"
+OPTIMIZER AMALGAMATION,0.2997416020671835,Optimization Stability
+OPTIMIZER AMALGAMATION,0.3023255813953488,"Amalgamated
+Adam
+RMSProp
+SGD
+Momentum
+AddSign
+PowerSign"
+OPTIMIZER AMALGAMATION,0.3049095607235142,"Figure 4: Relationship between optimiza-
+tion stability and performance as measured
+by validation loss on the Train optimizee;
+smaller stability and validation loss are better.
+Error bars show 95% conﬁdence intervals;
+analytical optimizers in the large pool and
+the optimizer amalgamated from the large
+pool using Optimal Choice are shown."
+OPTIMIZER AMALGAMATION,0.30749354005167956,"Previous Learned Optimizers
+Figure 2 compares the
+amalgamated optimizer against the baselines from Learn-
+ing to Optimize. Optimizer amalgamation performs signif-
+icantly better than all previous methods on all problems,
+with few exceptions (where it performs better but not sig-
+niﬁcantly better)."
+OPTIMIZER AMALGAMATION,0.31007751937984496,"Analytical Optimizers
+In Figure 3, we compare the
+best replicate amalgamated from the large pool using
+Choice amalgamation with the “oracle optimizer” de-
+scribed above. The amalgamated optimizer achieves sim-
+ilar or better validation losses than the best analytical opti-
+mizers, indicating that our amalgamated optimizer indeed
+captures the “best” loss-minimization characteristics of
+each optimizer."
+OPTIMIZER AMALGAMATION,0.31266149870801035,"The amalgamated optimizer also beneﬁts from excellent
+optimization stability, meeting or exceeding the optimiza-
+tion stability of the best analytical optimizers in the large"
+OPTIMIZER AMALGAMATION,0.3152454780361757,Published as a conference paper at ICLR 2022
+OPTIMIZER AMALGAMATION,0.3178294573643411,"Train
+MLP
+Wider
+Deeper
+FMNIST
+SVHN
+CIFAR-10
+ResNet
+Small Batch
+MNIST-DP
+0.00 0.05 0.10 0.15 0.20"
+OPTIMIZER AMALGAMATION,0.32041343669250644,Optimization Stability
+OPTIMIZER AMALGAMATION,0.32299741602067183,"Choice (Large)
+Adam
+RMSProp
+SGD
+Momentum
+AddSign
+PowerSign"
+OPTIMIZER AMALGAMATION,0.32558139534883723,"Figure 5: Optimization stability (lower is more stable) of an optimizer amalgamated by Optimal Choice from the
+large pool compared to optimization stability of the optimizers in that pool; 95% conﬁdence intervals are shown.
+A larger version of this ﬁgure showing training loss and validation loss as well is provided in Appendix E.3."
+OPTIMIZER AMALGAMATION,0.3281653746770026,"pool (Figure 5). Comparing analytical optimizers, we observe a general inverse relationship between
+optimization performance and optimization stability: in order to achieve better optimization, an
+optimizer typically sacriﬁces some optimization stability in order to move faster through the optimizee
+weight space. By integrating problem-speciﬁc knowledge, the amalgamated optimizer is able to
+combine the best optimization performance and optimization stability characteristics (Figure 4)."
+"STABILITY-AWARE OPTIMIZER AMALGAMATION
+INPUT PERTURBATION
+WHILE WE ALSO TESTED PERTURBING THE INPUTS OF THE OPTIMIZER DURING AMALGAMA-",0.330749354005168,"5.2
+STABILITY-AWARE OPTIMIZER AMALGAMATION
+Input Perturbation
+While we also tested perturbing the inputs of the optimizer during amalgama-
+tion, we were unable to improve stability. These experiments are included in Appendix E.4."
+"STABILITY-AWARE OPTIMIZER AMALGAMATION
+INPUT PERTURBATION
+WHILE WE ALSO TESTED PERTURBING THE INPUTS OF THE OPTIMIZER DURING AMALGAMA-",0.3333333333333333,"Random Perturbation
+Min-max amalgamation was trained on the small optimizer pool with
+random perturbation relative magnitudes of ε = {5 × 10−4, 10−3, 2 × 10−3, 5 × 10−3, 10−2}.
+ε = 10−1 was also tested, but all replicates tested diverged and are not reported here."
+"STABILITY-AWARE OPTIMIZER AMALGAMATION
+INPUT PERTURBATION
+WHILE WE ALSO TESTED PERTURBING THE INPUTS OF THE OPTIMIZER DURING AMALGAMA-",0.3359173126614987,"0.0
+1x10
+4 2x10
+4 5x10
+4 1x10
+3 2x10
+3 5x10
+3 1x10
+2"
+"STABILITY-AWARE OPTIMIZER AMALGAMATION
+INPUT PERTURBATION
+WHILE WE ALSO TESTED PERTURBING THE INPUTS OF THE OPTIMIZER DURING AMALGAMA-",0.3385012919896641,Magnitude 0.3 0.4 0.5 0.6 0.7 0.8 0.9
+"STABILITY-AWARE OPTIMIZER AMALGAMATION
+INPUT PERTURBATION
+WHILE WE ALSO TESTED PERTURBING THE INPUTS OF THE OPTIMIZER DURING AMALGAMA-",0.34108527131782945,Training Meta-Stability
+"STABILITY-AWARE OPTIMIZER AMALGAMATION
+INPUT PERTURBATION
+WHILE WE ALSO TESTED PERTURBING THE INPUTS OF THE OPTIMIZER DURING AMALGAMA-",0.34366925064599485,"Adversarial
+Random"
+"STABILITY-AWARE OPTIMIZER AMALGAMATION
+INPUT PERTURBATION
+WHILE WE ALSO TESTED PERTURBING THE INPUTS OF THE OPTIMIZER DURING AMALGAMA-",0.3462532299741602,"Figure 6: Amalgamation meta-stability for
+varying magnitudes of random and adver-
+sarial perturbations (lower is better). Meta-
+stability is measured by the variance across
+replicates of the training loss after 25 epochs
+on the Train convolutional network, adjusted
+for the variance of evaluation."
+"STABILITY-AWARE OPTIMIZER AMALGAMATION
+INPUT PERTURBATION
+WHILE WE ALSO TESTED PERTURBING THE INPUTS OF THE OPTIMIZER DURING AMALGAMA-",0.3488372093023256,"Comparing perturbed amalgamation against the non-
+perturbed baseline (ε = 0), we observe that perturbations
+increase meta-stability up to about ε = 10−3 (Figure 6).
+For larger perturbation magnitudes, meta-stability begins
+to decrease as the perturbation magnitude overwhelms the
+weight “signal,” eventually causing the training process to
+completely collapse for larger perturbation values. While
+the stability with random perturbation ε = 10−2 is better
+than 10−3, this is likely due to random chance, since we
+use a small sample size of 8 replicates."
+"STABILITY-AWARE OPTIMIZER AMALGAMATION
+INPUT PERTURBATION
+WHILE WE ALSO TESTED PERTURBING THE INPUTS OF THE OPTIMIZER DURING AMALGAMA-",0.35142118863049093,"Adversarial Perturbation
+Since adversarial perturba-
+tion is more computationally expensive than random per-
+turbations, min-max amalgamation was tested on a coarser
+grid of relative magnitudes ε = {10−4, 10−3, 10−2}, and
+to an adversarial attack depth of 1 step. These results are
+also reported in Figure 6, with ε = 10−2 omitted since all
+replicates diverged during training."
+"STABILITY-AWARE OPTIMIZER AMALGAMATION
+INPUT PERTURBATION
+WHILE WE ALSO TESTED PERTURBING THE INPUTS OF THE OPTIMIZER DURING AMALGAMA-",0.35400516795865633,"From our results, we observe that adversarial perturbations are about as effective as random pertur-
+bations. We also observe that the maximum perturbation magnitude that the amalgamation process
+can tolerate is much smaller for adversarial perturbations compared to random perturbations, likely
+because adversarial perturbations are much “stronger.” Due to the signiﬁcantly larger training cost of
+adversarial perturbations, we recommend random perturbations for future work."
+"STABILITY-AWARE OPTIMIZER AMALGAMATION
+INPUT PERTURBATION
+WHILE WE ALSO TESTED PERTURBING THE INPUTS OF THE OPTIMIZER DURING AMALGAMA-",0.35658914728682173,"Application to Other Methods
+Random and Adversarial perturbations can be applied to any
+gradient-based optimizer meta-training method, including all of our baselines. An experiment
+applying Gaussian perturbations to the RNNProp baseline can be found in Appendix E.5."
+CONCLUSION,0.35917312661498707,"6
+CONCLUSION"
+CONCLUSION,0.36175710594315247,"We deﬁne the problem of optimizer amalgamation, which we hope can inspire better and faster
+optimizers for researchers and practitioners. In this paper, we provide a procedure for optimizer
+amalgamation, including differentiable optimizer amalgamation mechanisms and amalgamation
+stability techniques. Then, we evaluate our problem on different datasets, architectures, and training
+settings to benchmark the strengths and weaknesses of our amalgamated optimizer. In the future, we
+hope to bring improve the generalizability of amalgamated optimizers to even more distant problems."
+CONCLUSION,0.3643410852713178,Published as a conference paper at ICLR 2022
+REFERENCES,0.3669250645994832,REFERENCES
+REFERENCES,0.3695090439276486,"Martin Abadi, Andy Chu, Ian Goodfellow, H. Brendan McMahan, Ilya Mironov, Kunal Talwar,
+and Li Zhang. Deep learning with differential privacy. Proceedings of the 2016 ACM SIGSAC
+Conference on Computer and Communications Security, Oct 2016. doi: 10.1145/2976749.2978318.
+URL http://dx.doi.org/10.1145/2976749.2978318."
+REFERENCES,0.37209302325581395,"Marcin Andrychowicz, Misha Denil, Sergio Gomez, Matthew W Hoffman, David Pfau, Tom Schaul,
+Brendan Shillingford, and Nando De Freitas. Learning to learn by gradient descent by gradient
+descent. In Advances in neural information processing systems, 2016."
+REFERENCES,0.37467700258397935,"Atilim Gunes Baydin, Robert Cornish, David Martinez Rubio, Mark Schmidt, and Frank Wood.
+Online learning rate adaptation with hypergradient descent. arXiv preprint arXiv:1703.04782,
+2017."
+REFERENCES,0.3772609819121447,"Irwan Bello, Barret Zoph, Vijay Vasudevan, and Quoc V. Le. Neural optimizer search with reinforce-
+ment learning, 2017."
+REFERENCES,0.3798449612403101,"Cristian Bucilua, Rich Caruana, and Alexandru Niculescu-Mizil. Model compression. In Proceedings
+of the 12th ACM SIGKDD International Conference on Knowledge Discovery and Data Mining,
+KDD ’06, pp. 535–541, New York, NY, USA, 2006. Association for Computing Machinery.
+ISBN 1595933395. doi: 10.1145/1150402.1150464. URL https://doi.org/10.1145/
+1150402.1150464."
+REFERENCES,0.38242894056847543,"Yue Cao, Tianlong Chen, Zhangyang Wang, and Yang Shen. Learning to optimize in swarms. In
+Advances in Neural Information Processing Systems, pp. 15018–15028, 2019."
+REFERENCES,0.3850129198966408,"Tianlong Chen, Weiyi Zhang, Jingyang Zhou, Shiyu Chang, Sijia Liu, Lisa Amini, and Zhangyang
+Wang. Training stronger baselines for learning to optimize. arXiv preprint arXiv:2010.09089,
+2020a."
+REFERENCES,0.3875968992248062,"Tianlong Chen, Xiaohan Chen, Wuyang Chen, Howard Heaton, Jialin Liu, Zhangyang Wang, and
+Wotao Yin. Learning to optimize: A primer and a benchmark, 2021a."
+REFERENCES,0.39018087855297157,"Tianlong Chen, Zhenyu Zhang, Sijia Liu, Shiyu Chang, and Zhangyang Wang. Robust overﬁtting
+may be mitigated by properly learned smoothening. In International Conference on Learning
+Representations, 2021b."
+REFERENCES,0.39276485788113696,"Wuyang Chen, Zhiding Yu, Zhangyang Wang, and Animashree Anandkumar. Automated synthetic-
+to-real generalization. In International Conference on Machine Learning, pp. 1746–1756. PMLR,
+2020b."
+REFERENCES,0.3953488372093023,"Xiangning Chen and Cho-Jui Hsieh. Stabilizing differentiable architecture search via perturbation-
+based regularization. CoRR, abs/2002.05283, 2020. URL https://arxiv.org/abs/2002.
+05283."
+REFERENCES,0.3979328165374677,"Xuxi Chen, Wuyang Chen, Tianlong Chen, Ye Yuan, Chen Gong, Kewei Chen, and Zhangyang Wang.
+Self-pu: Self boosted and calibrated positive-unlabeled training. In International Conference on
+Machine Learning, pp. 1510–1519. PMLR, 2020c."
+REFERENCES,0.4005167958656331,"Yutian Chen, Matthew W Hoffman, Sergio G´omez Colmenarejo, Misha Denil, Timothy P Lillicrap,
+Matt Botvinick, and Nando De Freitas. Learning to learn without gradient descent by gradient
+descent. In Proceedings of the 34th International Conference on Machine Learning-Volume 70, pp.
+748–756. JMLR. org, 2017."
+REFERENCES,0.40310077519379844,"Jeremy M Cohen, Elan Rosenfeld, and J. Zico Kolter. Certiﬁed adversarial robustness via randomized
+smoothing, 2019."
+REFERENCES,0.40568475452196384,"Christopher De Sa, Matthew Feldman, Christopher R´e, and Kunle Olukotun. Understanding and
+optimizing asynchronous low-precision stochastic gradient descent. In Proceedings of the 44th
+Annual International Symposium on Computer Architecture, pp. 561–574, 2017."
+REFERENCES,0.4082687338501292,"Olivier Devolder et al. Stochastic ﬁrst order methods in smooth convex optimization. Technical
+report, CORE, 2011."
+REFERENCES,0.4108527131782946,Published as a conference paper at ICLR 2022
+REFERENCES,0.4134366925064599,"Chelsea Finn, Pieter Abbeel, and Sergey Levine. Model-agnostic meta-learning for fast adaptation of
+deep networks. In Doina Precup and Yee Whye Teh (eds.), Proceedings of the 34th International
+Conference on Machine Learning, volume 70 of Proceedings of Machine Learning Research, pp.
+1126–1135. PMLR, 06–11 Aug 2017. URL https://proceedings.mlr.press/v70/
+finn17a.html."
+REFERENCES,0.4160206718346253,"Yaroslav Ganin, Evgeniya Ustinova, Hana Ajakan, Pascal Germain, Hugo Larochelle, Franc¸ois
+Laviolette, Mario Marchand, and Victor Lempitsky. Domain-adversarial training of neural networks.
+The journal of machine learning research, 17(1):2096–2030, 2016."
+REFERENCES,0.4186046511627907,"Aditya Golatkar, Alessandro Achille, and Stefano Soatto. Time matters in regularizing deep networks:
+Weight decay and data augmentation affect early learning dynamics, matter little near convergence.
+arXiv preprint arXiv:1905.13277, 2019."
+REFERENCES,0.42118863049095606,"Ian J Goodfellow, Jonathon Shlens, and Christian Szegedy. Explaining and harnessing adversarial
+examples. arXiv preprint arXiv:1412.6572, 2014."
+REFERENCES,0.42377260981912146,"Eduard Gorbunov, Marina Danilova, and Alexander Gasnikov. Stochastic optimization with heavy-
+tailed noise via accelerated gradient clipping. arXiv preprint arXiv:2005.10785, 2020."
+REFERENCES,0.4263565891472868,"Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image
+recognition. CoRR, abs/1512.03385, 2015. URL http://arxiv.org/abs/1512.03385."
+REFERENCES,0.4289405684754522,"Zhezhi He, Adnan Siraj Rakin, and Deliang Fan. Parametric noise injection: Trainable randomness
+to improve deep neural network robustness against adversarial attack. In Proceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern Recognition, pp. 588–597, 2019."
+REFERENCES,0.4315245478036176,"Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. Distilling the knowledge in a neural network. arXiv
+preprint arXiv:1503.02531, 2015."
+REFERENCES,0.43410852713178294,"Frank Hutter, Lars Kotthoff, and Joaquin Vanschoren (eds.). Automated Machine Learning: Methods,
+Systems, Challenges. Springer, 2018. In press, available at http://automl.org/book."
+REFERENCES,0.43669250645994834,"Prateek Jain and Purushottam Kar. Non-convex optimization for machine learning. arXiv preprint
+arXiv:1712.07897, 2017."
+REFERENCES,0.4392764857881137,"Haoming Jiang, Zhehui Chen, Yuyang Shi, Bo Dai, and Tuo Zhao. Learning to defense by learning
+to attack. arXiv preprint arXiv:1811.01213, 2018."
+REFERENCES,0.4418604651162791,"Diederik P. Kingma and Jimmy Ba. Adam: A method for stochastic optimization, 2017."
+REFERENCES,0.4444444444444444,"Alex Krizhevsky, Geoffrey Hinton, et al. Learning multiple layers of features from tiny images. 2009."
+REFERENCES,0.4470284237726098,"Yann LeCun and Corinna Cortes. MNIST handwritten digit database. 2010. URL http://yann.
+lecun.com/exdb/mnist/."
+REFERENCES,0.4496124031007752,"Mathias Lecuyer, Vaggelis Atlidakis, Roxana Geambasu, Daniel Hsu, and Suman Jana. Certiﬁed
+robustness to adversarial examples with differential privacy, 2019."
+REFERENCES,0.45219638242894056,"Kevin Leyton-Brown, Eugene Nudelman, Galen Andrew, Jim McFadden, Yoav Shoham, et al. A
+portfolio approach to algorithm selection. In IJCAI, volume 3, pp. 1542–1543, 2003."
+REFERENCES,0.45478036175710596,"Chaojian Li, Tianlong Chen, Haoran You, Zhangyang Wang, and Yingyan Lin. Halo: Hardware-aware
+learning to optimize. In European Conference on Computer Vision, pp. 500–518. Springer, 2020."
+REFERENCES,0.4573643410852713,"Liyuan Liu, Haoming Jiang, Pengcheng He, Weizhu Chen, Xiaodong Liu, Jianfeng Gao, and Jiawei
+Han. On the variance of the adaptive learning rate and beyond, 2020."
+REFERENCES,0.4599483204134367,"Sihui Luo, Xinchao Wang, Gongfan Fang, Yao Hu, Dapeng Tao, and Mingli Song.
+Knowl-
+edge amalgamation from heterogeneous networks by common feature learning. arXiv preprint
+arXiv:1906.10546, 2019."
+REFERENCES,0.4625322997416021,"Kaifeng Lv, Shunhua Jiang, and Jian Li. Learning gradient descent: Better generalization and longer
+horizons. In Proceedings of the 34th International Conference on Machine Learning-Volume 70,
+pp. 2247–2255. JMLR. org, 2017."
+REFERENCES,0.46511627906976744,Published as a conference paper at ICLR 2022
+REFERENCES,0.46770025839793283,"Haoyu Ma, Tianlong Chen, Ting-Kuei Hu, Chenyu You, Xiaohui Xie, and Zhangyang Wang. Good
+students play big lottery better. arXiv preprint arXiv:2101.03255."
+REFERENCES,0.4702842377260982,"Aleksander Madry, Aleksandar Makelov, Ludwig Schmidt, Dimitris Tsipras, and Adrian Vladu.
+Towards deep learning models resistant to adversarial attacks. arXiv preprint arXiv:1706.06083,
+2017."
+REFERENCES,0.4728682170542636,"Luke Metz, Niru Maheswaranathan, Jeremy Nixon, Daniel Freeman, and Jascha Sohl-Dickstein.
+Understanding and correcting pathologies in the training of learned optimizers. In International
+Conference on Machine Learning, pp. 4556–4565. PMLR, 2019."
+REFERENCES,0.4754521963824289,"Takeru Miyato, Shin-ichi Maeda, Masanori Koyama, and Shin Ishii. Virtual adversarial training: a
+regularization method for supervised and semi-supervised learning. IEEE transactions on pattern
+analysis and machine intelligence, 41(8):1979–1993, 2018."
+REFERENCES,0.4780361757105943,"Yuval Netzer, Tao Wang, Adam Coates, Alessandro Bissacco, Bo Wu, and Andrew Y Ng. Reading
+digits in natural images with unsupervised feature learning. 2011."
+REFERENCES,0.4806201550387597,"Alex Nichol, Joshua Achiam, and John Schulman. On ﬁrst-order meta-learning algorithms. arXiv
+preprint arXiv:1803.02999, 2018."
+REFERENCES,0.48320413436692505,"Adriana Romero, Nicolas Ballas, Samira Ebrahimi Kahou, Antoine Chassang, Carlo Gatta, and
+Yoshua Bengio. Fitnets: Hints for thin deep nets, 2015."
+REFERENCES,0.48578811369509045,"Robin M. Schmidt, Frank Schneider, and Philipp Hennig. Descending through a crowded valley -
+benchmarking deep learning optimizers. CoRR, abs/2007.01547, 2020. URL https://arxiv.
+org/abs/2007.01547."
+REFERENCES,0.4883720930232558,"Chengchao Shen, Xinchao Wang, Jie Song, Li Sun, and Mingli Song. Amalgamating knowledge
+towards comprehensive classiﬁcation, 2018."
+REFERENCES,0.4909560723514212,"Chengchao Shen, Xinchao Wang, Jie Song, Li Sun, and Mingli Song. Amalgamating knowl-
+edge towards comprehensive classiﬁcation.
+Proceedings of the AAAI Conference on Artiﬁ-
+cial Intelligence, 33(01):3068–3075, Jul. 2019a. doi: 10.1609/aaai.v33i01.33013068. URL
+https://ojs.aaai.org/index.php/AAAI/article/view/4165."
+REFERENCES,0.4935400516795866,"Chengchao Shen, Mengqi Xue, Xinchao Wang, Jie Song, Li Sun, and Mingli Song. Customizing stu-
+dent networks from heterogeneous teachers via adaptive knowledge amalgamation. In Proceedings
+of the IEEE/CVF International Conference on Computer Vision (ICCV), October 2019b."
+REFERENCES,0.49612403100775193,"Jiayi Shen, Xiaohan Chen, Howard Heaton, Tianlong Chen, Jialin Liu, Wotao Yin, and Zhangyang
+Wang. Learning a minimax optimizer: A pilot study. In International Conference on Learning
+Representations, 2021. URL https://openreview.net/forum?id=nkIDwI6oO4_."
+REFERENCES,0.49870801033591733,"Umut Simsekli, Levent Sagun, and Mert Gurbuzbalaban. A tail-index analysis of stochastic gradient
+noise in deep neural networks. In International Conference on Machine Learning, pp. 5827–5837.
+PMLR, 2019."
+REFERENCES,0.5012919896640827,"Jasper Snoek, Hugo Larochelle, and Ryan P Adams. Practical bayesian optimization of machine
+learning algorithms. Advances in neural information processing systems, 25, 2012."
+REFERENCES,0.5038759689922481,"Christian Szegedy, Wojciech Zaremba, Ilya Sutskever, Joan Bruna, Dumitru Erhan, Ian Goodfellow,
+and Rob Fergus. Intriguing properties of neural networks. arXiv preprint arXiv:1312.6199, 2013."
+REFERENCES,0.5064599483204134,"Antti Tarvainen and Harri Valpola. Mean teachers are better role models: Weight-averaged consistency
+targets improve semi-supervised deep learning results. arXiv preprint arXiv:1703.01780, 2017."
+REFERENCES,0.5090439276485789,"Hui Wang, Hanbin Zhao, Xi Li, and Xu Tan. Progressive blockwise knowledge distillation for neural
+network acceleration. In Proceedings of the Twenty-Seventh International Joint Conference on
+Artiﬁcial Intelligence, IJCAI-18, pp. 2769–2775. International Joint Conferences on Artiﬁcial
+Intelligence Organization, 7 2018. doi: 10.24963/ijcai.2018/384. URL https://doi.org/
+10.24963/ijcai.2018/384."
+REFERENCES,0.5116279069767442,Published as a conference paper at ICLR 2022
+REFERENCES,0.5142118863049095,"Olga Wichrowska, Niru Maheswaranathan, Matthew W Hoffman, Sergio Gomez Colmenarejo, Misha
+Denil, Nando de Freitas, and Jascha Sohl-Dickstein. Learned optimizers that scale and generalize.
+In Proceedings of the 34th International Conference on Machine Learning, 2017."
+REFERENCES,0.5167958656330749,"D.H. Wolpert and W.G. Macready. No free lunch theorems for optimization. IEEE Transactions on
+Evolutionary Computation, 1(1):67–82, 1997. doi: 10.1109/4235.585893."
+REFERENCES,0.5193798449612403,"Dongxian Wu, Shu-Tao Xia, and Yisen Wang. Adversarial weight perturbation helps robust general-
+ization. Advances in Neural Information Processing Systems, 33, 2020."
+REFERENCES,0.5219638242894057,"Han Xiao, Kashif Rasul, and Roland Vollgraf. Fashion-mnist: a novel image dataset for benchmarking
+machine learning algorithms. 08 2017."
+REFERENCES,0.524547803617571,"Yuanhao Xiong and Cho-Jui Hsieh. Improved adversarial training via learned optimizer, 2020."
+REFERENCES,0.5271317829457365,"Lin Xu, Frank Hutter, Holger H Hoos, and Kevin Leyton-Brown. Satzilla: portfolio-based algorithm
+selection for sat. Journal of artiﬁcial intelligence research, 32:565–606, 2008."
+REFERENCES,0.5297157622739018,"Chenglin Yang, Lingxi Xie, Chi Su, and Alan L. Yuille. Snapshot distillation: Teacher-student
+optimization in one generation, 2018."
+REFERENCES,0.5322997416020672,"Jingwen Ye, Yixin Ji, Xinchao Wang, Kairi Ou, Dapeng Tao, and Mingli Song. Student becoming
+the master: Knowledge amalgamation for joint scene parsing, depth estimation, and more. In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pp.
+2829–2838, 2019."
+REFERENCES,0.5348837209302325,"Jingwen Ye, Yixin Ji, Xinchao Wang, Xin Gao, and Mingli Song. Data-free knowledge amalgamation
+via group-stack dual-gan. In Proceedings of the IEEE/CVF Conference on Computer Vision and
+Pattern Recognition, pp. 12516–12525, 2020a."
+REFERENCES,0.537467700258398,"Jingwen Ye, Yixin Ji, Xinchao Wang, Xin Gao, and Mingli Song. Data-free knowledge amalgamation
+via group-stack dual-gan, 2020b."
+REFERENCES,0.5400516795865633,"Yuning You, Tianlong Chen, Zhangyang Wang, and Yang Shen. L2-gcn: Layer-wise and learned
+efﬁcient training of graph convolutional networks. In Proceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition, pp. 2127–2135, 2020."
+REFERENCES,0.5426356589147286,"Li Yuan, Francis EH Tay, Guilin Li, Tao Wang, and Jiashi Feng. Revisiting knowledge distillation via
+label smoothing regularization. In Proceedings of the IEEE/CVF Conference on Computer Vision
+and Pattern Recognition, pp. 3903–3911, 2020."
+REFERENCES,0.5452196382428941,"Linfeng Zhang, Jiebo Song, Anni Gao, Jingwei Chen, Chenglong Bao, and Kaisheng Ma. Be your
+own teacher: Improve the performance of convolutional neural networks via self distillation, 2019a."
+REFERENCES,0.5478036175710594,"Michael R. Zhang, James Lucas, Geoffrey E. Hinton, and Jimmy Ba. Lookahead optimizer: k steps
+forward, 1 step back. CoRR, abs/1907.08610, 2019b. URL http://arxiv.org/abs/1907.
+08610."
+REFERENCES,0.5503875968992248,"Stephan Zheng, Yang Song, Thomas Leung, and Ian Goodfellow. Improving the robustness of deep
+neural networks via stability training. In Proceedings of the ieee conference on computer vision
+and pattern recognition, pp. 4480–4488, 2016."
+REFERENCES,0.5529715762273901,Published as a conference paper at ICLR 2022
+REFERENCES,0.5555555555555556,"A
+ALGORITHMS"
+REFERENCES,0.5581395348837209,"In this section, we provide a detailed description of the key algorithms used in our paper."
+REFERENCES,0.5607235142118863,"Truncated Back-propagation: Algorithm 1 shows truncated back-propagation applied to optimizer
+amalgamation. For an unrolling length N, N data points (batches, in the case of mini-batch SGD)
+are sampled, which are split into N/t truncations of length t. Note that this requires N to be divisible
+by t; in our implementation, we require t and N/t to be speciﬁed as integers. For each truncation,
+the optimizee and teachers are trained for t iterations, and meta-gradients are computed over that
+truncation and applied."
+REFERENCES,0.5633074935400517,"Adversarial Weight Perturbation: Algorithm 2 shows adversarial perturbations applied to opti-
+mizer amalgamation. For each adversarial attack step, meta-gradients are taken with respect to the
+parameters, and are normalized for each tensor with respect to its tensor norm before being applied
+as an adversarial perturbation."
+REFERENCES,0.5658914728682171,"Algorithm 1: Distillation by Truncated
+Back-propagation
+Inputs
+:Amalgamation loss La
+Policy P with parameters φ
+Teacher policies T = T1, . . . T|T |
+Optimizee M, X, θ0
+Unrolling, truncation lengths N, t
+Outputs :Updated policy parameters φ
+Sample N data points x1, . . . xN from X.
+θ(P )
+0
+= θ(T1)
+0
+= . . . = θ
+(T|T |)
+0
+= θ0
+for i = 1, 2, . . . N/t do"
+REFERENCES,0.5684754521963824,"for j = 1, 2, . . . t do"
+REFERENCES,0.5710594315245479,"n = (i −1)t + j
+Update optimizee for P:
+θ(P )
+n+1 ←θ(P )
+n
+−P
+h
+∇M(xn, θ(P )
+n
+)
+i"
+REFERENCES,0.5736434108527132,"Update optimizees for each teacher:
+for k = 1, . . . |T | do"
+REFERENCES,0.5762273901808785,"θ(Tk)
+n+1 ←"
+REFERENCES,0.5788113695090439,"θ(Tk)
+n
+−Tk
+h
+∇M(xn, θ(Tk)
+n
+)
+i"
+REFERENCES,0.5813953488372093,"end
+end
+Compute distillation loss:
+Li ←La(x[(i−1)t:it], θ[(i−1)t:it]; φ)
+Update φ using ∇Li
+end"
+REFERENCES,0.5839793281653747,"Algorithm 2: Adversarial Weight Perturba-
+tion for Truncated Back-propagation
+Inputs
+:Truncated back-propagation
+parameters La, P, φ, T , M, X,
+θ0, N, t
+Adversarial attack steps A
+Outputs :Updated policy parameters φ
+Sample N data points and initialize
+optimizee parameters
+for i = 1, 2, ...N/t do"
+REFERENCES,0.58656330749354,"ψ0 ←0
+for a = 1, 2, ...A do"
+REFERENCES,0.5891472868217055,"Compute trajectories θ[(i−1)t:it] for
+P and T
+L(a)
+i
+←La(
+x[(i−1)t:it], θ[(i−1)t:it]; φ + ψa)
+for each weight tensor w do"
+REFERENCES,0.5917312661498708,"γ ←
+∇
+ψ(w)
+i
+L(a)
+i"
+REFERENCES,0.5943152454780362,"||∇
+ψ(w)
+i
+L(a)
+i
+||2"
+REFERENCES,0.5968992248062015,"ψ(w)
+a
+←ψa−1 + ε||φ||2γ.
+end
+end
+Li ←La(
+x[(i−1)t:it], θ[(i−1)t:it]; φ + ψA)
+Update φ using ∇Li
+end"
+REFERENCES,0.599483204134367,"B
+OPTIMIZEE DETAILS"
+REFERENCES,0.6020671834625323,"Table 1 shows a summary of the training problems used. While all training is performed on a 2-layer
+CNN on MNIST, we evaluated our optimizer on 4 different datasets described in (B.1) and 5 different
+architectures (described in B.2). We also experiment with different training settings, which are
+described in B.3."
+REFERENCES,0.6046511627906976,"B.1
+DATASETS"
+REFERENCES,0.6072351421188631,"All datasets used are classiﬁcation datasets, with cross entropy used as the training loss. The MNIST
+dataset (LeCun & Cortes, 2010) is used during training; the other datasets are, from most to least
+similar, are:"
+REFERENCES,0.6098191214470284,Published as a conference paper at ICLR 2022
+REFERENCES,0.6124031007751938,"Table 1: Summary of Optimizee Speciﬁcations. Dataset, architecture, and training setting speciﬁca-
+tions are given in sections B.1, B.2, and B.3 respectively."
+REFERENCES,0.6149870801033591,"Optimizee Name
+Dataset
+Architecture
+Parameters
+Other Settings
+Train
+MNIST
+2-layer CNN
+18122
+-"
+REFERENCES,0.6175710594315246,"MLP
+MNIST
+2-layer MLP
+15910
+-
+Wider
+MNIST
+2-layer CNN, 2x width
+61834
+-
+Deeper
+MNIST
+6-layer CNN
+72042
+-"
+REFERENCES,0.6201550387596899,"FMNIST
+FMNIST
+2-layer CNN
+18122
+-
+SVHN
+SVHN
+2-layer CNN
+21290
+-
+CIFAR
+CIFAR-10
+2-layer CNN, 2x width
+68170
+-
+ResNet
+CIFAR-10
+28-layer ResNet
+372330
+-"
+REFERENCES,0.6227390180878553,"Small Batch
+MNIST
+2-layer CNN
+18122
+Batch size 32
+MNIST-DP
+MNIST
+2-layer CNN
+18122
+Differentially Private"
+REFERENCES,0.6253229974160207,"• FMNIST: Fashion MNIST (Xiao et al., 2017). FMNIST is also a drop-in replacement for
+MNIST with 10 classes and 28x28 grayscale images. Unlike MNIST or KMNIST, it features
+images of clothing instead of handwritten characters.
+• SVHN: Street View House Numbers, cropped (Netzer et al., 2011). While SVHN also has
+10 classes of numerical digits, the images are 32x32 RGB, and have signiﬁcantly more noise
+than MNIST including “distraction digits” on each side.
+• CIFAR-10 (Krizhevsky et al., 2009): the least similar dataset. While CIFAR-10 still has 10
+classes and 32x32 RGB images, it has much higher noise and within-class diversity."
+REFERENCES,0.627906976744186,"Sample images from these datasets are shown in Figure 7. All datasets were accessed using Tensor-
+Flow Datasets and have a CC-BY 4.0 license."
+REFERENCES,0.6304909560723514,"(a) MNIST
+(b) FMNIST
+(c) SVHN
+(d) CIFAR-10"
+REFERENCES,0.6330749354005168,Figure 7: Dataset sample images.
+REFERENCES,0.6356589147286822,"B.2
+ARCHITECTURES"
+REFERENCES,0.6382428940568475,"The Train convolutional network (Table 2a) has one convolution layer with 16 3x3 ﬁlters and one
+convolution layer with 32 5x5 ﬁlters. Each convolution layer uses ReLU activation, has stride 1x1,
+and is followed by a max pooling layer with size 2x2. Finally, a fully connected softmax layer is used
+at the output."
+REFERENCES,0.6408268733850129,The four architectures evaluated are:
+REFERENCES,0.6434108527131783,"1. MLP: a 2-layer MLP with 20 hidden units and sigmoid activation
+2. Wider: a modiﬁed version of Train with double width on each layer (Table 2b)
+3. Deeper: a deeper network with 5 convolutional layers instead of 2 (Table 2c), again using
+ReLU activation and 1x1 stride
+4. ResNet: a 28-layer ResNet (He et al., 2015) (Table 2d)"
+REFERENCES,0.6459948320413437,Published as a conference paper at ICLR 2022
+REFERENCES,0.648578811369509,(a) Train
+REFERENCES,0.6511627906976745,"Layer
+Size
+Units
+Conv
+3x3
+16
+Max Pool
+2x2
+-
+Conv
+5x5
+32
+Max Pool
+2x2
+-
+Dense
+-
+10"
+REFERENCES,0.6537467700258398,(b) Wider
+REFERENCES,0.6563307493540051,"Layer
+Size
+Units
+Conv
+3x3
+32
+Max Pool
+2x2
+-
+Conv
+5x5
+64
+Max Pool
+2x2
+-
+Dense
+-
+10"
+REFERENCES,0.6589147286821705,(c) Deeper
+REFERENCES,0.661498708010336,"Layer
+Size
+Units
+Conv
+3x3
+16
+Conv
+3x3
+32
+Conv
+3x3
+32
+Max Pool
+2x2
+-
+Conv
+3x3
+64
+Conv
+3x3
+64
+Max Pool
+2x2
+-
+Dense
+-
+10"
+REFERENCES,0.6640826873385013,(d) ResNet
+REFERENCES,0.6666666666666666,"Block
+Size
+Units
+Conv
+3x3
+16
+Conv
+3x3
+64
+Residual (4x)
+3x3
+64
+Max Pool
+2x2
+-
+Conv
+3x3
+128
+Residual (4x)
+3x3
+128
+Max Pool
+2x2
+-
+Conv
+3x3
+256
+Residual (4x)
+3x3
+256
+Average Pool
+Global
+-
+Dense
+-
+10"
+REFERENCES,0.6692506459948321,"Table 2: Convolutional Optimizee Architectures. Note that for the 28-layer ResNet, each residual
+block consists of 2 layers, adding up to 28 convolutional layers in total."
+REFERENCES,0.6718346253229974,"B.3
+OPTIMIZEE TRAINING"
+REFERENCES,0.6744186046511628,"During training, a batch size of 128 is used except for the Small Batch evaluation, which has a batch
+size of 32. During training and evaluation, datasets are reshufﬂed each iteration."
+REFERENCES,0.6770025839793282,"To match the warmup process used in meta-training, warmup is also applied during evaluation. The
+SGD learning rate is ﬁxed at 0.01, which is a very conservative learning rate which does not optimize
+quickly, but is largely guaranteed to avoid divergent behavior."
+REFERENCES,0.6795865633074936,"For differentially private training, we implement differentially private SGD (Abadi et al., 2016). In
+differentially private SGD, gradients are ﬁrst clipped to a ﬁxed l2 norm ε on a per-sample basis; then,
+gaussian noise with standard deviation σε where σ > 1 is added to the aggregated batch gradients. In
+our experiments, we use clipping norm ε = 1.0 and noise ratio σ = 1.1. Both MNIST and KMNIST
+are used as training sets in order to simulate transfer from a non-private dataset (MNIST) used for
+meta-training to a private dataset (KMNIST)."
+REFERENCES,0.6821705426356589,"C
+AMALGAMATION DETAILS"
+REFERENCES,0.6847545219638242,"C.1
+OPTIMIZER ARCHITECTURES"
+REFERENCES,0.6873385012919897,"In this section, we provide the exact architecture speciﬁcations and hyperparameters of our amal-
+gamated optimizer along with other training details and training time. Our implementation is open
+source, and can be found here: http://github.com/VITA-Group/OptimizerAmalgamation."
+REFERENCES,0.689922480620155,"C.1.1
+RNNPROP ARCHITECTURE"
+REFERENCES,0.6925064599483204,"For our amalgamation target, we use RNNProp architecture described by Lv et al. (2017). For each
+parameter on each time step, this architecture takes as inputs RMSProp update g/
+√"
+REFERENCES,0.6950904392764858,"ˆv and Adam
+update ˆm/
+√"
+REFERENCES,0.6976744186046512,"ˆv using momentum ( ˆm) decay parameter β1 = 0.9 and variance (ˆv) decay parameter
+β2 = 0.999, matching the values used for our analytical optimizers. These values pass through a
+2-layer LSTM with tanh activation, sigmoid recurrent activation, and 20 units per layer. The output
+of this 2-layer LSTM is passed through a ﬁnal fully connected layer with tanh activation to produce a
+scalar ﬁnal update for each parameter."
+REFERENCES,0.7002583979328165,Published as a conference paper at ICLR 2022
+REFERENCES,0.7028423772609819,"C.1.2
+CHOICE NETWORK ARCHITECTURE"
+REFERENCES,0.7054263565891473,"Our Choice network for Optimal Choice Amalgamation is a modiﬁed RNNProp architecture. The
+update steps for each analytical optimizer are given as inputs to the same 2-layer LSTM used in
+RNNProp. Additionally, the current time step and tensor number of dimensions are provided, with
+the number of dimensions being encoded as a one-hot vector."
+REFERENCES,0.7080103359173127,"Then, instead of directly using the output of a fully connected layer as the update, LSTM output
+passes through a fully connected layer with one output per optimizer in the pool. This fully connected
+layer has a softmax activation, and is used as weights to combine the analytical optimizer updates."
+REFERENCES,0.710594315245478,"C.2
+OPTIMIZER POOL"
+REFERENCES,0.7131782945736435,"We consider six optimizers as teachers in this paper: Adam, RMSProp, SGD, Momentum, AddSign,
+and PowerSign. These optimizers are summarized in table 3."
+REFERENCES,0.7157622739018088,"Table 3: Optimizer pool update rules; all
+updates include an additional learning rate
+hyperparameter."
+REFERENCES,0.7183462532299741,"Optimizer
+Update Rule
+SGD
+g
+Momentum
+ˆm
+RMSProp
+g/
+√"
+REFERENCES,0.7209302325581395,"ˆv
+Adam
+ˆm/
+√"
+REFERENCES,0.7235142118863049,"ˆv
+AddSign
+g(1 + sign( ˆm)sign(g))
+PowerSign
+g exp(sign( ˆm)sign(g))"
+REFERENCES,0.7260981912144703,"Joining the popular hand-crafted optimizers Adam, RM-
+SProp, SGD, and Momentum, AddSign and PowerSign
+are two optimizers discovered by neural optimizer search
+(Bello et al., 2017). These two optimizers share the de-
+sign principle that update steps should be larger when
+the momentum and gradient are in agreement:"
+REFERENCES,0.7286821705426356,"AddSign ∝g(1 + sign( ˆm)sign(g))
+PowerSign ∝g exp(sign( ˆm)sign(g)).
+(7)"
+REFERENCES,0.7312661498708011,"Here, g represents the gradient, ˆm an exponential mov-
+ing average of the gradient. In order to use AddSign
+and Powersign as teachers for gradient-based distillation, we modify them to be differentiable by
+replacing the sign function with a scaled tanh with magnitudes normalized by
+√ ˆv:"
+REFERENCES,0.7338501291989664,"sign( ˆm)sign(g) ≈tanh( ˆm/
+√"
+REFERENCES,0.7364341085271318,"ˆv)tanh(g/
+√"
+REFERENCES,0.7390180878552972,"ˆv)
+(8)"
+REFERENCES,0.7416020671834626,"By dividing by
+√"
+REFERENCES,0.7441860465116279,"ˆv, we provide a consistent magnitude to the tanh function so that sign agreement
+mechanism is not affected by overall gradient magnitudes."
+REFERENCES,0.7467700258397932,"For all optimizers, the momentum decay parameter is set to β1 = 0.9, the variance decay parameter
+is set to β2 = 0.999, and the learning rate multiplier is found by grid search on the Train optimizee
+over a grid of {5 × 10−4, 1 × 10−3, 2 × 10−3, . . . 1}."
+REFERENCES,0.7493540051679587,"C.3
+ADDITIONAL TRAINING DETAILS"
+REFERENCES,0.751937984496124,"During amalgamation, we apply a number of techniques from previous Learning to Optimize literature
+in order to boost training:"
+REFERENCES,0.7545219638242894,"• Curriculum Learning: We apply curriculum learning (Chen et al., 2020a) to progressively increase
+the unrolling steps across a maximum of 4 stages with length 100, 200, 500, and 1000. During
+curriculum learning, checkpoints are saved and validated every 40 “meta-epochs,” which refers to a
+single optimizee trajectory trained with truncated back-propagation.
+• Random Scaling: We apply random scaling (Lv et al., 2017) to reduce overﬁtting to the gradient
+magnitudes of the training problem. This random scaling is only applied to the amalgamation
+target; amalgamation teachers receive “clean” (unscaled) gradients.
+• Warmup: Instead of initializing each training optimizee with random weights, we ﬁrst apply 100
+steps of SGD optimization as a “warmup” to avoid the turbulent initial phase of optimizing neural
+networks. A SGD learning rate of 0.01 is used during this period, and was chosen to be very
+conservative on all optimizees tested."
+REFERENCES,0.7571059431524548,"These techniques are also applied to all of our baselines, except for Random Scaling is only applied
+to baselines using the RNNProp architecture since we ﬁnd that it harms the performance of other
+optimizer architectures."
+REFERENCES,0.7596899224806202,Published as a conference paper at ICLR 2022
+REFERENCES,0.7622739018087855,"C.4
+TRAINING COST"
+REFERENCES,0.7648578811369509,"Table 4 provides a summary of the training costs for each amalgamation method and baseline are
+provided. For optimal choice amalgamation, this includes both training the optimal choice optimizer
+and amalgamation training. All values are reported as the mean across 8 replicates."
+REFERENCES,0.7674418604651163,Table 4: Amalgamation and baseline training times.
+REFERENCES,0.7700258397932817,"Method
+Time (hours)
+Mean
+3.86
+Min-max
+3.85
+Choice (small)
+5.28
+Choice (large)
+6.35"
+REFERENCES,0.772609819121447,"Method
+Training Time (hours)
+Random
+5.27
+Adversarial
+10.53
+RNNProp
+2.39
+Stronger Baselines
+3.56"
+REFERENCES,0.7751937984496124,"All experiments were run on single nodes with 4x Nvidia 1080ti GPUs, providing us with a meta-
+batch size of 4 simultaneous optimizations. In order to replicate our results, GPUs with at least
+11GB of memory are required, though less memory can be used if the truncation length for truncated
+back-propagation is reduced."
+REFERENCES,0.7777777777777778,"D
+STABILITY DEFINITIONS"
+REFERENCES,0.7803617571059431,"In this section, we provide the mathematical deﬁnition and measurement details of meta-stability,
+evaluation stability, and optimization stability."
+REFERENCES,0.7829457364341085,"D.1
+META-STABILITY AND EVALUATION STABILITY"
+REFERENCES,0.7855297157622739,"In order to quantify meta-stability and evaluation stability, we ﬁrst summarize the performance of
+each evaluation using the best validation loss obtained and the training loss of the last epoch. Then,
+we model the best validation loss Y (val)
+ij
+and ﬁnal training loss Y (train)
+ij
+for replicate i and evaluation j
+with the linear mixed effect model"
+REFERENCES,0.7881136950904393,"Yij = µ + αi + εij,
+(9)"
+REFERENCES,0.7906976744186046,"where µ is the true mean, αi are IID random variables representing the meta-stability of the amal-
+gamated optimizer, and εij are IID random variables representing the evaluation stability of each
+replicate. The meta-stability and evaluation stability are then quantiﬁed by standard deviations σα
+and σε."
+REFERENCES,0.7932816537467701,"D.2
+OPTIMIZATION STABILITY"
+REFERENCES,0.7958656330749354,"To measure optimization stability, we model the validation loss Lij(t) at epoch t for replicate i and
+evaluation j as"
+REFERENCES,0.7984496124031008,"Lij(t) = βij(t) + η(t)
+ij
+(10)"
+REFERENCES,0.8010335917312662,"for smooth function βij(t) which represents the behavior of the evaluation and random variable η(t)
+ij
+which captures the optimization stability; we assume that η(t)
+ij is IID with respect to t."
+REFERENCES,0.8036175710594315,"In order to estimate ση, we ﬁrst estimate βij(t) by applying a Gaussian ﬁlter with standard deviation
+σ = 2 (epochs) and ﬁlter edge mode “nearest,” and ˆσ(ij)
+η
+is calculated accordingly. Finally, σ(ij)
+η
+is
+treated as a summary statistic for each evaluation, and the mixed effect model described previously
+(Equation 9) is ﬁt to obtain a ﬁnal conﬁdence interval for the mean optimization stability."
+REFERENCES,0.8062015503875969,Published as a conference paper at ICLR 2022
+REFERENCES,0.8087855297157622,"E
+ADDITIONAL RESULTS"
+REFERENCES,0.8113695090439277,"E.1
+EVALUATION STABILITY"
+REFERENCES,0.813953488372093,"Table 5 summarizes the evaluation stability of analytical and amalgamated optimizers. All optimizers
+obtain similar evaluation stability, except for cases where an optimizer cannot reliably train the
+optimizee at all such as Momentum, AddSign, and PowerSign on the Deeper CNN. In these cases,
+the optimizer consistently learns a constant or random classiﬁer, which results in very low variance
+and high “stability.”"
+REFERENCES,0.8165374677002584,"Table 5: Evaluation stability of analytical and amalgamated optimizers; all optimizers are amalga-
+mated from the small pool, except for Optimal Choice Amalgamation on the large pool, which is
+abbreviated as “large”. A dash indicates optimizer-problem pairs where optimization diverged."
+REFERENCES,0.8191214470284238,Best Log Validation Loss
+REFERENCES,0.8217054263565892,"Problem
+Adam
+RMSProp
+SGD
+Momentum
+AddSign
+PowerSign
+Mean
+Min-Max
+Choice
+Large"
+REFERENCES,0.8242894056847545,"Train
+0.068
+0.048
+0.048
+0.068
+0.068
+0.049
+0.064
+0.072
+0.064
+0.058"
+REFERENCES,0.8268733850129198,"MLP
+0.044
+0.046
+0.027
+0.045
+0.022
+0.039
+0.052
+0.048
+0.046
+0.042
+Wider
+0.060
+0.123
+0.046
+0.056
+0.072
+0.059
+0.071
+0.064
+0.063
+0.055
+Deeper
+0.084
+0.075
+0.047
+1.971
+1.679
+−
+0.085
+0.062
+0.100
+0.087"
+REFERENCES,0.8294573643410853,"FMNIST
+0.011
+0.017
+0.015
+0.000
+0.019
+0.017
+0.023
+0.020
+0.018
+0.021
+SVHN
+0.099
+0.049
+0.019
+0.089
+0.037
+0.026
+0.095
+0.360
+0.064
+0.081
+CIFAR-10
+0.049
+0.025
+0.030
+0.000
+0.031
+0.032
+0.040
+0.044
+0.031
+0.021
+ResNet
+0.042
+0.054
+−
+−
+−
+−
+0.072
+0.052
+0.044
+0.040"
+REFERENCES,0.8320413436692506,"Small Batch
+0.047
+0.119
+0.079
+0.068
+0.056
+0.106
+0.085
+0.078
+0.065
+0.064
+MNIST-DP
+0.065
+0.055
+0.154
+0.151
+0.269
+0.229
+0.075
+0.076
+0.070
+0.069"
+REFERENCES,0.834625322997416,"E.2
+LARGER EVALUATIONS"
+REFERENCES,0.8372093023255814,"In order to explore the limits of our optimizer, we evaluated the amalgamated optimizer with a
+52-layer ResNet (763882 parameters — 40x the train network size), and the same 52-layer ResNet
+on CIFAR-100 instead of CIFAR-10. These results are compared to CIFAR-10 on a 2-layer network
+and CIFAR-10 on a 28-layer ResNet using Adam as a single baseline (Figure 8)."
+REFERENCES,0.8397932816537468,"While our amalgamated optimizer has signiﬁcant performance advantages on the shallow CIFAR-10
+network in our original evaluations and achieves performance parity in the 28-layer ResNet, the
+amalgamated optimizer can no longer perform as well as the oracle once we reach 52 layers and
+change to CIFAR-100."
+REFERENCES,0.8423772609819121,"0
+5
+10
+15
+20
+25
+Epoch 0.0 0.2 0.4 0.6"
+REFERENCES,0.8449612403100775,Log Validation Loss
+-LAYER,0.8475452196382429,2-layer
+-LAYER,0.8501291989664083,"0
+5
+10
+15
+20
+25
+Epoch 0.50 0.25 0.00 0.25 0.50 0.75 1.00"
+-LAYER,0.8527131782945736,Log Validation Loss
+-LAYER RESNET,0.8552971576227391,28-layer ResNet
+-LAYER RESNET,0.8578811369509044,"0
+5
+10
+15
+20
+25
+Epoch 0.6 0.4 0.2 0.0 0.2 0.4 0.6 0.8"
+-LAYER RESNET,0.8604651162790697,Log Validation Loss
+-LAYER RESNET,0.8630490956072352,52-layer ResNet
+-LAYER RESNET,0.8656330749354005,"0
+5
+10
+15
+20
+25
+Epoch 0.6 0.8 1.0 1.2 1.4 1.6"
+-LAYER RESNET,0.8682170542635659,Log Validation Loss
+-LAYER RESNET,0.8708010335917312,"52-layer ResNet, CIFAR-100"
+-LAYER RESNET,0.8733850129198967,"Amalgamated
+Oracle"
+-LAYER RESNET,0.875968992248062,"Figure 8: Amalgamated optimizer ablations on problems of increasing size relative to the training
+problem."
+-LAYER RESNET,0.8785529715762274,"E.3
+ADDITIONAL PLOTS"
+-LAYER RESNET,0.8811369509043928,"In this section, we include plots providing alternate versions of Figures 2, 3, and 5 in the main text
+which had some outliers cropped out in order to improve readability."
+-LAYER RESNET,0.8837209302325582,Published as a conference paper at ICLR 2022
+-LAYER RESNET,0.8863049095607235,"Train
+MLP
+Wider
+Deeper
+FMNIST
+SVHN
+CIFAR-10
+ResNet
+Small Batch
+MNIST-DP 0.0 0.5 1.0 1.5 2.0"
+-LAYER RESNET,0.8888888888888888,Relative Best Log Val Loss
+-LAYER RESNET,0.8914728682170543,"Amalgamated
+Stronger Baselines
+RNNProp
+Scale
+Original"
+-LAYER RESNET,0.8940568475452196,"Train
+MLP
+Wider
+Deeper
+FMNIST
+SVHN
+CIFAR-10
+ResNet
+Small Batch
+MNIST-DP 0.15 0.10 0.05 0.00"
+-LAYER RESNET,0.896640826873385,Relative Best Validation Accuracy
+-LAYER RESNET,0.8992248062015504,"Figure 9: Uncropped version of Figure 2. Poor performance of “Scale” and “Original” on small batch
+and differentially private training cause differences between the best performers (Amalgamated and Stronger
+Baselines) to be unreadable. A version showing the best validation accuracy is also included (higher is better);
+the accuracy results largely preserve relative differences between methods, and lead to the same conclusion."
+-LAYER RESNET,0.9018087855297158,"Train
+MLP
+Wider
+Deeper
+FMNIST
+SVHN
+CIFAR-10
+ResNet
+Small Batch
+MNIST-DP 0.0 0.5 1.0 1.5 2.0 2.5"
+-LAYER RESNET,0.9043927648578811,Best Val Loss
+-LAYER RESNET,0.9069767441860465,"Train
+MLP
+Wider
+Deeper
+FMNIST
+SVHN
+CIFAR-10
+ResNet
+Small Batch
+MNIST-DP 4 2 0 2"
+-LAYER RESNET,0.9095607235142119,Best Train Loss
+-LAYER RESNET,0.9121447028423773,"Train
+MLP
+Wider
+Deeper
+FMNIST
+SVHN
+CIFAR-10
+ResNet
+Small Batch
+MNIST-DP 0.0 0.1 0.2 0.3"
+-LAYER RESNET,0.9147286821705426,Optimization Stability
+-LAYER RESNET,0.917312661498708,Figure 10: Uncropped version of Figure 5 including similar plots for Training and Validation loss.
+-LAYER RESNET,0.9198966408268734,Published as a conference paper at ICLR 2022
+-LAYER RESNET,0.9224806201550387,"0
+5
+10
+15
+20
+25 0.975 0.980 0.985 0.990 Train"
+-LAYER RESNET,0.9250645994832042,"0
+5
+10
+15
+20
+25
+0.90 0.92 0.94 0.96 MLP"
+-LAYER RESNET,0.9276485788113695,"0
+5
+10
+15
+20
+25 0.980 0.985 0.990 Wider"
+-LAYER RESNET,0.9302325581395349,"0
+5
+10
+15
+20
+25 0.980 0.985 0.990 0.995"
+-LAYER RESNET,0.9328165374677002,Deeper
+-LAYER RESNET,0.9354005167958657,"0
+5
+10
+15
+20
+25
+0.82 0.84 0.86 0.88 0.90"
+-LAYER RESNET,0.937984496124031,FMNIST
+-LAYER RESNET,0.9405684754521964,"Amalgamated
+Oracle"
+-LAYER RESNET,0.9431524547803618,"0
+5
+10
+15
+20
+25
+0.80 0.82 0.84 0.86 0.88 0.90 SVHN"
+-LAYER RESNET,0.9457364341085271,"0
+5
+10
+15
+20
+25 0.3 0.4 0.5 0.6 0.7"
+-LAYER RESNET,0.9483204134366925,CIFAR-10
+-LAYER RESNET,0.9509043927648578,"0
+5
+10
+15
+20
+25 0.2 0.4 0.6 0.8"
+-LAYER RESNET,0.9534883720930233,ResNet
+-LAYER RESNET,0.9560723514211886,"0
+5
+10
+15
+20
+25 0.980 0.985 0.990"
+-LAYER RESNET,0.958656330749354,Small Batch
+-LAYER RESNET,0.9612403100775194,"0
+5
+10
+15
+20
+25
+0.86 0.88 0.90 0.92 0.94"
+-LAYER RESNET,0.9638242894056848,MNIST-DP
+-LAYER RESNET,0.9664082687338501,"Figure 11: An accuracy version of Figure 3 comparing the best Amalgamated Optimizer (blue) and the Oracle
+Optimizer (orange); the shaded area shows ±2 standard deviations from the mean. The title of each plot
+corresponds to an optimizee; full deﬁnitions can be found in Appendix B. The amalgamated optimizer performs
+similarly or better than the Oracle analytical optimizer on problems spanning a variety of training settings,
+architectures, and datasets, and has the largest advantage on more difﬁcult problems such as CIFAR-10, ResNet,
+and MNIST-DP."
+-LAYER RESNET,0.9689922480620154,"E.4
+INPUT PERTURBATION"
+-LAYER RESNET,0.9715762273901809,"When applying input perturbations, we perturb the inputs to the optimizer, or the optimizee gradients,
+instead of the optimizer weights:"
+-LAYER RESNET,0.9741602067183462,"θi+1 = θi −P(∇θiM(xi, θi) + N(0, σ2I)).
+(11)"
+-LAYER RESNET,0.9767441860465116,"Table 6: Meta-Stability with varying
+magnitudes of Input Perturbation"
+-LAYER RESNET,0.979328165374677,"Magnitude
+Meta-stability
+σ = 0
+0.104
+σ = 10−2
+0.485
+σ = 10−1
+1.637"
+-LAYER RESNET,0.9819121447028424,"We tested magnitudes σ = 10−1 and σ = 10−2 on a
+smaller experiment size of 6 replicates using Choice amal-
+gamation on the small pool as a baseline; these results
+are given in Table 6. Many experiment variants remain
+relating to input noise such as adding noise proportional
+to parameter norm or gradient norm or trying smaller mag-
+nitudes of noise, and this may be a potential area of future
+study. However, we believe that input noise is generally
+not helpful to optimizer amalgamation, and did not study
+it further."
+-LAYER RESNET,0.9844961240310077,"E.5
+BASELINES WITH RANDOM PERTURBATION"
+-LAYER RESNET,0.9870801033591732,"Our perturbation methods can be applied to any gradient-based optimizer meta-training method,
+including all of our baselines. To demonstrate this application, we trained 8 RNNProp replicates with
+Gaussian perturbations with magnitude 1 × 10−4; all other settings were identical to the RNNProp
+baseline. With perturbations, the RNNProp baseline is signiﬁcantly improved, though not enough to
+match the performance of our amalgamation method."
+-LAYER RESNET,0.9896640826873385,"Train
+MLP
+Wider
+Deeper
+FMNIST
+SVHN
+CIFAR-10
+ResNet
+Small Batch
+MNIST-DP 0.0 0.1 0.2 0.3"
+-LAYER RESNET,0.9922480620155039,Relative Best Log Val Loss
+-LAYER RESNET,0.9948320413436692,"Amalgamated
+RNNProp + Gaussian
+RNNProp"
+-LAYER RESNET,0.9974160206718347,"Figure 12: Comparison of 8 replicates amalgamated from the Large pool using Choice amalgamation with
+RNNProp baseline with Gaussian perturbations, with magnitude 1 × 10−4. With perturbations, the RNNProp
+baseline is signiﬁcantly improved, though not enough to match the performance of our amalgamation method."

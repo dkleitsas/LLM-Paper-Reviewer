@@ -1,0 +1,1833 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.0029411764705882353,"Structured pruning methods which are capable of delivering a densely pruned net-
+work are among the most popular techniques in the realm of neural network prun-
+ing, where most methods prune the original network at a ﬁlter or layer level. Al-
+though such methods may provide immediate compression and acceleration ben-
+eﬁts, we argue that the blanket removal of an entire ﬁlter or layer may result in
+undesired accuracy loss. In this paper, we revisit the idea of kernel pruning (to
+only prune one or several k × k kernels out of a 3D-ﬁlter), a heavily overlooked
+approach under the context of structured pruning. This is because kernel pruning
+will naturally introduce sparsity to ﬁlters within the same convolutional layer —
+thus, making the remaining network no longer dense. We address this problem
+by proposing a versatile grouped pruning framework where we ﬁrst cluster ﬁlters
+from each convolutional layer into equal-sized groups, prune the grouped kernels
+we deem unimportant from each ﬁlter group, then permute the remaining ﬁlters to
+form a densely grouped convolutional architecture (which also enables the parallel
+computing capability) for ﬁne-tuning. Speciﬁcally, we consult empirical ﬁndings
+from a series of literature regarding Lottery Ticket Hypothesis to determine the op-
+timal clustering scheme per layer, and develop a simple yet cost-efﬁcient greedy
+approximation algorithm to determine which group kernels to keep within each ﬁl-
+ter group. Extensive experiments also demonstrate our method often outperforms
+comparable SOTA methods with lesser data augmentation needed, smaller ﬁne-
+tuning budget required, and sometimes even much simpler procedure executed
+(e.g., one-shot v. iterative). Please refer to our GitHub repository for code."
+INTRODUCTION,0.0058823529411764705,"1
+INTRODUCTION"
+INTRODUCTION,0.008823529411764706,"The applications of convolutional neural networks (CNNs) have demonstrated proven success in
+various computer vision tasks (Voulodimos et al., 2018). However, with modern CNN architectures
+being increasingly deeper and wider, over-parameterization has become one of the major challenges
+of deploying such models to devices with limited computational resources and memory capacity
+(Frankle & Carbin, 2019). Therefore, the study of network pruning — the technique of removing
+redundant weights from the originally trained network without signiﬁcantly sacriﬁcing accuracy —
+has been an important subject both for practical concerns (Mozer & Smolensky, 1989) and better
+understanding of the properties and mechanisms of neural networks (Arora et al., 2018)."
+INTRODUCTION,0.011764705882352941,"In the realm of CNN pruning, a spectrum of techniques have been studied where the two ends are
+populated by structured pruning and unstructured pruning methods (Mao et al., 2017). Methods
+from the former end often propose to remove redundant weights in groups while following some
+geometrical constraints — such as removing a certain ﬁlter or layer. The methods from the latter
+end, on the other hand, prune the network with a more ﬁne-grained view where they evaluate every
+weight individually. Yet, there are many other methods lay in between of the two ends. Methods
+that are more “unstructured” are believed to be capable of yielding better accuracy retention with
+a commensurate amount of parameters pruned, due to having a higher degree of freedom on how"
+INTRODUCTION,0.014705882352941176,Published as a conference paper at ICLR 2022
+INTRODUCTION,0.01764705882352941,"and where to introduce sparsity to the originally dense network. Empirical ﬁndings also support this
+claim (Liu et al., 2019; Mao et al., 2017)."
+INTRODUCTION,0.020588235294117647,"Despite having advantages on accuracy retention, the resultant networks from methods closer to the
+unstructured end will be more sparse and less regulated on where to introduce sparsity. It may not
+provide actual compression and acceleration without relying on custom-indexing, sparse convolution
+libraries, or even dedicated hardware devices; thus, limits the deployability of such methods (Mao
+et al., 2017). Meanwhile, methods closer to the structured end, by preserving a more regulated
+resultant network, are more likely to be library/hardware-friendly. The most deployable structured
+pruning method may deliver a densely resultant network and therefore gain immediate compression
+and acceleration beneﬁts. We denote this kind of pruning method as densely structured."
+INTRODUCTION,0.023529411764705882,"Naturally, many scholars want to develop new methods within the realm of densely structured prun-
+ing but with better accuracy retention. The majority of densely structured pruning methods focus
+on pruning the original network at a ﬁlter or layer level. We argue that the blanket removal of an
+entire ﬁlter or layer may harm the representation power of the network and result in undesired ac-
+curacy loss — as removing a ﬁlter would consequently remove all feature maps generated by such
+ﬁlter. Even worse, removing a layer would eliminate more feature maps and even face the danger of
+layer-collapse, a phenomenon of having an untrainable pruned network due to premature pruning of
+an entire layer (Tanaka et al., 2020)."
+INTRODUCTION,0.026470588235294117,"In this paper, we revisit the idea of kernel pruning (to only prune one or several k × k kernels from a
+3D-ﬁlter, instead of an entire one) as an alternative and less aggressive pruning approach with higher
+degree of freedom. We hypothesize that by not removing the entire ﬁlter, the representation power
+of the original network will be better preserved. Although the idea of kernel pruning is nothing
+too novel (as it is simply a special case of individual weights pruning with 100% of weights of a
+kernel pruned), it is mostly applied under the context of unstructured pruning or structured pruning
+methods which may not deliver a dense pruned network (Mao et al., 2017; Ma et al., 2020). This is
+because a direct implementation of kernel pruning with no constraint would introduce sparsity across
+the network and therefore make the pruned network no longer dense. We address this problem by
+proposing a versatile grouped pruning framework, where we:"
+INTRODUCTION,0.029411764705882353,"1. Cluster similar ﬁlters from each convolutional layer into a (predeﬁned) number of equal-
+sized ﬁlter groups."
+INTRODUCTION,0.03235294117647059,"2. For each ﬁlter group, identify a certain portion of grouped kernels to prune according to the
+required pruning ratio."
+INTRODUCTION,0.03529411764705882,"3. Permute the remaining ﬁlters to form a densely grouped convolutional architecture accord-
+ing to the number of groups used in step 1."
+INTRODUCTION,0.03823529411764706,"Like most other post-train grouped pruning methods, we face the challenge of determining which
+clustering schemes and which importance metrics to use in step 1 and 2 of the above procedure.
+Upon investigations and experiments, we discovered that a classical clustering scoring system (e.g.,
+the Silhouette score) might not capture the better clustering scheme in regard to accuracy retention.
+Yet many ﬁlter importance metrics require sophisticated procedures, which are not computationally
+friendly or easy to execute when applied at a kernel level. We address the ﬁrst challenge by consult-
+ing model-generated information — in this case, the empirical ﬁndings on Lottery Ticket Hypothesis
+(LTH) and related literature on weights shifting — to develop a scoring system that identiﬁes the
+optimal clustering scheme among options per each convolutional layer (Frankle & Carbin, 2019;
+Renda et al., 2020). For the second challenge, we design a simple and cost-efﬁcient greedy algo-
+rithm with multiple restarts to generate multiple candidate kernel selection queues and identify the
+one queue where the preserved kernels are most “distinctive” from each other yet “similar” to the
+pruned kernels. The main contributions and advantages of our method are:"
+INTRODUCTION,0.041176470588235294,"• Bring back an overlooked approach: We brought attention to the heavily overlooked
+approach of kernel pruning under the context of densely structured pruning."
+INTRODUCTION,0.04411764705882353,"• Simple but effective — a vanilla adaptation of our framework outperforms sophis-
+ticated variants of other comparable frameworks (e.g., ﬁlter pruning): Even by just
+applying well-understood classical mathematical tools, extensive experiments demonstrate
+our method outperforms comparable SOTA methods across different networks and datasets."
+INTRODUCTION,0.047058823529411764,Published as a conference paper at ICLR 2022
+INTRODUCTION,0.05,"Additionally, our method often needs less data augmentation, a smaller ﬁne-tuning budget,
+and it executes without requiring any custom retraining, special ﬁne-tuning, or iterative
+prune-train cycles — which is rare for the approaches relying on LTH-related studies."
+INTRODUCTION,0.052941176470588235,"• Better longevity:
+We developed a framework that is compatible with further-
+developed/discovered clustering schemes and inductive biases, or more advanced variations
+upon them. This overcomes one of the major drawbacks of many ﬁlter pruning methods:
+as most of them propose different ﬁlter importance metrics that are largely incompatible
+with each other either in terms of their procedures or computational requirements."
+INTRODUCTION,0.05588235294117647,"• Improved deployability: The resultant network of our method is structured as a densely
+grouped convolution, which enables parallel computing capability and greatly increases the
+practical deployability of our methods: as we can now share the required computation and
+memory footprint across multiple end-user devices, where most of them have very limited
+said resources individually (e.g., IoT devices, mobile phones, and wearable technologies)."
+INTRODUCTION,0.058823529411764705,• General impact on LTH and beyond network pruning: Please refer to Section 5.
+RELATED WORK,0.061764705882352944,"2
+RELATED WORK"
+RELATED WORK,0.06470588235294118,"Many prior arts have explored the possibility of obtaining a smaller model with comparable perfor-
+mance by removing redundant weights (Zhu & Gupta, 2018; Han et al., 2016), ﬁlters (Molchanov
+et al., 2017; Yu et al., 2018; He et al., 2019; Wang et al., 2019a), layers (Wang et al., 2019b; Lin
+et al., 2019), image input (Howard et al., 2017; Han et al., 2020), or from all three dimensions (Wang
+et al., 2021). It is clear that ﬁlter pruning attracts the most attention among all structured pruning
+approaches."
+RELATED WORK,0.06764705882352941,"Our method is inspired by grouped convolution, a widely adopted convolutional architecture which
+could be implemented efﬁciently on common devices (Iandola et al., 2017). Although kernel prun-
+ing used together with ﬁlter clustering is not a popular trend, we have seen such a combination in
+work like Yu et al. (2017). However, the proposed method by Yu requires iterative analysis of many
+different intermediate feature maps per layer, involves a complex knowledge distillation application
+during the ﬁne-tuning stage, and lacks comparable experiment results to recent pruning literature.
+Where our method (and concurrent work like Zhang et al. (2022)) provides a much cleaner adap-
+tation of the abovementioned combination that delivers beyond-SOTA performance with a straight-
+forward one-shot pruning and standard ﬁne-tuning procedure. In addition, our method consults em-
+pirical ﬁndings on the lottery ticket hypothesis and its derived literature regarding weights shifting
+(Frankle & Carbin, 2019; Renda et al., 2020; Zhou et al., 2019), and we propose a novel greedy
+kernel pruning algorithm that is again simple, efﬁcient, yet effective — more on this in Section 3."
+PROPOSED METHOD,0.07058823529411765,"3
+PROPOSED METHOD"
+PRELIMINARIES,0.07352941176470588,"3.1
+PRELIMINARIES"
+PRELIMINARIES,0.07647058823529412,"Assume a convolutional neural network W has L convolutional layers, we denote the W ℓto be
+the ℓ-th convolutional layer of W (for ℓ∈{Z+ | [1, L]}). Therefore, we shall have a 4-D tensor
+W ℓ∈RCℓ
+out×Cℓ
+in×Hℓ×W ℓwhere Cℓ
+out represents the number of ﬁlters in W ℓ(also known as the
+number of output channels in some literature), Cℓ
+in represents the number of kernels per ﬁlter (a.k.a.
+number of input channels), and Hℓ× W ℓrepresents the size of each kernel."
+PRELIMINARIES,0.07941176470588235,"The overall procedure of our method can be mainly divided into four stages: 1) Clustering ﬁlters into
+n equal-sized groups, where the best clustering scheme for each convolutional layer is determined
+using the tickets magnitude increase score derived from prior arts on lottery ticket hypothesis and
+weight-shifting; 2) Evaluating several candidate grouped kernel pruning strategies generated by a
+greedy approximation algorithm with multiple restarts, where the strategy with preserved grouped
+kernels that are most distinctive from each other, yet most similar to the pruned grouped kernels
+gets selected; 3) Permuting the preserved ﬁlters to form a grouped convolutional architecture with n
+groups; 4) Fine-tuning the pruned and grouped network to recover accuracy lost from pruning."
+PRELIMINARIES,0.08235294117647059,"Published as a conference paper at ICLR 2022 3 5 1 2 3 4 5 6
+6 5 4 3 2 1"
+PRELIMINARIES,0.08529411764705883,"Input
+Output"
+PRELIMINARIES,0.08823529411764706,"Original 
+Convolutional Layer"
+PRELIMINARIES,0.09117647058823529,"Filter
+Grouping 1 3 2 5 4 6 1 2 3 4 5"
+"INPUT
+OUTPUT",0.09411764705882353,"6
+Input
+Output"
+"INPUT
+OUTPUT",0.09705882352941177,Group 1
+"INPUT
+OUTPUT",0.1,Group 2
+"INPUT
+OUTPUT",0.10294117647058823,Group 3
+"INPUT
+OUTPUT",0.10588235294117647,"Pruning 
+Within 
+Groups 1 3 2 5 4 6 1 2 3 4 5"
+"INPUT
+OUTPUT",0.10882352941176471,"6
+Input
+Output"
+"INPUT
+OUTPUT",0.11176470588235295,"Layer 
+Reconstruction 1 3 2 5 4 6"
+"INPUT
+OUTPUT",0.11470588235294117,"4
+1
+4
+5
+3
+5"
+"INPUT
+OUTPUT",0.11764705882352941,"Input
+Output
+6 3
+1"
+"INPUT
+OUTPUT",0.12058823529411765,Group 1
+"INPUT
+OUTPUT",0.12352941176470589,Group 2
+"INPUT
+OUTPUT",0.1264705882352941,Group 3
+"INPUT
+OUTPUT",0.12941176470588237,"Pruned 
+Convolutional Layer"
+"INPUT
+OUTPUT",0.1323529411764706,Weights:
+"INPUT
+OUTPUT",0.13529411764705881,Input Channels
+"INPUT
+OUTPUT",0.13823529411764707,Layer:
+"INPUT
+OUTPUT",0.1411764705882353,Group 1
+"INPUT
+OUTPUT",0.14411764705882352,Group 2
+"INPUT
+OUTPUT",0.14705882352941177,Group 3
+"INPUT
+OUTPUT",0.15,"1
+3
+2
+5 6
+4"
+"INPUT
+OUTPUT",0.15294117647058825,1 2 3 4 5 6
+"INPUT
+OUTPUT",0.15588235294117647,Output Channels
+"INPUT
+OUTPUT",0.1588235294117647,Input Channels
+"INPUT
+OUTPUT",0.16176470588235295,"1
+3
+2
+5 6
+4"
+"INPUT
+OUTPUT",0.16470588235294117,"1 3 4 1 4 5 3 5 6
+Input Channels"
+"INPUT
+OUTPUT",0.1676470588235294,Output Channels
+"INPUT
+OUTPUT",0.17058823529411765,Group 1
+"INPUT
+OUTPUT",0.17352941176470588,Group 2
+"INPUT
+OUTPUT",0.17647058823529413,Group 3
+"INPUT
+OUTPUT",0.17941176470588235,"Filter
+Kernel"
+"INPUT
+OUTPUT",0.18235294117647058,"Filter
+1
+2
+3
+4 6
+5"
+"INPUT
+OUTPUT",0.18529411764705883,1 2 3 4 5 6
+"INPUT
+OUTPUT",0.18823529411764706,Output Channels
+"INPUT
+OUTPUT",0.19117647058823528,Kernel
+"INPUT
+OUTPUT",0.19411764705882353,"Grouped Filter
+1
+3
+2
+5 6
+4"
+"INPUT
+OUTPUT",0.19705882352941176,1 2 3 4 5 6
+"INPUT
+OUTPUT",0.2,Output Channels
+"INPUT
+OUTPUT",0.20294117647058824,Input Channels
+"INPUT
+OUTPUT",0.20588235294117646,Grouped Kernel
+"INPUT
+OUTPUT",0.2088235294117647,"(a)
+(b)
+(c)
+(d)"
+"INPUT
+OUTPUT",0.21176470588235294,"Figure 1: Steps of our method
+3.2
+CLUSTERING FILTERS INTO GROUPS"
+"INPUT
+OUTPUT",0.21470588235294116,"The ﬁrst step of our method is to cluster ﬁlters from the same convolutional layer into n equal-sized
+groups. Known that for a layer W ℓwe have Cℓ
+out ﬁlters, there shall be Cℓ
+out/n ﬁlters inside each
+equal-sized ﬁlter group. We denote F ℓ
+i to be the i-th ﬁlter in W ℓ(namely, F ℓ
+i = W ℓ
+[i,:,:,:]) for
+i ∈{Z+ | [1, Cℓ
+out]}. Filter clustering is a maturely adopted technique in network pruning since it
+is a widely accepted assumption that when similar ﬁlters are clustered together, the representation
+power of some ﬁlters can be covered by the rest of the ﬁlters in the same group (which therefore
+enables the potential of pruning). Additionally, this technique drastically decomposes the scope of
+the problem, as we may now proceed to evaluate in a group-by-group fashion instead of evaluating
+all of the ﬁlters from W ℓat the same time."
+"INPUT
+OUTPUT",0.21764705882352942,"Many prior arts have developed methods on ﬁlter clustering with linearity assumptions (Guo et al.,
+2020), via retraining with a custom loss function (Wu et al., 2018), or through an iterative process
+(Yu et al., 2017). We argue that since each ﬁlter F ℓ
+i is a tensor of Cℓ
+in × Hℓ× W ℓ, considerations
+regarding non-linearity and high-dimensional relationships should be added. Therefore, we utilize
+the following three combinations of proven mathematical tools on dimensionality reduction and
+clustering in order to cluster ﬁlters from each layer into n equal-sized groups."
+AVAILABLE CLUSTERING SCHEMES,0.22058823529411764,"3.2.1
+AVAILABLE CLUSTERING SCHEMES"
+AVAILABLE CLUSTERING SCHEMES,0.2235294117647059,"To reduce the dimension of ﬁlters in W ℓand cluster them into n equal-sized groups, we utilize the
+following three sets of methods: K-PCA + k-Means, Spectral Clustering + k-Means, and t-SNE
++ DBSCAN (with slight modiﬁcations done to obtain the desired cluster size and number). Since
+all ﬁve methods here have been maturely studied, we will omit the introduction of these methods;
+please refer to section A.5 for details. We denote each set of methods as a clustering scheme."
+DECIDE OPTIMAL CLUSTERING SCHEME PER LAYER WITH TMI SCORE,0.22647058823529412,"3.2.2
+DECIDE OPTIMAL CLUSTERING SCHEME PER LAYER WITH TMI SCORE"
+DECIDE OPTIMAL CLUSTERING SCHEME PER LAYER WITH TMI SCORE,0.22941176470588234,"With the three proposed and many other unimplemented clustering schemes, one natural question
+to ask is how are we suppose to decide the optimal clustering scheme? And at what scale should
+we make such a decision? The latter question was relatively easier to answer as we already set on
+clustering ﬁlters into groups in a layer-by-layer fashion, so it is reasonable enough to ﬁnd out the
+most suitable clustering scheme for each layer. But to address the former question, we need to ﬁnd a
+way to quantify the “quality” of proposed clustering results. Mathematicians have provided us with
+classical tools such as the Silhouette score to measure the quality of clusters. However, experiment
+results suggest such tools can hardly identify the better cluster method under the context of accuracy
+retention (A.1.1)."
+DECIDE OPTIMAL CLUSTERING SCHEME PER LAYER WITH TMI SCORE,0.2323529411764706,"We hypothesize that this is because tools like the Silhouette score focus on properties regarding
+clusters themselves — such as distances between clusters, or cohesion within each cluster — while"
+DECIDE OPTIMAL CLUSTERING SCHEME PER LAYER WITH TMI SCORE,0.23529411764705882,Published as a conference paper at ICLR 2022
+DECIDE OPTIMAL CLUSTERING SCHEME PER LAYER WITH TMI SCORE,0.23823529411764705,"accuracy retention relies on ﬁlter importance, or balance between ﬁlter groups under the context of
+the network. Therefore, we decide to introduce network-induced information to help us quantify the
+quality of different clustering results: where we consult empirical ﬁndings from a series of literature
+regarding Lottery Ticket Hypothesis and weights shifting."
+DECIDE OPTIMAL CLUSTERING SCHEME PER LAYER WITH TMI SCORE,0.2411764705882353,"Background on Lottery Ticket Hypothesis, Weights Shifting, and Weights Rewinding
+For a
+dense convolutional neural network W initialized with weights of W0, the conventional post-train
+pruning procedure has three steps:"
+DECIDE OPTIMAL CLUSTERING SCHEME PER LAYER WITH TMI SCORE,0.24411764705882352,"1. Train the proposed network for t epochs. Where we denote the network has weights of
+Wk at the k-th epoch for 0 ≤k ≤t."
+DECIDE OPTIMAL CLUSTERING SCHEME PER LAYER WITH TMI SCORE,0.24705882352941178,"2. Prune the network with weights Wt according to the deﬁned pruning ratio and achieve
+subnetwork W
+′
+t , where W
+′
+t ⊂Wt."
+FINE-TUNE THE NETWORK WITH W,0.25,"3. Fine-tune the network with W
+′
+t and f more epochs to recover accuracy."
+FINE-TUNE THE NETWORK WITH W,0.2529411764705882,"The Lottery Ticket Hypothesis claims that instead of ﬁne-tuning upon the subnetwork W
+′
+t , there
+exists a subnetwork W
+′
+k (deﬁned as W
+′
+t but replaced with its counterpart weights from Wk) that,
+when trained in isolation for f more epochs, may match or outperform the test accuracy of the ﬁne-
+tuned W
+′
+t achieved from step 3 above. This W
+′
+k is therefore known as the winning ticket (Frankle
+& Carbin, 2019)."
+FINE-TUNE THE NETWORK WITH W,0.25588235294117645,"A vast amount of research has been done to demonstrate the existence of winning tickets across
+different networks and datasets, making the lottery ticket hypothesis one of the most tested inductive
+biases among neural networks (Renda et al., 2020). Scholars have additionally investigated the
+relationship between the winning ticket’s weights and ﬁnal weights in regard to accuracy retention.
+Zhou et al. (2019) did one of the most thorough experiments on exploring such relationship by
+deploying nine different zero mask criteria related to initial weights, ﬁnal weights, and weights
+shifting during training. They concluded that ||wt| −|w0|| (where wt, w0 respectively represent
+the same weight in Wt and W0), the magnitude increase of a weight at its initialization and after
+training, has demonstrated most signiﬁcant positive correlation with accuracy retention."
+FINE-TUNE THE NETWORK WITH W,0.25882352941176473,"Note that the Zhou et al. (2019) experiments were conducted under the assumption that the winning
+ticket exists at W0. This is because, for early or even concurrent arts on the lottery ticket hypothesis,
+scholars have their disagreements on whether to reinitialize the weights of W
+′
+t to their initial values
+(namely, k = 0 for k in W
+′
+k) (Frankle & Carbin, 2019), to near initialization (0 < k ≪t) (Renda
+et al., 2020), or just to reset randomly (Liu et al., 2019). However, with more comprehensive exper-
+iments conducted, the ﬁndings reveal there are multiple winning tickets that exist within a range of
+epochs starting from near initialization: such that for any k where 0 < k1 ≤k ≤k2 < t, W
+′
+k can
+be a winning ticket (with k1 being close to 0). This technique is referred as weights rewinding and
+we denote the range of [k1, k2] as the tickets window (Renda et al., 2020)."
+FINE-TUNE THE NETWORK WITH W,0.26176470588235295,"Ticket Magnitude Increase scoring system
+Based on the fact that a winning ticket may occur
+at near initialization but not necessary exactly at initialization, we slightly modify the magnitude
+increase criteria from Zhou et al. (2019) by replacing the initialization weights as the ticket weights.
+Thus, we deﬁne the ticket magnitude increase score (hereinafter “TMI score”) as ||wt| −|wk|| for
+0 < k ≪t (where wt, wk respectively represent the same weight in Wt and Wk). Since we aim
+to use such scoring system to govern the clustering quality of ﬁlter groups, we further expand this
+scoring system from individual weight to a ﬁlter-level. For a ﬁlter F ℓ
+i ∈RCℓ
+in×Hℓ×W ℓ, we denote
+the weight at (h, w) index from the c-th kernel of F ℓ
+i as W ℓ
+[i,c,h,w]; so the TMI score for ﬁlter F ℓ
+i in
+regard to a winning ticket at the k-th epoch should be deﬁned as the following."
+FINE-TUNE THE NETWORK WITH W,0.2647058823529412,"TMI(F ℓ
+i , k) ="
+FINE-TUNE THE NETWORK WITH W,0.2676470588235294,"Cℓ
+in
+X c Hℓ
+X h W ℓ
+X"
+FINE-TUNE THE NETWORK WITH W,0.27058823529411763,"w
+(||W ℓ
+t[i,c,h,w]| −|W ℓ
+k[i,c,h,w]||).
+(1)"
+FINE-TUNE THE NETWORK WITH W,0.2735294117647059,"Similarly, for a ﬁlter group gℓof {F ℓ
+i , F ℓ
+j , . . . }, its TMI score would be:"
+FINE-TUNE THE NETWORK WITH W,0.27647058823529413,Published as a conference paper at ICLR 2022
+FINE-TUNE THE NETWORK WITH W,0.27941176470588236,"TMI(gℓ, k) =
+X"
+FINE-TUNE THE NETWORK WITH W,0.2823529411764706,"gi∈gℓ
+TMI(F ℓ
+gi, k).
+(2)"
+FINE-TUNE THE NETWORK WITH W,0.2852941176470588,"Qualifying cluster results with TMI scores
+With the TMI score for a ﬁlter group deﬁned, the
+next question to address is what makes a good clustering result in regard to TMI scores? We already
+observed that tools like the Silhouette score could not capture the better clustering result in terms
+of accuracy retention, and we hypothesized that this is due to the lack of attention on ﬁlter impor-
+tance and balance between ﬁlter groups. Since Zhou et al. (2019) has established the relationship
+between better accuracy retention and weights with larger magnitude increase, we expect such re-
+lationship will expand to a ﬁlter level where ﬁlters with large TMI scores may help on accuracy
+retention and therefore be deemed “more important.” We conﬁrm such assumption in A.4.1."
+FINE-TUNE THE NETWORK WITH W,0.28823529411764703,"In terms of the balance between multiple ﬁlter groups — with each ﬁlter’s TMI score being an
+indicator of its importance — we would prefer clustering results where all ﬁlter groups have a
+similar TMI score. As if one ﬁlter group’s TMI score is signiﬁcantly larger than another ﬁlter group,
+the former group will presumably contain more “important ﬁlters” than the latter group. When
+we proceed to prune the same ratio of grouped kernels out of both groups, the network will lose
+more “important kernels” and therefore damage the accuracy retention. In other words, we want to
+minimize the intervals between the TMI scores of all ﬁlter groups. So for a clustering result Gℓ,
+assume gℓ
+i, gℓ
+j, ..., gℓ
+n−1, gℓ
+n are the n ﬁlter groups of Gℓsorted in descending order according to
+their TMI scores. We denote the intervals of Gℓwith respect to winning ticket k as:"
+FINE-TUNE THE NETWORK WITH W,0.2911764705882353,"Interval(Gℓ, k) = [TMI(gℓ
+i, k) −TMI(gℓ
+j, k), . . . , TMI(gℓ
+n−1, k) −TMI(gℓ
+n, k)],
+(3)"
+FINE-TUNE THE NETWORK WITH W,0.29411764705882354,"where the clustering result Gℓ= arg minGℓ(Sum[Interval(Gℓ, k)]) is preferred. To further identify
+the clustering result with the most balanced ﬁlter groups in terms of TMI scores, we also want to
+minimize the variance of intervals between the TMI scores of all ﬁlter groups. By combining the
+two heuristics with a balancing parameter α, the overall scoring system for a clustering result Gℓis
+deﬁned as:"
+FINE-TUNE THE NETWORK WITH W,0.29705882352941176,"Score
+ﬁlters clustering(Gℓ, k) = R(Sum[Interval(Gℓ, k)]/(n −1)) + α · R(Var[Interval(Gℓ, k)]),
+(4)"
+FINE-TUNE THE NETWORK WITH W,0.3,"where the function R denotes the ranking of the current Gℓagainst other proposed clustering re-
+sults (for ranking in an ascending order). For example, if clustering result Gℓhas the smallest
+Sum[Interval(Gℓ, k)] among all proposed clustering results, then R(Sum[Interval(Gℓ, k)]) = 1. We
+choose to use rank instead of the raw value as we are only interested in if one clustering result is
+better than another on one particular criterion (interval mean or interval variance), but not by how
+much. Therefore, by projecting both criteria to rank indices, we avoid the imbalance between the
+raw values of the two criteria. The arg min of this Equation 4 yields the best Gℓ."
+FINE-TUNE THE NETWORK WITH W,0.3029411764705882,"Increase robustness with multiple ticket evaluations
+Now we deﬁned how to identify the pre-
+ferred clustering scheme from all proposed Gℓs in layer W ℓ, the last challenge is to ﬁnd the winning
+ticket k for TMI score calculations. Unfortunately, ﬁnding the winning ticket requires an extremely
+computationally intensive process called iterative magnitude pruning, in which multiple training and
+pruning cycles are involved (Frankle et al., 2020). To make matters worse, since we know that there
+are often multiple winning tickets available from the training process (Renda et al., 2020), picking
+one ticket but not the other will potentially yield a different set of preferred clustering schemes for
+the network. This makes the k both a hard-to-ﬁnd task and a sensitive parameter to tune."
+FINE-TUNE THE NETWORK WITH W,0.3058823529411765,"We address both challenges by relying on the same ﬁnding from Renda et al. (2020), which demon-
+strates that for any k where 0 < k1 ≤k ≤k2 < t, W
+′
+k can be a winning ticket. This tickets window
+[k1, k2] is shown to be robust for the similar models across different datasets and pruning methods.
+Thus, we can decide which model we will prune on, identify its tickets window by consulting ex-
+periment results from Renda et al. (2020), and truncate some epochs in such window to conduct
+multiple evaluations. The optimal clustering scheme for W ℓwill be the one that most often yield"
+FINE-TUNE THE NETWORK WITH W,0.3088235294117647,Published as a conference paper at ICLR 2022
+FINE-TUNE THE NETWORK WITH W,0.31176470588235294,"as the preferred clustering scheme per different k settings1. By doing this, we ﬁrst avoid searching
+for the winning ticket k, which greatly reduces the computational power needed to implement our
+method. Secondly, it increases the robustness of our method, since the optimal clustering scheme
+per layer is no longer sensitive to the choice of k. Last, granted the wide range of [k1, k2] observed
+from most networks, practically we don’t even need to search for the exact (k1, k2) pair; an ap-
+proximated guess with a reasonable overlap with the ideal (k1, k2) would often sufﬁce. The kind of
+tolerance, combined with the proven generalizability of winning tickets across different tasks, mod-
+els, and datasets (Morcos et al., 2019), with more efﬁcient methods of ﬁnding the winning tickets
+become available (Tanaka et al., 2020; You et al., 2020). Our proposed method can also be applied
+to experiments outside of Renda et al. (2020)."
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.31470588235294117,"3.3
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES"
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.3176470588235294,"With ﬁlters of W ℓgrouped into ﬁlter groups {gℓ
+1, gℓ
+2, ..., gℓ
+n}, we will carry out the pruning proce-
+dure within each ﬁlter group. Let Kgℓ"
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.3205882352941177,"i
+be the i-th grouped kernel in ﬁlter group gℓ(for 1 ≤i ≤Cℓ
+in)"
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.3235294117647059,such that Kgℓ
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.3264705882352941,"i
+is the collection of the i-th kernels from every ﬁlter in gℓ. The pruning of a ﬁlter group
+gℓcan be viewed as the task of identifying a set group kernels in gℓthat needs to be preserved. To
+start off such identiﬁcation, we ﬁrst hypothesize a set of grouped kernels that are most “distinctive”
+from each other may provide the best help on preserving the representation power of the origi-
+nal ﬁlter group. We deﬁne a distance matrix between grouped kernels from gℓas D(gℓ)) where
+D(gℓ)[u,v] = |Kgℓ
+u −Kgℓ
+v |. This D(gℓ)) shall be a symmetric matrix with its diagonal full of 0s."
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.32941176470588235,"With this matrix, we may now translate this problem as a maximum edge-weight connected subgraph
+problem: Given a ﬁlter group gℓrepresented as an undirected complete graph G(V, E) with edge
+weights w(u, v) = D(gℓ)[u,v] between nodes u and v, ﬁnd a subset V ∗⊆V with |V ∗| = s where
+the total edge sum of G[V ∗] := (V ∗, E ∩
+ V ∗"
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.3323529411764706,"2
+
+) is maximal (with s = (1 −pruning rate) · Cℓ
+in)."
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.3352941176470588,"The brute force solution of this problem requires iterating through every possible subset of grouped
+kernels with size s and calculate their edge sum. With
+ |V |
+s
+
+possible subsets available and each
+subset having
+ s
+2
+
+edges, this procedure has a time complexity of O(s2 · |V |s). This can be quite a
+compute-extensive task given each graph G(V, E) deduced from gℓhas a |V | equals to Cℓ
+in; which
+can be as large as 512 in models like ResNet-101. To address this, we hereby propose a simple
+greedy algorithm with multiple restarts that may approximate the V ∗in question."
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.3382352941176471,"Our approximated solution was based on the hypothesis that, assume we already have a set of nodes
+U ∗⊂V ∗representing grouped kernels which will be preserved. To ﬁnd the next node unext ∈V ∗
+for unext ̸∈U ∗, such unext should have a maximal edge sum to all nodes in U ∗. Namely, unext =
+arg maxunext(P"
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.3411764705882353,"u∈U ∗w(u, unext)). With this, for a ﬁlter group gℓwe may simply set the ﬁrst grouped"
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.34411764705882353,kernel uinitial ∈U ∗to be every grouped kernel Kgℓ
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.34705882352941175,"i
+∈gℓ, ﬁnd the unext until |V ∗| = s, and obtain Cℓ
+in
+pruning strategies. This trick is known as multiple restarts and is widely adopted in many algorithms
+such as k-Means clustering."
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.35,"We formalize the procedure of our approximation algorithm in pseudocode at A.2.1. The core of
+our algorithm resides at line 10, where we use the computed result of previous row in M to
+reduce time complexity of our algorithm. With M ∈Rs×Cℓ
+in and ﬁlled Cℓ
+in times, our approximation
+algorithm therefore has a time complexity of O(s|V |2) (as |V | = Cℓ
+in). This provides a sensible
+improvement upon the O(s2 · |V |s) brute force solution. To further and better identify the best
+grouped kernel pruning strategy among the Cℓ
+in candidate strategies in PS, we deﬁne the score of a
+strategy V ∗on gℓas the following:"
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.35294117647058826,"Score
+grouped kernel pruning(V ∗, gℓ) =
+X"
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.3558823529411765,"su,sv∈(
+V ∗
+2 )"
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.3588235294117647,"w(su, sv) −β
+
+X"
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.36176470588235293,p∈gℓ\V ∗
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.36470588235294116," 
+sγ
+X"
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.36764705882352944,"si=1∈V ∗
+w(p, si)
+
+.
+(5)"
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.37058823529411766,"1For example, suppose k1 + 29 = k2, clustering scheme A is chosen as the preferred clustering scheme by
+Equation 4 for 20 times on layer W ℓ, yet clustering schemes B and C are chosen 5 times respectively. In this
+case, A will be the optimal clustering scheme for W ℓ."
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.3735294117647059,Published as a conference paper at ICLR 2022
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.3764705882352941,"The ﬁrst term calculates the inner distance sum of V ∗, where a larger value represents greater in-
+ner heterogeneity within the kept grouped kernels. The second term iterates through every pruned
+grouped kernel p, ﬁnds the γ number of kept grouped kernels that are closest to each p according to
+the distance matrix D(gℓ), then sums over the distance between each p to its corresponding γ kept
+grouped kernels. A pruning strategy with a smaller second term has better homogeneity between
+kept and pruned grouped kernels. Since a strategy with greater inner heterogeneity and smaller outer
+homogeneity is desired, we further introduce a tunable parameter −β to balance two terms and de-
+ﬁne the best the pruning strategy of gℓto be V ∗
+best = arg max
+V ∗
+(Score(V ∗, gℓ)) for all V ∗s available"
+EVALUATE CANDIDATE PRESERVED GROUPED KERNEL QUEUES,0.37941176470588234,"in PS. We have also implemented a toy experiment to verify if our grouped kernel pruning
+method may obtain the optimal or a close-to-optimal solution, please refer to A.1.2 for details.
+Ablation studies conducted at A.4.5 also conﬁrm the efﬁcacy of our greedy algorithm."
+LAYER RECONSTRUCTION TO GROUPED CONVOLUTION ARCHITECTURE,0.38235294117647056,"3.4
+LAYER RECONSTRUCTION TO GROUPED CONVOLUTION ARCHITECTURE"
+LAYER RECONSTRUCTION TO GROUPED CONVOLUTION ARCHITECTURE,0.38529411764705884,"The layer reconstruction of our method happens at two places: 1) Given a convolutional layer W ℓ,
+we permute the output channels of such layer according to the ﬁlter clustering result. This makes
+ﬁlters within W ℓform n grouped ﬁlters as demonstrated in Figure 1 (a) to (b). 2) After a certain
+ratio of grouped kernels were pruned from their corresponding ﬁlter groups, we permute the input
+channels of the remaining grouped kernels to remove sparsity from each ﬁlter group (Figure 1(c) to
+(d)). As the result of the above two channel permutations, we will have n dense grouped ﬁlters left
+in the pruned W ℓ. Since every grouped ﬁlter has its own set of input-output pathways, the pruned
+W ℓis essentially a grouped convolution architecture. This architecture enables parallel computing
+capabilities, because every grouped ﬁlter can be deployed to a different device so that all group ﬁlters
+may compute simultaneously. Please refer to A.2.2 for the general procedure in pseudocode."
+EXPERIMENTS AND RESULTS,0.38823529411764707,"4
+EXPERIMENTS AND RESULTS
+4.1
+EXPERIMENT SETTINGS"
+EXPERIMENTS AND RESULTS,0.3911764705882353,"Network Architectures and Datasets
+We evaluate the efﬁcacy of our method on popular net-
+works with various depth and architectures: ResNet-20/32/56/110 with the BasicBlock im-
+plementation and ResNet-50/101 with the BottleNeck implementation (He et al., 2016). For
+datasets, we choose CIFAR-10 (Krizhevsky, 2009), Tiny-ImageNet (Wu et al., 2017), and ImageNet
+(ILSVRC-12) (Deng et al., 2009) as they vary in complexity and Wang et al. (2021) has carried out a
+fairly large-scale comparative experiments of many different structured pruning algorithms running
+under the same setting — which provides us with a rich background to compare against."
+EXPERIMENTS AND RESULTS,0.3941176470588235,"Compared Methods and Performance Evaluation
+We test our method against various existing
+pruning methods showed in Table 2. All mentioned pruning methods are evaluated against the
+following criteria: ∆Acc, ↓Params, and ↓FLOPs which are deﬁned as the difference of top-
+1 accuracy, parameters reduction, and FLOPs reduction between the baseline and pruned model
+(where x represents x% of parameters/FLOPs were removed/reduced comparing to the original
+network). In addition, we investigate the pruning procedure and pruning setting of the compared
+methods in the three following aspects: 1) Does the method require an iterative pruning procedure?
+2) Does the method require a special ﬁne-tuning setup that deviates from Section 3.2.2 or Figure
+1(a) of Wang et al. (2020)? 3) What is the ﬁne-tuning budget of the method-in-question? We believe
+these are crucial information for building a fair understanding of the three aforementioned numerical
+criteria. Note, a method with iterative pruning procedure will automatically require special ﬁne-
+tuning, as it will ﬁne-tune/retrain after each pruning operation, which is intrinsically different from
+the procedure introduced in Section 3.2.2. Our training and pruning settings are fairly simple
+given our method follows a one-shot procedure, please refer to A.3.1 for details."
+RESULTS AND ANALYSIS,0.39705882352941174,"4.2
+RESULTS AND ANALYSIS"
+RESULTS AND ANALYSIS,0.4,"As demonstrated in Table 2, our method yields superior accuracy retention than various modern
+SOTA methods across six tested network-dataset combinations with a commensurate amount
+of parameters pruned with the exception of ResNet-56 on Tiny-ImageNet, where our performance
+is reasonably close (−0.12% behind) to the best offering of 3D by Wang et al. (2021). Speciﬁcally,"
+RESULTS AND ANALYSIS,0.40294117647058825,Published as a conference paper at ICLR 2022
+RESULTS AND ANALYSIS,0.40588235294117647,"our method achieves such results with a simple one-shot pruning procedure and a standard ﬁne-
+tuning setup. Which are usually considered two less advantageous design as many recent SOTA
+methods utilize iterative prune-train cycles (Wang et al., 2021; Frankle & Carbin, 2019). Yet some
+simple tricks like dynamic pruning rate, soft-pruning (keep the pruned components updatable until
+very end), and weight reinitialization before ﬁne-tuning may often provide most algorithms another
+performance boost (Li et al., 2017; He et al., 2018; Renda et al., 2020; Liu et al., 2019). We opt not
+to implement such tricks to provide a cleaner delivery of our method. Last, although not universally
+observed, our method often requires a smaller ﬁne-tuning budget than other offerings. Here we
+include an abbreviated version of our experiment report at Table 1, please refer to Table 2 for
+the full one. Please also refer to A.3.2 and A.3.3 for discussions on hyperparameters and speedup.
+Table 1: “IT”, “SF” respectively indicate if the method-in-question requires an iterative pruning or
+a special ﬁne-tuning procedure. “FB” is the ﬁne-tuning budget of each method (in terms of # of
+epochs). “BA” represents the pre-pruned network’s accuracy. A cell with “-” implies either such
+information is inapplicable or we failed to conﬁdently identify such information. Methods noted
+with ⊙are replicated by Wang et al. (2021), the rest are drawn from their original papers. The
+pruning rates (PR) of our method are adjusted to meet the ↓Params or ↓FLOPs of other methods."
+RESULTS AND ANALYSIS,0.4088235294117647,"Method
+IT
+FB
+SF
+BA (%)
+∆Acc (%)
+↓Params (%)
+↓FLOPs(%)
+ResNet-56 on CIFAR-10: FLOPs: 1.27E8 Params: 8.53E5
+DBP⊙(Wang et al., 2019b)
+
+560
+
+93.69
+↓0.42
+40
+52
+FPGM (He et al., 2019)
+
+100
+
+93.59
+↓0.33
+-
+52
+GAL (Lin et al., 2019)
+
+100
+
+93.26
+↑0.12
+12
+38
+PScratch (Wang et al., 2020)
+
+≈600
+
+93.23
+↓0.18
+-
+50
+SFP (He et al., 2018)
+
+100
+
+93.59
+↓1.33
+-
+53
+3D (Wang et al., 2021)
+
+560
+
+93.69
+↑0.07
+40
+50
+TMI-GKP (ours, PR = 43.75%)
+
+300
+
+93.78
+↑0.22
+43.49
+43.23
+ResNet-110 on CIFAR-10: FLOPs: 2.55E8 Params: 1.73E6
+DHP (Li et al., 2020)
+-
+-
+
+94.69
+↓0.06
+37
+36
+FPGM (He et al., 2019)
+
+100
+
+93.68
+↑0.05
+-
+52
+GAL (Lin et al., 2019)
+
+-
+
+93.50
+↓0.76
+45
+49
+PScratch (Wang et al., 2020)
+
+≈500
+
+93.49
+↑0.20
+-
+40
+SFP (He et al., 2018)
+
+100
+
+93.68
+↓0.30
+-
+41
+TMI-GKP (ours, PR = 43.75%)
+
+300
+
+94.26
+↑0.64
+43.52
+43.31
+ResNet-101 on Tiny-ImageNet: FLOPs: 1.01E10
+Params: 4.29E7
+DBP⊙(Wang et al., 2019b)
+
+420
+
+64.83
+↓3.48
+76
+77
+DHP⊙(Li et al., 2020)
+-
+420
+
+64.83
+↓0.01
+50
+75
+GAL⊙(Lin et al., 2019)
+
+420
+
+64.83
+↓0.50
+45
+76
+3D (Wang et al., 2021)
+
+420
+
+64.83
+↑0.44
+51
+75
+TMI-GKP (ours, PR = 87.50%)
+
+300
+
+65.51
+↑1.38
+43.53
+43.25
+ResNet-50 on ImageNet (ILSVRC-12):
+FLOPs: 5.37E9 Params: 2.56E7
+PScratch (Wang et al., 2020)
+
+≈409
+
+77.20
+↓0.50
+29.8
+26.8
+Taylor (Molchanov et al., 2019)
+
+25
+
+76.18
+↓0.70
+30.0
+28.1
+ThiNet (Luo et al., 2017)
+
+1 per prune
+
+72.88
+↓0.84
+-
+36.7
+FPGM (He et al., 2019)
+
+100
+
+75.96
+↓0.92
+33.2
+33.7
+SFP (He et al., 2018)
+
+100
+
+76.15
+↓1.54
+-
+41.8
+TMI-GKP (ours, PR = 75%)
+
+90
+
+76.15
+↓0.62
+33.21
+33.74"
+ABLATION STUDY,0.4117647058823529,"4.3
+ABLATION STUDY
+We anatomize the effectiveness of different components of our proposed method. Speciﬁcally, we
+ﬁrst demonstrate if the idea of our proposed TMI system and greedy approach are sound at a fun-
+damental level; then we evaluate if they are better than some common alternative approaches with
+similar functionalities. With the procedure design evaluated, we also provide some real-word run-
+time experiments of our proposed pruning procedure. Last, we evaluate the relationship between the
+hyperparameters and the pruned network’s accuracy retention. Please refer to A.4 for details.
+5
+CONCLUSION
+We proposed a densely structured pruning framework capable of yielding beyond SOTA perfor-
+mance with a straightforward one-shot procedure. We believe the power of densely structured kernel
+pruning may go well beyond our implementation, as a) there will certainly be more — and hopefully
+better — inductive biases and unsupervised clustering schemes made available, and b) our adapta-
+tion of kernel pruning and grouped convolution is rather vanilla, where more sophisticated variants
+are available to explore; our framework may thrive on these further-discoveries.
+In addition, our work serves as a proof of the lottery tickets-induced heuristics can be used to guide
+a structured pruning strategy. This is an often overlooked usage despite the popularity of LT-related
+research, possibly due to the high cost of winning tickets searching. In such case, we hope the
+multiple (potential) tickets evaluations trick we introduced in our method may help in levitating
+such concerns. This might have an impact beyond the ﬁeld of network pruning, as scholars of other
+tasks might ﬁnd the ticket-induced heuristics to be useful but are deterred by the high cost of tickets
+searching. Where our trick provides a form of approximation by just inspecting the weights shifting
+log saved during training."
+ABLATION STUDY,0.4147058823529412,Published as a conference paper at ICLR 2022
+REPRODUCIBILITY STATEMENT,0.4176470588235294,REPRODUCIBILITY STATEMENT
+REPRODUCIBILITY STATEMENT,0.42058823529411765,"As we advocate our proposed framework is able to shine a new light on kernel pruning under the con-
+text of densely structured pruning, we have prepared a GitHub repository with checkpoints placed
+on every stage of our method. We hope this will facilitate the reproduction of our work and invite our
+fellow scholars to research and optimize on different stages of our pruning framework. To reproduce
+the exact training and pruning settings of our experiments in Table 2, please refer to A.3."
+REFERENCES,0.4235294117647059,REFERENCES
+REFERENCES,0.4264705882352941,"Sanjeev Arora, Rong Ge, Behnam Neyshabur, and Yi Zhang. Stronger generalization bounds for
+deep nets via a compression approach. In Jennifer Dy and Andreas Krause (eds.), Proceedings of
+the 35th International Conference on Machine Learning, volume 80 of Proceedings of Machine
+Learning Research, pp. 254–263. PMLR, 10–15 Jul 2018."
+REFERENCES,0.4294117647058823,"Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li Fei-Fei. Imagenet: A large-scale hi-
+erarchical image database. In 2009 IEEE conference on computer vision and pattern recognition,
+pp. 248–255. Ieee, 2009."
+REFERENCES,0.4323529411764706,"Jonathan Frankle and Michael Carbin. The lottery ticket hypothesis: Finding sparse, trainable neural
+networks. In ICLR. OpenReview.net, 2019."
+REFERENCES,0.43529411764705883,"Jonathan Frankle, Gintare Karolina Dziugaite, Daniel M. Roy, and Michael Carbin. Linear mode
+connectivity and the lottery ticket hypothesis. In Proceedings of the 37th International Conference
+on Machine Learning, ICML 2020, 13-18 July 2020, Virtual Event, volume 119 of Proceedings
+of Machine Learning Research, pp. 3259–3269. PMLR, 2020."
+REFERENCES,0.43823529411764706,"Perry Gibson, Jos´e Cano, Jack Turner, Elliot J. Crowley, Michael F. P. O’Boyle, and Amos J. Storkey.
+Optimizing grouped convolutions on edge devices. In 31st IEEE International Conference on
+Application-speciﬁc Systems, Architectures and Processors , ASAP 2020, Manchester, United
+Kingdom, July 6-8, 2020, pp. 189–196. IEEE, 2020. doi: 10.1109/ASAP49362.2020.00039."
+REFERENCES,0.4411764705882353,"Qingbei Guo, X. Wu, J. Kittler, and Zhi quan Feng. Self-grouping convolutional neural networks.
+Neural networks : the ofﬁcial journal of the International Neural Network Society, 132:491–505,
+2020."
+REFERENCES,0.4441176470588235,"Kai Han, Yunhe Wang, Qiulin Zhang, Wei Zhang, Chunjing XU, and Tong Zhang. Model rubik’s
+cube: Twisting resolution, depth and width for tinynets. In H. Larochelle, M. Ranzato, R. Hadsell,
+M. F. Balcan, and H. Lin (eds.), Advances in Neural Information Processing Systems, volume 33,
+pp. 19353–19364. Curran Associates, Inc., 2020."
+REFERENCES,0.4470588235294118,"Song Han, Huizi Mao, and William J. Dally. Deep compression: Compressing deep neural networks
+with pruning, trained quantization and huffman coding, 2016."
+REFERENCES,0.45,"Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun.
+Deep residual learning for image
+recognition.
+In 2016 IEEE Conference on Computer Vision and Pattern Recognition, CVPR
+2016, Las Vegas, NV, USA, June 27-30, 2016, pp. 770–778. IEEE Computer Society, 2016. doi:
+10.1109/CVPR.2016.90."
+REFERENCES,0.45294117647058824,"Yang He, Guoliang Kang, Xuanyi Dong, Yanwei Fu, and Yi Yang. Soft ﬁlter pruning for accelerating
+deep convolutional neural networks. In J´erˆome Lang (ed.), Proceedings of the Twenty-Seventh In-
+ternational Joint Conference on Artiﬁcial Intelligence, IJCAI 2018, July 13-19, 2018, Stockholm,
+Sweden, pp. 2234–2240. ijcai.org, 2018. doi: 10.24963/ijcai.2018/309."
+REFERENCES,0.45588235294117646,"Yang He, Ping Liu, Ziwei Wang, Zhilan Hu, and Yi Yang. Filter pruning via geometric median
+for deep convolutional neural networks acceleration. In IEEE Conference on Computer Vision
+and Pattern Recognition, CVPR 2019, Long Beach, CA, USA, June 16-20, 2019, pp. 4340–4349.
+Computer Vision Foundation / IEEE, 2019. doi: 10.1109/CVPR.2019.00447."
+REFERENCES,0.4588235294117647,"Yihui He, Xiangyu Zhang, and Jian Sun. Channel pruning for accelerating very deep neural net-
+works. In IEEE International Conference on Computer Vision, ICCV 2017, Venice, Italy, October
+22-29, 2017, pp. 1398–1406. IEEE Computer Society, 2017. doi: 10.1109/ICCV.2017.155."
+REFERENCES,0.46176470588235297,Published as a conference paper at ICLR 2022
+REFERENCES,0.4647058823529412,"Andrew G. Howard, Menglong Zhu, Bo Chen, Dmitry Kalenichenko, Weijun Wang, Tobias Weyand,
+Marco Andreetto, and Hartwig Adam. Mobilenets: Efﬁcient convolutional neural networks for
+mobile vision applications. CoRR, abs/1704.04861, 2017."
+REFERENCES,0.4676470588235294,"Forrest N. Iandola, Matthew W. Moskewicz, K. Ashraf, Song Han, W. Dally, and K. Keutzer.
+Squeezenet: Alexnet-level accuracy with 50x fewer parameters and ¡1mb model size. ArXiv,
+abs/1602.07360, 2017."
+REFERENCES,0.47058823529411764,"Elsie Maria Jordaan. Development of robust inferential sensors: Industrial application of support
+vector machines for regression. 2004."
+REFERENCES,0.47352941176470587,"Alex Krizhevsky. Learning multiple layers of features from tiny images. pp. 32–33, 2009."
+REFERENCES,0.4764705882352941,"Hao Li, Asim Kadav, Igor Durdanovic, Hanan Samet, and Hans Peter Graf. Pruning ﬁlters for
+efﬁcient convnets. In 5th International Conference on Learning Representations, ICLR 2017,
+Toulon, France, April 24-26, 2017, Conference Track Proceedings. OpenReview.net, 2017."
+REFERENCES,0.47941176470588237,"Yawei Li, Shuhang Gu, Kai Zhang, Luc Van Gool, and Radu Timofte. DHP: differentiable meta
+pruning via hypernetworks. In Andrea Vedaldi, Horst Bischof, Thomas Brox, and Jan-Michael
+Frahm (eds.), Computer Vision - ECCV 2020 - 16th European Conference, Glasgow, UK, August
+23-28, 2020, Proceedings, Part VIII, volume 12353 of Lecture Notes in Computer Science, pp.
+608–624. Springer, 2020."
+REFERENCES,0.4823529411764706,"Mingbao Lin, Rongrong Ji, Yan Wang, Yichen Zhang, Baochang Zhang, Yonghong Tian, and Ling
+Shao. Hrank: Filter pruning using high-rank feature map. In 2020 IEEE/CVF Conference on
+Computer Vision and Pattern Recognition, CVPR 2020, Seattle, WA, USA, June 13-19, 2020, pp.
+1526–1535. Computer Vision Foundation / IEEE, 2020. doi: 10.1109/CVPR42600.2020.00160."
+REFERENCES,0.4852941176470588,"Shaohui Lin, Rongrong Ji, Chenqian Yan, Baochang Zhang, Liujuan Cao, Qixiang Ye, Feiyue
+Huang, and David Doermann. Towards optimal structured cnn pruning via generative adversarial
+learning. In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition
+(CVPR), 2019."
+REFERENCES,0.48823529411764705,"Zhuang Liu, Mingjie Sun, Tinghui Zhou, Gao Huang, and Trevor Darrell. Rethinking the value of
+network pruning. In International Conference on Learning Representations, 2019."
+REFERENCES,0.49117647058823527,"Jian-Hao Luo, Jianxin Wu, and Weiyao Lin. Thinet: A ﬁlter level pruning method for deep neural
+network compression. In IEEE International Conference on Computer Vision, ICCV 2017, Venice,
+Italy, October 22-29, 2017, pp. 5068–5076. IEEE Computer Society, 2017. doi: 10.1109/ICCV.
+2017.541."
+REFERENCES,0.49411764705882355,"Xiaolong Ma, Fu-Ming Guo, Wei Niu, Xue Lin, Jian Tang, Kaisheng Ma, Bin Ren, and Yanzhi
+Wang. PCONV: the missing but desirable sparsity in DNN weight pruning for real-time execution
+on mobile devices. In The Thirty-Fourth AAAI Conference on Artiﬁcial Intelligence, AAAI 2020,
+The Thirty-Second Innovative Applications of Artiﬁcial Intelligence Conference, IAAI 2020, The
+Tenth AAAI Symposium on Educational Advances in Artiﬁcial Intelligence, EAAI 2020, New York,
+NY, USA, February 7-12, 2020, pp. 5117–5124. AAAI Press, 2020."
+REFERENCES,0.4970588235294118,"Huizi Mao, Song Han, Jeff Pool, Wenshuo Li, Xingyu Liu, Yu Wang, and William J. Dally. Ex-
+ploring the granularity of sparsity in convolutional neural networks. In Proceedings of the IEEE
+Conference on Computer Vision and Pattern Recognition (CVPR) Workshops, July 2017."
+REFERENCES,0.5,"Pavlo Molchanov, Stephen Tyree, Tero Karras, Timo Aila, and Jan Kautz. Pruning convolutional
+neural networks for resource efﬁcient inference. In 5th International Conference on Learning
+Representations, ICLR 2017, Toulon, France, April 24-26, 2017, Conference Track Proceedings.
+OpenReview.net, 2017."
+REFERENCES,0.5029411764705882,"Pavlo Molchanov, Arun Mallya, Stephen Tyree, Iuri Frosio, and Jan Kautz. Importance estimation
+for neural network pruning. In IEEE Conference on Computer Vision and Pattern Recognition,
+CVPR 2019, Long Beach, CA, USA, June 16-20, 2019, pp. 11264–11272. Computer Vision Foun-
+dation / IEEE, 2019. doi: 10.1109/CVPR.2019.01152."
+REFERENCES,0.5058823529411764,Published as a conference paper at ICLR 2022
+REFERENCES,0.5088235294117647,"Ari S. Morcos, Haonan Yu, Michela Paganini, and Yuandong Tian. One ticket to win them all:
+generalizing lottery ticket initializations across datasets and optimizers. In Hanna M. Wallach,
+Hugo Larochelle, Alina Beygelzimer, Florence d’Alch´e-Buc, Emily B. Fox, and Roman Garnett
+(eds.), Advances in Neural Information Processing Systems 32: Annual Conference on Neural
+Information Processing Systems 2019, NeurIPS 2019, December 8-14, 2019, Vancouver, BC,
+Canada, pp. 4933–4943, 2019."
+REFERENCES,0.5117647058823529,"Michael C Mozer and Paul Smolensky. Skeletonization: A technique for trimming the fat from
+a network via relevance assessment.
+In D. Touretzky (ed.), Advances in Neural Information
+Processing Systems, volume 1. Morgan-Kaufmann, 1989."
+REFERENCES,0.5147058823529411,"Zheng Qin, Zhaoning Zhang, Dongsheng Li, Yiming Zhang, and Yuxing Peng. Diagonalwise refac-
+torization: An efﬁcient training method for depthwise convolutions. In 2018 International Joint
+Conference on Neural Networks, IJCNN 2018, Rio de Janeiro, Brazil, July 8-13, 2018, pp. 1–8.
+IEEE, 2018. doi: 10.1109/IJCNN.2018.8489312."
+REFERENCES,0.5176470588235295,"Alex Renda, Jonathan Frankle, and Michael Carbin. Comparing rewinding and ﬁne-tuning in neural
+network pruning. In International Conference on Learning Representations, 2020."
+REFERENCES,0.5205882352941177,"Erich Schubert and Arthur Zimek. ELKI: A large open-source library for data analysis - ELKI
+release 0.7.5 ”heidelberg”. CoRR, abs/1902.03616, 2019."
+REFERENCES,0.5235294117647059,"Karen Simonyan and Andrew Zisserman. Very deep convolutional networks for large-scale image
+recognition. CoRR, abs/1409.1556, 2014."
+REFERENCES,0.5264705882352941,"Zhuo Su, Linpu Fang, Wenxiong Kang, Dewen Hu, Matti Pietik¨ainen, and Li Liu. Dynamic group
+convolution for accelerating convolutional neural networks. In Andrea Vedaldi, Horst Bischof,
+Thomas Brox, and Jan-Michael Frahm (eds.), Computer Vision - ECCV 2020 - 16th European
+Conference, Glasgow, UK, August 23-28, 2020, Proceedings, Part VI, volume 12351 of Lecture
+Notes in Computer Science, pp. 138–155. Springer, 2020."
+REFERENCES,0.5294117647058824,"Hidenori Tanaka, Daniel Kunin, Daniel L Yamins, and Surya Ganguli. Pruning neural networks
+without any data by iteratively conserving synaptic ﬂow. In H. Larochelle, M. Ranzato, R. Had-
+sell, M. F. Balcan, and H. Lin (eds.), Advances in Neural Information Processing Systems, vol-
+ume 33, pp. 6377–6389. Curran Associates, Inc., 2020."
+REFERENCES,0.5323529411764706,"Ulrike Von Luxburg. A tutorial on spectral clustering. Statistics and computing, 17(4):395–416,
+2007."
+REFERENCES,0.5352941176470588,"Athanasios Voulodimos, Nikolaos Doulamis, Anastasios Doulamis, and Eftychios Protopapadakis.
+Deep learning for computer vision: A brief review. Computational Intelligence and Neuroscience,
+2018:1–13, 2018."
+REFERENCES,0.538235294117647,"Wenxiao Wang, Cong Fu, Jishun Guo, Deng Cai, and Xiaofei He. COP: customized deep model
+compression via regularized correlation-based ﬁlter-level pruning. In Sarit Kraus (ed.), Proceed-
+ings of the Twenty-Eighth International Joint Conference on Artiﬁcial Intelligence, IJCAI 2019,
+Macao, China, August 10-16, 2019, pp. 3785–3791. ijcai.org, 2019a. doi: 10.24963/ijcai.2019/
+525."
+REFERENCES,0.5411764705882353,"Wenxiao Wang, Shuai Zhao, Minghao Chen, Jinming Hu, Deng Cai, and Haifeng Liu.
+DBP:
+discrimination based block-level pruning for deep model acceleration. CoRR, abs/1912.10178,
+2019b."
+REFERENCES,0.5441176470588235,"Wenxiao Wang, Minghao Chen, Shuai Zhao, Long Chen, Jinming Hu, Hai Liu, Deng Cai, Xiaofei
+He, and Wei Liu. Accelerate cnns from three dimensions: A comprehensive pruning framework.
+In ICML 2021, July 2021."
+REFERENCES,0.5470588235294118,"Yulong Wang, Xiaolu Zhang, Lingxi Xie, Jun Zhou, Hang Su, Bo Zhang, and Xiaolin Hu. Pruning
+from scratch. In The Thirty-Fourth AAAI Conference on Artiﬁcial Intelligence, AAAI 2020, The
+Thirty-Second Innovative Applications of Artiﬁcial Intelligence Conference, IAAI 2020, The Tenth
+AAAI Symposium on Educational Advances in Artiﬁcial Intelligence, EAAI 2020, New York, NY,
+USA, February 7-12, 2020, pp. 12273–12280. AAAI Press, 2020."
+REFERENCES,0.55,Published as a conference paper at ICLR 2022
+REFERENCES,0.5529411764705883,"Jiayu Wu, Qixiang Zhang, and Guoxi Xu. Tiny imagenet challenge. Technical Report, 2017."
+REFERENCES,0.5558823529411765,"Junru Wu, Yue Wang, Zhenyu Wu, Zhangyang Wang, Ashok Veeraraghavan, and Yingyan Lin. Deep
+k-means: Re-training and parameter sharing with harder cluster assignments for compressing
+deep convolutions. In Jennifer G. Dy and Andreas Krause (eds.), Proceedings of the 35th Inter-
+national Conference on Machine Learning, ICML 2018, Stockholmsm¨assan, Stockholm, Sweden,
+July 10-15, 2018, volume 80 of Proceedings of Machine Learning Research, pp. 5359–5368.
+PMLR, 2018."
+REFERENCES,0.5588235294117647,"Haoran You, Chaojian Li, Pengfei Xu, Yonggan Fu, Yue Wang, Xiaohan Chen, Richard G. Baraniuk,
+Zhangyang Wang, and Yingyan Lin. Drawing early-bird tickets: Toward more efﬁcient training
+of deep networks. In International Conference on Learning Representations, 2020."
+REFERENCES,0.5617647058823529,"Niange Yu, Shi Qiu, Xiaolin Hu, and Jianmin Li.
+Accelerating convolutional neural networks
+by group-wise 2d-ﬁlter pruning. In 2017 International Joint Conference on Neural Networks
+(IJCNN), pp. 2502–2509, 2017. doi: 10.1109/IJCNN.2017.7966160."
+REFERENCES,0.5647058823529412,"Ruichi Yu, Ang Li, Chun-Fu Chen, Jui-Hsin Lai, Vlad I. Morariu, Xintong Han, Mingfei Gao,
+Ching-Yung Lin, and Larry S. Davis. NISP: pruning networks using neuron importance score
+propagation. In 2018 IEEE Conference on Computer Vision and Pattern Recognition, CVPR
+2018, Salt Lake City, UT, USA, June 18-22, 2018, pp. 9194–9203. Computer Vision Foundation /
+IEEE Computer Society, 2018. doi: 10.1109/CVPR.2018.00958."
+REFERENCES,0.5676470588235294,"Guanqun Zhang, Shuai Xu, Jing Li, and Alan J. X. Guo.
+Group-based network pruning via
+nonlinear relationship between convolution ﬁlters.
+Applied Intelligence, January 2022.
+doi:
+10.1007/s10489-021-02907-0."
+REFERENCES,0.5705882352941176,"Hattie Zhou, Janice Lan, Rosanne Liu, and Jason Yosinski. Deconstructing lottery tickets: Zeros,
+signs, and the supermask. In Hanna M. Wallach, Hugo Larochelle, Alina Beygelzimer, Florence
+d’Alch´e-Buc, Emily B. Fox, and Roman Garnett (eds.), Advances in Neural Information Process-
+ing Systems 32: Annual Conference on Neural Information Processing Systems 2019, NeurIPS
+2019, December 8-14, 2019, Vancouver, BC, Canada, pp. 3592–3602, 2019."
+REFERENCES,0.5735294117647058,"Michael Zhu and Suyog Gupta. To prune, or not to prune: Exploring the efﬁcacy of pruning for
+model compression. In 6th International Conference on Learning Representations, ICLR 2018,
+Vancouver, BC, Canada, April 30 - May 3, 2018, Workshop Track Proceedings. OpenReview.net,
+2018."
+REFERENCES,0.5764705882352941,"A
+APPENDIX"
+REFERENCES,0.5794117647058824,"A.1
+SUPPLEMENTARY MATERIAL TO PROPOSED METHOD"
+REFERENCES,0.5823529411764706,"A.1.1
+Silhouette score AND ACCURACY RETENTION"
+REFERENCES,0.5852941176470589,"We experiment ResNet-32 on CIFAR-10 (BA = 92.82%) with K-PCA + Equal-sized k-Means
+and Spectral + Equal-sized k-Means.
+The mean Silhouette score of the latter combination is
+0.3349/0.0268 = 12.49 times higher than the previous combination; indicating that if the Sil-
+houette score may capture the better clustering result with respect to accuracy retention, the latter
+approach should be signiﬁcantly better. However, the K-PCA approach has a pruned accuracy of
+92.68% where the Spectral approach has a pruned accuracy of 92.41%, a +0.27% in favor of the
+method which the Silhouette score strongly suggests against. This demonstrates that tools like the
+Silhouette score might not be a good judge of clustering quality in terms of accuracy retention."
+REFERENCES,0.5882352941176471,"A.1.2
+EFFECTIVENESS OF OUR GREEDY APPROXIMATION ALGORITHM WITH TOY EXAMPLE"
+REFERENCES,0.5911764705882353,"To test out whether our greedy approximation algorithm may yield a solution that is close enough to
+the optimal one, we conducted a trial of TMI-GKP with β = 0 in Equation 5 on ResNet-32. For the
+ﬁrst ten convolutional layers (80 ﬁlter groups pruned), all approximated solutions are within 0.5%
+in terms of the score difference (as deﬁned in Equation 5) to the optimal solution — which implies
+the effectiveness of our approximation algorithm."
+REFERENCES,0.5941176470588235,Published as a conference paper at ICLR 2022
+REFERENCES,0.5970588235294118,"A.2
+ADDITIONAL METHOD PROCEDURE INFORMATION"
+REFERENCES,0.6,"A.2.1
+GREEDY GROUPED KERNEL PRUNING PROCEDURE"
+REFERENCES,0.6029411764705882,"Algorithm 1 Generate Cℓ
+in grouped kernel pruning strategies"
+REFERENCES,0.6058823529411764,"Input: Filter group gℓ
+▷one of the n ﬁlter group in layer W ℓ
+Input: s
+▷number of grouped kernels to preserve, s = (1 −pruning rate) · Cℓ
+in
+Initialize: Empty list PS
+▷for storing grouped kernels pruning strategies
+Initialize: Cℓ
+in, D(gℓ)
+▷number of grouped kernel in gℓand distance matrix of gℓ"
+REFERENCES,0.6088235294117647,"1: for each Ki ∈gℓdo
+2:
+Initialize: Empty list U ∗
+▷storing preserved grouped kernels per the current strategy
+3:
+Initialize: Zero-ﬁlled matrix M ∈Rs×Cℓ
+in
+▷the cost matrix
+4:
+M[0,j] ←w(Ki, Kj) for all Kj ∈gℓ\Ki
+5:
+U ∗.append(Ki)
+▷make Ki the ﬁrst grouped kernel to keep
+6:
+for row ←1 to s do
+7:
+Klast ←U ∗[−1]
+8:
+for each grouped kernel K ∈gℓbut K ̸∈U ∗do
+9:
+Kindex←gℓ.getindex(K)
+10:
+M[row,Kindex] ←M[row−1,Kindex] + w(Klast, K)"
+REFERENCES,0.611764705882353,"11:
+U ∗.append(arg max
+K
+(M[row]))"
+REFERENCES,0.6147058823529412,"12:
+if |U ∗| == s then
+13:
+V ∗←U ∗, PS.append(V ∗) and break"
+REFERENCES,0.6176470588235294,14: return PS
+REFERENCES,0.6205882352941177,"A.2.2
+GENERAL PROCEDURE"
+REFERENCES,0.6235294117647059,Algorithm 2 General Procedure of TMI-GKP
+REFERENCES,0.6264705882352941,"Input: W , (k1, k2)
+▷trained model, tickets window
+Input: CS, PR, n
+▷clustering schemes, pruning ratio, number of groups
+1: for each convolutional layer W ℓ∈W do
+2:
+Initialize: Empty list Gℓ
+candidates
+▷To store candidate clustering results
+3:
+for ki ∈[k1, k2] do
+4:
+Cluster ﬁlters from W ℓinto n equal-sized groups according to each scheme in CS
+5:
+Identify the preferred clustering result Gℓ
+ki ←arg min
+Gℓ
+(
+Score
+ﬁlters clustering(Gℓ, ki))[Equation 4]"
+REFERENCES,0.6294117647058823,"6:
+Gℓ
+candidates.append(Gℓ
+ki)"
+REFERENCES,0.6323529411764706,"7:
+Identify Gℓ
+best ←the most occurred item in Gℓ
+candidates
+8:
+Apply Gℓ
+best on W ℓ"
+REFERENCES,0.6352941176470588,"9:
+for each ﬁlter group gℓ
+i ∈Gℓ
+best do
+10:
+Get grouped kernel pruning strategies V ∗←Algorithm 1(gℓ
+i) [A.2.1]
+11:
+Identify V ∗
+best ←arg max
+V ∗
+(
+Score
+grouped kernel pruning(V ∗, gℓ
+i)) [Equation 5]"
+REFERENCES,0.638235294117647,"12:
+Apply V ∗
+best on gℓ
+i
+13:
+W ℓ←pruned W ℓreconstructed in grouped convolution architecture
+14: return W"
+REFERENCES,0.6411764705882353,"A.2.3
+TIME COMPLEXITY ANALYSIS OF THE TMI CLUSTERING PROCEDURE"
+REFERENCES,0.6441176470588236,"Our pruning procedure is basically two-stage: ﬁlter clustering and grouped kernel pruning. Since we
+have already analyzed the time complexity of the second stage at the end of Section 3.3, we hereby
+focus on the time complexity of our ﬁlter clustering procedure."
+REFERENCES,0.6470588235294118,"Given a clustering result of convolutional layer W ℓ, we ﬁrst calculate the TMI score of each ﬁlter
+group deﬁned by Equation 2. The TMI score of a clustering result in regards to an epoch k has a"
+REFERENCES,0.65,Published as a conference paper at ICLR 2022
+REFERENCES,0.6529411764705882,"time complexity of O(W ℓ) for W ℓ∈RCℓ
+out×Cℓ
+in×Hℓ×W ℓ. This is because TMI scores are essentially
+achieved by ﬁnding out the magnitude increase of individual weights in W ℓfrom epoch k to epoch
+t (the ﬁnal epoch). TMI scores for ﬁlters and ﬁlters groups are simply sum of the TMI scores of a
+certain individual weights — where the summing procedure is at most O(W ℓ) as we only got these
+many weights to sum."
+REFERENCES,0.6558823529411765,"The TMI score for this clustering result is then determined by Equation 4. Which is a O(n) proce-
+dure as we have n groups (thus n −1 intervals). Granted O(n) ≪O(W ℓ), this term is negligible
+and the overall time complexity is still O(W ℓ)"
+REFERENCES,0.6588235294117647,"Note we may have multiple clustering results generated by multiple clustering schemes, where we
+use their TMI scores and Equation 4 to determine the best clustering result for layer W ℓ. Thus, we
+need to multiple the time complexity of a single clustering result to the number of clustering schemes
+available, we denote this number as CSnum. The overall complexity is now CSnum·O(W ℓ). It is hard
+to analyze the time complexity of each clustering scheme as it involves various dimension-reduction
+and clustering combinations. For the ease of expression, we uniformly denote all clustering schemes
+to have a time complexity of O(CS(W ℓ)) on layer W ℓ(for CS(W ℓ) > W ℓas a clustering scheme
+need to read all weights in W ℓto produce a proper clustering result)."
+REFERENCES,0.6617647058823529,"Last, as illustrated in Section 3.2.2 - Increase robustness with multiple ticket evaluations, we
+need to repeat the whole procedure for knum times for knum being the number of potential ticket
+epochs we evaluated. Thus, the ﬁnal “rough” big-O complexity for our ﬁlter clustering procedure
+is:"
+REFERENCES,0.6647058823529411,"CSnum · O(CS(W ℓ)) + CSnum · knum · O(W ℓ).
+(6)"
+REFERENCES,0.6676470588235294,"In our experiments, such knum is usually set to 35 (unless the network is too large) and CSnum is 3
+as we have three different clustering schemes available (see Section 3.2.1). By the “absorption” law
+of big-O analysis, the theoretical time complexity is only O(CS(W ℓ)) — which is identical to a
+standard single-shot ﬁlter clustering procedure. This implies the theoretical lightweight-ness of our
+proposed method."
+REFERENCES,0.6705882352941176,"For more information, we included a discussion on how to adjust the pruning procedure to meet a
+time/computation budget at A.2.4 with real-world runtime experiments available at A.4.7."
+REFERENCES,0.6735294117647059,"A.2.4
+ADJUST THE PRUNING PROCEDURE TO MEET A TIME/COMPUTATION BUDGET"
+REFERENCES,0.6764705882352942,"Although the analysis at A.2.3 and experiments in A.4.7 demonstrate our TMI pruning procedure is
+reasonably fast, we admit that it can be slow if given a wide network to prune or were asked to eval-
+uate many potential ticket epochs — as our algorithm will have to repetitively evaluate the network
+with different TMI scores over and over again. We hereby provide several points for adjustability of
+our method."
+REFERENCES,0.6794117647058824,"1. Reduce the range of ticket window: If a ticket window is deﬁned to be [k1, k2], consider
+using [k′
+1, k′
+2] where k1 < k′
+1 and k′
+2 < k2. So less potential ticket epochs were evaluated."
+REFERENCES,0.6823529411764706,"2. Add a ticket step: For a ticket window [k1, k2], consider adding a kstep so instead of
+evaluating k1, k1+1, k1+1+1, ... we now evaluate k1, k1+kstep, k1+kstep+kstep, .... By doing this,
+less potential ticket epochs were evaluated while a wide range of potential ticket epochs
+from different stage of the network training are still considered."
+REFERENCES,0.6852941176470588,"3. Relax the granularity of clustering evaluation: The proposed TMI-GKP determines the
+optimal clustering scheme at a per layer manner. For CNN models with block-like structure
+(such as ResNet), one may opt to determine the clustering scheme for one layer of the block,
+then proceed to use such clustering scheme on the whole block."
+REFERENCES,0.6882352941176471,"4. Adjust clustering schemes: One may opt to reduce the number of clustering schemes
+available for the TMI score evaluation. Or one may opt to use clustering schemes which
+are less computational demanding. Granted the TMI system is likely to capture the “better”
+clustering scheme among the options, the method would still function, but likely not at its
+full potential."
+REFERENCES,0.6911764705882353,Published as a conference paper at ICLR 2022
+REFERENCES,0.6941176470588235,"A.3
+SUPPLEMENTARY MATERIAL TO EXPERIMENTS AND RESULTS"
+REFERENCES,0.6970588235294117,"A.3.1
+TRAINING AND PRUNING SETTINGS"
+REFERENCES,0.7,"For all experiments done on CIFAR-10 and Tiny-ImageNet, we train the baseline models for 300
+epochs with the learning rate starting at 0.1 and dividing by 10 per every 100 epochs. The baseline
+model is trained using SGD with a weight-decay set to 5e-4, momentum set to 0.9, and a batch-size
+of 64. All data are augmented with random crop and randomly horizontal ﬂip. For the experiments
+done on ImageNet, we train the ResNet-50 model for 90 epochs with the weight-decay set to 1e-4
+and learning rate dividing by 10 per every 30 epochs (while keeping all other settings the same
+as CIFAR-10 and Tiny-ImageNet experiments). Our pruning settings are largely identical to our
+training settings except for the learning rate, which is set to 0.01 at the start."
+REFERENCES,0.7029411764705882,"A.3.2
+CHOICE OF HYPERPARAMETERS"
+REFERENCES,0.7058823529411765,"There are three main tunable hyperparameters in the mainframe of TMI-GKP, α from Equation 4
+and β, γ from Equation 5. Note in practice γ is not a ﬁxed value but rather a value that has a ﬁxed
+proportion to its the convolutional layer’s input channels, i.e., γ = γratio · Cℓ
+in for layer W ℓ. This is
+because different convolutional layer may have a different Cin, so it makes better sense to let γ of a
+layer adjust along with its Cin."
+REFERENCES,0.7088235294117647,"For experiments shown in Table 2, we ﬁx α to 0.5 and γratio to 0.2 for convenience. For experiments
+of ResNet-56 on CIFAR-10 and ResNet-101 on Tiny-ImageNet, we set β to 2. For the experiment
+of ResNet-32 on CIFAR-10, we set β to 1. For the rest of the experiments in Table 2, we set
+β =
+ V ∗"
+REFERENCES,0.711764705882353,"2
+
+/(|gℓ\V ∗| · γ) with respect to Equation 5. This basically implies we want the two terms
+in Equation 5 to evaluate an equal amount of grouped kernel pairs."
+REFERENCES,0.7147058823529412,"To further ensure/demonstrate the reproducibility of our work, in our codebase we will provide a
+Google Colab notebook that replicates all CIFAR-10 pruning experiments conducted in Table 2. For
+every completed experiment, our codebase may register a setting.json, a cluster.json
+(upon extraction of a pruned model), and an experiment.log. Where the setting.json
+includes all hyperparameters’ settings, cluster.json includes the clustering scheme per each
+convolutional layer and its resultant permutation matrix for converting the baseline model from (a)
+to (b) in Figure 1, and experiment.log contains the experiment printouts. In addition, we have
+implemented a set of methods so a fellow researcher may pipeline the cluster.json ﬁle to the
+baseline model and try for a different set of pruning strategies. This will save them the work of
+re-clustering the ﬁlters and re-calculating/re-evaluating the TMI scores for every layer."
+REFERENCES,0.7176470588235294,"A.3.3
+OMITTING SPEED UP ANALYSIS"
+REFERENCES,0.7205882352941176,"We purposefully omitted the speedup analysis between the original and the pruned network mainly
+due to lack of optimization of grouped convolution on current ML platforms. As an example, on
+PyTorch, a grouped convolution with groups = 8 is much slower than the standard convolution
+despite the former one has much less parameters and FLOPs."
+REFERENCES,0.7235294117647059,"Please direct to our GitHub repository where we discuss in length of why PyTorch is slowing
+us done, what’s the reason behind it, and empirically show that it is indeed PyTorch lacks of
+optimization that causing this problem. We also discuss why this will not be an issue for long (by
+presenting ML platforms’ commitments of optimizing the speed of grouped convolution), why this
+is an achievable goal (as scholars have already accelerated grouped convolution on said platforms
+(Gibson et al., 2020; Qin et al., 2018)), and how this is not likely to affect the serious implementation
+of our method for its intended purposes — as a group convolution network can be deployed as
+standard convolution on multiple edge devices in a parallel fashion (Su et al., 2020)."
+REFERENCES,0.7264705882352941,"A.3.4
+SPECIFIC EXPERIMENTS REQUESTED BY REVIEWERS"
+REFERENCES,0.7294117647058823,"Upon the requests of two reviewers, we have additionally conducted experiments with our proposed
+method on VGG-16 (Simonyan & Zisserman, 2014) and on ResNet-56 on CIFAR-10 against pruning
+method GAL by Lin et al. (2019) (but with a more aggressive pruning rate as ↓Params and ↓FLOPs
+are ≈60% instead of ≈43%)."
+REFERENCES,0.7323529411764705,Published as a conference paper at ICLR 2022
+REFERENCES,0.7352941176470589,"Please refer to our OpenReview entry (former experiment, latter experiment, context of the latter
+experiment) for details — as these requests should only make sense under their Q&A context, and
+we have not (or for some literature, we are not able to) conduct the pruning procedure investigations
+like we did in Table 2 as deﬁned in Section 4.1."
+REFERENCES,0.7382352941176471,"A.4
+ABLATION STUDIES"
+REFERENCES,0.7411764705882353,"In this section we will anatomize our method in the following aspects. The general idea is we
+ﬁrst show the basic format(s) of our approach works — as if the results achieved by following
+our approach would be better than the results achieved by going against our approach — then,
+we show that our approach works better than some common alternative approaches with similar
+functionalities."
+REFERENCES,0.7441176470588236,"First, we conﬁrm the effectiveness of our TMI scoring system by conducting the following ablation
+studies:"
+REFERENCES,0.7470588235294118,"1. TMI/MI scores and ﬁlter pruning: where we investigate if ﬁlters with higher TMI score
+or larger magnitude increase will lead to better accuracy retention. This shows our TMI
+scoring system works at a ﬁlter level.
+2. TMI-driven clustering and accuracy retention: where we compare the TMI-driven clus-
+tering results with shufﬂed clustering results in terms of accuracy retention. This shows our
+TMI scoring system works in terms of ﬁlter clustering.
+3. TMI-driven clustering v.
+Other ﬁlter clustering schemes: where we investigate if
+the TMI-driven clustering schemes are better than some common alternative clustering
+schemes.
+4. TMI-GKP v. Grouped convolution-only: where we investigate if the performance of our
+method is from the procedure we proposed, or it is simply due to the adaptation of grouped
+convolution."
+REFERENCES,0.75,"Then, we investigate our greedy grouped kernel pruning algorithm with the following ablation stud-
+ies:"
+REFERENCES,0.7529411764705882,"1. Greedy-induced pruning and accuracy retention: where we compare the grouped kernel
+pruning results induced by our greedy approach to two approaches that take the “inverse”
+and “complement” of our greedy approach. This shows the basic principle of our greedy
+approach works.
+2. Greedy-induced pruning v. Other grouped kernel pruning policies: where we compare
+the greedy approach against some alternative kernel pruning policies applied on grouped
+kernel pruning. This shows our greedy approach works better than some common alterna-
+tive kernel pruning policies."
+REFERENCES,0.7558823529411764,"Last, we provide some experiments to evaluate the real-world runtime of the pruning procedure of
+TMI-GKP and ablation studies on hyperparameters."
+REFERENCES,0.7588235294117647,"A.4.1
+TMI/MI SCORES AND FILTER PRUNING"
+REFERENCES,0.7617647058823529,"We ﬁrst address the question of whether the TMI score (or the original “MI” magnitude increase
+score from Zhou et al. (2019)) has a relationship with accuracy retention when relaxed to a ﬁlter
+level. Although the question is straightforward, it is up to different interpretations as the TMI score
+was proposed as a tool to determine which clustering result is the optimal one — which requires
+multiple tickets evaluation. Thus, it is hard to determine the TMI scores of a ﬁlter, as it is sensitive
+to the choice of k in Equation 1."
+REFERENCES,0.7647058823529411,"To address such problem, we run Equation 1 on the same set of ks as our TMI-GKP algorithm, then
+we rank (sort) all ﬁlters according to their TMI scores under each k. Namely, when k = 35, we may
+have ﬁlter A to be rank 1, ﬁlter B to be rank 2... and for k = 36 we may have B to be rank 1 and
+ﬁlter C to be rank 2. We then sum all ranks of each ﬁlter across different ks, where the ﬁlter with
+smallest sum (highest sum of ranks) is considered the one that is most preferred by the TMI system.
+We denote this sum the TMI Filter Ranking Score."
+REFERENCES,0.7676470588235295,Published as a conference paper at ICLR 2022
+REFERENCES,0.7705882352941177,"We opt to use rank-per-each-k, but not simply adding TMI scores of the same ﬁlter on different ks to-
+gether and rank all ﬁlters, because the former approach is a) less sensitive to potential extreme value
+introduced by a certain k and b) similar to the proposed scoring mechanism deﬁned in Equation 4,
+which is used in TMI-GKP."
+REFERENCES,0.7735294117647059,"We zero-mask different ﬁlters according to the following ﬁve criteria. All experiments are conducted
+on ResNet-32 (baseline accuracy: 92.82%) with pruning rate set to 50% (half of the ﬁlters per each
+layer are zero masked)."
+REFERENCES,0.7764705882352941,"1. TMI preferred: We kept ﬁlters that have the lowest TMI Filter Ranking Scores, and zero-
+masked the rest."
+REFERENCES,0.7794117647058824,"2. TMI complement: We kept ﬁlters that have the highest TMI Filter Ranking Scores, and
+zero-masked the rest. Since the pruning rate is set to 50%, this is essentially taking the
+complement of the above scheme."
+REFERENCES,0.7823529411764706,"3. MI preferred: We kept ﬁlters that have the highest magnitude increase since initialization,
+and zero-masked the rest."
+REFERENCES,0.7852941176470588,4. MI complement: The complement of above scheme.
+REFERENCES,0.788235294117647,5. Random: Half of the ﬁlters per each layer were randomly zero-masked.
+REFERENCES,0.7911764705882353,"Scheme
+TMI preferred
+TMI complement
+MI preferred
+MI complement
+Random
+Acc. (%)
+64.48
+61.93
+63.25
+62.06
+63.92"
+REFERENCES,0.7941176470588235,"The above experiments clearly demonstrate that both better TMI ﬁlter ranking scores and larger MI
+scores are correlated with better accuracy retention. In addition, the 1.23% lead of TMI preferred
+to MI preferred scheme also implies that our TMI system — with multiple tickets evaluation
+— is superior than the original magnitude increase system introduced in Zhou et al. (2019) at
+the ﬁlter level."
+REFERENCES,0.7970588235294118,"A.4.2
+TMI-DRIVEN CLUSTERING AND ACCURACY RETENTION"
+REFERENCES,0.8,"Knowing that TMI preferred ﬁlters might lead to better accuracy retention. We are interested in
+learning if the clustering results produced by the TMI system may also lead to better accuracy
+retention. Thus, we implement the following criterion:"
+REFERENCES,0.8029411764705883,"• TMI shufﬂed: Take a clustering result determined by the TMI scoring system (argmin of
+Equation 5) and shufﬂe its ﬁlters across different groups. By “shufﬂe,” we mean that if a set
+of ﬁlters were originally in the same group, after the shufﬂe, no two of the above-mentioned
+ﬁlters will be in the same group anymore."
+REFERENCES,0.8058823529411765,"Model
+Baseline (%)
+TMI-GKP (%)
+TMI shufﬂed (%)
+ResNet-20
+92.35
+↓0.34
+↓0.67
+ResNet-32
+92.82
+↑0.22
+↓0.09
+ResNet-56
+93.78
+↑0.22
+↓0.05
+ResNet-101
+94.26
+↑0.64
+↑0.25"
+REFERENCES,0.8088235294117647,"The experiment results conﬁrmed that our TMI system may provide positive contribution even under
+the ﬁlter clustering context. Although the improvement is not as signiﬁcant as the one provide by
+the greedy approach (see A.4.6), the improvement is consistent. Yet without it, our method may not
+exceed SOTA performance at all."
+REFERENCES,0.8117647058823529,"We further include a discussion in A.4.6 on why empirical evidence suggests the TMI-driven clus-
+tering may not guarantee on ﬁnding the best clustering in terms of accuracy retention, but rather a
+robust policy with more comprehensive considerations done to deliver a “better” and very usable
+solution."
+REFERENCES,0.8147058823529412,Published as a conference paper at ICLR 2022
+REFERENCES,0.8176470588235294,"A.4.3
+TMI-DRIVEN CLUSTERING V. OTHER FILTER CLUSTERING SCHEMES"
+REFERENCES,0.8205882352941176,"We set the greedy grouped kernel pruning procedure to ﬁxed and feed our method with different
+schemes on ﬁlter clustering: three clustering schemes individually and a uniform random assignment
+of the three clustering schemes. The results with ResNet-32 on CIFAR-10 suggest the TMI-driven
+clustering may deliver the best accuracy retention."
+REFERENCES,0.8235294117647058,"Method
+BA (%)
+∆Acc (%)
+↓Params (%)
+↓FLOPs(%)
+ResNet-32 on CIFAR-10:
+FLOPs: 6.95E7 Params: 4.29E7
+TMI Clustering w/ Greedy
+92.82
+↑0.22
+43.43
+43.09
+K-PCA + k-Means w/ Greedy
+92.82
+↑0.01
+43.43
+43.09
+Spectral + k-Means w/ Greedy
+92.82
+↓0.16
+43.43
+43.09
+t-SNE + DBSCAN w/ Greedy
+92.82
+↓0.14
+43.43
+43.09
+Random Clustering Schemes w/ Greedy
+92.82
+↑0.03
+43.43
+43.09"
+REFERENCES,0.8264705882352941,"However, by conducting experiments for the A.4.6, we notice that for the combination of ResNet-
+110 on CIFAR-10, forcing the clustering scheme as Spectral Clustering may achieve slightly supe-
+rior accuracy retention to TMI-GKP (+0.06%). But by running the same clustering scheme on other
+experiment combinations like ResNet-20 and ResNet-32 on CIFAR-10, spectral clustering induces
+much lower results (−0.33% and −0.16% in comparison to TMI-GKP). This implies the TMI-
+driven clustering may not guarantee on ﬁnding the best clustering in terms of accuracy retention,
+but rather a robust policy with more comprehensive considerations done to deliver a “better” solu-
+tion than many other structured pruning methods when combined with our greedy-induced pruning
+procedure."
+REFERENCES,0.8294117647058824,"We observe similar phenomena on the K-PCA + k-Means clustering scheme as it only shows slightly
+lower performance (−0.21% in comparison to TMI-GKP) on ResNet-32 on CIFAR-10. But the
+same clustering scheme performs consistently worse than TMI-GKP on ResNet-20/56/100 with
+CIFAR-10: coming as respectively −0.38%, −0.29%, and −0.24% to our TMI-GKP method; which
+implies TMI-GKP is likely more robust on providing a “better” solution across different networks."
+REFERENCES,0.8323529411764706,"A.4.4
+TMI-GKP V. GROUPED CONVOLUTION-ONLY"
+REFERENCES,0.8352941176470589,"Since the architecture of grouped convolution itself may induce a reduction of parameters, we are
+also interested in learning how much it contributes to accuracy retention. We modiﬁed the original
+network as a vanilla grouped convolution, trained it with the same training settings as in A.3.1, and
+compared it against TMI-GKP. With a comparable amount of parameters and FLOPs reduction, the
+results achieved with grouped convolution-only are well below our TMI-GKP."
+REFERENCES,0.8382352941176471,"Method
+BA (%)
+Pruned Acc (%)
+↓Params (%)
+↓FLOPs(%)
+ResNet-20 on CIFAR-10:
+FLOPs: 4.09E7 Params: 2.70E5
+Grouped Conv (n = 2)
+90.48
+-
+49.0
+49.5
+TMI-GKP
+92.35
+92.01
+43.4
+42.9
+ResNet-32 on CIFAR-10:
+FLOPs: 6.95E7 Params: 4.64E5
+Grouped Conv (n = 2)
+91.75
+-
+49.2
+49.6
+TMI-GKP
+92.82
+93.04
+43.4
+43.1
+ResNet-56 on CIFAR-10: FLOPs: 1.27E8 Params: 8.53E5
+Grouped Conv (n = 2)
+92.34
+-
+49.4
+49.7
+TMI-GKP
+93.78
+94.00
+43.5
+43.2
+ResNet-110 on CIFAR-10: FLOPs: 2.55E8 Params: 1.73E6
+Grouped Conv (n = 2)
+92.90
+-
+49.5
+49.7
+TMI-GKP
+94.26
+94.90
+43.5
+43.3"
+REFERENCES,0.8411764705882353,"A.4.5
+GREEDY-INDUCED PRUNING AND ACCURACY RETENTION"
+REFERENCES,0.8441176470588235,"Our greedy grouped kernel pruning approach is developed on the assumption of (grouped) kernels
+that are most distinctive from each other are better. We now put this assumption to test with the
+following two schemes:"
+REFERENCES,0.8470588235294118,Published as a conference paper at ICLR 2022
+REFERENCES,0.85,"1. Greedy complement: where we keep the group kernels that was originally pruned in TMI-
+GKP.
+2. Greedy reverse: where we ﬂip the arg max on line 11 of Algorithm A.2.1 to arg min
+with β = 0 in Equation 5. This means the algorithm is now searching for the next grouped
+kernel that is “most similar” to the selected grouped kernels."
+REFERENCES,0.8529411764705882,Here are the experiment results with pruning rate set to 43.75%:
+REFERENCES,0.8558823529411764,"Model
+Baseline (%)
+TMI-GKP (%)
+Greedy complement (%)
+Greedy reverse (%)
+ResNet-20
+92.35
+↓0.34
+↓1.50
+↓1.38
+ResNet-32
+92.82
+↑0.22
+↓1.38
+↓0.56
+ResNet-56
+93.78
+↑0.22
+↓0.88
+↓0.54
+ResNet-110
+94.26
+↑0.64
+↓0.76
+↓0.67"
+REFERENCES,0.8588235294117647,"The experiment results once again demonstrate the signiﬁcance of our greedy approach. In addition,
+we observe Greedy reverse to have better accuracy retention to Greedy complement. We believe
+this is because the pruning strategy produced by Greedy reverse may have overlaps with the one
+produced by TMI-GKP; yet the pruning strategy produced Greedy complement is mutually exclu-
+sive with the one produced by TMI-GKP. This indirectly suggests the grouped kernels selected by
+our greedy approach are certainly “the better” ones, as only a partial overlap with the TMI-GKP’s
+pruning strategy may lead to noticeably better accuracy retention."
+REFERENCES,0.861764705882353,"Upon request, we further investigated Greedy reverse with β = 1 on ResNet-20/32/56/110 on
+CIFAR-10, where such scheme is identical to Greedy reverse with the exception of setting β to 1.
+This means the algorithm is still searching for the next grouped kernel that is “most similar” to the
+selected grouped kernels. But among the Cℓ
+in candidate pruning strategies, it will pick the one with
+best outer homogeneity (pruned and kept ﬁlters are most similar). The results are ↓1.52%, ↓0.42%,
+↓0.45%, and ↓0.61% respectively to the baseline of four aforementioned networks."
+REFERENCES,0.8647058823529412,"This is in line with our anticipation. As per the design of Algorithm 2 and Equation 5, the set of
+grouped kernels preserved by greedy reverse with β = 1 should be very similar to the set group
+kernels preserved by greedy reverse with β = 0. This is because both of them will preserve a set
+of grouped kernels that are very similar to each other; and as 56.25% of grouped kernels per layer
+are preserved, the two policies might very likely end up on the same (or similar) set of grouped
+kernels. Empirical evidence supports this hypothesis, as the performance differences between the
+two policies are marginal."
+REFERENCES,0.8676470588235294,"A.4.6
+GREEDY-INDUCED PRUNING V. OTHER GROUPED KERNEL PRUNING POLICIES"
+REFERENCES,0.8705882352941177,"We set the ﬁlter clustering scheme to ﬁx as Spectral Clustering and feed our method with differ-
+ent commonly applied grouped kernel pruning policies (L2 and center pruning). Experiments of
+ResNet-32/110 on CIFAR-10 have conﬁrmed that our greedy-induced pruning scheme may yield
+better accuracy retention in a controlled setting."
+REFERENCES,0.8735294117647059,"Method
+BA (%)
+∆Acc (%)
+↓Params (%)
+↓FLOPs(%)
+ResNet-32 on CIFAR-10:
+FLOPs: 6.95E7 Params: 4.29E7
+Greedy-induced Pruning
+92.82
+↑0.06
+43.4
+43.1
+L2 Pruning
+92.82
+↓0.30
+43.4
+43.1
+Center Pruning
+92.82
+↓0.19
+43.4
+43.1
+ResNet-110 on CIFAR-10:
+FLOPs: 2.55E8 Params: 1.73E6
+Greedy-induced Pruning
+94.26
+↑0.70
+43.3
+43.5
+L2 Pruning
+93.76
+↓0.08
+43.3
+43.5
+Center Pruning
+93.76
+↓0.05
+43.3
+43.5"
+REFERENCES,0.8764705882352941,"A.4.7
+RUNTIME ANALYSIS OF TMI-GKP"
+REFERENCES,0.8794117647058823,"The following experiments are conducted on a 2.00GHz 4 core Intel Xeon CPU and Tesla V100.
+Evaluated on 35 potential ticket epochs."
+REFERENCES,0.8823529411764706,Published as a conference paper at ICLR 2022
+REFERENCES,0.8852941176470588,"In our code implementation, we ﬁrst cluster a layer, then prune it, then move on to the next layer. So
+the runtime is a mixed product of both the TMI ﬁlter clustering procedure and the greedy grouped
+kernel pruning procedure. Please refer to the table below for the runtime of the pruning procedure
+of our TMI-GKP method. All experiments are against the CIFAR-10 dataset."
+REFERENCES,0.888235294117647,"Model
+ResNet-20
+ResNet-32
+ResNet-56
+ResNet-101"
+REFERENCES,0.8911764705882353,"Clustering and Pruning Runtime
+2,977 sec
+(49.62 min)"
+REFERENCES,0.8941176470588236,"4,741 sec
+(78.18 min)"
+REFERENCES,0.8970588235294118,"10,376 sec
+(172.93 min)"
+REFERENCES,0.9,"19,818 sec
+(330.3 min)"
+REFERENCES,0.9029411764705882,"We also separately analyze the runtime of our greedy grouped kernel pruning procedure. This is
+done by assigning a pre-determined permutation matrix to the network (same effect as clustering,
+as it permutes a convolutional layer from Figure 1(a) to Figure 1(b)), so the actual greedy-only
+approach will be even slightly faster). Also note the runtime of this greedy procedure is theoretically
+related to the choice of γ in Equation 5, but the greedy procedure itself is so fast to the point the
+value of γ does not matter anymore."
+REFERENCES,0.9058823529411765,"Model
+ResNet-20
+ResNet-32
+ResNet-56
+ResNet-101"
+REFERENCES,0.9088235294117647,"Greedy Pruning Runtime
+47 sec
+16 sec
+250 sec
+(4.17 min)"
+REFERENCES,0.9117647058823529,"2,205 sec
+(36.75 min)"
+REFERENCES,0.9147058823529411,"We consider this sort of runtime is totally tolerable as an overhead. When compared to methods
+involve iterative prune-train cycles (Wang et al., 2021), custom loss function (Wu et al., 2018), or
+feature maps analysis (Yu et al., 2017), our method is signiﬁcantly more efﬁcient and applicable to
+a broader set of pre-trained networks."
+REFERENCES,0.9176470588235294,"A.4.8
+EFFECTS OF DIFFERENT HYPERPARAMETERS CHOICES"
+REFERENCES,0.9205882352941176,"As mentioned in A.3.2, the two hyperparameters we tuned are β and γ (derived from γratio) in
+Equation 5. We hereby provide a set of experiments to show how different choices of such two
+parameters will affect the accuracy retention of the pruned network. All experiments were done on
+ResNet-32 on CIFAR-10 with pruning rate set to 43.75% (baseline: 92.82%). Note the experiments
+below were done with setting one parameter ﬁxed and adjusting the other, so the two tables should
+be inspect in a collective manner."
+REFERENCES,0.9235294117647059,"We ﬁrst ﬁxed γratio to 0.2 — namely, for every pruned grouped kernel, 20% of all kept grouped ker-
+nels which are most similar to such pruned grouped kernel were evaluated — and try with different
+β settings. The term “auto” implies β =
+ V ∗"
+REFERENCES,0.9264705882352942,"2
+
+/(|gℓ\V ∗| · γ) with respect to Equation 5, please refer
+to A.3.2 on how we inferred this value."
+REFERENCES,0.9294117647058824,"Fixed / Tuned param
+β = 0
+β = 1
+β = 2
+β = 4
+β = 6
+β = 8
+β = auto
+γratio = 0.2
+92.71
+93.04
+92.58
+92.67
+92.8
+92.76
+92.74"
+REFERENCES,0.9323529411764706,"The experiment results suggest a relatively more “balanced” relationship between the two terms in
+Equation 5 may lead to better accuracy retention. This implies both the inner heterogeneity of kept
+grouped kernels and outer homogeneity between kept and pruned grouped kernels should be taken
+into consideration — which is exactly how Equation 5 was designed."
+REFERENCES,0.9352941176470588,We then ﬁxed β to “auto” and try with different γratio settings:
+REFERENCES,0.9382352941176471,"Fixed / Tuned param
+γratio = 0.1
+γratio = 0.2
+γratio = 0.4
+γratio = 0.6
+γratio = 0.8
+γratio = 1
+β = auto
+92.97
+92.74
+92.7
+92.65
+92.74
+92.53"
+REFERENCES,0.9411764705882353,"The experiment results suggest γratio should be a relatively small value as increasing its value may
+lead to worse accuracy retention of the pruned network. This is a rather intuitive result, as when
+γratio = 1 every pruned grouped kernel is evaluated against all kept grouped kernels. In such case,
+the second term of Equation 5 can no longer reveal if there are some kept grouped kernels that"
+REFERENCES,0.9441176470588235,Published as a conference paper at ICLR 2022
+REFERENCES,0.9470588235294117,"are similar to a pruned one, because all kept kernels are evaluated, yet all kept kernels are already
+distinctive from each others due to the selection procedure introduced in A.2.1."
+REFERENCES,0.95,"Additionally, we have conducted/disclosed more experiments with speciﬁc settings required by one
+reviewer (e.g., with β = and γratio = 0.1 on ResNets; choice of β being 2 verses auto). Please refer
+to our OpenReview entry for more details — as these speciﬁcally requested experiments should only
+make sense under the Q&A context, and they do not ﬁt well to the structure of our ablation studies."
+REFERENCES,0.9529411764705882,"A.5
+DIMENSIONALITY REDUCTION AND CLUSTERING SCHEMES"
+REFERENCES,0.9558823529411765,"A.5.1
+KERNEL PRINCIPAL COMPONENT ANALYSIS (K-PCA)"
+REFERENCES,0.9588235294117647,"Kernel PCA is considered an improved version of PCA. The choice of kernel functions will signif-
+icantly affect the experimental results. Global kernels (e.g. polynomial, Sigmoid) and local kernels
+(e.g. RBF, Laplacian) are the most commonly used kernel functions for K-PCA. They capture dif-
+ferent characteristics of the data: the former one demonstrates better extrapolation abilities, and the
+latter one has better interpolation abilities (Jordaan, 2004). Since the ﬁlters are usually not linearly
+separable and often there are fewer ﬁlters than the number of features, we will mix the global and
+local kernel functions to beneﬁt both extrapolation and interpolation properties. Speciﬁcally, we
+mixed a polynomial and an RBF kernel. We use a parameter λ to control the balance of these two
+functions.
+Knew(x, y) = λKPoly(x, y + (1 −λ)KRBF(x, y)"
+REFERENCES,0.961764705882353,"= λ(axT · y + c)d + (1 −λ) exp
+
+−∥x −y ∥2 2σ2"
+REFERENCES,0.9647058823529412,"
+,
+(7)"
+REFERENCES,0.9676470588235294,"where λ ∈[0, 1), parameters a and c in polynomial kernel have been ﬁxed to 1 and 0. d = 2 is the
+degree of polynomial kernel and σ in RBF kernel is the reciprocal of the width of the radial basis
+function. In practice, such λ is set ﬁxed to 0.5."
+REFERENCES,0.9705882352941176,"A.5.2
+SPECTRAL CLUSTERING"
+REFERENCES,0.9735294117647059,"Spectral Clustering is yet another maturely studied and widely adopted clustering method. Unlike in
+K-PCA, for this method we simply utilize the implementation of Von Luxburg (2007). Speciﬁcally
+in TMI-GKP, we utilize the variation of mutual-KNN as the similarity graph and cosine distance
+as the adjacency matrix based on empirical observations. We rely on Yikun Zhang’s version of
+implementation."
+REFERENCES,0.9764705882352941,"A.5.3
+EQUAL-SIZED k-MEANS"
+REFERENCES,0.9794117647058823,"To ensure we may have n equal-sized groups out of each ﬁlter group, we utilize the default Same-
+size k-Means Variation offered by Schubert & Zimek (2019). Speciﬁcally, we rely on Nathan
+Danielsen’s version of implementation."
+REFERENCES,0.9823529411764705,"A.5.4
+t-SNE AND DBSCAN"
+REFERENCES,0.9852941176470589,"We explore the option of t-SNE and DBSCAN because we want to add a density-based clus-
+tering scheme from the two distance-based offerings.
+For implementation details: we set the
+perplexity of t-SNE to be the size of the ﬁlter group (namely, Cℓ
+in/n in layer W ℓ) and iter-
+ate through different combinations of n components, ϵ, and min samples until the DBSCAN
+algorithm may yield a clustering result of ≥n + 1 groups (for n components ∈[2, n)). After
+that, we execute the same data-point reassignment procedure as listed in Schubert & Zimek (2019)
+until n equal-sized groups are achieved."
+REFERENCES,0.9882352941176471,"A.6
+ACKNOWLEDGEMENT"
+REFERENCES,0.9911764705882353,"We would like to acknowledge and give our warmest thanks to John Mays for his timely help on
+analytical writing."
+REFERENCES,0.9941176470588236,Published as a conference paper at ICLR 2022
+REFERENCES,0.9970588235294118,"Table 2: Full comparisons of different pruning methods with ResNet-20/32/56/110 on CIFAR-10,
+ResNet-56/101 on Tiny-ImageNet, and ResNet-50 on ImageNet (ILSVRC-12). “IT”, “SF” respec-
+tively indicate if the method-in-question requires an iterative pruning or a special ﬁne-tuning pro-
+cedure. “FB” is the ﬁne-tuning budget of each method (in terms of # of epochs). “BA” represents
+the pre-pruned network’s accuracy. A cell with “-” implies either such information is inapplicable
+or we failed to conﬁdently identify such information. Methods noted with ⊙are replicated by Wang
+et al. (2021), the rest are drawn from their original papers. The pruning rates (PR) of our method are
+adjusted to meet the ↓Params or ↓FLOPs of other methods."

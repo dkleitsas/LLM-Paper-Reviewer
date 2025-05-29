@@ -1,0 +1,1459 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.0026954177897574125,"We aim at advancing open-vocabulary object detection, which detects objects
+described by arbitrary text inputs. The fundamental challenge is the availabil-
+ity of training data. It is costly to further scale up the number of classes con-
+tained in existing object detection datasets. To overcome this challenge, we pro-
+pose ViLD, a training method via Vision and Language knowledge Distillation.
+Our method distills the knowledge from a pretrained open-vocabulary image
+classiﬁcation model (teacher) into a two-stage detector (student). Speciﬁcally,
+we use the teacher model to encode category texts and image regions of ob-
+ject proposals.
+Then we train a student detector, whose region embeddings
+of detected boxes are aligned with the text and image embeddings inferred by
+the teacher.
+We benchmark on LVIS by holding out all rare categories as
+novel categories that are not seen during training.
+ViLD obtains 16.1 mask
+APr with a ResNet-50 backbone, even outperforming the supervised counterpart
+by 3.8.
+When trained with a stronger teacher model ALIGN, ViLD achieves
+26.3 APr.
+The model can directly transfer to other datasets without ﬁnetun-
+ing, achieving 72.2 AP50 on PASCAL VOC, 36.6 AP on COCO and 11.8
+AP on Objects365.
+On COCO, ViLD outperforms the previous state-of-the-
+art (Zareian et al., 2021) by 4.8 on novel AP and 11.4 on overall AP. Code
+and demo are open-sourced at https://github.com/tensorflow/tpu/
+tree/master/models/official/detection/projects/vild."
+INTRODUCTION,0.005390835579514825,"1
+INTRODUCTION"
+INTRODUCTION,0.008086253369272238,"Consider Fig. 1, can we design object detectors beyond recognizing only base categories (e.g., toy)
+present in training labels and expand the vocabulary to detect novel categories (e.g., toy elephant)?
+In this paper, we aim to train an open-vocabulary object detector that detects objects in any novel
+categories described by text inputs, using only detection annotations in base categories."
+INTRODUCTION,0.01078167115902965,"Existing object detection algorithms often learn to detect only the categories present in detection
+datasets. A common approach to increase the detection vocabulary is by collecting images with more
+labeled categories. The research community has recently collected new object detection datasets
+with large vocabularies (Gupta et al., 2019; Kuznetsova et al., 2020). LVIS (Gupta et al., 2019) is a
+milestone of these efforts by building a dataset with 1,203 categories. With such a rich vocabulary,
+it becomes quite challenging to collect enough training examples for all categories. By Zipf’s law,
+object categories naturally follow a long-tailed distribution. To ﬁnd sufﬁcient training examples for
+rare categories, signiﬁcantly more data is needed (Gupta et al., 2019), which makes it expensive to
+scale up detection vocabularies."
+INTRODUCTION,0.013477088948787063,"On the other hand, paired image-text data are abundant on the Internet. Recently, Radford et al.
+(2021) train a joint vision and language model using 400 million image-text pairs and demonstrate
+impressive results on directly transferring to over 30 datasets. The pretrained text encoder is the
+key to the zero-shot transfer ability to arbitrary text categories. Despite the great success on learn-
+ing image-level representations, learning object-level representations for open-vocabulary detection
+is still challenging. In this work, we consider borrowing the knowledge from a pretrained open-
+vocabulary classiﬁcation model to enable open-vocabulary detection."
+INTRODUCTION,0.016172506738544475,∗Work done while Xiuye was a Google AI Resident and Tsung-Yi was at Google.
+INTRODUCTION,0.018867924528301886,Published as a conference paper at ICLR 2022
+INTRODUCTION,0.0215633423180593,: Novel categories
+INTRODUCTION,0.02425876010781671,: Base categories
+INTRODUCTION,0.026954177897574125,"toy: 0.77
+blue toy: 0.74
+toy elephant: 0.51"
+INTRODUCTION,0.029649595687331536,"toy: 0.56
+green toy: 0.48
+toy crocodile: 0.20
+toy: 0.89
+yellow toy: 0.70
+toy duck: 0.86"
+INTRODUCTION,0.03234501347708895,"Figure 1: An example of our open-vocabulary detector with arbitrary texts. After training on base cate-
+gories (purple), we can detect novel categories (pink) that are not present in the training data."
+INTRODUCTION,0.03504043126684636,"We begin with an R-CNN (Girshick et al., 2014) style approach. We turn open-vocabulary detection
+into two sub-problems: 1) generalized object proposal and 2) open-vocabulary image classiﬁcation.
+We train a region proposal model using examples from the base categories. Then we use the pre-
+trained open-vocabulary image classiﬁcation model to classify cropped object proposals, which can
+contain both base and novel categories. We benchmark on LVIS (Gupta et al., 2019) by holding out
+all rare categories as novel categories and treat others as base categories. To our surprise, the perfor-
+mance on the novel categories already surpasses its supervised counterpart. However, this approach
+is very slow for inference, because it feeds object proposals one-by-one into the classiﬁcation model."
+INTRODUCTION,0.03773584905660377,"To address the above issue, we propose ViLD (Vision and Language knowledge Distillation) for
+training two-stage open-vocabulary detectors. ViLD consists of two components: learning with
+text embeddings (ViLD-text) and image embeddings (ViLD-image) inferred by an open-vocabulary
+image classiﬁcation model, e.g., CLIP. In ViLD-text, we obtain the text embeddings by feeding
+category names into the pretrained text encoder. Then the inferred text embeddings are used to
+classify detected regions. Similar approaches have been used in prior detection works (Bansal et al.,
+2018; Rahman et al., 2018; Zareian et al., 2021). We ﬁnd text embeddings learned jointly with
+visual data can better encode the visual similarity between concepts, compared to text embeddings
+learned from a language corpus, e.g., GloVe (Pennington et al., 2014). Using CLIP text embeddings
+achieves 10.1 APr (AP of novel categories) on LVIS, signiﬁcantly outperforming the 3.0 APr of
+using GloVe. In ViLD-image, we obtain the image embeddings by feeding the object proposals into
+the pretrained image encoder. Then we train a Mask R-CNN whose region embeddings of detected
+boxes are aligned with these image embeddings. In contrast to ViLD-text, ViLD-image distills
+knowledge from both base and novel categories since the proposal network may detect regions
+containing novel objects, while ViLD-text only learns from base categories. Distillation enables
+ViLD to be general in choosing teacher and student architectures. ViLD is also energy-efﬁcient as
+it works with off-the-shelf open-vocabulary image classiﬁers. We experiment with the CLIP and
+ALIGN (Jia et al., 2021) teacher models with different architectures (ViT and EfﬁcientNet)."
+INTRODUCTION,0.04043126684636118,"We show that ViLD achieves 16.1 AP for novel categories on LVIS, surpassing the supervised coun-
+terpart by 3.8. We further use ALIGN as a stronger teacher model to push the performance to 26.3
+novel AP, which is close (only 3.7 worse) to the 2020 LVIS Challenge winner (Tan et al., 2020) that
+is fully-supervised. We directly transfer ViLD trained on LVIS to other detection datasets without
+ﬁnetuning, and obtain strong performance of 72.2 AP50 on PASCAL VOC, 36.6 AP on COCO and
+11.8 AP on Objects365. We also outperform the previous state-of-the-art open-vocabulary detector
+on COCO (Zareian et al., 2021) by 4.8 novel AP and 11.4 overall AP."
+RELATED WORK,0.0431266846361186,"2
+RELATED WORK"
+RELATED WORK,0.04582210242587601,"Increasing vocabulary in visual recognition: Recognizing objects using a large vocabulary is
+a long-standing research problem in computer vision. One focus is zero-shot recognition, aim-
+ing at recognizing categories not present in the training set. Early works (Farhadi et al., 2009;
+Rohrbach et al., 2011; Jayaraman & Grauman, 2014) use visual attributes to create a binary code-
+book representing categories, which is used to transfer learned knowledge to unseen categories. In
+this direction, researchers have also explored class hierarchy, class similarity, and object parts as
+discriminative features to aid the knowledge transfer (Rohrbach et al., 2011; Akata et al., 2016;
+Zhao et al., 2017; Elhoseiny et al., 2017; Ji et al., 2018; Cacheux et al., 2019; Xie et al., 2020).
+Another focus is learning to align latent image-text embeddings, which allows to classify images
+using arbitrary texts. Frome et al. (2013) and Norouzi et al. (2014) are pioneering works that learn
+a visual-semantic embedding space using deep learning. Wang et al. (2018) distills information"
+RELATED WORK,0.04851752021563342,Published as a conference paper at ICLR 2022
+RELATED WORK,0.05121293800539083,Knowledge Distillation
+RELATED WORK,0.05390835579514825,Backbone + RPN
+RELATED WORK,0.05660377358490566,"Pre-trained 
+Text Encoder"
+RELATED WORK,0.05929919137466307,"B1
+B2
+...
+Bn R1 R2"
+RELATED WORK,0.06199460916442048,"Novel 
+Categories"
+RELATED WORK,0.0646900269541779,stop sign car
+RELATED WORK,0.0673854447439353,"···
+Base 
+Categories dice"
+RELATED WORK,0.07008086253369272,lapponian
+RELATED WORK,0.07277628032345014,herder ···
+RELATED WORK,0.07547169811320754,"N1
+...
+Nk"
+RELATED WORK,0.07816711590296496,"R1·B2
+...
+R1·Bn
+R1·N1
+...
+R1·Nk
+R1·B1
+dice"
+RELATED WORK,0.08086253369272237,"R2·B2
+...
+R2·Bn
+R2·Nk
+...
+R2·N1
+R2·B1
+lapponian"
+RELATED WORK,0.08355795148247978,herder
+RELATED WORK,0.0862533692722372,RoIAlign
+RELATED WORK,0.0889487870619946,"R2·B1
+R2·B2
+...
+R2·Bn R1"
+RELATED WORK,0.09164420485175202,"Cross entropy loss
+R2"
+RELATED WORK,0.09433962264150944,"Pre-trained 
+Image Encoder
+Cropped"
+RELATED WORK,0.09703504043126684,"Regions
+I1
+I2"
+RELATED WORK,0.09973045822102426,L1 loss
+RELATED WORK,0.10242587601078167,"B1
+B2
+...
+Bn"
+RELATED WORK,0.10512129380053908,RoIAlign
+RELATED WORK,0.1078167115902965,Training
+RELATED WORK,0.1105121293800539,Inference conv conv
+RELATED WORK,0.11320754716981132,Backbone + RPN conv conv
+RELATED WORK,0.11590296495956873,"A photo of 
+a {category} 
+in the scene"
+RELATED WORK,0.11859838274932614,text embeddings
+RELATED WORK,0.12129380053908356,image embeddings
+RELATED WORK,0.12398921832884097,region embeddings
+RELATED WORK,0.12668463611859837,"Figure 2: An overview of using ViLD for open-vocabulary object detection. ViLD distills the knowledge
+from a pretrained open-vocabulary image classiﬁcation model. First, the category text embeddings and the im-
+age embeddings of cropped object proposals are computed, using the text and image encoders in the pretrained
+classiﬁcation model. Then, ViLD employs the text embeddings as the region classiﬁer (ViLD-text) and mini-
+mizes the distance between the region embedding and the image embedding for each proposal (ViLD-image).
+During inference, text embeddings of novel categories are used to enable open-vocabulary detection."
+RELATED WORK,0.1293800539083558,"from both word embeddings and knowledge graphs. Recent work CLIP (Radford et al., 2021) and
+ALIGN (Jia et al., 2021) push the limit by collecting million-scale image-text pairs and then training
+joint image-text models using contrastive learning. These models can directly transfer to a suite of
+classiﬁcation datasets and achieve impressive performances. While these work focus on image-level
+open-vocabulary recognition, we focus on detecting objects using arbitrary text inputs."
+RELATED WORK,0.1320754716981132,"Increasing vocabulary in object detection: It’s expensive to scale up the data collection for large
+vocabulary object detection. Zhao et al. (2020) and Zhou et al. (2021) unify the label space from
+multiple datasets. Joseph et al. (2021) incrementally learn identiﬁed unknown categories. Zero-shot
+detection (ZSD) offers another direction. Most ZSD methods align region features to pretrained
+text embeddings in base categories (Bansal et al., 2018; Demirel et al., 2018; Rahman et al., 2019;
+Hayat et al., 2020; Zheng et al., 2020). However, there is a large performance gap to supervised
+counterparts. To address this issue, Zareian et al. (2021) pretrain the backbone model using image
+captions and ﬁnetune the pretrained model with detection datasets. In contrast, we use an image-text
+pretrained model as a teacher model to supervise student object detectors. All previous methods are
+only evaluated on tens of categories, while we are the ﬁrst to evaluate on more than 1,000 categories."
+METHOD,0.1347708894878706,"3
+METHOD"
+METHOD,0.13746630727762804,"Notations: We divide categories in a detection dataset into the base and novel subsets, and denote
+them by CB and CN. Only annotations in CB are used for training. We use T (·) to denote the text
+encoder and V(·) to denote the image encoder in the pretrained open-vocabulary image classiﬁer."
+LOCALIZATION FOR NOVEL CATEGORIES,0.14016172506738545,"3.1
+LOCALIZATION FOR NOVEL CATEGORIES"
+LOCALIZATION FOR NOVEL CATEGORIES,0.14285714285714285,"The ﬁrst challenge for open-vocabulary detection is to localize novel objects. We modify a standard
+two-stage object detector, e.g., Mask R-CNN (He et al., 2017), for this purpose. We replace its class-
+speciﬁc localization modules, i.e., the second-stage bounding box regression and mask prediction
+layers, with class-agnostic modules for general object proposals. For each region of interest, these
+modules only predict a single bounding box and a single mask for all categories, instead of one
+prediction per category. The class-agnostic modules can generalize to novel objects."
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.14555256064690028,"3.2
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.14824797843665768,"Once object candidates are localized, we propose to reuse a pretrained open-vocabulary image clas-
+siﬁer to classify each region for detection."
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.1509433962264151,Published as a conference paper at ICLR 2022
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.15363881401617252,(b) ViLD-text
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.15633423180592992,N proposals
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.15902964959568733,Projection Layer
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.16172506738544473,L2 Normalization Head
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.16442048517520216,"N region 
+embeddings"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.16711590296495957,"Back
+ground"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.16981132075471697,"Text 
+Embeddings"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.1725067385444744,"Cross entropy loss
+trainable weights"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.1752021563342318,fixed weights
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.1778975741239892,offline modules
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.18059299191374664,(a) Vanilla detector
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.18328840970350405,Classifier
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.18598382749326145,Cross entropy loss
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.18867924528301888,N proposals Head
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.19137466307277629,"N region 
+embeddings"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.1940700808625337,(c) ViLD-image
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.1967654986522911,Projection Layer
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.19946091644204852,L2 Normalization
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.20215633423180593,M pre-computed
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.20485175202156333,proposals Head
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.20754716981132076,Cropping & Resizing
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.21024258760107817,"Pre-trained
+Image Encoder"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.21293800539083557,"M region 
+embeddings"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.215633423180593,"M image 
+embeddings"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.2183288409703504,L1 loss
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.2210242587601078,Knowledge Distillation
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.22371967654986524,(d) ViLD
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.22641509433962265,M pre-computed
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.22911051212938005,proposals
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.23180592991913745,Splitting
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.23450134770889489,Cropping & Resizing
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.2371967654986523,Knowledge Distillation
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.2398921832884097,"Pre-trained
+Image Encoder"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.24258760107816713,"M region 
+embeddings"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.24528301886792453,"M image 
+embeddings"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.24797843665768193,"L1 loss
+Cross entropy loss"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.25067385444743934,N proposals
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.25336927223719674,Projection Layer
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.2560646900269542,L2 Normalization Head
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.2587601078167116,"N region 
+embeddings"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.261455525606469,"Back
+ground"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.2641509433962264,"Text 
+Embeddings"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.2668463611859838,"Figure 3: Model architecture and training objectives. (a) The classiﬁcation head of a vanilla two-stage
+detector, e.g., Mask R-CNN. (b) ViLD-text replaces the classiﬁer with ﬁxed text embeddings and a learnable
+background embedding. The projection layer is introduced to adjust the dimension of region embeddings to
+be compatible with the text embeddings. (c) ViLD-image distills from the precomputed image embeddings of
+proposals with an L1 loss. (d) ViLD combines ViLD-text and ViLD-image."
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.2695417789757412,"Image embeddings: We train a proposal network on base categories CB and extract the region
+proposals ˜r ∈eP ofﬂine. We crop and resize the proposals, and feed them into the pretrained image
+encoder V to compute image embeddings V(crop(I, ˜r)), where I is the image."
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.2722371967654987,"We ensemble the image embeddings from 1× and 1.5× crops, as the 1.5× crop provides more
+context cues. The ensembled embedding is then renormalized to unit norm:"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.2749326145552561,"V(crop(I, ˜r{1×,1.5×})) =
+v
+∥v∥, where v = V(crop(I, ˜r1×)) + V(crop(I, ˜r1.5×)).
+(1)"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.2776280323450135,"Text embeddings: We generate the text embeddings ofﬂine by feeding the category texts with
+prompt templates, e.g., “a photo of {category} in the scene”, into the text encoder T . We ensemble
+multiple prompt templates and the synonyms if provided."
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.2803234501347709,"Then, we compute cosine similarities between the image and text embeddings. A softmax activation
+is applied, followed by a per-class NMS to obtain ﬁnal detections. The inference is slow since every
+cropped region is fed into V."
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.2830188679245283,"3.3
+VILD: VISION AND LANGUAGE KNOWLEDGE DISTILLATION."
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.2857142857142857,"We propose ViLD to address the slow inference speed of the above method. ViLD learns region
+embeddings in a two-stage detector to represent each proposal r. We denote region embeddings by
+R(φ(I), r), where φ(·) is a backbone model and R(·) is a lightweight head that generates region
+embeddings. Speciﬁcally, we take outputs before the classiﬁcation layer as region embeddings."
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.2884097035040431,"Replacing classiﬁer with text embeddings: We ﬁrst introduce ViLD-text. Our goal is to train the
+region embeddings such that they can be classiﬁed by text embeddings. Fig. 3(b) shows the archi-
+tecture and training objective. ViLD-text replaces the learnable classiﬁer in Fig. 3(a) with the text
+embeddings introduced in Sec. 3.2. Only T (CB), the text embeddings of CB, are used for training.
+For the proposals that do not match any groundtruth in CB, they are assigned to the background
+category. Since the text “background” does not well represent these unmatched proposals, we allow
+the background category to learn its own embedding ebg. We compute the cosine similarity between
+each region embedding R(φ(I), r) and all category embeddings, including T (CB) and ebg. Then
+we apply softmax activation with a temperature τ to compute the cross entropy loss. To train the
+ﬁrst-stage region proposal network of the two-stage detector, we extract region proposals r ∈P
+online, and train the detector with ViLD-text from scratch. The loss for ViLD-text can be written as:"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.29110512129380056,"er = R(φ(I), r)"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.29380053908355797,"z(r) =
+sim(er, ebg), sim(er, t1), · · · , sim(er, t|CB|)"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.29649595687331537,LViLD-text = 1 N X
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.2991913746630728,"r∈P
+LCE
+
+softmax
+ 
+z(r)/τ
+
+, yr
+
+,
+(2)"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.3018867924528302,Published as a conference paper at ICLR 2022
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.3045822102425876,"where sim(a, b) = a⊤b/(∥a∥∥b∥), ti denotes elements in T (CB), yr denotes the class label of
+region r, N is the number of proposals per image (|P|), and LCE is the cross entropy loss."
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.30727762803234504,"During inference, we include novel categories (CN) and generate T (CB ∪CN) (sometimes T (CN)
+only) for open-vocabulary detection (Fig. 2). Our hope is that the model learned from annotations
+in CB can generalize to novel categories CN."
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.30997304582210244,"Distilling image embeddings: We then introduce ViLD-image, which aims to distill the knowl-
+edge from the teacher image encoder V into the student detector. Speciﬁcally, we align region
+embeddings R(φ(I), ˜r) to image embeddings V(crop(I, ˜r)) introduced in Sec. 3.2."
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.31266846361185985,"To make the training more efﬁcient, we extract M proposals ˜r ∈˜P ofﬂine for each training image,
+and precompute the M image embeddings. These proposals can contain objects in both CB and
+CN, as the network can generalize. In contrast, ViLD-text can only learn from CB. We apply an L1
+loss between the region and image embeddings to minimize their distance. The ensembled image
+embeddings in Sec. 3.2 are used for distillation:"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.31536388140161725,LViLD-image = 1 M X
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.31805929919137466,"˜r∈e
+P
+∥V(crop(I, ˜r{1×,1.5×})) −R(φ(I), ˜r)∥1.
+(3)"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.32075471698113206,"Fig. 3(c) shows the architecture. Zhu et al. (2019) use a similar approach to make Faster R-CNN
+features mimic R-CNN features, however, the details and goals are different: They reduce redundant
+context to improve supervised detection; while ViLD-image is to enable open-vocabulary detection
+on novel categories."
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.32345013477088946,The total training loss of ViLD is simply a weighted sum of both objectives:
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.3261455525606469,"LViLD = LViLD-text + w · LViLD-image,
+(4)"
+OPEN-VOCABULARY DETECTION WITH CROPPED REGIONS,0.3288409703504043,"where w is a hyperparameter weight for distilling the image embeddings. Fig. 3(d) shows the model
+architecture and training objectives. ViLD-image distillation only happens in training time. Dur-
+ing inference, ViLD-image, ViLD-text and ViLD employ the same set of text embeddings as the
+detection classiﬁer, and use the same architecture for open-vocabulary detection (Fig. 2)."
+MODEL ENSEMBLING,0.33153638814016173,"3.4
+MODEL ENSEMBLING"
+MODEL ENSEMBLING,0.33423180592991913,"In this section, we explore model ensembling for the best detection performance over base and novel
+categories. First, we combine the predictions of a ViLD-text detector with the open-vocabulary im-
+age classiﬁcation model. The intuition is that ViLD-image learns to approximate the predictions of
+its teacher model, and therefore, we assume using the teacher model directly may improve perfor-
+mance. We use a trained ViLD-text detector to obtain top k candidate regions and their conﬁdence
+scores. Let pi,ViLD-text denote the conﬁdence score of proposal ˜r belonging to category i. We then
+feed crop(I, ˜r) to the open-vocabulary classiﬁcation model to obtain the teacher’s conﬁdence score
+pi,cls. Since we know the two models have different performance on base and novel categories, we
+introduce a weighted geometric average for the ensemble:"
+MODEL ENSEMBLING,0.33692722371967654,"pi,ensemble ="
+MODEL ENSEMBLING,0.33962264150943394,"(
+pλ
+i,ViLD-text · p(1−λ)
+i,cls
+,
+if i ∈CB
+p(1−λ)
+i,ViLD-text · pλ
+i,cls.
+if i ∈CN
+(5)"
+MODEL ENSEMBLING,0.3423180592991914,"λ is set to 2/3, which weighs the prediction of ViLD-text more on base categories and vice versa.
+Note this approach has a similar slow inference speed as the method in Sec. 3.2."
+MODEL ENSEMBLING,0.3450134770889488,"Next, we introduce a different ensembling approach to mitigate the above inference speed issue.
+Besides, in ViLD, the cross entropy loss of ViLD-text and the L1 distillation loss of ViLD-image
+is applied to the same set of region embeddings, which may cause contentions. Here, instead, we
+learn two sets of embeddings for ViLD-text (Eq. 2) and ViLD-image (Eq. 3) respectively, with
+two separate heads of identical architectures. Text embeddings are applied to these two regions
+embeddings to obtain conﬁdence scores pi,ViLD-text and pi,ViLD-image, which are then ensembled in the
+same way as Eq. 5, with pi,ViLD-image replacing pi,cls. We name this approach ViLD-ensemble."
+MODEL ENSEMBLING,0.3477088948787062,Published as a conference paper at ICLR 2022
+EXPERIMENTS,0.3504043126684636,"4
+EXPERIMENTS"
+EXPERIMENTS,0.353099730458221,"Implementation details: We benchmark on the Mask R-CNN (He et al., 2017) with ResNet (He
+et al., 2016) FPN (Lin et al., 2017) backbone and use the same settings for all models unless explic-
+itly speciﬁed. The models use 1024×1024 as input image size, large-scale jittering augmentation of
+range [0.1, 2.0], synchronized batch normalization (Ioffe & Szegedy, 2015; Girshick et al., 2018) of
+batch size 256, weight decay of 4e-5, and an initial learning rate of 0.32. We train the model from
+scratch for 180,000 iterations, and divide the learning rate by 10 at 0.9×, 0.95×, and 0.975× of total
+iterations. We use the publicly available pretrained CLIP model1 as the open-vocabulary classiﬁ-
+cation model, with an input size of 224×224. The temperature τ is set to 0.01, and the maximum
+number of detections per image is 300. We refer the readers to Appendix D for more details."
+BENCHMARK SETTINGS,0.3557951482479784,"4.1
+BENCHMARK SETTINGS"
+BENCHMARK SETTINGS,0.3584905660377358,"We mainly evaluate on LVIS (Gupta et al., 2019) with our new setting. To compare with previ-
+ous methods, we also use the setting in Zareian et al. (2021), which is adopted in many zero-shot
+detection works."
+BENCHMARK SETTINGS,0.3611859838274933,"LVIS: We benchmark on LVIS v1. LVIS contains a large and diverse set of vocabulary (1,203 cat-
+egories) that is more suitable for open-vocabulary detection. We take its 866 frequent and common
+categories as the base categories CB, and hold out the 337 rare categories as the novel categories
+CN. APr, the AP of rare categories, is the main metric."
+BENCHMARK SETTINGS,0.3638814016172507,"COCO: Bansal et al. (2018) divide COCO-2017 (Lin et al., 2014) into 48 base categories and 17
+novel categories, removing 15 categories without a synset in the WordNet hierarchy. We follow
+previous works and do not compute instance masks. We evaluate on the generalized setting."
+LEARNING GENERALIZABLE OBJECT PROPOSALS,0.3665768194070081,"4.2
+LEARNING GENERALIZABLE OBJECT PROPOSALS"
+LEARNING GENERALIZABLE OBJECT PROPOSALS,0.3692722371967655,"We ﬁrst study whether a detector can localize novel categories when only trained on base categories.
+We evaluate the region proposal networks in Mask R-CNN with a ResNet-50 backbone. Table 1
+shows the average recall (AR) (Lin et al., 2014) on novel categories. Training with only base cat-
+egories performs slightly worse by ∼2 AR at 100, 300, and 1000 proposals, compared to using
+both base and novel categories. This experiment demonstrates that, without seeing novel categories
+during training, region proposal networks can generalize to novel categories, only suffering a small
+performance drop. We believe better proposal networks focusing on unseen category generalization
+should further improve the performance, and leave this for future research."
+LEARNING GENERALIZABLE OBJECT PROPOSALS,0.3719676549865229,"Table 1: Training with only base categories achieves comparable average recall (AR) for novel categories
+on LVIS. We compare RPN trained with base only vs. base+novel categories and report the bounding box AR."
+LEARNING GENERALIZABLE OBJECT PROPOSALS,0.3746630727762803,"Supervision
+ARr@100
+ARr@300
+ARr@1000"
+LEARNING GENERALIZABLE OBJECT PROPOSALS,0.37735849056603776,"base
+39.3
+48.3
+55.6
+base + novel
+41.1
+50.9
+57.0"
+OPEN-VOCABULARY CLASSIFIER ON CROPPED REGIONS,0.38005390835579517,"4.3
+OPEN-VOCABULARY CLASSIFIER ON CROPPED REGIONS"
+OPEN-VOCABULARY CLASSIFIER ON CROPPED REGIONS,0.38274932614555257,"In Table 2, we evaluate the approach in Sec. 3.2, i.e., using an open-vocabulary classiﬁer to classify
+cropped region proposals. We use CLIP in this experiment and ﬁnd it tends to output conﬁdence
+scores regardless of the localization quality (Appendix B). Given that, we ensemble the CLIP con-
+ﬁdence score with a proposal objectness score by geometric mean. Results show it improves both
+base and novel APs. We compare with supervised baselines trained on base/base+novel categories,
+as well as Supervised-RFS (Mahajan et al., 2018; Gupta et al., 2019) that uses category frequency
+for balanced sampling. CLIP on cropped regions already outperforms supervised baselines on APr
+by a large margin, without accessing detection annotations in novel categories. However, the per-
+formances of APc and APf are still trailing behind. This experiment shows that a strong open-
+vocabulary classiﬁcation model can be a powerful teacher model for detecting novel objects, yet
+there is still much improvement space for inference speed and overall AP."
+OPEN-VOCABULARY CLASSIFIER ON CROPPED REGIONS,0.38544474393531,"1https://github.com/openai/CLIP, ViT-B/32."
+OPEN-VOCABULARY CLASSIFIER ON CROPPED REGIONS,0.3881401617250674,Published as a conference paper at ICLR 2022
+OPEN-VOCABULARY CLASSIFIER ON CROPPED REGIONS,0.3908355795148248,"Table 2: Using CLIP for open-vocabulary detection achieves high detection performance on novel cate-
+gories. We apply CLIP to classify cropped region proposals, with or without ensembling objectness scores, and
+report the mask average precision (AP). The performance on novel categories (APr) is far beyond supervised
+learning approaches. However, the overall performance is still behind."
+OPEN-VOCABULARY CLASSIFIER ON CROPPED REGIONS,0.3935309973045822,"Method
+APr
+APc
+APf
+AP"
+OPEN-VOCABULARY CLASSIFIER ON CROPPED REGIONS,0.39622641509433965,"Supervised (base class only)
+0.0
+22.6
+32.4
+22.5
+CLIP on cropped regions w/o objectness
+13.0
+10.6
+6.0
+9.2
+CLIP on cropped regions
+18.9
+18.8
+16.0
+17.7
+Supervised (base+novel)
+4.1
+23.5
+33.2
+23.9
+Supervised-RFS (base+novel)
+12.3
+24.3
+32.4
+25.4"
+OPEN-VOCABULARY CLASSIFIER ON CROPPED REGIONS,0.39892183288409705,"Table 3: Performance of ViLD and its variants. ViLD outperforms the supervised counterpart on novel
+categories. Using ALIGN as the teacher model achieves the best performance without bells and whistles. All
+results are mask AP. We average over 3 runs for R50 experiments. †: methods with R-CNN style; runtime is
+630× of Mask R-CNN style. ‡: for reference, fully-supervised learning with additional tricks."
+OPEN-VOCABULARY CLASSIFIER ON CROPPED REGIONS,0.40161725067385445,"Backbone
+Method
+APr
+APc
+APf
+AP"
+OPEN-VOCABULARY CLASSIFIER ON CROPPED REGIONS,0.40431266846361186,"ResNet-50+ViT-B/32
+CLIP on cropped regions†
+18.9
+18.8
+16.0
+17.7
+ViLD-text+CLIP†
+22.6
+24.8
+29.2
+26.1"
+OPEN-VOCABULARY CLASSIFIER ON CROPPED REGIONS,0.40700808625336926,ResNet-50
+OPEN-VOCABULARY CLASSIFIER ON CROPPED REGIONS,0.40970350404312667,"Supervised-RFS (base+novel)
+12.3
+24.3
+32.4
+25.4
+GloVe baseline
+3.0
+20.1
+30.4
+21.2
+ViLD-text
+10.1
+23.9
+32.5
+24.9
+ViLD-image
+11.2
+11.3
+11.1
+11.2
+ViLD (w=0.5)
+16.1
+20.0
+28.3
+22.5
+ViLD-ensemble (w=0.5)
+16.6
+24.6
+30.3
+25.5"
+OPEN-VOCABULARY CLASSIFIER ON CROPPED REGIONS,0.4123989218328841,"EfﬁcientNet-b7
+ViLD-ensemble w/ ViT-L/14 (w=1.0)
+21.7
+29.1
+33.6
+29.6
+ViLD-ensemble w/ ALIGN (w=1.0)
+26.3
+27.2
+32.9
+29.3
+ResNeSt269+HTC
+2020 Challenge winner (Tan et al., 2020)‡
+30.0
+41.9
+46.0
+41.5"
+VISION AND LANGUAGE KNOWLEDGE DISTILLATION,0.41509433962264153,"4.4
+VISION AND LANGUAGE KNOWLEDGE DISTILLATION"
+VISION AND LANGUAGE KNOWLEDGE DISTILLATION,0.41778975741239893,"We evaluate the performance of ViLD and its variants (ViLD-text, ViLD-image, and ViLD-
+ensemble), which are signiﬁcantly faster compared to the method in Sec. 4.3. Finally, we use
+stronger teacher models to demonstrate our best performance. Table 3 summarizes the results."
+VISION AND LANGUAGE KNOWLEDGE DISTILLATION,0.42048517520215634,"Text embeddings as classiﬁers (ViLD-text): We evaluate ViLD-text using text embeddings gen-
+erated by CLIP, and compare it with GloVe text embeddings (Pennington et al., 2014) pretrained on
+a large-scale text-only corpus. Table 3 shows ViLD-text achieves 10.1 APr, which is signiﬁcantly
+better than 3.0 APr using GloVe. This demonstrates the importance of using text embeddings that
+are jointly trained with images. ViLD-text achieves much higher APc and APf compared to CLIP on
+cropped regions (Sec. 4.3), because ViLD-text uses annotations in CB to align region embeddings
+with text embeddings. The APr is worse, showing that using only 866 base categories in LVIS does
+not generalize as well as CLIP to novel categories."
+VISION AND LANGUAGE KNOWLEDGE DISTILLATION,0.42318059299191374,"Distilling image embeddings (ViLD-image): We evaluate ViLD-image, which distills from the
+image embeddings of cropped region proposals, inferred by CLIP’s image encoder, with a distilla-
+tion weight of 1.0. Experiments show that ensembling with objectness scores doesn’t help with other
+ViLD variants, so we only apply it to ViLD-image. Without training with any object category labels,
+ViLD-image achieves 11.2 APr and 11.2 overall AP. This demonstrates that visual distillation works
+for open-vocabulary detection but the performance is not as good as CLIP on cropped regions."
+VISION AND LANGUAGE KNOWLEDGE DISTILLATION,0.42587601078167114,"Text+visual embeddings (ViLD): ViLD shows the beneﬁts of combining distillation loss (ViLD-
+image) with classiﬁcation loss using text embeddings (ViLD-text). We explore different hyperpa-
+rameter settings in Appendix Table 7 and observe a consistent trade-off between APr and APc,f,
+which suggests there is a competition between ViLD-text and ViLD-image. In Table 3, we compare
+ViLD with other methods. Its APr is 6.0 higher than ViLD-text and 4.9 higher than ViLD-image,
+indicating combining the two learning objectives boosts the performance on novel categories. ViLD
+outperforms Supervised-RFS by 3.8 APr, showing our open-vocabulary detection approach is better
+than supervised models on rare categories."
+VISION AND LANGUAGE KNOWLEDGE DISTILLATION,0.42857142857142855,Published as a conference paper at ICLR 2022
+VISION AND LANGUAGE KNOWLEDGE DISTILLATION,0.431266846361186,"Table 4: Performance on COCO dataset compared with existing methods. ViLD outperforms all the other
+methods in the table trained with various sources by a large margin, on both novel and base categories."
+VISION AND LANGUAGE KNOWLEDGE DISTILLATION,0.4339622641509434,"Method
+Training source
+Novel AP
+Base AP
+Overall AP"
+VISION AND LANGUAGE KNOWLEDGE DISTILLATION,0.4366576819407008,"Bilen & Vedaldi (2016)
+image-level labels in CB ∪CN
+19.7
+19.6
+19.6
+Ye et al. (2019)
+20.3
+20.1
+20.1
+Bansal et al. (2018)
+instance-level labels in CB
+0.31
+29.2
+24.9
+Zhu et al. (2020)
+3.41
+13.8
+13.0
+Rahman et al. (2020)
+4.12
+35.9
+27.9"
+VISION AND LANGUAGE KNOWLEDGE DISTILLATION,0.4393530997304582,"Zareian et al. (2021)
+image captions in CB ∪CN
+instance-level labels in CB
+22.8
+46.0
+39.9"
+VISION AND LANGUAGE KNOWLEDGE DISTILLATION,0.4420485175202156,"CLIP on cropped regions
+image-text pairs from Internet
+(may contain CB ∪CN)
+instance-level labels in CB"
+VISION AND LANGUAGE KNOWLEDGE DISTILLATION,0.444743935309973,"26.3
+28.3
+27.8
+ViLD-text
+5.9
+61.8
+47.2
+ViLD-image
+24.1
+34.2
+31.6
+ViLD (w = 0.5)
+27.6
+59.5
+51.3"
+VISION AND LANGUAGE KNOWLEDGE DISTILLATION,0.4474393530997305,"Model ensembling:
+We study methods discussed in Sec. 3.4 to reconcile the conﬂict of joint train-
+ing with ViLD-text and ViLD-image. We use two ensembling approaches: 1) ensembling ViLD-text
+with CLIP (ViLD-text+CLIP); 2) ensembling ViLD-text and ViLD-image using separate heads
+(ViLD-ensemble). As shown in Table 3, ViLD-ensemble improves performance over ViLD, mainly
+on APc and APr. This shows ensembling reduces the competition. ViLD-text+CLIP obtains much
+higher APr, outperforming ViLD by 6.5, and maintains good APc,f. Note that it is slow and im-
+practical for real world applications. This experiment is designed for showing the potential of using
+open-vocabulary classiﬁcation models for open-vocabulary detection."
+VISION AND LANGUAGE KNOWLEDGE DISTILLATION,0.4501347708894879,"Stronger teacher model: We use CLIP ViT-L/14 and ALIGN (Jia et al., 2021) to explore the
+performance gain with a stronger teacher model (details in Appendix D). As shown in Table 3,
+both models achieve superior results compared with R50 ViLD w/ CLIP. The detector distilled from
+ALIGN is only trailing to the fully-supervised 2020 Challenge winner (Tan et al., 2020) by 3.7 APr,
+which employs two-stage training, self-training, and multi-scale testing etc. The results demonstrate
+ViLD scales well with the teacher model, and is a promising open-vocabulary detection approach."
+PERFORMANCE COMPARISON ON COCO DATASET,0.4528301886792453,"4.5
+PERFORMANCE COMPARISON ON COCO DATASET"
+PERFORMANCE COMPARISON ON COCO DATASET,0.4555256064690027,"Several related works in zero-shot detection and open-vocabulary detection are evaluated on COCO.
+To compare with them, we train and evaluate ViLD variants following the benchmark setup
+in Zareian et al. (2021) and report box AP with an IoU threshold of 0.5. We use the ResNet-50
+backbone, shorten the training schedule to 45,000 iterations, and keep other settings the same as our
+experiments on LVIS. Table 4 summarizes the results. ViLD outperforms Zareian et al. (2021) by
+4.8 Novel AP and 13.5 Base AP. Different from Zareian et al. (2021), we do not have a pretraining
+phase tailored for detection. Instead, we use an off-the-shelf classiﬁcation model. The performance
+of ViLD-text is low because only 48 base categories are available, which makes generalization to
+novel categories challenging. In contrast, ViLD-image and ViLD, which can distill image features
+of novel categories, outperform all existing methods (not apple-to-apple comparison though, given
+different methods use different settings)."
+TRANSFER TO OTHER DATASETS,0.4582210242587601,"4.6
+TRANSFER TO OTHER DATASETS"
+TRANSFER TO OTHER DATASETS,0.4609164420485175,"Trained ViLD models can be transferred to other detection datasets, by simply switching the clas-
+siﬁer to the category text embeddings of the new datasets. For simplicity, we keep the background
+embedding trained on LVIS. We evaluate the transferability of ViLD on PASCAL VOC (Everingham
+et al., 2010), COCO (Lin et al., 2014), and Objects365 (Shao et al., 2019). Since the three datasets
+have much smaller vocabularies, category overlap is unavoidable and images can be shared among
+datasets, e.g., COCO and LVIS. As shown in Table 5, ViLD achieves better transfer performance
+than ViLD-text. In PASCAL and COCO, the gap is large. This improvement should be credited to
+visual distillation, which better aligns region embeddings with the text classiﬁer. We also compare
+with supervised learning and ﬁnetuning the classiﬁcation layer. Although across datasets, ViLD has
+3-6 AP gaps compared to the ﬁnetuning method and larger gaps compared to the supervised method,
+it is the ﬁrst time we can directly transfer a trained detector to different datasets using language."
+TRANSFER TO OTHER DATASETS,0.4636118598382749,Published as a conference paper at ICLR 2022
+TRANSFER TO OTHER DATASETS,0.46630727762803237,"Table 5: Generalization ability of ViLD. We evaluate the LVIS-trained model with ResNet-50 backbone on
+PASCAL VOC 2007 test set, COCO validation set, and Objects365 v1 validation set. Simply replacing the
+text embeddings, our approaches are able to transfer to various detection datasets. The supervised baselines of
+COCO and Objects365 are trained from scratch. †: the supervised baseline of PASCAL VOC is initialized with
+an ImageNet-pretrained checkpoint. All results are box APs."
+TRANSFER TO OTHER DATASETS,0.46900269541778977,"Method
+PASCAL VOC†
+COCO
+Objects365
+AP50
+AP75
+AP
+AP50
+AP75
+AP
+AP50
+AP75"
+TRANSFER TO OTHER DATASETS,0.4716981132075472,"ViLD-text
+40.5
+31.6
+28.8
+43.4
+31.4
+10.4
+15.8
+11.1
+ViLD
+72.2
+56.7
+36.6
+55.6
+39.8
+11.8
+18.2
+12.6
+Finetuning
+78.9
+60.3
+39.1
+59.8
+42.4
+15.2
+23.9
+16.2
+Supervised
+78.5
+49.0
+46.5
+67.6
+50.9
+25.6
+38.6
+28.0 .08"
+TRANSFER TO OTHER DATASETS,0.4743935309973046,"LVIS 
+novel
+LVIS
+base + novel
+Transfer to 
+COCO
+Transfer to 
+Objects365"
+TRANSFER TO OTHER DATASETS,0.477088948787062,"Figure 4: Qualitative results on LVIS, COCO, and Objects365. First row: ViLD is able to correctly localize
+and recognize objects in novel categories. For clarity, we only show the detected novel objects. Second row:
+The detected objects on base+novel categories. The performance on base categories is not degraded with ViLD.
+Last two rows: ViLD can directly transfer to COCO and Objects365 without further ﬁnetuning."
+QUALITATIVE RESULTS,0.4797843665768194,"4.7
+QUALITATIVE RESULTS"
+QUALITATIVE RESULTS,0.48247978436657685,"In Fig. 4, we visualize ViLD’s detection results. It illustrates ViLD is able to detect objects of
+both novel and base categories, with high-quality mask predictions on novel objects, e.g., it well
+separates banana slices from the crepes (novel category). We also show qualitative results on COCO
+and Objects365, and ﬁnd ViLD generalizes well. We show more qualitative results, e.g., interactive
+detection and systematic expansion, in Appendix A."
+CONCLUSION,0.48517520215633425,"5
+CONCLUSION"
+CONCLUSION,0.48787061994609165,"We present ViLD, an open-vocabulary object detection method by distilling knowledge from open-
+vocabulary image classiﬁcation models. ViLD is the ﬁrst open-vocabulary detection method eval-
+uated on the challenging LVIS dataset. It attains 16.1 AP for novel cateogires on LVIS with a
+ResNet50 backbone, which surpasses its supervised counterpart at the same inference speed. With
+a stronger teacher model (ALIGN), the performance can be further improved to 26.3 novel AP. We
+demonstrate that the detector learned from LVIS can be directly transferred to 3 other detection
+datasets. We hope that the simple design and strong performance make ViLD a scalable alternative
+approach for detecting long-tailed categories, instead of collecting expensive detection annotations."
+CONCLUSION,0.49056603773584906,Published as a conference paper at ICLR 2022
+ETHICS STATEMENT,0.49326145552560646,ETHICS STATEMENT
+ETHICS STATEMENT,0.49595687331536387,"Our paper studies open-vocabulary object detection, a sub-ﬁeld in computer vision. Our method
+is based on knowledge distillation, a machine learning technique that has been extensively used in
+computer vision, natural language processing, etc. All of our experiments were conducted on public
+datasets with pretrained models that are either publicly available or introduced in published papers.
+The method proposed in our paper is a principled method for open-vocabulary object detection
+that can be used in a wide range of applications. Therefore, the ethical impact of our work would
+primarily depends on the speciﬁc applications. We foresee positive impacts if our method is applied
+to object detection problems where the data collection is difﬁcult to scale, such as detecting rare
+objects for self-driving cars. But the method can also be applied to other sensitive applications that
+could raise ethical concerns, such as video surveillance systems."
+REPRODUCIBILITY STATEMENT,0.49865229110512127,REPRODUCIBILITY STATEMENT
+REPRODUCIBILITY STATEMENT,0.5013477088948787,"We provide detailed descriptions of the proposed method in Sec. 3. Details about experiment set-
+tings, hyper-parameters and implementations are presented in Sec. 4, Appendix C and Appendix D.
+We release our code and pretrained models at https://github.com/tensorflow/tpu/
+tree/master/models/official/detection/projects/vild to facilitate the repro-
+ducibility of our work."
+REFERENCES,0.5040431266846361,REFERENCES
+REFERENCES,0.5067385444743935,"Zeynep Akata, Mateusz Malinowski, Mario Fritz, and Bernt Schiele. Multi-cue zero-shot learning
+with strong supervision. In CVPR, 2016."
+REFERENCES,0.5094339622641509,"Ankan Bansal, Karan Sikka, Gaurav Sharma, Rama Chellappa, and Ajay Divakaran. Zero-shot
+object detection. In ECCV, 2018."
+REFERENCES,0.5121293800539084,"Hakan Bilen and Andrea Vedaldi. Weakly supervised deep detection networks. In CVPR, 2016."
+REFERENCES,0.5148247978436657,"Yannick Le Cacheux, Herve Le Borgne, and Michel Crucianu. Modeling inter and intra-class rela-
+tions in the triplet loss for zero-shot learning. In ICCV, 2019."
+REFERENCES,0.5175202156334232,"Berkan Demirel, Ramazan Gokberk Cinbis, and Nazli Ikizler-Cinbis. Zero-shot object detection by
+hybrid region embedding. In BMVC, 2018."
+REFERENCES,0.5202156334231806,"Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. Bert: Pre-training of deep
+bidirectional transformers for language understanding. NAACL, 2019."
+REFERENCES,0.522911051212938,"Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas
+Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, et al. An
+image is worth 16x16 words: Transformers for image recognition at scale. ICLR, 2020."
+REFERENCES,0.5256064690026954,"Mohamed Elhoseiny, Yizhe Zhu, Han Zhang, and Ahmed Elgammal. Link the head to the “beak”:
+Zero shot learning from noisy text description at part precision. In CVPR, 2017."
+REFERENCES,0.5283018867924528,"Mark Everingham, Luc Van Gool, Christopher KI Williams, John Winn, and Andrew Zisserman.
+The pascal visual object classes (voc) challenge. IJCV, 2010."
+REFERENCES,0.5309973045822103,"Ali Farhadi, Ian Endres, Derek Hoiem, and David Forsyth. Describing objects by their attributes. In
+CVPR, 2009."
+REFERENCES,0.5336927223719676,"Andrea Frome, Greg S Corrado, Jon Shlens, Samy Bengio, Jeff Dean, Marc’Aurelio Ranzato, and
+Tomas Mikolov. Devise: A deep visual-semantic embedding model. In NeurIPS, 2013."
+REFERENCES,0.5363881401617251,"Ross Girshick, Jeff Donahue, Trevor Darrell, and Jitendra Malik. Rich feature hierarchies for accu-
+rate object detection and semantic segmentation. In CVPR, 2014."
+REFERENCES,0.5390835579514824,"Ross Girshick, Ilija Radosavovic, Georgia Gkioxari, Piotr Doll´ar, and Kaiming He.
+Detectron.
+https://github.com/facebookresearch/detectron, 2018."
+REFERENCES,0.5417789757412399,Published as a conference paper at ICLR 2022
+REFERENCES,0.5444743935309974,"Agrim Gupta, Piotr Dollar, and Ross Girshick. Lvis: A dataset for large vocabulary instance seg-
+mentation. In CVPR, 2019."
+REFERENCES,0.5471698113207547,"Nasir Hayat, Munawar Hayat, Shaﬁn Rahman, Salman Khan, Syed Waqas Zamir, and Fahad Shah-
+baz Khan. Synthesizing the unseen for zero-shot object detection. In ACCV, 2020."
+REFERENCES,0.5498652291105122,"Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recog-
+nition. In CVPR, 2016."
+REFERENCES,0.5525606469002695,"Kaiming He, Georgia Gkioxari, Piotr Doll´ar, and Ross Girshick. Mask r-cnn. In ICCV, 2017."
+REFERENCES,0.555256064690027,"Sergey Ioffe and Christian Szegedy. Batch normalization: Accelerating deep network training by
+reducing internal covariate shift. In ICML, 2015."
+REFERENCES,0.5579514824797843,"Dinesh Jayaraman and Kristen Grauman. Zero shot recognition with unreliable attributes. NeurIPS
+2014, 2014."
+REFERENCES,0.5606469002695418,"Zhong Ji, Yanwei Fu, Jichang Guo, Yanwei Pang, Zhongfei Mark Zhang, et al. Stacked semantics-
+guided attention model for ﬁne-grained zero-shot learning. In NeurIPS, 2018."
+REFERENCES,0.5633423180592992,"Chao Jia, Yinfei Yang, Ye Xia, Yi-Ting Chen, Zarana Parekh, Hieu Pham, Quoc V Le, Yunhsuan
+Sung, Zhen Li, and Tom Duerig. Scaling up visual and vision-language representation learning
+with noisy text supervision. ICML, 2021."
+REFERENCES,0.5660377358490566,"KJ Joseph, Salman Khan, Fahad Shahbaz Khan, and Vineeth N Balasubramanian. Towards open
+world object detection. In CVPR, 2021."
+REFERENCES,0.568733153638814,"Alina Kuznetsova, Hassan Rom, Neil Alldrin, Jasper Uijlings, Ivan Krasin, Jordi Pont-Tuset, Shahab
+Kamali, Stefan Popov, Matteo Malloci, Alexander Kolesnikov, Tom Duerig, and Vittorio Ferrari.
+The open images dataset v4: Uniﬁed image classiﬁcation, object detection, and visual relationship
+detection at scale. IJCV, 2020."
+REFERENCES,0.5714285714285714,"Tsung-Yi Lin, Michael Maire, Serge Belongie, James Hays, Pietro Perona, Deva Ramanan, Piotr
+Doll´ar, and C Lawrence Zitnick. Microsoft coco: Common objects in context. In ECCV, 2014."
+REFERENCES,0.5741239892183289,"Tsung-Yi Lin, Piotr Doll´ar, Ross Girshick, Kaiming He, Bharath Hariharan, and Serge Belongie.
+Feature pyramid networks for object detection. In CVPR, 2017."
+REFERENCES,0.5768194070080862,"Dhruv Mahajan, Ross Girshick, Vignesh Ramanathan, Kaiming He, Manohar Paluri, Yixuan Li,
+Ashwin Bharambe, and Laurens Van Der Maaten. Exploring the limits of weakly supervised
+pretraining. In ECCV, 2018."
+REFERENCES,0.5795148247978437,"Mohammad Norouzi, Tomas Mikolov, Samy Bengio, Yoram Singer, Jonathon Shlens, Andrea
+Frome, Greg S Corrado, and Jeffrey Dean. Zero-shot learning by convex combination of semantic
+embeddings. ICLR, 2014."
+REFERENCES,0.5822102425876011,"Jeffrey Pennington, Richard Socher, and Christopher Manning. GloVe: Global vectors for word
+representation. In EMNLP, 2014."
+REFERENCES,0.5849056603773585,"Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agar-
+wal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen Krueger, and Ilya
+Sutskever. Learning transferable visual models from natural language supervision. ICML, 2021."
+REFERENCES,0.5876010781671159,"Shaﬁn Rahman, Salman Khan, and Fatih Porikli. Zero-shot object detection: Learning to simulta-
+neously recognize and localize novel concepts. In ACCV, 2018."
+REFERENCES,0.5902964959568733,"Shaﬁn Rahman, Salman Khan, and Nick Barnes. Transductive learning for zero-shot object detec-
+tion. In ICCV, 2019."
+REFERENCES,0.5929919137466307,"Shaﬁn Rahman, Salman Khan, and Nick Barnes. Improved visual-semantic alignment for zero-shot
+object detection. In AAAI, 2020."
+REFERENCES,0.5956873315363881,"Joseph Redmon and Ali Farhadi. Yolo9000: better, faster, stronger. In CVPR, 2017."
+REFERENCES,0.5983827493261455,Published as a conference paper at ICLR 2022
+REFERENCES,0.601078167115903,"Shaoqing Ren, Kaiming He, Ross B Girshick, and Jian Sun. Faster r-cnn: Towards real-time object
+detection with region proposal networks. In NeurIPS, 2015."
+REFERENCES,0.6037735849056604,"Marcus Rohrbach, Michael Stark, and Bernt Schiele. Evaluating knowledge transfer and zero-shot
+learning in a large-scale setting. In CVPR, 2011."
+REFERENCES,0.6064690026954178,"Shuai Shao, Zeming Li, Tianyuan Zhang, Chao Peng, Gang Yu, Xiangyu Zhang, Jing Li, and Jian
+Sun. Objects365: A large-scale, high-quality dataset for object detection. In ICCV, 2019."
+REFERENCES,0.6091644204851752,"Jingru Tan, Gang Zhang, Hanming Deng, Changbao Wang, Lewei Lu, quanquan Li, and Jifeng Dai.
+Technical report: A good box is not a guarantee of a good mask. Joint COCO and LVIS workshop
+at ECCV 2020: LVIS Challenge Track, 2020."
+REFERENCES,0.6118598382749326,"Mingxing Tan and Quoc Le. Efﬁcientnet: Rethinking model scaling for convolutional neural net-
+works. In ICML, 2019."
+REFERENCES,0.6145552560646901,"Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez,
+Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. In NeurIPS, 2017."
+REFERENCES,0.6172506738544474,"Catherine Wah, Steve Branson, Peter Welinder, Pietro Perona, and Serge Belongie. The caltech-ucsd
+birds-200-2011 dataset. 2011."
+REFERENCES,0.6199460916442049,"Xiaolong Wang, Yufei Ye, and Abhinav Gupta. Zero-shot recognition via semantic embeddings and
+knowledge graphs. In CVPR, 2018."
+REFERENCES,0.6226415094339622,"Guo-Sen Xie, Li Liu, Fan Zhu, Fang Zhao, Zheng Zhang, Yazhou Yao, Jie Qin, and Ling Shao.
+Region graph embedding network for zero-shot learning. In ECCV, 2020."
+REFERENCES,0.6253369272237197,"Keren Ye, Mingda Zhang, Adriana Kovashka, Wei Li, Danfeng Qin, and Jesse Berent. Cap2det:
+Learning to amplify weak caption supervision for object detection. In ICCV, 2019."
+REFERENCES,0.628032345013477,"Alireza Zareian, Kevin Dela Rosa, Derek Hao Hu, and Shih-Fu Chang. Open-vocabulary object
+detection using captions. In CVPR, 2021."
+REFERENCES,0.6307277628032345,"Hang Zhao, Xavier Puig, Bolei Zhou, Sanja Fidler, and Antonio Torralba. Open vocabulary scene
+parsing. In ICCV, 2017."
+REFERENCES,0.633423180592992,"Xiangyun Zhao, Samuel Schulter, Gaurav Sharma, Yi-Hsuan Tsai, Manmohan Chandraker, and
+Ying Wu. Object detection with a uniﬁed label space from multiple datasets. In ECCV, 2020."
+REFERENCES,0.6361185983827493,"Ye Zheng, Ruoran Huang, Chuanqi Han, Xi Huang, and Li Cui. Background learnable cascade for
+zero-shot object detection. In ACCV, 2020."
+REFERENCES,0.6388140161725068,"Xingyi Zhou, Vladlen Koltun, and Philipp Kr¨ahenb¨uhl.
+Simple multi-dataset detection.
+arXiv
+preprint arXiv:2102.13086, 2021."
+REFERENCES,0.6415094339622641,"Pengkai Zhu, Hanxiao Wang, and Venkatesh Saligrama. Don’t even look once: Synthesizing fea-
+tures for zero-shot detection. In CVPR, 2020."
+REFERENCES,0.6442048517520216,"Xizhou Zhu, Han Hu, Stephen Lin, and Jifeng Dai. Deformable convnets v2: More deformable,
+better results. In CVPR, 2019."
+REFERENCES,0.6469002695417789,Published as a conference paper at ICLR 2022
+REFERENCES,0.6495956873315364,APPENDIX
+REFERENCES,0.6522911051212938,"A
+ADDITIONAL QUALITATIVE RESULTS"
+REFERENCES,0.6549865229110512,"On-the-ﬂy interactive object detection: We tap the potential of ViLD by using arbitrary text to
+interactively recognize ﬁne-grained categories and attributes. We extract the region embedding and
+compute its cosine similarity with a small set of on-the-ﬂy arbitrary texts describing attributes and/or
+ﬁne-grained categories; we apply softmax with temperature τ on top of the similarities. To our sur-
+prise, though never trained on ﬁne-grained dog breeds (Fig. 5), it correctly distinguishes husky
+from shiba inu. It also works well on identifying object colors (Fig. 1). The results demonstrate
+knowledge distillation from an open-vocabulary image classiﬁcation model helps ViLD to gain un-
+derstanding of concepts not present in the detection training. Of course, ViLD does not work all the
+time, e.g., it fails to recognize poses of animals."
+REFERENCES,0.6576819407008087,"(a) Fine-grained breeds and colors.
+(b) Colors of body parts."
+REFERENCES,0.660377358490566,"Figure 5: On-the-ﬂy interactive object detection. One application of ViLD is using on-the-ﬂy arbitrary texts
+to further recognize more details of the detected objects, e.g., ﬁne-grained categories and color attributes."
+REFERENCES,0.6630727762803235,"Systematic expansion of dataset vocabulary: In addition, we propose to systematically expand
+the dataset vocabulary (v = {v1, ..., vp}) with a set of attributes (a = {a1, ..., aq}) as follows:
+Pr(vi, aj | er) = Pr(vi | er) · Pr(aj | vi, er)
+= Pr(vi | er) · Pr(aj | er),
+(6)
+where er denotes the region embedding. We assume vi ⊥⊥aj | er, i.e., given er the event the object
+belongs to category vi is conditionally independent to the event it has attribute aj."
+REFERENCES,0.6657681940700808,"Let τ denote the temperature used for softmax and T denote the text encoder as in Eq. 2. Then
+Pr(vi | er) = softmaxi(sim(er, T (v))/τ),
+(7)
+Pr(aj | er) = softmaxj(sim(er, T (a))/τ).
+(8)"
+REFERENCES,0.6684636118598383,"In this way, we are able to expand p vocabularies into a new set of p×q vocabularies with attributes.
+The conditional probability approach is similar to YOLO9000 (Redmon & Farhadi, 2017). We
+show a qualitative example of this approach in Fig. 6, where we use a color attribute set as a. Our
+open-vocabulary detector successfully detects fruits with color attributes."
+REFERENCES,0.6711590296495957,"We further expand the detection vocabulary to ﬁne-grained bird categories by using all 200 species
+from CUB-200-2011 (Wah et al., 2011). Fig. 7 shows successful and failure examples of our open-
+vocabulary ﬁne-grained detection on CUB-200-2011 images. In general, our model is able to detect
+visually distinctive species, but fails at other ones."
+REFERENCES,0.6738544474393531,"Transfer to PASCAL VOC: In Fig. 8, we show qualitative results of transferring an open-
+vocabulary detector trained on LVIS (Gupta et al., 2019) to PASCAL VOC Detection (2007 test
+set) (Everingham et al., 2010), without ﬁnetuning (Sec. 4.6 in the main paper). Results demonstrate
+that the transferring works well."
+REFERENCES,0.6765498652291105,"Failure cases: In Fig. 9, we show two failure cases of ViLD. The most common failure cases are
+the missed detection. A less common mistake is misclassifying the object category."
+REFERENCES,0.6792452830188679,"We show a failure case of mask prediction on PASCAL VOC in Fig. 10. It seems that the mask
+prediction is sometimes based on low-level appearance rather than semantics."
+REFERENCES,0.6819407008086253,Published as a conference paper at ICLR 2022
+REFERENCES,0.6846361185983828,orange: 0.97
+REFERENCES,0.6873315363881402,orange: 0.96
+REFERENCES,0.6900269541778976,orange: 0.96
+REFERENCES,0.692722371967655,orange: 0.96
+REFERENCES,0.6954177897574124,orange: 0.95
+REFERENCES,0.6981132075471698,orange: 0.95
+REFERENCES,0.7008086253369272,orange: 0.94
+REFERENCES,0.7035040431266847,orange: 0.94
+REFERENCES,0.706199460916442,lemon: 0.91
+REFERENCES,0.7088948787061995,kiwi: 0.87
+REFERENCES,0.7115902964959568,kiwi: 0.70
+REFERENCES,0.7142857142857143,lemon: 0.69
+REFERENCES,0.7169811320754716,kiwi: 0.41
+REFERENCES,0.7196765498652291,orange: 0.39
+REFERENCES,0.7223719676549866,orange: 0.29
+REFERENCES,0.7250673854447439,(a) Using LVIS vocabulary.
+REFERENCES,0.7277628032345014,"""yellow"" lemon: 0.85"
+REFERENCES,0.7304582210242587,"""green"" kiwi: 0.62"
+REFERENCES,0.7331536388140162,"""yellow"" lemon: 0.57"
+REFERENCES,0.7358490566037735,"""dark orange"" orange: 0.50"
+REFERENCES,0.738544474393531,"""dark orange"" orange: 0.50"
+REFERENCES,0.7412398921832885,"""dark orange"" orange: 0.48
+""dark orange"" orange: 0.48"
+REFERENCES,0.7439353099730458,"""dark orange"" orange: 0.46"
+REFERENCES,0.7466307277628033,"""dark orange"" orange: 0.45"
+REFERENCES,0.7493261455525606,"""green"" kiwi: 0.45
+""light orange"" orange: 0.38"
+REFERENCES,0.7520215633423181,"""light orange"" orange: 0.38"
+REFERENCES,0.7547169811320755,"""red orange"" orange: 0.20"
+REFERENCES,0.7574123989218329,"""green"" kiwi: 0.19"
+REFERENCES,0.7601078167115903,"""red orange"" orange: 0.16"
+REFERENCES,0.7628032345013477,(b) After expanding vocabulary with color attributes.
+REFERENCES,0.7654986522911051,"Figure 6: Systematic expansion of dataset vocabulary with colors. We add 11 color attributes (red orange,
+dark orange, light orange, yellow, green, cyan, blue, purple, black, brown, white) to LVIS categories, which
+expand the vocabulary size by 11×. Above we show an example of detection results. Our open-vocabulary
+detector is able to assign the correct color to each fruit. A class-agnostic NMS with threshold 0.9 is applied.
+Each ﬁgure shows top 15 predictions."
+REFERENCES,0.7681940700808625,"(a) Successful cases
+(b) Failure case"
+REFERENCES,0.77088948787062,"Figure 7: Systematic expansion of dataset vocabulary with ﬁne-grained categories. We use the systematic
+expansion method to detect 200 ﬁne-grained bird species in CUB-200-2011. (a): Our open-vocabulary detector
+is able to perform ﬁne-grained detection (bottom) using the detector trained on LVIS (top). (b): It fails at
+recognizing visually non-distinctive species. It incorrectly assigns “Western Gull” to “Horned Pufﬁn” due to
+visual similarity."
+REFERENCES,0.7735849056603774,"B
+ANALYSIS OF CLIP ON CROPPED REGIONS"
+REFERENCES,0.7762803234501348,"In this section, we analyze some common failure cases of CLIP on cropped regions and discuss
+possible ways to mitigate these problems."
+REFERENCES,0.7789757412398922,"Visual similarity: This confusion is common for any classiﬁers and detectors, especially on large
+vocabularies. In Fig. 11(a), we show two failure examples due to visual similarity. Since we only
+use a relatively small ViT-B/32 CLIP model, potentially we can improve the performance with a
+higher-capacity pretrained model. In Table 6, when replacing this CLIP model with an EfﬁcientNet-
+l2 ALIGN model, we see an increase on AP."
+REFERENCES,0.7816711590296496,Published as a conference paper at ICLR 2022
+REFERENCES,0.784366576819407,"Figure 8: Transfer to PASCAL VOC. ViLD correctly detects objects when transferred to PASCAL VOC,
+where images usually have lower resolution than LVIS (our training set). In the third picture, our detector is
+able to ﬁnd tiny bottles, though it fails to detect the person."
+REFERENCES,0.7870619946091644,"(a) Missed
+(b) Misclassified"
+REFERENCES,0.7897574123989218,"Figure 9: Failure cases on LVIS novel categories. The red bounding boxes indicate the groundtruths of the
+failed detections. (a) A common failure type where the novel objects are missing, e.g., the elevator car is not
+detected. (b) A less common failure where (part of) the novel objects are misclassiﬁed, e.g., half of the wafﬂe
+iron is detected as a calculator due to visual similarity."
+REFERENCES,0.7924528301886793,"Aspect ratio: This issue is introduced by the pre-processing of inputs in CLIP. We use the ViT-
+B/32 CLIP with a ﬁxed input resolution of 224×224. It resizes the shorter edge of the image to 224,
+and then uses a center crop. However, since region proposals can have more extreme aspect ratios
+than the training images for CLIP, and some proposals are tiny, we directly resize the proposals to
+that resolution, which might cause some issues. For example, the thin structure in Fig. 11(b) right
+will be highly distorted with the pre-processing. And the oven and fridge can be confusing with
+the distorted aspect ratio. There might be some simple remedies for this, e.g., pasting the cropped
+region with original aspect ratio on a black background. We tried this simple approach with both
+CLIP and ALIGN. Preliminary results show that it works well on the fully convolutional ALIGN,
+while doesn’t work well on the transformer-based CLIP, probably because CLIP is never trained
+with black image patches."
+REFERENCES,0.7951482479784366,"Multiple objects in a bounding box: Multiple objects in a region interfere CLIP’s classiﬁcation
+results, see Fig. 11(c), where a corner of an aquarium dominates the prediction. This is due to
+CLIP pretraining, which pairs an entire image with its caption. The caption is usually about salient
+objects in the image. It’s hard to mitigate this issue at the open-vocabulary classiﬁcation model’s
+end. On the other hand, a supervised detector are trained to recognize the object tightly surrounded
+by the bounding box. So when distilling knowledge from an open-vocabulary image classiﬁcation
+model, keeping training a supervised detector on base categories could help, as can be seen from the
+improvement of ViLD over ViLD-image (Sec. 4.4)."
+REFERENCES,0.7978436657681941,"Conﬁdence scores predicted by CLIP do not reﬂect the localization quality: For example, in
+Fig. 12(a), CLIP correctly classiﬁes the object, but gives highest scores to partial detection boxes.
+CLIP is not trained to measure the quality of bounding boxes. Nonetheless, in object detection, it is
+important for the higher-quality boxes to have higher scores. In Fig. 12(c), we simply re-score by
+taking the geometric mean of the CLIP conﬁdence score and the objectness score from the proposal
+model, which yields much better top predictions. In Fig. 12(b), we show top predictions of the Mask"
+REFERENCES,0.8005390835579514,Published as a conference paper at ICLR 2022
+REFERENCES,0.8032345013477089,"Figure 10: An example of ViLD on PASCAL VOC showing a mask of poor quality. The class-agnostic
+mask prediction head occasionally predicts masks based on low-level appearance rather than semantics, and
+thus fails to obtain a complete instance mask."
+REFERENCES,0.8059299191374663,"Table 6: ALIGN on cropped regions achieves superior APr, and overall very good performance. It shows
+a stronger open-vocabulary classiﬁcation model can improve detection performance by a large margin. We
+report box APs here."
+REFERENCES,0.8086253369272237,"Method
+APr
+APc
+APf
+AP"
+REFERENCES,0.8113207547169812,"CLIP on cropped regions
+19.5
+19.7
+17.0
+18.6
+ALIGN on cropped regions
+39.6
+32.6
+26.3
+31.4"
+REFERENCES,0.8140161725067385,"R-CNN model. Its top predictions have good bounding boxes, while the predicted categories are
+wrong. This experiment shows that it’s important to have both an open-vocabulary classiﬁcation
+model for better recognition, as well as supervision from detection dataset for better localization."
+REFERENCES,0.816711590296496,"C
+ADDITIONAL QUANTITATIVE RESULTS"
+REFERENCES,0.8194070080862533,"Hyperparameter sweep for visual distillation: Table 7 shows the parameter sweep of different
+distillation weights using L1 and L2 losses. Compared with no distillation, additionally learning
+from image embeddings generally yields better performance on novel categories. We ﬁnd L1 loss
+can better improve the APr performance with the trade-off against APc and APf. This suggests
+there is a competition between ViLD-text and ViLD-image."
+REFERENCES,0.8221024258760108,"Table 7: Hyperparameter sweep for visual distillation in ViLD. L1 loss is better than L2 loss. For L1 loss,
+there is a trend that APr increases as the weight increases, while APf,c decrease. For all parameter combi-
+nations, ViLD outperforms ViLD-text on APr. We use ResNet-50 backbone and shorter training iterations
+(84,375 iters), and report mask AP in this table."
+REFERENCES,0.8247978436657682,"Distill loss
+Distill weight w
+APr
+APc
+APf
+AP"
+REFERENCES,0.8274932614555256,"No distill
+0.0
+10.4
+22.9
+31.3
+24.0"
+REFERENCES,0.8301886792452831,"L2 loss
+0.5
+13.7
+21.7
+31.2
+24.0
+1.0
+12.4
+22.7
+31.4
+24.3
+2.0
+13.4
+22.0
+30.9
+24.0"
+REFERENCES,0.8328840970350404,L1 loss
+REFERENCES,0.8355795148247979,"0.05
+12.9
+22.4
+31.7
+24.4
+0.1
+14.0
+20.9
+31.2
+23.8
+0.5
+16.3
+19.2
+27.3
+21.9
+1.0
+17.3
+18.2
+25.1
+20.7"
+REFERENCES,0.8382749326145552,"Box APs and ResNet-152 backbone: Table 8 shows the corresponding box AP of Table 3 in the
+main paper. In general, box AP is slightly higher than mask AP. In addition, we include the results
+of ViLD variants with the ResNet-152 backbone. The deeper backbone improves all metrics. The
+trend/relative performance is consistent for box and mask APs, as well as for different backbones.
+ViLD-ensemble achieves the best box and mask APr."
+REFERENCES,0.8409703504043127,"Ablation study on prompt engineering: We conduct an ablation study on prompt engineering.
+We compare the text embeddings ensembled over synonyms and 63 prompt templates (listed in
+Appendix D) with a non-ensembled version: Using the single prompt template “a photo of {article}"
+REFERENCES,0.8436657681940701,Published as a conference paper at ICLR 2022
+REFERENCES,0.8463611859838275,(a) Visual similarity
+REFERENCES,0.8490566037735849,(b) Aspect ratio
+REFERENCES,0.8517520215633423,(c) Other objects in the bounding box
+REFERENCES,0.8544474393530997,"Figure 11: Typical errors of CLIP on cropped regions. (a): The prediction and the groundtruth have high
+visual similarity. (b): Directly resizing the cropped regions changes the aspect ratios, which may cause troubles.
+(c): CLIP’s predictions are sometimes affected by other objects appearing in the region, rather than predicting
+what the entire bounding box is."
+REFERENCES,0.8571428571428571,"(a) CLIP on 
+cropped region"
+REFERENCES,0.8598382749326146,"(b) Mask R-CNN
+(no CLIP)"
+REFERENCES,0.862533692722372,"(c) CLIP multiplies 
+objectness score"
+REFERENCES,0.8652291105121294,"Figure 12: The prediction scores of CLIP do not reﬂect the quality of bounding box localization. (a): Top
+predictions of CLIP on cropped region. Boxes of poor qualities receive high scores, though the classiﬁcation is
+correct. (b): Top predictions of a vanilla Mask R-CNN model. Box qualities are good while the classiﬁcation
+is wrong. (c): We take the geometric mean of CLIP classiﬁcation score and objectiveness score, and use it to
+rescore (a). In this way, a high-quality box as well as the correct category rank ﬁrst."
+REFERENCES,0.8679245283018868,"{category}”. Table 9 illustrates that ensembling multiple prompts slightly improves the performance
+by 0.4 APr."
+REFERENCES,0.8706199460916442,Published as a conference paper at ICLR 2022
+REFERENCES,0.8733153638814016,"Table 8: Performance of ViLD variants. This table shows additional box APs for models in Table 3 and
+ResNet-152 results."
+REFERENCES,0.876010781671159,"Backbone
+Method
+Box
+Mask
+APr
+APc
+APf
+AP
+APr
+APc
+APf
+AP"
+REFERENCES,0.8787061994609164,"ResNet-50
++ViT-B/32
+CLIP on cropped regions
+19.5
+19.7
+17.0
+18.6
+18.9
+18.8
+16.0
+17.7
+ViLD-text+CLIP
+23.8
+26.7
+32.8
+28.6
+22.6
+24.8
+29.2
+26.1"
+REFERENCES,0.8814016172506739,ResNet-50
+REFERENCES,0.8840970350404312,"Supervised-RFS (base+novel)
+13.0
+26.7
+37.4
+28.5
+12.3
+24.3
+32.4
+25.4
+GloVe baseline
+3.2
+22.0
+34.9
+23.8
+3.0
+20.1
+30.4
+21.2
+ViLD-text
+10.6
+26.1
+37.4
+27.9
+10.1
+23.9
+32.5
+24.9
+ViLD-image
+10.3
+11.5
+11.1
+11.2
+11.2
+11.3
+11.1
+11.2
+ViLD (w=0.5)
+16.3
+21.2
+31.6
+24.4
+16.1
+20.0
+28.3
+22.5
+ViLD-ensemble (w=0.5)
+16.7
+26.5
+34.2
+27.8
+16.6
+24.6
+30.3
+25.5"
+REFERENCES,0.8867924528301887,ResNet-152
+REFERENCES,0.889487870619946,"Supervised-RFS (base+novel)
+16.2
+29.6
+39.7
+31.2
+14.4
+26.8
+34.2
+27.6
+ViLD-text
+12.3
+28.3
+39.7
+30.0
+11.7
+25.8
+34.4
+26.7
+ViLD-image
+12.5
+13.9
+13.4
+13.4
+13.1
+13.4
+13.0
+13.2
+ViLD (w=1.0)
+19.1
+22.4
+31.5
+25.4
+18.7
+21.1
+28.4
+23.6
+ViLD-ensemble (w=2.0)
+19.8
+27.1
+34.5
+28.7
+18.7
+24.9
+30.6
+26.0"
+REFERENCES,0.8921832884097035,"EfﬁcientNet-b7
+ViLD-ensemble w/ ViT-L/14 (w=1.0)
+22.0
+31.5
+38.0
+32.4
+21.7
+29.1
+33.6
+29.6
+ViLD-ensemble w/ ALIGN (w=1.0)
+27.0
+29.4
+36.5
+31.8
+26.3
+27.2
+32.9
+29.3"
+REFERENCES,0.894878706199461,"Table 9: Ablation study on prompt engineering. Results indicate ensembling multiple prompt templates
+slightly improves APr. ViLD w/ multiple prompts is the same ViLD model in Table 3, and ViLD w/ single
+prompt only changes the text embeddings used as the classiﬁer."
+REFERENCES,0.8975741239892183,"Method
+APr
+APc
+APf
+AP"
+REFERENCES,0.9002695417789758,"ViLD w/ single prompt
+15.7
+19.7
+28.9
+22.6
+ViLD w/ multiple prompts
+16.1
+20.0
+28.3
+22.5"
+REFERENCES,0.9029649595687331,"D
+MORE IMPLEMENTATION DETAILS"
+REFERENCES,0.9056603773584906,"ViLD-ensemble architecture: In Fig. 13, we show the detailed architecture and learning objectives
+for ViLD-ensemble, the ensembling technique introduced in Sec. 3.4."
+REFERENCES,0.9083557951482479,"Model used for qualitative results: For all qualitative results, we use a ViLD model with ResNet-
+152 backbone, whose performance is shown in Table 8."
+REFERENCES,0.9110512129380054,"Details for supervised baselines: For a fair comparison, we train the second stage box/mask pre-
+diction heads of Supervised and Supervised-RFS baselines in the class-agnostic manner introduced
+in Sec. 3.1."
+REFERENCES,0.9137466307277629,"Details for R-CNN style experiments: We provide more details here for the R-CNN style experi-
+ments: CLIP on cropped regions in Sec. 4.2 and ViLD-text+CLIP in Sec. 4.3. 1) Generalized object
+proposal: We use the standard Mask R-CNN R50-FPN model. To report mask AP and compare
+with other methods, we treat the second-stage reﬁned boxes as proposals and use the corresponding
+masks. We apply a class-agnostic NMS with 0.9 threshold, and output a maximum of 1000 pro-
+posals. The objectness score is one minus the background score. 2) Open-vocabulary classiﬁcation
+on cropped regions: After obtaining CLIP conﬁdence scores for the 1000 proposals, we apply a
+class-speciﬁc NMS with a threshold of 0.6, and output the top 300 detections as the ﬁnal results."
+REFERENCES,0.9164420485175202,"Additional details for ViLD variants: Different from the R-CNN style experiments, for all ViLD
+variants (Sec. 3.3, Sec. 3.4), we use the standard two-stage Mask R-CNN with the class-agnostic
+localization modules introduced in Sec. 3.1. Both the M ofﬂine proposals and N online proposals
+are obtained from the ﬁrst-stage RPN (Ren et al., 2015). In general, the R-CNN style methods and
+ViLD variants share the same concept of class-agnostic object proposals. We use the second-stage
+outputs in R-CNN style experiments only because we want to obtain the Mask AP, the main metric,
+to compare with other methods. For ViLD variants, we remove the unnecessary complexities and
+show that using a simple one-stage RPN works well."
+REFERENCES,0.9191374663072777,Published as a conference paper at ICLR 2022
+REFERENCES,0.921832884097035,M pre-computed
+REFERENCES,0.9245283018867925,proposals
+REFERENCES,0.9272237196765498,Cropping & Resizing
+REFERENCES,0.9299191374663073,Knowledge Distillation
+REFERENCES,0.9326145552560647,"Pre-trained
+Image Encoder"
+REFERENCES,0.9353099730458221,"M region 
+embeddings"
+REFERENCES,0.9380053908355795,"M image 
+embeddings"
+REFERENCES,0.9407008086253369,"L1 loss
+Cross entropy loss"
+REFERENCES,0.9433962264150944,N proposals
+REFERENCES,0.9460916442048517,Projection Layer
+REFERENCES,0.9487870619946092,L2 Normalization
+REFERENCES,0.9514824797843666,Head 1
+REFERENCES,0.954177897574124,"N region 
+embeddings"
+REFERENCES,0.9568733153638814,"Back
+ground"
+REFERENCES,0.9595687331536388,"Text 
+Embeddings"
+REFERENCES,0.9622641509433962,Projection Layer
+REFERENCES,0.9649595687331537,L2 Normalization
+REFERENCES,0.967654986522911,Head 2
+REFERENCES,0.9703504043126685,trainable weights
+REFERENCES,0.9730458221024259,fixed weights
+REFERENCES,0.9757412398921833,offline modules
+REFERENCES,0.9784366576819407,"Figure 13: Model architecture and training objectives for ViLD-ensemble. The learning objectives are
+similar to ViLD. Different from ViLD, we use two separate heads of identical architecture in order to reduce
+the competition between ViLD-text and ViLD-image objetvies. During inference, the results from the two
+heads are ensembled as described in Sec. 3.4. Please refer to Fig. 3 for comparison with other ViLD variants."
+REFERENCES,0.9811320754716981,"Architecture for open-vocabulary image classiﬁcation models: Popular open-vocabulary image
+classiﬁcation models (Radford et al., 2021; Jia et al., 2021) perform contrastive pre-training on
+a large number of image-text pairs. Given a batch of paired images and texts, the model learns
+to maximize the cosine similarity between the embeddings of the corresponding image and text
+pairs, while minimizing the cosine similarity between other pairs. Speciﬁcally, for CLIP (Radford
+et al., 2021), we use the version where the image encoder adopts the Vision Transformer (Doso-
+vitskiy et al., 2020) architecture and the text encoder is a Transformer (Vaswani et al., 2017). For
+ALIGN (Jia et al., 2021), its image encoder is an EfﬁcientNet (Tan & Le, 2019) and its text encoder
+is a BERT (Devlin et al., 2019)."
+REFERENCES,0.9838274932614556,"Details for ViLD with stronger teacher models: In both experiments with CLIP ViT-L/14 and
+ALIGN, we use EfﬁcientNet-b7 as the backbone and ViLD-ensemble for better performance. We
+also crop the RoI features from only FPN level P3 in the feature pyramid. The large-scale jittering
+range is reduced to [0.5, 2.0]. For CLIP ViT-L/14, since its image/text embeddings have 768 dimen-
+sions, we increase the FC dimension of the Faster R-CNN heads to 1,024, and the FPN dimension
+to 512. For ViLD w/ ALIGN, we use the ALIGN model with an EfﬁcientNet-l2 image encoder
+and a BERT-large text encoder as the teacher model. We modify several places in the Mask R-
+CNN architecture to better distill the knowledge from the teacher. We equip the ViLD-image head
+in ViLD-ensemble with the MBConvBlocks in EfﬁcientNet. Since the MBConvBlocks are fully-
+convolutional, we apply a global average pooling to obtain the image embeddings, following the
+teacher. The ViLD-text head keeps the same Faster R-CNN head architecture as in Mask R-CNN.
+Since ALIGN image/text embeddings have 1,376 dimensions (2.7× CLIP embedding dimension),
+we increase the number of units in the fully connected layers of the ViLD-text head to 2,048, and
+the FPN dimension to 1,024."
+REFERENCES,0.9865229110512129,"Text prompts: Since the open-vocabulary classiﬁcation model is trained on full sentences, we
+feed the category names into a prompt template ﬁrst, and use an ensemble of various prompts.
+Following Radford et al. (2021), we curate a list of 63 prompt templates. We specially include
+several prompts containing the phrase “in the scene” to better suit object detection, e.g., “There is
+{article} {category} in the scene”."
+REFERENCES,0.9892183288409704,Our list of prompt templates is shown below:
+REFERENCES,0.9919137466307277,"’There is {article} {category} in the scene.’
+’There is the {category} in the scene.’
+’a photo of {article} {category} in the scene.’
+’a photo of the {category} in the scene.’
+’a photo of one {category} in the scene.’
+’itap of {article} {category}.’"
+REFERENCES,0.9946091644204852,Published as a conference paper at ICLR 2022
+REFERENCES,0.9973045822102425,"’itap of my {category}.’
+’itap of the {category}.’
+’a photo of {article} {category}.’
+’a photo of my {category}.’
+’a photo of the {category}.’
+’a photo of one {category}.’
+’a photo of many {category}.’
+’a good photo of {article} {category}.’
+’a good photo of the {category}.’
+’a bad photo of {article} {category}.’
+’a bad photo of the {category}.’
+’a photo of a nice {category}.’
+’a photo of the nice {category}.’
+’a photo of a cool {category}.’
+’a photo of the cool {category}.’
+’a photo of a weird {category}.’
+’a photo of the weird {category}.’
+’a photo of a small {category}.’
+’a photo of the small {category}.’
+’a photo of a large {category}.’
+’a photo of the large {category}.’
+’a photo of a clean {category}.’
+’a photo of the clean {category}.’
+’a photo of a dirty {category}.’
+’a photo of the dirty {category}.’
+’a bright photo of {article} {category}.’
+’a bright photo of the {category}.’
+’a dark photo of {article} {category}.’
+’a dark photo of the {category}.’
+’a photo of a hard to see {category}.’
+’a photo of the hard to see {category}.’
+’a low resolution photo of {article} {category}.’
+’a low resolution photo of the {category}.’
+’a cropped photo of {article} {category}.’
+’a cropped photo of the {category}.’
+’a close-up photo of {article} {category}.’
+’a close-up photo of the {category}.’
+’a jpeg corrupted photo of {article} {category}.’
+’a jpeg corrupted photo of the {category}.’
+’a blurry photo of {article} {category}.’
+’a blurry photo of the {category}.’
+’a pixelated photo of {article} {category}.’
+’a pixelated photo of the {category}.’
+’a black and white photo of the {category}.’
+’a black and white photo of {article} {category}.’
+’a plastic {category}.’
+’the plastic {category}.’
+’a toy {category}.’
+’the toy {category}.’
+’a plushie {category}.’
+’the plushie {category}.’
+’a cartoon {category}.’
+’the cartoon {category}.’
+’an embroidered {category}.’
+’the embroidered {category}.’
+’a painting of the {category}.’
+’a painting of a {category}.’"

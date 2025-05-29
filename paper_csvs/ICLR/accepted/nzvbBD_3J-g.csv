@@ -1,0 +1,1640 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.0024813895781637717,"We explain why directly changing the prior can be a surprisingly ineffective mech-
+anism for incorporating inductive biases into variational auto-encoders (VAEs),
+and introduce a simple and effective alternative approach: Intermediary Latent
+Space VAEs (InteL-VAEs). InteL-VAEs use an intermediary set of latent variables
+to control the stochasticity of the encoding process, before mapping these in turn to
+the latent representation using a parametric function that encapsulates our desired
+inductive bias(es). This allows us to impose properties like sparsity or clustering
+on learned representations, and incorporate human knowledge into the generative
+model. Whereas changing the prior only indirectly encourages behavior through
+regularizing the encoder, InteL-VAEs are able to directly enforce desired character-
+istics. Moreover, they bypass the computation and encoder design issues caused by
+non-Gaussian priors, while allowing for additional flexibility through training of
+the parametric mapping function. We show that these advantages, in turn, lead to
+both better generative models and better representations being learned."
+INTRODUCTION,0.004962779156327543,"1
+INTRODUCTION"
+INTRODUCTION,0.007444168734491315,"VAEs provide a rich class of deep generative models (DGMs) with many variants (Kingma & Welling,
+2014; Rezende & Mohamed, 2015; Burda et al., 2016; Gulrajani et al., 2016; Vahdat & Kautz, 2020).
+Based on an encoder-decoder structure, VAEs encode datapoints into latent embeddings before
+decoding them back to data space. By parameterizing the encoder and decoder using expressive neural
+networks, VAEs provide a powerful basis for learning both generative models and representations."
+INTRODUCTION,0.009925558312655087,"The standard VAE framework assumes an isotropic Gaussian prior. However, this can cause issues,
+such as when one desires the learned representations to exhibit some properties of interest, for example
+sparsity (Tonolini et al., 2020) or clustering (Dilokthanakul et al., 2016), or when the data distribution
+has very different topological properties from a Gaussian, for example multi-modality (Shi et al.,
+2020) or group structure (Falorsi et al., 2018). Therefore, a variety of recent works have looked to
+use non-Gaussian priors (van den Oord et al., 2017; Tomczak & Welling, 2018; Casale et al., 2018;
+Razavi et al., 2019; Bauer & Mnih, 2019), often with the motivation of adding inductive biases into
+the model (Davidson et al., 2018b; Mathieu et al., 2019b; Nagano et al., 2019; Skopek et al., 2019)."
+INTRODUCTION,0.01240694789081886,"In this work, we argue that this approach of using non-Gaussian priors can be a problematic, and even
+ineffective, mechanism for adding inductive biases into VAEs. Firstly, non-Gaussian priors will often
+necessitate complex encoder models to maintain consistency with the prior’s shape and dependency
+structure (Webb et al., 2018), which typically no longer permit simple parameterization. Secondly,
+the latent encodings are still not guaranteed to follow the desired structure because the ‘prior’ only
+appears in the training objective as a regularizer on the encoder. Indeed, Mathieu et al. (2019b) find
+that changing the prior is typically insufficient in practice to learn the desired representations at a
+population level, with mismatches occurring between the data distribution and learned model."
+INTRODUCTION,0.01488833746898263,"To provide an alternative, more effective, approach that does not suffer from these pathologies,
+we introduce Intermediary Latent Space VAEs (InteL-VAEs), an extension to the standard VAE
+framework that allows a wide range of powerful inductive biases to be incorporated while maintaining
+an isotropic Gaussian prior. This is achieved by introducing an intermediary set of latent variables
+that deal with the stochasticity of the encoding process before incorporating the desired inductive
+biases via a parametric function that maps these intermediary latents to the latent representation itself,
+with the decoder taking this final representation as input. See Fig. 1 for an example."
+INTRODUCTION,0.017369727047146403,"1Department of Statistics, University of Oxford, 2University of Edinburgh
+*Correspondence to: Ning Miao <ning.miao@stats.ox.ac.uk>, Tom Rainforth <rainforth@stats.ox.ac.uk>"
+INTRODUCTION,0.019851116625310174,Published as a conference paper at ICLR 2022
+INTRODUCTION,0.022332506203473945,"𝒳
+𝒴
+𝒵
+𝒳
+𝑔𝜓 𝑥1 𝑥2 𝑞𝜙
+𝑝𝜃"
+INTRODUCTION,0.02481389578163772,"Representation
+Generation"
+INTRODUCTION,0.02729528535980149,"Figure 1: Example InteL-VAE with star-like data. We consider the auto-encoding for two example
+datapoints (x1 and x2, shown in green), which are first stochastically mapped to Y using a Gaussian
+encoder. This embedding is then pushed forward to Z using the non-stochastic mapping gψ, which is
+a radial mapping to enforce a spherical distribution. Decoding is then done in the standard way from
+Z, with the complexity of the decoder mapping simplified by the induced structural properties of Z."
+INTRODUCTION,0.02977667493796526,"The InteL-VAE framework provides a variety of advantages over directly replacing the prior. Firstly,
+it directly enforces our inductive biases on the representations, rather than relying on the regularizing
+effect of the prior to encourage this implicitly. Secondly, it provides a natural congruence between
+the generative and representational models via sharing of the mapping function, side-stepping the
+issues that non-Gaussian priors can cause for the inference model. Finally, it allows for more general
+and more flexible inductive biases to be incorporated, by removing the need to express them with an
+explicit density function and allowing for parts of the mapping to be learned during training."
+INTRODUCTION,0.03225806451612903,"To further introduce a number of novel specific realizations of the InteL-VAE framework, showing
+how they can be used to incorporate various inductive biases, enforcing latent representations that
+are, for example, multiply connected, multi-modal, sparse, or hierarchical. Experimental results show
+their superiority compared with baseline methods in both generation and feature quality, most notably
+providing state-of-the-art performance for learning sparse representations in the VAE framework."
+INTRODUCTION,0.034739454094292806,"To summarize, we a) highlight the need for inductive biases in VAEs and explain why directly
+changing the prior is a suboptimal means for incorporating them; b) propose InteL-VAEs as a simple
+but effective general framework to introduce inductive biases; and c) introduce specific InteL-VAE
+variants which can learn improved generative models and representations over existing baselines on a
+number of tasks. Accompanying code is provided at https://github.com/NingMiao/InteL-VAE."
+THE NEED FOR INDUCTIVE BIASES IN VAES,0.03722084367245657,"2
+THE NEED FOR INDUCTIVE BIASES IN VAES"
+THE NEED FOR INDUCTIVE BIASES IN VAES,0.03970223325062035,"Variational auto-encoders (VAEs) are deep stochastic auto-encoders that can be used for learning
+both deep generative models and low-dimensional representations of complex data. Their key
+components are an encoder, qϕ(z|x), which probabilistically maps from data x ∈X to latents z ∈Z;
+a decoder, pθ(x|z), which probabilistically maps from latents to data; and a prior, p(z), that completes
+the generative model, p(z)pθ(x|z), and regularizes the encoder during training. The encoder and
+decoder are parameterized by deep neural networks and are simultaneously trained using a dataset
+{x1, x2, ..., xN} and a variational lower bound on the log-likelihood, most commonly,
+L(x, θ, ϕ) := Ez∼qϕ(z|x) [log pθ(x|z)] −DKL (qϕ(z|x) ∥p(z)) .
+(1)"
+THE NEED FOR INDUCTIVE BIASES IN VAES,0.04218362282878412,"Namely, we optimize L(θ, ϕ) := Ex∼pdata(x) [L(x, θ, ϕ)], where pdata(x) represents the empirical data
+distribution. Here the prior is typically fixed to a standard Gaussian, i.e. p(z) = N(z; 0, I)."
+THE NEED FOR INDUCTIVE BIASES IN VAES,0.04466501240694789,"While it is well documented that this standard VAE setup with a ‘Gaussian’ latent space can be
+suboptimal (Davidson et al., 2018a; Mathieu et al., 2019b; Tomczak & Welling, 2018; Bauer & Mnih,
+2019; Tonolini et al., 2020), there is perhaps less of a unified high-level view on exactly when, why,
+and how one should change it to incorporate inductive biases. Note here that the prior does not play
+the same role as in a Bayesian model: because the latents themselves are somewhat arbitrary and the
+model is learned from data, it does not encapsulate our initial beliefs in the way one might expect."
+THE NEED FOR INDUCTIVE BIASES IN VAES,0.04714640198511166,"We argue that there are two core reasons why inductive biases can be important for VAEs: (a)
+standard VAEs can fail to encourage, and even prohibit, desired structure in the representations we
+learn; and (b) standard VAEs do not allow one to impart prior information or desired topological
+characteristic into the generative model."
+THE NEED FOR INDUCTIVE BIASES IN VAES,0.04962779156327544,Published as a conference paper at ICLR 2022
+THE NEED FOR INDUCTIVE BIASES IN VAES,0.052109181141439205,"Considering the former, one often has some a priori desired characteristics, or constraints, on the
+representations learned (Bengio et al., 2013). For example, sparse features can be desirable because
+they can improve data efficiency (Yip & Sussman, 1997), and provide robustness to noise (Wright
+et al., 2009; Ahmad & Scheinkman, 2019) and attacks (Gopalakrishnan et al., 2018). In other settings
+one might desire clustered (Jiang et al., 2017), disentangled (Ansari & Soh, 2019; Kim & Mnih, 2018;
+Higgins et al., 2018) or hierarchical representations (Song & Li, 2013; Sønderby et al., 2016; Zhao
+et al., 2017). The KL-divergence term in Eq. (1) regularizes the encoding distribution towards the
+prior and, as a standard Gaussian distribution typically does not exhibit our desired characteristics, this
+regularization can significantly hinder our ability to learn representations with the desired properties."
+THE NEED FOR INDUCTIVE BIASES IN VAES,0.05459057071960298,"Not only can this be problematic at an individual sample level, it can cause even more pronounced
+issues at the population level: desired structural characteristics of our representations often relate to
+the pushforward distribution of the data in the latent space, qϕ(z) := Epdata(x)[qϕ(z|x)], which is both
+difficult to control and only implicitly regularized to the prior (Hoffman & Johnson, 2016)."
+THE NEED FOR INDUCTIVE BIASES IN VAES,0.05707196029776675,"(a) Data
+(b) VAE
+Figure 2: VAE learned generative distri-
+bution Ep(z)[pθ(x|z)] for mixture data."
+THE NEED FOR INDUCTIVE BIASES IN VAES,0.05955334987593052,"Inductive biases can also be essential to the generation
+quality of VAEs: because the generation process of stan-
+dard VAEs is essentially pushing-forward the Gaussian
+prior on Z to data space X by a ‘smooth’ decoder, there
+is an underlying inductive bias that standard VAEs prefer
+sample distributions with similar topology structures to
+Gaussians. As a result, VAEs can perform poorly when
+the data manifold exhibits certain different topological
+properties (Caterini et al., 2020). For example, they can
+struggle when data is clustered into unconnected com-
+ponents as shown in Fig. 2, or when data is not simply-connected. This renders learning effective
+mappings using finite datasets and conventional architectures (potentially prohibitively) difficult. In
+particular, it can necessitate large Lipschitz constants in the decoder, causing knock-on issues like
+unstable training and brittle models (Scaman & Virmaux, 2018), as well as posterior collapse (van den
+Oord et al., 2017; Alemi et al., 2018). In short, the Gaussian prior of a standard VAE can induce
+fundamental topological differences to the true data distribution (Falorsi et al., 2018; Shi et al., 2020)."
+SHORTFALLS OF VAES WITH NON-GAUSSIAN PRIORS,0.062034739454094295,"3
+SHORTFALLS OF VAES WITH NON-GAUSSIAN PRIORS"
+SHORTFALLS OF VAES WITH NON-GAUSSIAN PRIORS,0.06451612903225806,"(a) Directly replacing p(z)
+(b) InteL-VAE
+Figure 3: Prior-encoder mismatch. We train (a)
+a VAE with a sparse prior and (b) an InteL-VAE
+with a sparse inductive bias on 2 dimensional sparse
+data. Figure shows target latent distribution p(z)
+(blue), learned variational embeddings qϕ(z|x) of
+exemplar data (green), and data pushforward qϕ(z)
+(red shadow) for each method. Simply replacing the
+prior does not help the VAE match prior structure
+on either a per-sample or population level, whereas
+InteL-VAE produces an effective match."
+SHORTFALLS OF VAES WITH NON-GAUSSIAN PRIORS,0.06699751861042183,"Though directly replacing the Gaussian prior
+with a different prior sounds like a simple so-
+lution, effectively introducing inductive biases
+can, unfortunately, be more complicated."
+SHORTFALLS OF VAES WITH NON-GAUSSIAN PRIORS,0.06947890818858561,"Firstly, the only influence of the prior dur-
+ing training is as a regularizer on the encoder
+through the DKL (qϕ(z|x) ∥p(z)) term. This
+regularization is always competing with the
+need for effective reconstructions and only has
+an indirect influence on qϕ(z). As such, simply
+replacing the prior can be an ineffective way
+of inducing desired structure at the population
+level (Mathieu et al., 2019b), particularly if
+p(z) is a complex distribution that it is difficult
+to fit (see, e.g., Fig. 3a). Mismatches between
+qϕ(z) and p(z) can also have further deleteri-
+ous effects on the learned generative model: the
+former represents the distribution of the data in latent space during training, while the latter is what is
+used by the learned generative model, leading to unrepresentative generations if there is mismatch."
+SHORTFALLS OF VAES WITH NON-GAUSSIAN PRIORS,0.07196029776674938,"Secondly, it can be extremely difficult to construct appropriate encoder mappings and distributions for
+non-Gaussian priors. While the typical choice of a mean-field Gaussian for the encoder distribution
+is simple, easy to train, and often effective for Gaussian priors, it is often inappropriate for other
+choices of prior. For example, in Fig. 3, we consider replacement with a sparse prior. A VAE with a
+Gaussian encoder struggles to encode points in a manner that even remotely matches the prior. One"
+SHORTFALLS OF VAES WITH NON-GAUSSIAN PRIORS,0.07444168734491315,Published as a conference paper at ICLR 2022
+SHORTFALLS OF VAES WITH NON-GAUSSIAN PRIORS,0.07692307692307693,"might suggest replacing the encoder distribution as well, but this has its own issues, most notably
+that other distributions can be hard to effectively parameterize or train. In particular, the form of the
+required encoding noise might become heavily spatially variant; in our sparse example, the noise
+must be elongated in a particular direction depending on where the mean embedding is. If the prior
+has constraints or topological properties distinct from the data, it can even be difficult to learn a mean
+encoder mapping that respects these, due to the continuous nature of neural networks."
+THE INTEL-VAE FRAMEWORK,0.0794044665012407,"4
+THE INTEL-VAE FRAMEWORK"
+THE INTEL-VAE FRAMEWORK,0.08188585607940446,"To solve the issues highlighted in the previous section, and provide a principled and effective method
+for adding inductive biases to VAEs, we propose Intermediary Latent Space VAEs (InteL-VAEs). The
+key idea behind InteL-VAEs is to introduce an intermediary set of latent variables y ∈Y, used as a
+stepping stone in the construction of the representation z ∈Z. Data is initially encoded in Y using a
+conventional VAE encoder (e.g. a mean-field Gaussian) before being passed through a non-stochastic
+mapping gψ : Y 7→Z that incorporates our desired inductive biases and which can be trained, if
+needed, through its parameters ψ. The prior is defined on Y and taken to be a standard Gaussian,
+p(y) = N(y; 0, I), while our representations, z = gψ(y), correspond to a pushforward of y. By first
+encoding datapoints to y, rather than z directly, we can deal with all the encoder and prior stochasticity
+in this first, well-behaved, latent space, while maintaining z as our representation and using it for
+the decoder pθ(x|z). In principle, gψ can be any arbitrary parametric (or fixed) mapping, including
+non-differentiable or even discontinuous functions. However, to allow for reparameterized gradient
+estimators (Kingma & Welling, 2014; Rezende & Mohamed, 2015), we will restrict ourselves to gψ
+that are sub-differentiable (and thus continuous) with respect to both their inputs and parameters.
+Note that setting gψ to the identity mapping recovers a conventional VAE."
+THE INTEL-VAE FRAMEWORK,0.08436724565756824,"As shown in Fig. 1, the auto-encoding process is now X
+qϕ
+−→Y
+gψ
+−−→Z
+pθ
+−→X. This three-step
+process no longer unambiguously fits into the encoder-decoder terminology of the standard VAE and
+permits a variety of interpretations; for now we take the convention of calling qϕ(y|x) the encoder
+and pθ(x|z) the decoder, but also discuss some alternative interpretations below. We emphasize
+here that these no longer respectively match up with our representation model—which corresponds
+to passing an input into the encoder and then mapping the resulting encoding using gψ—and our
+generative model—which corresponds to N(y; 0, I)pθ(x|z = gψ(y)), such that we sample a y from
+the prior and then pass this through through gψ and the decoder in turn."
+THE INTEL-VAE FRAMEWORK,0.08684863523573201,"The mapping gψ introduces inductive biases into both the generative model and our representations
+by imposing a particular form on z, such as the spherical structure enforced in Fig. 1 (see also Sec. 6).
+It can be viewed as a shared module between them, ensuring congruence between the two. This
+congruence allows us to more directly introduce inductive biases through careful construction of gψ,
+without complicating the process of learning an effective inference network. In particular, because
+Y is treated as our latent space for the purposes of training, we sidestep the inference issues that
+non-Gaussian priors usually cause. Moreover, because all samples must explicitly pass through gψ
+during both training and generation, we can more directly ensure the desired structure is enforced
+without causing a mismatch in the latent distribution between training and deployment."
+THE INTEL-VAE FRAMEWORK,0.08933002481389578,"Training As with standard VAEs, training of an InteL-VAE is done by maximizing a variational
+lower bound (ELBO) on the log evidence, which we denote LY. Most simply, we have"
+THE INTEL-VAE FRAMEWORK,0.09181141439205956,"log pθ,ψ(x) := log
+ 
+Ep(y) [pθ(x|gψ(y))]
+
+= log
+
+Eqϕ(y|x)"
+THE INTEL-VAE FRAMEWORK,0.09429280397022333,"pθ(x|gψ(y))N(y; 0, I)"
+THE INTEL-VAE FRAMEWORK,0.0967741935483871,qϕ(y|x) 
+THE INTEL-VAE FRAMEWORK,0.09925558312655088,"≥Eqϕ(y|x)[log pθ(x|gψ(y))] −DKL (qϕ(y|x) ∥N(y; 0, I)) =: LY(x, θ, ϕ, ψ).
+(2)"
+THE INTEL-VAE FRAMEWORK,0.10173697270471464,"Note that the regularization is on y, but our representation corresponds to z = gψ(y). Training
+corresponds to the optimization arg maxθ,ϕ,ψ Ex∼pdata(x) [LY(x, θ, ϕ, ψ)], which can be performed
+using stochastic gradient ascent with reparameterized gradients in the standard manner. Although
+inductive biases are introduced, the calculation, and optimization, of LY is thus equivalent to the
+standard ELBO. In particular, parameterizing qϕ(y|x) with a Gaussian distribution still yields an
+analytical DKL (qϕ(y|x) ∥N(y; 0, I)) term."
+THE INTEL-VAE FRAMEWORK,0.10421836228287841,"Alternative Interpretations It is interesting to note that our representation, gψ(y), only appears in
+the context of the decoder in this training objective. As such, we see that an important alternative
+interpretation of InteL-VAEs is to consider gψ as being a customized first layer in the decoder, and our"
+THE INTEL-VAE FRAMEWORK,0.10669975186104218,Published as a conference paper at ICLR 2022
+THE INTEL-VAE FRAMEWORK,0.10918114143920596,"test–time representations as partial decodings of the latents y. This viewpoint allows it to be applied
+with more general bounds and VAE variants (e.g. Burda et al. (2016); Le et al. (2018); Maddison et al.
+(2017); Naesseth et al. (2018); Zhao et al. (2019)), as it requires only a carefully customized decoder
+architecture during training and an adjusted mechanism for constructing representations at test–time."
+THE INTEL-VAE FRAMEWORK,0.11166253101736973,"Yet another interpretation is to think about InteL-VAEs as implicitly defining a conventional VAE
+with latents z, but where both the non-Gaussian prior, pψ(z), and our encoder distribution, qϕ,ψ(z|x),
+are themselves defined implicitly as pushforwards along gψ, which acts as a shared module that
+instills a natural compatibility between the two. Formally we have the following theorem.
+Theorem 1. Let pψ(z) and qϕ,ψ(z|x) represent the respective pushforward distributions of N(0, I)
+and qϕ(y|x) induced by the mapping gψ : Y 7→Z. The following holds for all measurable gψ:"
+THE INTEL-VAE FRAMEWORK,0.1141439205955335,"DKL (qϕ,ψ(z|x) ∥pψ(z)) ≤DKL (qϕ(y|x) ∥N(y; 0, I)) .
+(3)"
+THE INTEL-VAE FRAMEWORK,0.11662531017369727,"If gψ is also an invertible function then the above becomes an equality and LY equals the standard
+ELBO on the space of Z as follows"
+THE INTEL-VAE FRAMEWORK,0.11910669975186104,"LY(x, θ, ϕ, ψ) = Eqϕ,ψ(z|x)[log pθ(x|z)] −DKL (qϕ,ψ(z|x) ∥pψ(z)) .
+(4)"
+THE INTEL-VAE FRAMEWORK,0.12158808933002481,"The proof is given in Appendix A. Here, (3) shows that the divergence in our representation space
+Z is never more than that in Y, or equivalently that the implied ELBO on the space of Z is always
+at least as tight as that on Y; (4) shows they are exactly equal if gψ is invertible. As the magnitude
+of DKL (qϕ(y|x) ∥N(y; 0, I)) in an InteL-VAE will remain comparable to the KL divergence in a
+standard Gaussian prior VAE setup, this, in turn, ensures that DKL (qϕ,ψ(z|x) ∥pψ(z)) does not be-
+come overly large. This is in stark contrast to the conventional non-Gaussian prior setup, where it can
+be difficult to avoid DKL (qϕ(z|x) ∥pψ(z)) exploding without undermining reconstruction (Mathieu
+et al., 2019b). The intuition here is that having the stochasticity in the encoder before it is passed
+through gψ ensures that the form of the noise in the embedding is inherently appropriate for the space:
+the same mapping is used to warp this noise as to define the generative model in the first place. For
+example, when gψ is a sparse mapping, the Gaussian noise in qϕ(y|x) will be compressed to a sparse
+subspace by gψ, leading to a sparse variational posterior qϕ,ψ(z|x) as shown in Fig. 3b. In particular,
+qϕ(y|x) does not need to learn any complex spatial variations that result from properties of Z. In
+turn, InteL-VAEs further alleviate issues of mismatch between pψ(z) and qϕ,ψ(z)."
+THE INTEL-VAE FRAMEWORK,0.12406947890818859,"Further Benefits
+A key benefit of InteL-VAEs is that the extracted features are guaranteed to
+have the desired structure. Take the spherical case for example, all extracted features gψ(µϕ(x)) lie
+within a small neighborhood of the unit sphere. By comparison, methods based on training loss
+modifications, e.g. Mathieu et al. (2019b), often fail to generate features with the targeted properties."
+THE INTEL-VAE FRAMEWORK,0.12655086848635236,"A more subtle advantage is that we do not need to explicitly specify pψ(z). This can be extremely
+helpful when we want to specify complex inductive biases: designing a non-stochastic mapping is
+typically much easier than a density function, particularly for complex spaces. Further, this can make
+it much easier to parameterize and learn aspects of pψ(z) in a data-driven manner (see e.g. Sec. 6.3)."
+RELATED WORK,0.12903225806451613,"5
+RELATED WORK"
+RELATED WORK,0.1315136476426799,"Inductive biases
+There is much prior work on introducing human knowledge to deep learning
+models by structural design, such as CNNs (LeCun et al., 1989), RNNs (Hochreiter & Schmidhuber,
+1997) and transformers (Vaswani et al., 2017). However, most of these designs are on the sample
+level, utilizing low–level information such as transformation invariances or internal correlations in
+each sample. By contrast, InteL-VAEs provide a convenient way to incorporate population level
+knowledge—information about the global properties of data distributions can be effectively utilized."
+RELATED WORK,0.13399503722084366,"Non-Gaussian priors There is an abundance of prior work utilizing non-Gaussian priors to improve
+the fit and generation capabilities of VAEs, including MoG priors (Dilokthanakul et al., 2016; Shi
+et al., 2020), sparse priors (Mathieu et al., 2019b; Tonolini et al., 2020; Barello et al., 2018), Gaussian-
+process priors (Casale et al., 2018) and autoregressive priors (Razavi et al., 2019; van den Oord
+et al., 2017). However, these methods often require specialized algorithms to train and are primarily
+applicable only to specific kinds of data. Moreover, as we have explained, changing the prior alone
+often provides insufficient pressure on its own to induce the desired characteristics. Others have
+proposed non-Gaussian priors to reduce the prior-posterior gap, such as Vamp-VAE (Tomczak &
+Welling, 2018) and LARS (Bauer & Mnih, 2019), but these are tangential to our inductive bias aims."
+RELATED WORK,0.13647642679900746,Published as a conference paper at ICLR 2022
+RELATED WORK,0.13895781637717122,"Non-Euclidean latents
+A related line of work has focused on non-Euclidean latent spaces. For
+instance Davidson et al. (2018a) leveraged a von Mises-Fisher distribution on a hyperspherical latent
+space, Falorsi et al. (2018) endowed the latent space with a SO(3) group structure, and Mathieu et al.
+(2019a); Ovinnikov (2019); Nagano et al. (2019) with hyperbolic geometry. Other spaces like product
+of constant curvature spaces (Skopek et al., 2019) and embedded manifolds (Rey et al., 2019) have
+also been considered. However, these works generally require careful design and training."
+RELATED WORK,0.141439205955335,"Normalizing flows Our use of a non-stochastic mapping shares some interesting links to normalizing
+flows (NFs) (Rezende & Mohamed, 2015; Papamakarios et al., 2019; Grathwohl et al., 2018; Dinh
+et al., 2017; Huang et al., 2018; Papamakarios et al., 2018). Indeed a NF would be a valid choice
+for gψ, albeit an unlikely one due to their architectural constraints. However, unlike previous use of
+NFs in VAEs, our gψ is crucially shared between the generative and representational models, rather
+than just being used in the encoder, while the KL divergence in our framework is taken before, not
+after, the mapping. Moreover, the underlying motivation, and type of mapping typically used, differs
+substantially: our mapping is used to introduce inductive biases, not purely to improve inference.
+Our mapping is also more general than a NF (e.g. it need not be invertible) and does not introduce
+additional constraints or computational issues."
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.14392059553349876,"6
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK"
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.14640198511166252,"We now present several novel example InteL-VAEs, introducing various inductive biases through
+different choices of gψ. We will start with artificial, but surprisingly challenging, examples where
+some precise topological properties of the target distributions are known, incorporating them directly
+through a fixed gψ. We will then move onto experiments where we impose a fixed clustering
+inductive bias when training on image data, allowing us to learn InteL-VAEs that account effectively
+for multi-modality in the data distribution. Finally, we consider the example of learning sparse
+representations of high–dimensional data. Here we will see that it is imperative to exploit the ability
+of InteL-VAEs to learn aspects of gψ during training, providing a flexible inductive bias framework,
+rather than a pre-fixed mapping. By comparing InteL-VAEs with strong baselines, we show that
+InteL-VAEs are effective in introducing these desired inductive biases, and consequently both improve
+generation quality and learn better data representations for downstream tasks. One note of particular
+importance is that we find that InteL-VAEs provide state-of-the-art performance for learning sparse
+VAE representations. A further example of using InteL-VAEs to learn hierarchical representations is
+presented in Appendix B, while full details on the various examples are given in Appendix C."
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.1488833746898263,"6.1
+MULTIPLE–CONNECTIVITY"
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.1513647642679901,"(a) Data
+(b) VAE
+(c) InteL-VAE
+Figure 4: Training data and samples from
+learned generative models of vanilla-VAE
+and InteL-VAE for multiply-connected and
+clustered distributions.
+InteL-VAE uses
+[Rows 1,2] circular prior with one hole, [Row
+3] multiply-connected prior with two holes,
+and [Row 4] clustered prior. Vamp-VAE be-
+haves similarly to a vanilla VAE; its results
+are presented in Fig. 4."
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.15384615384615385,"Data is often most naturally described on non-
+Euclidean spaces such as circles, e.g. wind direc-
+tions (Mardia & Jupp, 2000), and other multiply-
+connected shapes, e.g. holes in disease databases (Liu
+et al., 1997). For reasons previously explained in
+Sec. 2, standard VAEs cannot practically model such
+topologies, which prevents them from learning gen-
+erative models which match even the simplest data
+distributions with non-trivial topological structures,
+as shown in Fig. 4b."
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.15632754342431762,"Luckily, by designing gψ to map the Gaussian prior
+to a simple representative distribution in a topolog-
+ical class, we can easily equip InteL-VAEs with
+the knowledge to approximate any data distribu-
+tions with similar topological properties. Specifically,
+by defining gψ as the orthogonal projection to S1,
+gψ(z) = z/(||z||2 + ϵ), we map the Gaussian prior
+approximately to a uniform distribution to S1, where
+ϵ is a small positive constant to ensure the continuity
+of gψ near the origin. From Rows 1 and 2 of Fig. 4,
+we find that this inductive bias gives InteL-VAEs the ability to learn various distributions with a hole."
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.1588089330024814,Published as a conference paper at ICLR 2022
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.16129032258064516,"We can add further holes by simply ‘gluing’ point pairs. For example, for two holes we can use"
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.16377171215880892,"g2(y) = Concat
+
+g1(y)[:,1], g1(y)[:,2]
+q"
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.1662531017369727,"(4/3 −(1 −|g1(y)[:,1]|)2) −1/
+√"
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.1687344913151365,"3
+
+,
+(5)"
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.17121588089330025,"which first map y to approximately S1, and then glues (0, 1) and (0, −1) together to create new holes
+(see Fig. C.1 for an illustration). Furthermore, we can continue to glue points together to achieve a
+higher number of holes h, and thus more complex connectivity. Row 3 of Fig. 4 gives an example of
+learning an infinity sign by introducing a ‘two-hole’ inductive bias."
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.17369727047146402,"Compared with vanilla-VAE and Vamp-VAE, which try to find a convex hull for real data distributions,
+InteL-VAEs can deal with distributions with highly non-convex and very non-smooth supports (see
+Fig. 4 and Appendix C.1). We emphasize here that our inductive bias does not contain the information
+about the precise shape of the data, only the number of holes. We thus see that InteL-VAEs can
+provide substantial improvements in performance by incorporating only basic prior information about
+the topological properties of the data, which point out a way to approximate distributions on more
+complex structures, such as linear groups (Gupta & Mishra, 2018)."
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.1761786600496278,"6.2
+MULTI–MODALITY"
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.17866004962779156,"Many real-world datasets exhibit multi-modality. For example, data with distinct classes are often
+naturally clustered into (nearly) disconnected components representing each class. However, vanilla
+VAEs generally fail to fit multi-modal data due to the topological issues explained in Sec. 2. Previous
+work (Johnson et al., 2017; Mathieu et al., 2019b) has thus proposed the use of a multi-modal
+prior, such as a mixture of Gaussian (MoG) distribution, so as to capture all components of the
+data. Nonetheless, VAEs with such priors often still struggle to model multi-modal data because of
+mismatch between qϕ(z) and p(z) or training instability issues."
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.18114143920595532,"(a)
+(b)
+(c)"
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.18362282878411912,"Figure 5: Illustration of clustered mapping where
+K = 3. The circle represents a density isoline of
+a Gaussian. Note that not all points in the sector
+are moved equally: points close to the boundaries
+between sectors are moved less, with points on the
+boundary themselves not moved at all."
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.18610421836228289,"We tackle this problem by using a mapping gψ which
+contains a clustering inductive bias. The high-level
+idea is to design a mapping gψ with a localized high
+Lipschitz constant that ‘splits’ the continuous Gaus-
+sian distribution into K disconnected parts and then
+pushes them away from each other. In particular, we
+split Y it into K equally sized sectors using its first
+two dimensions (noting it is not needed to split on
+all dimensions to form clusters), as shown in Fig. 5.
+For any point y, we can easily get the center direction
+r(y) of the sector that y belongs to and the distance
+dis(y) between y and the sector boundary. Then we
+define gψ(y) as:
+gψ(y) = y + c1dis(y)c2r(y),
+(6)
+where c1 and c2 are empirical constants. We can see that although gψ has very different function
+on different sectors, it is still continuous on the whole plane with gψ(y) = y on sector boundaries,
+which is desirable for gradient-based training. See Appendix C.2 for more details."
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.18858560794044665,"To assess the performance of our approach, we first consider a simple 2-component MoG synthetic
+dataset in the last row of Fig. 4. We see that the vanilla VAE fails to learn a clustered distribution that
+fits the data, while the InteL-VAE sorts this issue and fits the data well."
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.19106699751861042,"Method
+FID Score (↓)"
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.1935483870967742,"VAE
+42.0 ± 1.1
+GM-VAE
+41.0 ± 4.7
+MoG-VAE
+41.2 ± 3.3
+Vamp-VAE
+38.8 ± 2.4
+VAE with Sylvester NF
+35.0 ± 0.9
+InteL-VAE
+32.2 ± 1.5"
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.19602977667493796,"Table 1:
+Generation quality on MNIST.
+Shown is mean FID score (lower better) ±
+standard deviation over 10 runs."
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.19851116625310175,"To provide a more real-world example, we train an
+InteL-VAE and a variety of baselines on the MNIST
+dataset, comparing the generation quality of the
+learned models using the FID score (Heusel et al.,
+2017) in Table 1. We find that the GM-VAE (Dilok-
+thanakul et al., 2016) and MoG-VAE (VAE with a
+fixed MoG prior) achieve performance gains by using
+non-Gaussian priors. The Vamp-VAE (Tomczak &
+Welling, 2018) and a VAE with a Sylvester Normal-
+izing Flow (Berg et al., 2018) encoder provide further
+gains by making the prior and encoder distributions
+more flexible respectively. However, the InteL-VAE comfortably outperforms all of them."
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.20099255583126552,Published as a conference paper at ICLR 2022
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.20347394540942929,"Method
+Data
+VAE
+GM-VAE
+MoG-VAE
+Vamp-VAE
+Flow
+InteL-VAE"
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.20595533498759305,"Uncertainty(%)
+0.2 ± 0.1
+2.5 ± 0.4
+3.5 ± 1.8
+4.5 ± 0.8
+2.4 ± 0.3
+16.2 ± 2.1
+0.9 ± 0.8
+‘1’ proportion(%)
+50.0 ± 0.2
+48.8 ± 0.2
+48.1 ± 0.3
+47.7 ± 0.4
+48.8 ± 0.1
+42.5 ± 1.0
+49.5 ± 0.4"
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.20843672456575682,"Table 2: Quantitative results on MNIST-01. Uncertainty is the proportion of images whose labels
+are ‘indistinguishable’ by the pre-trained classifier, defined as having prediction confidence < 80%.
+‘1’ proportion is the proportion of images classified as ‘1’."
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.2109181141439206,"(a) VAE
+(b) MoG-VAE (c) InteL-VAE
+Figure 6: Generated samples for MNIST-01."
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.21339950372208435,"To gain insight into how InteL-VAEs achieve superior
+generation quality, we perform analysis on a simpli-
+fied setting where we select only the ‘0’ and ‘1’ digits
+from the MNIST dataset to form a strongly clustered
+dataset, MNIST-01. We further decrease the latent
+dimension to 1 to make the problem more challeng-
+ing. Fig. 6 shows that here the vanilla VAE generates
+some samples which look like interpolations between ’0’ and ’1’, meaning that it still tries to learn a
+connected distribution containing ’0’ and ’1’. Further, the general generation quality is poor, with
+blurred images and a lack of diversity in generated samples (e.g. all the ‘1’s have the same slant).
+Despite using a clustered prior, the MoG-VAE still produces unwanted interpolations between the
+classes. By contrast, InteL-VAE generates digits that are unambiguous and crisper."
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.21588089330024815,"True Prop.
+Learned Prop."
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.21836228287841192,"0.5
+0.47 ± 0.01
+0.4
+0.36 ± 0.10
+0.25
+0.25 ± 0.08
+0.2
+0.16 ± 0.11
+0
+0.02 ± 0.01"
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.22084367245657568,"Table 3: Learned proportions of ‘0’s on
+MNIST-01 for different ground truths.
+Error bars are std. dev. from 10 runs."
+SPECIFIC REALIZATIONS OF THE INTEL-VAE FRAMEWORK,0.22332506203473945,"To quantify these results, we further train a logistic classi-
+fier on MNIST-01 and use it to classify images generated
+by each method. For each method, we calculate the pro-
+portion of samples produced by the generative model that
+are assigned to each class by this pre-trained classifier,
+as well as the proportion of samples for which the clas-
+sifier is uncertain. From Table 2 we see that InteL-VAE
+significantly outperforms its competitors in the ability to
+generate balanced and unambiguous digits. To extend this
+example further, and show the ability of InteL-VAEs to
+learn aspects of gψ during training, we further consider parameterizing and then learning the relative
+size of the clusters. Table 3 shows that this can be successfully learned by InteL-VAEs on MNIST-01."
+SPARSITY,0.22580645161290322,"6.3
+SPARSITY"
+SPARSITY,0.228287841191067,"Sparse features are often well-suited to data efficiency on downstream tasks (Huang & Aviyente,
+2006), in addition to being naturally easier to visualize and manipulate than dense features (Ng et al.,
+2011). However, existing VAE models for sparse representations trade off generation quality to
+achieve this sparsity (Mathieu et al., 2019b; Tonolini et al., 2020; Barello et al., 2018). Here, we
+show that InteL-VAEs can instead simultaneously increase feature sparsity and generation quality.
+Moreover, they are able to achieve state-of-the-art scores on sparsity metrics."
+SPARSITY,0.23076923076923078,"Compared with our previous examples, the gψ here needs to be more flexible so that it can learn to
+map points in a data-specific way and induce sparsity without unduly harming reconstruction. To
+achieve this, we use the simple form for the mapping: gψ(y) = y ⊙DSψ(y), where ⊙is pointwise
+multiplication, and DS is a ‘dimension selector’ network that selects dimensions to deactivate given
+y. DS outputs values between [0, 1] for each dimension, with 0 being fully deactivated and 1 fully
+activated; the more dimensions we deactivate, the sparser the representation. By learning DS during
+training, this setup allows us to learn a sparse representation in a data-driven manner. To control
+the degree of sparsity, we add a sparsity regularizer, Lsp, to the ELBO with weighting parameter γ
+(higher γ corresponds to more sparsity). Namely, we optimize LY(θ, ϕ, ψ) + γ Lsp(ϕ, ψ), where"
+SPARSITY,0.23325062034739455,"Lsp(ϕ, ψ) := E ""
+1
+M M
+X"
+SPARSITY,0.23573200992555832,"i=1
+(H (DS(yi))) −H"
+M,0.23821339950372208,"1
+M M
+X"
+M,0.24069478908188585,"i=1
+DS(yi) !# ,
+(7)"
+M,0.24317617866004962,H(v) = −P
+M,0.2456575682382134,"i (vi/∥v∥1) log (vi/∥v∥1) is the normalized entropy of an positive vector v, and the
+expectation is over drawing a minibatch of samples x1, . . . , xM and then sampling each corresponding
+yi ∼qϕ(·|x = xi). Lsp encourages DS to deactivate more dimensions, while also encouraging
+diversity in which dimensions are activated for different data points, improving utilization of the
+latent space. Please see Appendix C.3 for more details and intuitions. Initial qualitative results are
+shown in Fig. 8, where we see that our InteL-VAE is able to learn sparse and intuitive representations."
+M,0.24813895781637718,Published as a conference paper at ICLR 2022
+M,0.2506203473945409,"0.2
+0.4
+0.6
+0.8
+1.0
+Sparse scores (
+) 100 150 200 250 300"
+M,0.2531017369727047,"FID scores (
+)"
+M,0.2555831265508685,"= 0
+0.1"
+M,0.25806451612903225,0.31.03.0 10.0
+M,0.26054590570719605,"= 0
+100200 500 1000"
+M,0.2630272952853598,= 0.02
+M,0.2655086848635236,"0.10
+0.50"
+M,0.2679900744416873,"Ours
+DD
+Sparse-VAE
+Vanilla-VAE"
+M,0.2704714640198511,"10
+20
+50
+100
+200
+500 1000 2000 5000
+#Data 0.2 0.4 0.6 0.8"
+M,0.2729528535980149,"Accuracy (
+)"
+M,0.27543424317617865,"DD(
+= 100)"
+M,0.27791563275434245,"VAE(
+= 0.3)"
+M,0.2803970223325062,"VAE(
+= 1.0)"
+M,0.28287841191067,"VAE(
+= 3.0)"
+M,0.2853598014888337,"Sprase-VAE(
+= 0.1)"
+M,0.2878411910669975,Ours( = 10.0)
+M,0.2903225806451613,Ours( = 30.0)
+M,0.29280397022332505,Ours( = 100.0)
+M,0.29528535980148884,"Figure 7: Results on Fashion-MNIST. The left figure shows FID and sparsity scores. Lower FID
+scores (↓) represent better sample quality while higher sparse scores (→) indicate sparser features. The
+right figure shows the performance of sparse features from InteL-VAE on downstream classification
+tasks. See Appendix C.3 for details and results for MNIST."
+M,0.2977667493796526,"0
+5
+10
+15
+20
+25
+30
+35
+40
+45
+50
+Latent dimension 0.0 0.5 1.0 1.5"
+M,0.3002481389578164,Avg. magnitude
+M,0.3027295285359802,"Trouser
+Coat
+Sneaker (a) (b) (c)"
+M,0.3052109181141439,"Figure 8: Qualitative evaluation of sparsity. [Top]
+Average magnitude of each latent dimension for
+three example classes in Fashion-MNIST; less
+than 10% dimensions are activated for each class.
+[Bottom] Activated dimensions are different be-
+tween classes: (a-c) show the results of separately
+manipulating an activated dimension for each class.
+(a) Trouser separation (Dim 18). (b) Coat length
+(Dim 46). (c) Shoe style (formal/sport, Dim 25)."
+M,0.3076923076923077,"To quantitatively assess the ability of our ap-
+proach to yield sparse representations and good
+quality generations, we compare against vanilla
+VAEs, the specially customized sparse-VAE
+of Tonolini et al. (2020), and the sparse ver-
+sion of Mathieu et al. (2019b) (DD) on Fashion-
+MNIST (Xiao et al., 2017) and MNIST. As
+shown in Fig. 7 (left), we find that InteL-
+VAEs increase sparsity of the representations—
+measured by the Hoyer metric (Hurley &
+Rickard, 2009)—while increasing generative
+sample quality at the same time. Indeed, the FID
+score obtained by InteL-VAE outperforms the
+vanilla VAE when γ < 3.0, while the sparsity
+score substantially increases with γ, reaching ex-
+tremely high levels. By comparison, DD signifi-
+cantly degrades generation quality and only pro-
+vides a more modest increase in sparsity, while
+its sparsity also drops if the regularization co-
+efficient is set too high. The level of sparsity
+achieved by sparse-VAEs was substantially less
+than both DD and InteL-VAEs."
+M,0.31017369727047145,"To further evaluate the quality of the learned
+features for downstream tasks, we trained a clas-
+sifier to predict class labels from the latent representations. For this, we choose a random for-
+est (Breiman, 2001) with maximum depth 4 as it is well-suited for sparse features. We vary the size
+of training data given to the classifier to measure the data efficiency of each model. Fig. 7 (right)
+shows that InteL-VAE typically outperforms other the models, especially in few-shot scenarios."
+M,0.31265508684863524,"Method
+FID (↓)
+Sparsity (↑)"
+M,0.315136476426799,"VAE
+68.6±1.1
+0.22±0.01
+Vamp-VAE
+67.5±1.1
+0.22±0.01
+VAE with Sylvester NF
+66.3±0.4
+0.22±0.01
+Sparse-VAE (α = 0.01)
+328±10.1
+0.25±0.01
+Sparse-VAE (α = 0.2)
+337±8.1
+0.28±0.01
+InteL-VAE (γ = 30)
+64.9±0.4
+0.25±0.01
+InteL-VAE (γ = 70)
+68.0±0.6
+0.46±0.02"
+M,0.3176178660049628,Table 4: Generation results on CelebA.
+M,0.3200992555831266,"Finally, to verify InteL-VAE’s effectiveness on
+larger and higher-resolution datasets, we also
+make comparisons on CelebA (Liu et al., 2015).
+From Table 4, we can see that InteL-VAE in-
+crease sparse scores to 0.46 without sacrific-
+ing generation quality. By comparison, the
+maximal sparse score that sparse-VAE gets is
+0.30, with unacceptable sample quality. Inter-
+estingly, InteL-VAEs with ly low regulation γ
+achieved particularly good generative sample
+quality, outperforming even the Vamp-VAE and a VAE with a Sylvester NF encoder."
+M,0.3225806451612903,"Conclusions In this paper, we proposed InteL-VAEs, a general schema for incorporating inductive
+biases into VAEs. Experiments show that InteL-VAEs can both provide representations with desired
+properties and improve generation quality, outperforming a variety of baselines such as directly
+changing the prior. This is achieved while maintaining the simplicity and stability of standard VAEs."
+M,0.3250620347394541,Published as a conference paper at ICLR 2022
+ETHICS STATEMENT,0.32754342431761785,ETHICS STATEMENT
+ETHICS STATEMENT,0.33002481389578164,"We do not believe that there are direct ethical concerns regarding our paper: the datasets we consider
+are all already well established and do not contain sensitive information, while the methods and ideas
+we introduce have no clear direct potential negative societal impacts of their own. From a bigger
+picture perspective, work like ours that looks to permit more effective incorporation of inductive
+biases into models can be thought of as allowing more direct human control on how models will
+behave after training. While this will typically be a force for good, for example by encouraging model
+interpretability and providing mechanisms to try and induce positive characteristics like fairness,
+in rare circumstances there may also be the potential for this to be used nefariously by deliberately
+encouraging undesirable behavior. However, we do not believe that our work is any more prone to
+such exploitation than existing methods or that the risk of it being used in such as a way is significant."
+REPRODUCIBILITY STATEMENT,0.3325062034739454,REPRODUCIBILITY STATEMENT
+REPRODUCIBILITY STATEMENT,0.3349875930521092,"Full experimental details are given in Appendix C, while anonymized source code for reproducing all
+our experiments directly is provided at https://github.com/djkdsjwkjerkjermf/InteL-VAE. Together
+these should make it straightforward for others to reproduce our empirical results. We have been
+careful to provide quantitative metrics of performance whenever possible, rather than just relying on
+qualitative or anecdotal evidence. Repeat runs and error bars are provided whenever this is feasible,
+with the level of variability always found to be sufficiently small to draw reliable and statistically
+sound conclusions. In fact, the training stability and consistent performance of our general approach
+under retraining provides a clear advantage in itself compared to many of the baseline methods. Full
+formal proof for our only theoretical result is given in Appendix A, while the assumptions it makes
+are clearly stated and easily verifiable."
+REFERENCES,0.337468982630273,REFERENCES
+REFERENCES,0.3399503722084367,"Martín Abadi, Ashish Agarwal, Paul Barham, Eugene Brevdo, Zhifeng Chen, Craig Citro, Greg S.
+Corrado, Andy Davis, Jeffrey Dean, Matthieu Devin, Sanjay Ghemawat, Ian Goodfellow, Andrew
+Harp, Geoffrey Irving, Michael Isard, Yangqing Jia, Rafal Jozefowicz, Lukasz Kaiser, Manjunath
+Kudlur, Josh Levenberg, Dandelion Mané, Rajat Monga, Sherry Moore, Derek Murray, Chris Olah,
+Mike Schuster, Jonathon Shlens, Benoit Steiner, Ilya Sutskever, Kunal Talwar, Paul Tucker, Vincent
+Vanhoucke, Vijay Vasudevan, Fernanda Viégas, Oriol Vinyals, Pete Warden, Martin Wattenberg,
+Martin Wicke, Yuan Yu, and Xiaoqiang Zheng. TensorFlow: Large-scale machine learning on
+heterogeneous systems, 2015. URL https://www.tensorflow.org/. Software available
+from tensorflow.org."
+REFERENCES,0.3424317617866005,"Subutai Ahmad and Luiz Scheinkman. How can we be so dense? the benefits of using highly sparse
+representations. arXiv preprint arXiv:1903.11257, 2019."
+REFERENCES,0.34491315136476425,"Alexander Alemi, Ben Poole, Ian Fischer, Joshua Dillon, Rif A Saurous, and Kevin Murphy. Fixing a
+broken elbo. In International Conference on Machine Learning, pp. 159–168. PMLR, 2018."
+REFERENCES,0.34739454094292804,"Abdul Fatir Ansari and Harold Soh. Hyperprior induced unsupervised disentanglement of latent
+representations. In Proceedings of the AAAI Conference on Artificial Intelligence, volume 33, pp.
+3175–3182, 2019."
+REFERENCES,0.34987593052109184,"Dzmitry Bahdanau, Kyunghyun Cho, and Yoshua Bengio. Neural machine translation by jointly
+learning to align and translate. arXiv preprint arXiv:1409.0473, 2014."
+REFERENCES,0.3523573200992556,"Gabriel Barello, Adam S. Charles, and Jonathan W. Pillow. Sparse-coding variational auto-encoders.
+Preprint, Neuroscience, August 2018."
+REFERENCES,0.3548387096774194,"Matthias Bauer and Andriy Mnih. Resampled priors for variational autoencoders. In The 22nd
+International Conference on Artificial Intelligence and Statistics, pp. 66–75. PMLR, 2019."
+REFERENCES,0.3573200992555831,"Mohamed Ishmael Belghazi, Sai Rajeswar, Olivier Mastropietro, Negar Rostamzadeh, Jovana Mitro-
+vic, Aaron Courville, and AI Element. Hierarchical adversarially learned inference. stat, 1050:4,
+2018."
+REFERENCES,0.3598014888337469,Published as a conference paper at ICLR 2022
+REFERENCES,0.36228287841191065,"Yoshua Bengio, Aaron Courville, and Pascal Vincent. Representation learning: A review and new
+perspectives. IEEE transactions on pattern analysis and machine intelligence, 35(8):1798–1828,
+2013."
+REFERENCES,0.36476426799007444,"Rianne van den Berg, Leonard Hasenclever, Jakub M Tomczak, and Max Welling.
+Sylvester
+normalizing flows for variational inference. arXiv preprint arXiv:1803.05649, 2018."
+REFERENCES,0.36724565756823824,"Leo Breiman. Random forests. Machine learning, 45(1):5–32, 2001."
+REFERENCES,0.369727047146402,"Yuri Burda, Roger B Grosse, and Ruslan Salakhutdinov. Importance weighted autoencoders. In ICLR
+(Poster), 2016."
+REFERENCES,0.37220843672456577,"Francesco Paolo Casale, Adrian V Dalca, Luca Saglietti, Jennifer Listgarten, and Nicoló Fusi.
+Gaussian process prior variational autoencoders. In NeurIPS, 2018."
+REFERENCES,0.3746898263027295,"Anthony L Caterini, Robert Cornish, Dino Sejdinovic, and Arnaud Doucet. Variational inference
+with continuously-indexed normalizing flows. 2020."
+REFERENCES,0.3771712158808933,"Tim R. Davidson, Luca Falorsi, Nicola De Cao, Thomas Kipf, and Jakub M. Tomczak. Hyperspherical
+variational auto-encoders. arXiv:1804.00891 [cs, stat], September 2018a. URL http://arxiv.
+org/abs/1804.00891."
+REFERENCES,0.37965260545905705,"Tim R. Davidson, Luca Falorsi, Nicola De Cao, Thomas Kipf, and Jakub M. Tomczak. Hyperspherical
+variational auto-encoders. 34th Conference on Uncertainty in Artificial Intelligence (UAI-18),
+2018b."
+REFERENCES,0.38213399503722084,Alfredo De la Fuente and Robert Aduviri. Replication/machine learning. 2019.
+REFERENCES,0.38461538461538464,"Nat Dilokthanakul, Pedro AM Mediano, Marta Garnelo, Matthew CH Lee, Hugh Salimbeni, Kai
+Arulkumaran, and Murray Shanahan. Deep unsupervised clustering with gaussian mixture varia-
+tional autoencoders. arXiv preprint arXiv:1611.02648, 2016."
+REFERENCES,0.3870967741935484,"Laurent Dinh, Jascha Sohl-Dickstein, and Samy Bengio.
+Density estimation using real nvp.
+arXiv:1605.08803 [cs, stat], February 2017. URL http://arxiv.org/abs/1605.08803."
+REFERENCES,0.38957816377171217,"Luca Falorsi, Pim de Haan, Tim R. Davidson, Nicola De Cao, Maurice Weiler, Patrick Forré, and
+Taco S. Cohen. Explorations in homeomorphic variational auto-encoding. arXiv:1807.04689 [cs,
+stat], July 2018. URL http://arxiv.org/abs/1807.04689."
+REFERENCES,0.3920595533498759,"Xavier Glorot, Antoine Bordes, and Yoshua Bengio. Deep sparse rectifier neural networks. In
+Proceedings of the fourteenth international conference on artificial intelligence and statistics, pp.
+315–323. JMLR Workshop and Conference Proceedings, 2011."
+REFERENCES,0.3945409429280397,"Soorya Gopalakrishnan, Zhinus Marzi, Upamanyu Madhow, and Ramtin Pedarsani. Combating
+adversarial attacks using sparse representations. arXiv preprint arXiv:1803.03880, 2018."
+REFERENCES,0.3970223325062035,"Will Grathwohl, Ricky T. Q. Chen, Jesse Bettencourt, Ilya Sutskever, and David Duvenaud. FFJORD:
+Free-form continuous dynamics for scalable reversible generative models. arXiv:1810.01367 [cs,
+stat], October 2018. URL http://arxiv.org/abs/1810.01367."
+REFERENCES,0.39950372208436724,"Ishaan Gulrajani, Kundan Kumar, Faruk Ahmed, Adrien Ali Taiga, Francesco Visin, David Vazquez,
+and Aaron Courville. Pixelvae: A latent variable model for natural images. arXiv preprint
+arXiv:1611.05013, 2016."
+REFERENCES,0.40198511166253104,"Ved Prakash Gupta and Mukund Madhav Mishra. On the topology of certain matrix groups. THE
+MATHEMATICS STUDENT, pp. 61, 2018."
+REFERENCES,0.4044665012406948,"Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bernhard Nessler, and Sepp Hochreiter. Gans
+trained by a two time-scale update rule converge to a local nash equilibrium. In Proceedings of the
+31st International Conference on Neural Information Processing Systems, pp. 6629–6640, 2017."
+REFERENCES,0.40694789081885857,"Irina Higgins, David Amos, David Pfau, Sebastien Racaniere, Loic Matthey, Danilo Rezende,
+and Alexander Lerchner. Towards a definition of disentangled representations. arXiv preprint
+arXiv:1812.02230, 2018."
+REFERENCES,0.4094292803970223,Published as a conference paper at ICLR 2022
+REFERENCES,0.4119106699751861,"Sepp Hochreiter and Jürgen Schmidhuber. Long short-term memory. Neural computation, 9(8):
+1735–1780, 1997."
+REFERENCES,0.4143920595533499,"Matthew D Hoffman and Matthew J Johnson. Elbo surgery: yet another way to carve up the variational
+evidence lower bound. 2016."
+REFERENCES,0.41687344913151364,"Xianxu Hou, Linlin Shen, Ke Sun, and Guoping Qiu. Deep feature consistent variational autoencoder.
+In 2017 IEEE Winter Conference on Applications of Computer Vision (WACV), pp. 1133–1141.
+IEEE, 2017."
+REFERENCES,0.41935483870967744,"Chin-Wei Huang, David Krueger, Alexandre Lacoste, and Aaron Courville. Neural autoregressive
+flows. pp. 10, 2018."
+REFERENCES,0.4218362282878412,"Ke Huang and Selin Aviyente. Sparse representation for signal classification. Advances in neural
+information processing systems, 19:609–616, 2006."
+REFERENCES,0.42431761786600497,"Niall Hurley and Scott Rickard. Comparing measures of sparsity. IEEE Transactions on Information
+Theory, 55:4723–4741, 2009."
+REFERENCES,0.4267990074441687,"Zhuxi Jiang, Yin Zheng, Huachun Tan, Bangsheng Tang, and Hanning Zhou. Variational deep
+embedding: An unsupervised and generative approach to clustering. In IJCAI, 2017."
+REFERENCES,0.4292803970223325,"Matthew J. Johnson, David Duvenaud, Alexander B. Wiltschko, Sandeep R. Datta, and Ryan P. Adams.
+Composing graphical models with neural networks for structured representations and fast inference.
+arXiv:1603.06277 [stat], July 2017. URL http://arxiv.org/abs/1603.06277."
+REFERENCES,0.4317617866004963,"Hyunjik Kim and Andriy Mnih. Disentangling by factorising. In Jennifer Dy and Andreas Krause
+(eds.), Proceedings of the 35th International Conference on Machine Learning, volume 80 of
+Proceedings of Machine Learning Research, pp. 2649–2658. PMLR, 10–15 Jul 2018. URL
+http://proceedings.mlr.press/v80/kim18b.html."
+REFERENCES,0.43424317617866004,"Diederik P Kingma and Max Welling. Auto-encoding variational bayes. In International Conference
+on Learning Representations, 2014."
+REFERENCES,0.43672456575682383,"Alexej Klushyn, Nutan Chen, Richard Kurle, Botond Cseke, and Patrick van der Smagt. Learning
+hierarchical priors in vaes."
+REFERENCES,0.4392059553349876,"Abhishek Kumar, Prasanna Sattigeri, and Avinash Balakrishnan. Variational inference of disen-
+tangled latent concepts from unlabeled observations. In International Conference on Learning
+Representations, 2018."
+REFERENCES,0.44168734491315137,"Tuan Anh Le, Maximilian Igl, Tom Rainforth, Tom Jin, and Frank Wood. Auto-encoding sequential
+monte carlo. In International Conference on Learning Representations, 2018."
+REFERENCES,0.4441687344913151,"Yann LeCun, Bernhard Boser, John S Denker, Donnie Henderson, Richard E Howard, Wayne
+Hubbard, and Lawrence D Jackel. Backpropagation applied to handwritten zip code recognition.
+Neural computation, 1(4):541–551, 1989."
+REFERENCES,0.4466501240694789,"Bing Liu, Liang-Ping Ku, and Wynne Hsu. Discovering interesting holes in data. In Proceedings of
+the Fifteenth international joint conference on Artifical intelligence-Volume 2, pp. 930–935, 1997."
+REFERENCES,0.4491315136476427,"Ziwei Liu, Ping Luo, Xiaogang Wang, and Xiaoou Tang. Deep learning face attributes in the wild. In
+Proceedings of International Conference on Computer Vision (ICCV), December 2015."
+REFERENCES,0.45161290322580644,"Chris J Maddison, John Lawson, George Tucker, Nicolas Heess, Mohammad Norouzi, Andriy Mnih,
+Arnaud Doucet, and Yee Whye Teh. Filtering variational objectives. In NIPS, 2017."
+REFERENCES,0.45409429280397023,"K. V. Mardia and Peter E. Jupp. Directional Statistics. Wiley Series in Probability and Statistics. J.
+Wiley, Chichester ; New York, 2000. ISBN 978-0-471-95333-3."
+REFERENCES,0.456575682382134,"Emile Mathieu, Charline Le Lan, Chris J. Maddison, Ryota Tomioka, and Yee Whye Teh. Continuous
+hierarchical representations with poincar\’e variational auto-encoders. January 2019a. URL
+https://arxiv.org/abs/1901.06033v3."
+REFERENCES,0.45905707196029777,Published as a conference paper at ICLR 2022
+REFERENCES,0.46153846153846156,"Emile Mathieu, Tom Rainforth, N Siddharth, and Yee Whye Teh. Disentangling disentanglement
+in variational autoencoders. In International Conference on Machine Learning, pp. 4402–4412.
+PMLR, 2019b."
+REFERENCES,0.4640198511166253,"Christian Naesseth, Scott Linderman, Rajesh Ranganath, and David Blei. Variational sequential
+monte carlo. In International Conference on Artificial Intelligence and Statistics, pp. 968–977.
+PMLR, 2018."
+REFERENCES,0.4665012406947891,"Yoshihiro Nagano, Shoichiro Yamaguchi, Yasuhiro Fujita, and Masanori Koyama. A wrapped normal
+distribution on hyperbolic space for gradient-based learning. arXiv:1902.02992 [cs, stat], May
+2019. URL http://arxiv.org/abs/1902.02992."
+REFERENCES,0.46898263027295284,"Andrew Ng et al. Sparse autoencoder. CS294A Lecture notes, 72(2011):1–19, 2011."
+REFERENCES,0.47146401985111663,"Ivan Ovinnikov. Poincar\’e wasserstein autoencoder. January 2019. URL https://arxiv.org/
+abs/1901.01427v2."
+REFERENCES,0.4739454094292804,"George Papamakarios, Theo Pavlakou, and Iain Murray. Masked autoregressive flow for density
+estimation. arXiv:1705.07057 [cs, stat], June 2018. URL http://arxiv.org/abs/1705.
+07057."
+REFERENCES,0.47642679900744417,"George Papamakarios, Eric Nalisnick, Danilo Jimenez Rezende, Shakir Mohamed, and Balaji
+Lakshminarayanan. Normalizing flows for probabilistic modeling and inference. arXiv preprint
+arXiv:1912.02762, 2019."
+REFERENCES,0.47890818858560796,"Rajesh Ranganath, Dustin Tran, and David Blei. Hierarchical variational models. In International
+Conference on Machine Learning, pp. 324–333. PMLR, 2016."
+REFERENCES,0.4813895781637717,"Ali Razavi, Aaron van den Oord, and Oriol Vinyals. Generating diverse high-fidelity images with
+vq-vae-2. In NIPS, 2019."
+REFERENCES,0.4838709677419355,"Luis A. Pérez Rey, Vlado Menkovski, and Jacobus W. Portegies. Diffusion variational autoencoders.
+arXiv:1901.08991 [cs, stat], March 2019. URL http://arxiv.org/abs/1901.08991."
+REFERENCES,0.48635235732009924,"Danilo Rezende and Shakir Mohamed. Variational inference with normalizing flows. In International
+Conference on Machine Learning, pp. 1530–1538. PMLR, 2015."
+REFERENCES,0.48883374689826303,"Igal Sason. On data-processing and majorization inequalities for f-divergences with applications.
+Entropy, 21(10):1022, October 2019. ISSN 1099-4300. doi: 10.3390/e21101022."
+REFERENCES,0.4913151364764268,"Kevin Scaman and Aladin Virmaux. Lipschitz regularity of deep neural networks: analysis and
+efficient estimation. In Proceedings of the 32nd International Conference on Neural Information
+Processing Systems, pp. 3839–3848, 2018."
+REFERENCES,0.49379652605459057,"Wenxian Shi, Hao Zhou, Ning Miao, and Lei Li. Dispersed exponential family mixture vaes for
+interpretable text generation. In International Conference on Machine Learning, pp. 8840–8851.
+PMLR, 2020."
+REFERENCES,0.49627791563275436,"Ondrej Skopek, Octavian-Eugen Ganea, and Gary Bécigneul. Mixed-curvature variational autoen-
+coders. November 2019. URL https://arxiv.org/abs/1911.08411v2."
+REFERENCES,0.4987593052109181,"Casper Kaae Sønderby, Tapani Raiko, Lars Maaløe, Søren Kaae Sønderby, and Ole Winther. Ladder
+variational autoencoders. In NIPS, 2016."
+REFERENCES,0.5012406947890818,"Tiecheng Song and Hongliang Li. Wavelbp based hierarchical features for image classification.
+Pattern Recognition Letters, 34(12):1323–1328, 2013."
+REFERENCES,0.5037220843672456,"Jakub M Tomczak and Max Welling. Vae with a vampprior. In 21st International Conference on
+Artificial Intelligence and Statistics, AISTATS 2018, 2018."
+REFERENCES,0.5062034739454094,"Francesco Tonolini, Bjørn Sand Jensen, and Roderick Murray-Smith. Variational sparse coding. In
+Uncertainty in Artificial Intelligence, pp. 690–700. PMLR, 2020."
+REFERENCES,0.5086848635235732,"Arash Vahdat and Jan Kautz. Nvae: A deep hierarchical variational autoencoder. arXiv preprint
+arXiv:2007.03898, 2020."
+REFERENCES,0.511166253101737,Published as a conference paper at ICLR 2022
+REFERENCES,0.5136476426799007,"Aaron van den Oord, Oriol Vinyals, and Koray Kavukcuoglu. Neural discrete representation learning.
+In Proceedings of the 31st International Conference on Neural Information Processing Systems,
+pp. 6309–6318, 2017."
+REFERENCES,0.5161290322580645,"Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Lukasz
+Kaiser, and Illia Polosukhin. Attention is all you need. In NIPS, 2017."
+REFERENCES,0.5186104218362283,"Stefan Webb, Adam Golinski, Robert Zinkov, Siddharth Narayanaswamy, Tom Rainforth, Yee Whye
+Teh, and Frank Wood. Faithful inversion of generative models for effective amortized inference.
+In NeurIPS, 2018."
+REFERENCES,0.5210918114143921,"John Wright, Allen Y. Yang, Arvind Ganesh, S. Shankar Sastry, and Yi Ma. Robust face recognition
+via sparse representation. IEEE Transactions on Pattern Analysis and Machine Intelligence, 31(2):
+210–227, 2009. doi: 10.1109/TPAMI.2008.79."
+REFERENCES,0.5235732009925558,"Han Xiao, Kashif Rasul, and Roland Vollgraf. Fashion-mnist: a novel image dataset for benchmarking
+machine learning algorithms. arXiv preprint arXiv:1708.07747, 2017."
+REFERENCES,0.5260545905707196,"Kenneth Yip and Gerald Jay Sussman.
+Sparse representations for fast, one-shot learning.
+In
+Proceedings of the fourteenth national conference on artificial intelligence and ninth conference
+on Innovative applications of artificial intelligence, pp. 521–527, 1997."
+REFERENCES,0.5285359801488834,"Shengjia Zhao, Jiaming Song, and Stefano Ermon. Learning hierarchical features from generative
+models. In International Conference on Machine Learning, 2017."
+REFERENCES,0.5310173697270472,"Shengjia Zhao, Jiaming Song, and Stefano Ermon. Infovae: Balancing learning and inference
+in variational autoencoders. In Proceedings of the aaai conference on artificial intelligence,
+volume 33, pp. 5885–5892, 2019."
+REFERENCES,0.533498759305211,Published as a conference paper at ICLR 2022
+REFERENCES,0.5359801488833746,"APPENDIX A
+PROOFS"
+REFERENCES,0.5384615384615384,"Theorem 1. Let pψ(z) and qϕ,ψ(z|x) represent the respective pushforward distributions of N(0, I)
+and qϕ(y|x) induced by the mapping gψ : Y 7→Z. The following holds for all measurable gψ:
+DKL (qϕ,ψ(z|x) ∥pψ(z)) ≤DKL (qϕ(y|x) ∥N(y; 0, I)) .
+(3)
+If gψ is also an invertible function then the above becomes an equality and LY equals the standard
+ELBO on the space of Z as follows
+LY(x, θ, ϕ, ψ) = Eqϕ,ψ(z|x)[log pθ(x|z)] −DKL (qϕ,ψ(z|x) ∥pψ(z)) .
+(4)"
+REFERENCES,0.5409429280397022,"Proof. We first prove the inequality from Eq. (3), then we show that Eq. (3) is actually an equality
+when gψ is invertible, and finally we prove that the reconstruction term is unchanged by gψ."
+REFERENCES,0.543424317617866,"Let us denote by F and G the sigma-algebras of respectively Y and Z, and we have by construction
+a measurable map gψ : (Y, F) →(Z, G). We can actually define the measurable space (Z, G)
+as the image of (Y, F) by gψ, then gψ is automatically both surjective and measurable.1 We also
+assume that there exists a measure on Y, which we denote ξ, and denote with ν the corresponding
+pushforward measure by gψ on Z. We further have ν(A) = ξ(g−1
+ψ (A)) for any A ∈G.2"
+REFERENCES,0.5459057071960298,"We start by proving Eq. (3), where the Kullback-Leibler (KL) divergence between the two push-
+forward measures3 qϕ,ψ ≜qϕ ◦g−1
+ψ
+and pψ ≜p ◦g−1
+ψ
+is upper bounded by DKL (qϕ(y|x) ∥p(y)),
+where here we have p(y) = N(y; 0, I) but we will use p as a convenient shorthand. At a high-level,
+we essentially have that Eq. (3) follows directly the data processing inequality (Sason, 2019) with a
+deterministic kernel z = gψ(y). Nonetheless, we develop in what follows a proof which addition-
+ally gives sufficient conditions for when this inequality becomes non-strict. We can assume that
+DKL (qϕ(y|x) ∥N(y; 0, I)) is finite, as otherwise the result is trivially true, which in turn implies
+qϕ ≪p.4 For any A ∈G, we have that if pψ(A) = p ◦g−1
+ψ (A) = p(g−1
+ψ (A)) = 0 then this
+implies qϕ(g−1
+ψ (A)) = qϕ ◦g−1
+ψ (A) = qϕ,ψ(A) = 0. As such, we have that qϕ,ψ ≪pψ and so the
+DKL (qϕ,ψ(z|x) ∥pψ(z)) is also defined."
+REFERENCES,0.5483870967741935,Our next significant step is to show that Ep(y) qϕ p
+REFERENCES,0.5508684863523573,"σ(gψ)
+
+=
+qϕ ◦g−1
+ψ
+p ◦g−1
+ψ
+◦gψ,
+(A.1)"
+REFERENCES,0.5533498759305211,"where σ(gψ) denotes the sigma-algebra generated by the function gψ. To do this, let h : (Z, G) →"
+REFERENCES,0.5558312655086849,"(R+, B(R+)) be a measurable function s.t. Ep(y)
+h
+qϕ"
+REFERENCES,0.5583126550868487,"p
+ σ(gψ)
+i
+= h ◦gψ. To show this, we will
+demonstrate that they lead to equivalent measures when integrated over any arbitrary set A ∈G:
+Z"
+REFERENCES,0.5607940446650124,"Z
+1A
+qϕ ◦g−1
+ψ
+p ◦g−1
+ψ
+p ◦g−1
+ψ
+dν =
+Z"
+REFERENCES,0.5632754342431762,"Z
+1A qϕ ◦g−1
+ψ
+dν =
+Z"
+REFERENCES,0.56575682382134,"Z
+1A d(qϕ ◦g−1
+ψ )"
+REFERENCES,0.5682382133995038,"(a)
+=
+Z"
+REFERENCES,0.5707196029776674,"Y
+(1A ◦gψ) dqϕ =
+Z"
+REFERENCES,0.5732009925558312,"Y
+(1A ◦gψ) qϕ dξ"
+REFERENCES,0.575682382133995,"(b)
+=
+Z"
+REFERENCES,0.5781637717121588,"Y
+(1A ◦gψ) qϕ"
+REFERENCES,0.5806451612903226,p p dξ
+REFERENCES,0.5831265508684863,"(c)
+=
+Z"
+REFERENCES,0.5856079404466501,"Y
+(1A ◦gψ) Ep(y) qϕ p"
+REFERENCES,0.5880893300248139,"σ(gψ)
+
+p dξ"
+REFERENCES,0.5905707196029777,"(d)
+=
+Z"
+REFERENCES,0.5930521091811415,"Y
+(1A ◦gψ) (h ◦gψ) p dξ =
+Z"
+REFERENCES,0.5955334987593052,"Y
+(1A ◦gψ) (h ◦gψ) dp"
+REFERENCES,0.598014888337469,"(e)
+=
+Z"
+REFERENCES,0.6004962779156328,"Z
+1A h d(p ◦g−1
+ψ ) =
+Z"
+REFERENCES,0.6029776674937966,"Z
+1A h (p ◦g−1
+ψ ) dν,"
+REFERENCES,0.6054590570719603,"1We recall that gψ is said to be measurable if and only if for any A ∈G, g−1
+ψ (A) ∈F.
+2The notation g−1
+ψ (A) does not imply that gψ is invertible, but denotes the preimage of A which is defined
+as g−1
+ψ (A) = {y ∈Y | gψ(y) ∈A}.
+3We denote the pushforward of a probability measure χ along a map g by χ ◦g−1.
+4We denote the absolute continuity of measures with ≪, where µ is said to be absolutely continuous w.r.t. ν,
+i.e. µ ≪ν, if for any measurable set A, ν(A) = 0 implies µ(A) = 0."
+REFERENCES,0.607940446650124,Published as a conference paper at ICLR 2022
+REFERENCES,0.6104218362282878,"where we have leveraged the definition of pushforward measures in (a & e); the absolute continuity
+of qϕ w.r.t. p in (b); the conditional expectation definition in (c); and the definition of h in (d). By
+equating terms, we have that qϕ ◦g−1
+ψ /p ◦g−1
+ψ
+= h, almost-surely with respect to qϕ ◦g−1
+ψ
+and thus
+that Eq. (A.1) is verified."
+REFERENCES,0.6129032258064516,"Let us define f : x 7→x log(x), which is strictly convex on [0, ∞) (as it can be prolonged with
+f(0) = 0). We have the following"
+REFERENCES,0.6153846153846154,"DKL (qϕ,ψ(z|x) ∥pψ(z))
+(a)
+=
+Z"
+REFERENCES,0.6178660049627791,"Z
+log
+qϕ,ψ pψ"
+REFERENCES,0.6203473945409429,"
+qϕ,ψ dν"
+REFERENCES,0.6228287841191067,"(b)
+=
+Z"
+REFERENCES,0.6253101736972705,"Z
+log
+qϕ,ψ pψ"
+REFERENCES,0.6277915632754343," qϕ,ψ"
+REFERENCES,0.630272952853598,"pψ
+pψ dν"
+REFERENCES,0.6327543424317618,"(c)
+=
+Z"
+REFERENCES,0.6352357320099256,"Z
+f
+qϕ,ψ pψ"
+REFERENCES,0.6377171215880894,"
+pψ dν =
+Z"
+REFERENCES,0.6401985111662531,"Z
+f
+qϕ,ψ pψ"
+REFERENCES,0.6426799007444168,"
+d(p ◦g−1
+ψ )"
+REFERENCES,0.6451612903225806,"(d)
+=
+Z"
+REFERENCES,0.6476426799007444,"Y
+f
+qϕ,ψ"
+REFERENCES,0.6501240694789082,"pψ
+◦gψ"
+REFERENCES,0.652605459057072,"
+dp =
+Z Y
+f"
+REFERENCES,0.6550868486352357,"qϕ ◦g−1
+ψ
+p ◦g−1
+ψ
+◦gψ ! p dξ"
+REFERENCES,0.6575682382133995,"(e)
+=
+Z"
+REFERENCES,0.6600496277915633,"Y
+f
+
+Ep(y) qϕ p"
+REFERENCES,0.6625310173697271,"σ(gψ)
+
+p dξ"
+REFERENCES,0.6650124069478908,"(f)
+≤
+Z"
+REFERENCES,0.6674937965260546,"Y
+Ep(y)"
+REFERENCES,0.6699751861042184,"
+f
+qϕ p"
+REFERENCES,0.6724565756823822,"  σ(gψ)
+
+p dξ"
+REFERENCES,0.674937965260546,"(g)
+=
+Z"
+REFERENCES,0.6774193548387096,"Y
+f
+qϕ p"
+REFERENCES,0.6799007444168734,"
+p dξ"
+REFERENCES,0.6823821339950372,"(h)
+=
+Z"
+REFERENCES,0.684863523573201,"Y
+log
+qϕ p  qϕ"
+REFERENCES,0.6873449131513648,p p dξ
+REFERENCES,0.6898263027295285,"(i)
+= Eqϕ(y|x)"
+REFERENCES,0.6923076923076923,"
+log
+qϕ(y|x) p(y) "
+REFERENCES,0.6947890818858561,"(j)
+= DKL (qϕ(y|x) ∥p(y)) ,"
+REFERENCES,0.6972704714640199,"where we leveraged the definition of the KL divergence in (a & j); the absolute continuity of qϕ w.r.t.
+p in (b & i); the definition of f in (c & h); the definition of the pushforward measure in (d); Eq. (A.1)
+in (e); the conditional Jensen inequality in (f) and the law of total expectation in (g). Note that this
+proof not only holds for the KL divergence, but for any f-divergences as they are defined as in (b)
+with f convex."
+REFERENCES,0.6997518610421837,"To prove Eq. (4), we now need to show that line (f) above becomes an equality when gψ is invertible."
+REFERENCES,0.7022332506203474,"As f is strictly convex, this happens if and only if qϕ"
+REFERENCES,0.7047146401985112,"p = Ep(y)
+h
+qϕ"
+REFERENCES,0.707196029776675,"p
+ σ(gψ)
+i
+. A sufficient condition"
+REFERENCES,0.7096774193548387,for this to be true is for qϕ
+REFERENCES,0.7121588089330024,"p to be measurable w.r.t. σ(gψ) which is satisfied when gψ : Y 7→Z is
+invertible as σ(gψ) ⊇F, as required. We have thus shown that the KL divergences are equal when
+using an invertible gψ."
+REFERENCES,0.7146401985111662,"For the reconstruction term, we instead have"
+REFERENCES,0.71712158808933,"Eqϕ(y|x)[log pθ(x|gψ(y))] =
+Z"
+REFERENCES,0.7196029776674938,"Y
+log pθ(x|gψ(y))qϕ(y|x)dξ =
+Z"
+REFERENCES,0.7220843672456576,"Z
+log pθ(x|z)qϕ,ψ(z|x)dν"
+REFERENCES,0.7245657568238213,"= Eqϕ,ψ(z|x)[log pθ(x|z)]."
+REFERENCES,0.7270471464019851,Eq. (4) now follows from the fact that both the reconstruction and KL terms are equal.
+REFERENCES,0.7295285359801489,Published as a conference paper at ICLR 2022
+REFERENCES,0.7320099255583127,"APPENDIX B
+HIERARCHICAL REPRESENTATIONS"
+REFERENCES,0.7344913151364765,"Figure B.1: Graphical model for hierar-
+chical InteL-VAE"
+REFERENCES,0.7369727047146402,"The isotropic Gaussian prior in standard VAEs as-
+sumes that representations are independent across dimen-
+sions (Kumar et al., 2018). However, this assumption is
+often unrealistic (Belghazi et al., 2018; Mathieu et al.,
+2019b). For example, in Fashion-MNIST, high-level fea-
+tures such as object category, may affect low-level features
+such as shape or height. Separately extracting such global
+and local information can be beneficial for visualization
+and data manipulation (Zhao et al., 2017). To try and cap-
+ture this, we introduce an inductive bias that is tailored to
+model and learn hierarchical features. We note here that
+our aim is not to try and provide a state-of-the-art hierarchi-
+cal VAE approach, as a wide variety of highly–customized
+and powerful approaches are already well–established, but
+to show how easily the InteL-VAE framework can be used
+to induce hierarchical representations in a simple, lightweight, manner."
+REFERENCES,0.739454094292804,"Mapping design
+Following existing ideas from hierarchical VAEs (Sønderby et al., 2016; Zhao
+et al., 2017), we propose a hierarchical mapping gψ. As shown in Fig. B.1, the intermediary Gaussian
+variable y is first split into a set of N layers [y0, y1, ..., yN]. The mapping z = gψ(y) is then
+recursively defined as zi = NNi(zi−1, yi), where NNi is a neural network combining information
+from higher-level feature zi−1 and new information from yi. As a result, we get a hierarchical
+encoding z = [z0, z1, ..., zN], where high-level features influence low-level ones but not vice-versa.
+This gψ thus endows InteL-VAEs with hierarchical representations. (a) (b) (c) (d) (e)"
+REFERENCES,0.7419354838709677,"Figure B.2: Manipulating representations of
+a hierarchical InteL-VAE. The features are
+split into 5 levels, with each of (a) [highest]
+to (e) [lowest] corresponding to an example
+feature from each. We see that high-level
+features control more complex properties,
+such as class label or topological structure,
+while low-level features control simpler de-
+tails, (e.g. (d) controls collar shape)."
+REFERENCES,0.7444168734491315,"Experiments
+While
+conventional
+hierarchical
+VAEs, e.g. (Sønderby et al., 2016; Zhao et al.,
+2017; Vahdat & Kautz, 2020), use hierarchies to
+try and improve generation quality, our usage is
+explicitly from the representation perspective, with
+our experiments set up accordingly. Fig. B.2 shows
+some hierarchical features learned by InteL-VAE
+on Fashion-MNIST. We observe that high-level
+information such as categories have indeed been
+learned in the top-level features, while low-level
+features control more detailed aspects."
+REFERENCES,0.7468982630272953,"To provide more quantitative investigation, we also
+consider the CelebA dataset (Liu et al., 2015) and
+investigate performance on downstream tasks, com-
+paring to vanilla-VAEs with different latent dimen-
+sions. For this, we train a linear classifier to predict
+all 40 binary labels from the learned features for each
+method. In order to eliminate the effect of latent di-
+mensions, we compare InteL-VAE (with fixed latent
+dimension 128) and vanilla VAE with different latent
+dimensions (1, 2, 4, 8, 16, 32, 64, 128). We show ex-
+periment results on some labels as well as the average
+accuracy on all labels in Table B.1 and Fig. B.3. We
+first find that the optimal latent dimension increases
+with the number of data points for the vanilla-VAEs, but is always worse than the InteL-VAE. Notably,
+the accuracy with InteL-VAE is quite robust, even as the number of data points gets dramatically low,
+indicating high data efficiency. To the best of our knowledge, this is the first result showing that a
+hierarchical inductive bias in VAE is beneficial to feature quality."
+REFERENCES,0.749379652605459,"Related work Hierarchical VAEs (Vahdat & Kautz, 2020; Ranganath et al., 2016; Sønderby et al.,
+2016; Klushyn et al.; Zhao et al., 2017) seek to improve the fit and generation quality of VAEs by
+recursively correcting the generative distributions. However, they require careful design of neural"
+REFERENCES,0.7518610421836228,Published as a conference paper at ICLR 2022
+REFERENCES,0.7543424317617866,"Model
+Latent dim
+Data size"
+REFERENCES,0.7568238213399504,"50
+100
+500
+1000
+5000
+10000"
+REFERENCES,0.7593052109181141,"VAE
+8
+0.791
+0.799
+0.814
+0.815
+0.819
+0.819
+16
+0.788
+0.801
+0.820
+0.824
+0.829
+0.831
+32
+0.769
+0.795
+0.825
+0.832
+0.842
+0.846
+64
+0.767
+0.794
+0.826
+0.832
+0.849
+0.855
+128
+0.722
+0.765
+0.817
+0.825
+0.830
+0.852"
+REFERENCES,0.7617866004962779,"InteL-VAE
+64
+0.817
+0.824
+0.841
+0.846
+0.854
+0.857"
+REFERENCES,0.7642679900744417,"Table B.1: Average accuracy in predicting all 40 binary labels of CelebA. Overall best accuracy is
+shown in bold and best results of vanilla-VAEs are underlined for comparison. Each experiment is
+repeated 10 times and differences are significant at the 5% level for data size ≤1000."
+REFERENCES,0.7667493796526055,"layers, and the hierarchical KL divergence makes training deep hierarchical VAEs unstable (Vahdat &
+Kautz, 2020). In comparison, InteL-VAE with hierarchical mappings is extremely easy to implement
+without causing any computational instabilities, while its aims also differ noticeably: our approach
+successfully learns hierarchical representations—something that is rarely mentioned in prior works."
+REFERENCES,0.7692307692307693,Published as a conference paper at ICLR 2022 0.80 0.85 0.90
+REFERENCES,0.771712158808933,#Data = 50
+REFERENCES,0.7741935483870968,5_o_Clock_Shadow 0.82 0.84 0.86 0.88 0.90
+REFERENCES,0.7766749379652605,#Data = 100 0.86 0.88 0.90
+REFERENCES,0.7791563275434243,#Data = 200 0.88 0.89 0.90 0.91
+REFERENCES,0.7816377171215881,#Data = 500 0.89 0.90 0.91
+REFERENCES,0.7841191066997518,#Data = 1000 0.89 0.90 0.91
+REFERENCES,0.7866004962779156,#Data = 2000 0.89 0.90 0.91
+REFERENCES,0.7890818858560794,#Data = 5000
+REFERENCES,0.7915632754342432,"1
+2
+4
+8
+16 32 64 128
+Latent Dimension 0.890 0.895 0.900 0.905 0.910"
+REFERENCES,0.794044665012407,#Data = 10000 0.525 0.550 0.575 0.600 0.625
+REFERENCES,0.7965260545905707,Attractive 0.525 0.550 0.575 0.600 0.625 0.650 0.55 0.60 0.65 0.55 0.60 0.65 0.55 0.60 0.65 0.55 0.60 0.65 0.70 0.55 0.60 0.65 0.70
+REFERENCES,0.7990074441687345,"1
+2
+4
+8
+16 32 64 128
+Latent Dimension 0.55 0.60 0.65 0.70 0.85 0.90 0.95 Bald 0.92 0.94 0.96 0.98 0.960 0.965 0.970 0.975 0.980 0.974 0.976 0.978 0.980 0.974 0.976 0.978 0.980 0.976 0.977 0.978 0.979 0.980 0.981 0.976 0.977 0.978 0.979 0.980 0.981"
+REFERENCES,0.8014888337468983,"1
+2
+4
+8
+16 32 64 128
+Latent Dimension 0.976 0.978 0.980 0.70 0.75 0.80"
+BANGS,0.8039702233250621,"0.85
+Bangs 0.76 0.78 0.80 0.82 0.84 0.80 0.82 0.84 0.86 0.85 0.86 0.87 0.88 0.89 0.85 0.86 0.87 0.88 0.89 0.85 0.86 0.87 0.88 0.89 0.90 0.86 0.88 0.90"
+BANGS,0.8064516129032258,"1
+2
+4
+8
+16 32 64 128
+Latent Dimension 0.86 0.88 0.90 0.625 0.650 0.675 0.700 0.725"
+BANGS,0.8089330024813896,Black_Hair 0.64 0.66 0.68 0.70 0.72 0.68 0.70 0.72 0.74 0.72 0.74 0.76 0.73 0.74 0.75 0.76 0.77 0.78 0.74 0.76 0.78 0.74 0.76 0.78 0.80
+BANGS,0.8114143920595533,"1
+2
+4
+8
+16 32 64 128
+Latent Dimension 0.74 0.76 0.78 0.80 0.70 0.75 0.80 0.85"
+BANGS,0.8138957816377171,Blond_Hair 0.78 0.80 0.82 0.84 0.86 0.88 0.82 0.84 0.86 0.88 0.85 0.86 0.87 0.88 0.89 0.87 0.88 0.89 0.87 0.88 0.89 0.90 0.87 0.88 0.89 0.90 0.91
+BANGS,0.8163771712158809,"1
+2
+4
+8
+16 32 64 128
+Latent Dimension 0.87 0.88 0.89 0.90 0.91 0.92"
+BANGS,0.8188585607940446,"Figure B.3: InteL-VAE’s performance of attribute prediction on CelebA dataset. Each column shows
+results on the same feature with different data sizes and each column shows results on different
+features. In each graph, test accuracy of vanilla-VAE with different latent dimensions are shown
+in blue line. And results of InteL-VAE with hierarchical prior are shown in red. We find that our
+method (red line) achieves comparable or even better results compared with vanilla-VAE with all
+latent dimensions."
+BANGS,0.8213399503722084,Published as a conference paper at ICLR 2022
+BANGS,0.8238213399503722,"APPENDIX C
+FULL METHOD AND EXPERIMENT DETAILS"
+BANGS,0.826302729528536,"In this section, we first provide complete details of the mapping designs used for our different InteL-
+VAE realizations along with some additional experiments. We then provide other general information
+about datasets, network structures, and experiment settings to facilitate results reproduction."
+BANGS,0.8287841191066998,"C.1
+MULTIPLE-CONNECTIVITY"
+BANGS,0.8312655086848635,"Mapping design
+Full details for this mapping were given in the main paper. Fig. C.1 provides a
+further illustration of the gluing process. Additional resulting including the Vamp-VAE are given
+in Fig. 4. 1
+0
+1 1 0 1"
+BANGS,0.8337468982630273,"(a) Circular prior with h = 1 1
+0
+1 1 0 1"
+BANGS,0.8362282878411911,"(b) Glue point pair 1
+0
+1 1 0 1"
+BANGS,0.8387096774193549,(c) Implied prior with h = 2
+BANGS,0.8411910669975186,Figure C.1: An illustration of the glue function in multiply-connected mappings.
+BANGS,0.8436724565756824,"C.2
+MULTI-MODALITY"
+BANGS,0.8461538461538461,"Mapping design
+In Sec. 6.2, we see the general idea of designing clustered mappings. In this
+part, we delve into the details of mapping design as well as extending it to 1 dimensional and high-
+dimensional cases. For simplicity’s sake let us temporarily assume that the dimension of Y is 2. Our
+approach is based on splitting the original space into K equally sized sectors, where K is the number
+of clusters we wish to create, as shown in Fig. 5b. For any point y, we can get its component (sector)
+index ci(y) as well as its distance from the sector boundary dis(y). By further defining the radius
+direction for the k-th sector (cf Fig. 5c) as"
+BANGS,0.8486352357320099,"∆(k) =
+
+cos
+2π K"
+BANGS,0.8511166253101737,"
+k + 1 2"
+BANGS,0.8535980148883374,"
+, sin
+2π K"
+BANGS,0.8560794044665012,"
+k + 1 2"
+BANGS,0.858560794044665,"
+∀k ∈{1, . . . , K},"
+BANGS,0.8610421836228288,we can in turn define g(y) as:
+BANGS,0.8635235732009926,"r(y) = ∆(ci(y)),
+(C.1)
+g(y) = y + c1dis(y)c2r(y),
+(C.2)"
+BANGS,0.8660049627791563,"where c1 and c2 are constants, which are set to 5 and 0.2 in our experiments. we make sure g still
+continuous by keeping g(y) = y on boundaries."
+BANGS,0.8684863523573201,"When dimension of Y is greater than 2, we have more diverse choice for g. When K is decomposable,
+i.e., K = Q"
+BANGS,0.8709677419354839,"i Ki, we can separately cut the plane expanded by Y2i and Y2i+1 into Ki sectors by the
+Eq. (C.1). As a result, Y is split into K = Q"
+BANGS,0.8734491315136477,"i ki clusters. When K = 2, we find that g only changes
+the 1-st dimension of Y, so it can be applied to cases where latent dimension is 1."
+BANGS,0.8759305210918115,"Learnable proportions
+We can also make the mapping more flexible by learning rather than
+assigning the cluster proportions. To do so, we keep a learnable value ui for each cluster and set the
+angle of the i-th sector as 2πSoftmax(u)i. Things are simpler for the 1-dimensional case where we
+can uniformly translate y by a learnable bias b before splitting the space from the origin."
+BANGS,0.8784119106699751,"C.3
+SPARSITY"
+BANGS,0.8808933002481389,"Relationship to soft attention
+We note that our setup for the sparsity mapping shares some
+similarities with a soft attention layer (Bahdanau et al., 2014). However, there are also some"
+BANGS,0.8833746898263027,Published as a conference paper at ICLR 2022
+BANGS,0.8858560794044665,"(a) Real distribution
+(b) VAE
+(c) Vamp-VAE
+(d) InteL-VAE"
+BANGS,0.8883374689826302,"Figure C.2: Extension of Fig. 4 showing Vamp-VAE baseline and additional circular target distribution
+(top row, uses the same single hole gψ as the second and third rows)."
+BANGS,0.890818858560794,"important points of difference. Firstly, soft attention aims to find the weights to blend features from
+different time steps (for sequential data) or different positions (for image data). In contrast, the
+dimension selector (DS) selects which dimensions to activate or deactivate for the same latent vector.
+Secondly, the weights of features are usually calculated by inner products of features for soft attention,
+while DS relies on a network to directly output the logits."
+BANGS,0.8933002481389578,"Sparsity regularizer
+Our sparsity regularizer term, Lsp, is used to encourage our dimensionality
+selector network (DS) to produce sparse mappings. It is defined using a mini-batch of samples
+{yi}M
+i=1 drawn during training as per (7). During training, the first term of Lsp decreases the number
+of activated dimensions for each sample, while the second term prevents the samples from all using
+the same set of activated dimensions, which would cause the model to degenerate to a vanilla VAE
+with a lower latent dimensionality."
+BANGS,0.8957816377171216,"We note that Lsp alone is not expected to induce sparsity without also using the carefully constructed
+gψ of the suggested InteL-VAE. We confirm this empirically by performing an ablation study on
+MNIST where we apply this regularization directly to a vanilla VAE. We find that even when using
+very large values of γ > 30.0 we can only slightly increase the sparsity score (0.230 →0.235).
+Moreover, unlikely for the InteL-VAE, this substantially deteriorates generation quality, with the FID
+score raising to more than 80.0 at the same time."
+BANGS,0.8982630272952854,"Sparse metric
+We use the Hoyer extrinsic metric (Hurley & Rickard, 2009) to measure the sparsity
+of representations. For a representation z ∈RD,"
+BANGS,0.9007444168734491,Hoyer(z) = √
+BANGS,0.9032258064516129,"D −||ˆz||1/||ˆz||2
+√"
+BANGS,0.9057071960297767,"D −1
+.
+(C.3)"
+BANGS,0.9081885856079405,"Here, following Mathieu et al. (2019b), we crucially first normalized each dimension d of z to have
+standard deviation 1, ˆzd = zd/σd, to ensure that we only measure sparsity that varies between data"
+BANGS,0.9106699751861043,Published as a conference paper at ICLR 2022
+BANGS,0.913151364764268,"0.2
+0.4
+0.6
+0.8
+1.0
+Sparse scores (
+) 50 100 150 200 250 300"
+BANGS,0.9156327543424317,"FID scores (
+)"
+BANGS,0.9181141439205955,"= 00.1 0.31.03.0
+10.0"
+BANGS,0.9205955334987593,"= 0
+100"
+BANGS,0.9230769230769231,"200
+500
+1000"
+BANGS,0.9255583126550868,"= 0.02
+0.10
+0.50"
+BANGS,0.9280397022332506,"Ours
+DD
+Sparse-VAE
+Vanilla-VAE"
+BANGS,0.9305210918114144,"10
+20
+50
+100
+200
+500 1000 2000 5000
+#Data 0.3 0.5 0.7 0.9"
+BANGS,0.9330024813895782,"Accuracy (
+)"
+BANGS,0.9354838709677419,"DD(
+= 100)"
+BANGS,0.9379652605459057,"VAE(
+= 0.3)"
+BANGS,0.9404466501240695,"VAE(
+= 1.0)"
+BANGS,0.9429280397022333,"VAE(
+= 3.0)"
+BANGS,0.9454094292803971,"Sprase-VAE(
+= 0.1)"
+BANGS,0.9478908188585607,Ours( = 10.0)
+BANGS,0.9503722084367245,Ours( = 30.0)
+BANGS,0.9528535980148883,Ours( = 100.0)
+BANGS,0.9553349875930521,"Figure C.3: Results on MNIST. The left figure shows FID and sparsity scores. Lower FID scores (↓)
+represent better sample quality while higher sparse scores (→) indicate sparser features. The right
+figure shows the performance of sparse features from InteL-VAE on downstream classification tasks.
+See Sec. 6.3 for details and results for MNIST."
+BANGS,0.9578163771712159,"Parameters
+Synthetic
+MNIST
+Fashion-MNIST
+MNIST-01
+CelebA"
+BANGS,0.9602977667493796,"Dataset sizes
+Unlimited
+55k/5k/10k
+55k/5k/10k
+10k/1k/2k
+163k/20k/20k
+Input space
+R2
+Binary 28x28
+Binary 28x28
+Binary 28x28
+RGB 64x64x3
+Encoder net
+MLP
+CNN
+CNN
+CNN
+CNN
+Decoder net
+MLP
+CNN
+CNN
+CNN
+CNN
+Latent dimension
+2-10
+50
+50
+1-10
+1-128
+Batch size
+10-500
+100
+100
+100
+100
+Optimizer
+Adam
+Adam
+Adam
+Adam
+Adam
+Learning rate
+1e-3
+1e-3
+1e-3
+1e-3
+1e-3"
+BANGS,0.9627791563275434,Table C.1: Hyperparameters used for different experiments.
+BANGS,0.9652605459057072,"points (as is desired), rather than any tendency to uniformly ‘switch off’ certain latent dimensions
+(which is tangential to our aims). In other words, this normalization is necessary to avoid giving
+high scores to representations whose length scales vary between dimensions, but which are not really
+sparse."
+BANGS,0.967741935483871,"By averaging Hoyer(z) over all representations, we can get the sparse score of a method. For the
+sparsest case, where each representation has a single activated dimension, the sparse score is 1. And
+when the representations get denser, ||ˆz||2 get smaller compared with ||ˆz||1, leading to smaller sparse
+scores."
+BANGS,0.9702233250620348,"Reproduction of Sparse-VAE
+We tried two different code bases for Sparse-VAE (Tonolini et al.,
+2020). The official code base5 gives higher sparse scores for MNIST and FashionMNIST (though
+still lower than InteL-VAE), but is very unstable during training, with runs regularly failing after
+diverging and producing NaNs. This issue gets even more severe on CelebA which occurs after only
+a few training steps, undermining our ability to train anything meaningful at all. To account for this,
+we switched to the codebase6 from De la Fuente & Aduviri (2019) that looked to replicate the results
+of the original paper. We report the results from this code base because it solves the instability issue
+and achieves reasonable results on CelebA. Interestingly, though its generation quality is good on
+MNIST and Fashion-MNIST, it fails to achieve a sparse score significantly higher than vanilla-VAE.
+As the original paper does not provide any quantitative evaluation of the achieved sparsity, it is
+difficult to know if this behavior is expected. We note though that the qualitative results shown in the
+paper appear to be substantially less sparse than those we show for the InteL-VAE, cf their Figure 5
+compared to the top row of our Fig. 8. In particular, their representation seems to mostly ‘switch off’
+some latents entirely, rather than having diversity between datapoints that is needed to score well
+under the Hoyer metric."
+BANGS,0.9727047146401985,"5https://github.com/ftonolini45/Variational_Sparse_Coding
+6https://github.com/Alfo5123/Variational-Sparse-Coding"
+BANGS,0.9751861042183623,Published as a conference paper at ICLR 2022
+BANGS,0.9776674937965261,Encoder
+BANGS,0.9801488833746899,"Input 64 x 64 x 3
+4x4 conv. 64 stride 2 & BN & LReLU
+4x4 conv. 128 stride 2 & BN & LReLU
+4x4 conv. 256 stride 2 & BN & LReLU
+Dense (dim)"
+BANGS,0.9826302729528535,Decoder
+BANGS,0.9851116625310173,"Input dim
+Dense (8x8x256) & BN & ReLU
+4x4 upconv. 256 stride 2 & BN & ReLU
+4x4 upconv. 128 stride 2 & BN & ReLU
+4x4 upconv. 3 stride 2"
+BANGS,0.9875930521091811,"Table C.2: Encoder and Decoder structures for CelebA, where dim is the latent dimension."
+BANGS,0.9900744416873449,"C.4
+ADDITIONAL EXPERIMENT DETAILS"
+BANGS,0.9925558312655087,"Datasets
+Both synthetic and real datasets are used in this paper. All synthetic datasets (sphere,
+square, star, and mixture of Gaussian) are generated by generators provided in our codes. For real
+datasets, We load MNIST, Fashion-MNIST, and CelebA directly from Tensorflow (Abadi et al., 2015),
+and we resize images from CelebA to 64x64 following Hou et al. (2017). For experiments with a
+specified number of training samples, we randomly select a subset of the training data. We use the
+same random seed for each model in the same experiment and different random seeds when repeating
+experiments."
+BANGS,0.9950372208436724,"Model structure
+For low-dimensional data, the encoder and decoder are both simple multilayer
+perceptrons with 3 hidden layers (10-10-10) and ReLU (Glorot et al., 2011) activation. For MNIST
+and Fashion-MNIST, we use the same encoder and decoder as Mathieu et al. (2019b). For CelebA,
+the structure of convolutional networks are shown in Table C.2."
+BANGS,0.9975186104218362,"Experiment settings
+Other hyperparameters are shown in Table C.1. All experiments are run on a
+GTX-1080-Ti GPU."

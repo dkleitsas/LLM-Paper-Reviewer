@@ -1,0 +1,1404 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,Abstract
+ABSTRACT,0.0024875621890547263,"Data augmentation is a key element of deep learning pipelines, as it informs
+the network during training about transformations of the input data that
+keep the label unchanged. Manually ﬁnding adequate augmentation methods
+and parameters for a given pipeline is however rapidly cumbersome. In
+particular, while intuition can guide this decision for images, the design and
+choice of augmentation policies remains unclear for more complex types of
+data, such as neuroscience signals. Besides, class-dependent augmentation
+strategies have been surprisingly unexplored in the literature, although it
+is quite intuitive: changing the color of a car image does not change the
+object class to be predicted, but doing the same to the picture of an orange
+does. This paper investigates gradient-based automatic data augmentation
+algorithms amenable to class-wise policies with exponentially larger search
+spaces. Motivated by supervised learning applications using EEG signals for
+which good augmentation policies are mostly unknown, we propose a new
+diﬀerentiable relaxation of the problem. In the class-agnostic setting, results
+show that our new relaxation leads to optimal performance with faster
+training than competing gradient-based methods, while also outperforming
+gradient-free methods in the class-wise setting. This work proposes also novel
+diﬀerentiable augmentation operations relevant for sleep stage classiﬁcation."
+INTRODUCTION,0.004975124378109453,"1
+Introduction"
+INTRODUCTION,0.007462686567164179,"The interest in using deep learning for EEG related tasks has been rapidly growing in the
+last years, specially for applications in sleep staging, seizure detection and prediction, and
+brain-computer interfaces (BCI) (Roy et al., 2019). Data augmentation is a well-known
+regularization technique, widely used to improve the generalization power of large models,
+specially in deep learning (Krizhevsky et al., 2012; Yaeger et al., 1996; Simard et al., 2003).
+Not only does it help by synthetically increasing the size of the dataset used for training, it
+also creates useful inductive biases, as it encodes invariances of the data and the underlying
+decision function which the model does not have to learn from scratch (Chen et al., 2020a;
+van der Maaten et al., 2013). Such invariant transforms are also a key ingredient for state-
+of-the-art self-supervised learning (Chen et al., 2020b). Unfortunately, these transforms
+have to be known a priori and the best augmentations to use often highly depend on
+the model architecture, the task, the dataset and even the training stage (Ho et al., 2019;
+Cubuk et al., 2020). Manually ﬁnding what augmentation to use for a new problem is a
+cumbersome task, and this motivated the proposal of several automatic data augmentation
+search algorithms (Cubuk et al., 2019)."
+INTRODUCTION,0.009950248756218905,"The existing automatic data augmentation literature often focuses on computer vision
+problems only, and its application to other scientiﬁc domains such as neuroscience has been
+under-explored. Data augmentation is all the more important in this ﬁeld, as brain data,
+be it functional MRI (fMRI) or electroencephalography (EEG) signals, is very scarce either
+because its acquisition is complicated and costly or because expert knowledge is required for
+labelling it, or both. Furthermore, while atomic transformations encoding suitable invariances
+for images are intuitive (if you ﬂip the picture of a cat horizontally it is still a cat), the
+same cannot be said about functional brain signals such as EEG. Hence, automatic data"
+INTRODUCTION,0.012437810945273632,Published as a conference paper at ICLR 2022
+INTRODUCTION,0.014925373134328358,"augmentation search could be helpful not only to improve the performance of predictive
+models on EEG data, but also to discover interesting invariances present in brain signals."
+INTRODUCTION,0.017412935323383085,"Another interesting aspect of data augmentation that has gotten little attention is the fact
+that suitable invariances often depend on the class considered. When doing object recognition
+on images, using color transformations during training can help the model to better recognize
+cars or lamps, which are invariant to it, but will probably hurt the performance for classes
+which are strongly deﬁned by their color, such as apples or oranges. This also applies to
+neuroscience tasks, such as sleep staging which is part of a clinical exam conducted to
+characterize sleep disorders. As most commonly done (Iber et al., 2007), it consists in
+assigning to windows of 30 s of signals a label among ﬁve: Wake (W), Rapid Eye Movement
+(REM) and Non-REM of depth 1, 2 or 3 (N1, N2, N3). While some sleep stages are strongly
+characterized by the presence of waves with a particular shape, such as spindles and K-
+complexes in the N2 stage, others are deﬁned by the dominating frequencies in the signal,
+such as alpha and theta rhythms in W and N1 stages respectively (Rosenberg & Van Hout,
+2013). This means that while randomly setting some small portion of a signal to zero might
+work to augment W or N1 signals, it might wash out important waves in N2 stages and slow
+down the learning for this class. This motivates the study of augmentations depending on
+the class. Of course, as this greatly increases the number of operations and parameters to
+set, handcrafting such augmentations is not conceivable and eﬃcient automatic searching
+strategies are required, which is the central topic of this paper. Using black-box optimization
+algorithms as most automatic data augmentation papers suggest seemed unsuitable given
+the exponential increase in complexity of the problem when separate augmentations for each
+class are considered."
+INTRODUCTION,0.01990049751243781,"In this paper, we extend the bilevel framework of AutoAugment (Cubuk et al., 2019) in order
+to search for class-wise (CW) data augmentation policies. First, Section 3 introduces three
+novel augmentation operations for EEG signals, and Section 4 quantiﬁes on sleep staging and
+digit classiﬁcation tasks how CW augmentations can enable gains in prediction performance
+by exploiting interesting invariances. Then, Section 5 introduces a novel diﬀerentiable
+relaxation of this extended problem which enables gradient-based policy learning. Finally,
+in Section 6, we use the EEG sleep staging task in the class-agnostic setting to evaluate
+our approach against previously proposed gradient-based methods. In the class-wise setting,
+the CADDA method is compared against gradient-free methods that can suﬀer signiﬁcantly
+from the dimension of policy learning problem. Furthermore, we carry an ablation study
+which clariﬁes the impact of each architecture choices that we propose. Our experiments
+also investigate density matching-based approaches (Lim et al., 2019; Hataya et al., 2020) in
+low or medium data regimes."
+RELATED WORK,0.022388059701492536,"2
+Related Work"
+RELATED WORK,0.024875621890547265,"EEG Data Augmentation Given the relatively small size of available EEG datasets, part
+of the community has explored ways of generating more data from existing ones, e.g., using
+generative models (Hartmann et al., 2018; Bouallegue & Djemal, 2020) or data augmentation
+strategies (e.g., Roy et al. 2019; Yin & Zhang 2017; Wang et al. 2018). Here, we give a
+succinct review which is completed in Appendix B. The reader is referred to Roy et al. (2019)
+for a more detailed discussion on previous EEG data augmentation papers."
+RELATED WORK,0.02736318407960199,"Noise addition is the most straight-forward data augmentation that can be applied to either
+raw EEG signals (Wang et al., 2018) or to derived features (Yin & Zhang, 2017). Adding
+such transformed samples forces the estimator to learn a decision function that is invariant
+to the added noise. Other transforms have also been proposed to account for other sources of
+noise, such as label misalignment with the time shift (Mohsenvand et al., 2020), positional
+noise for the sensors with sensor rotations (Krell & Kim, 2017) or corrupted sensors with
+channel dropout (Saeed et al., 2021)."
+RELATED WORK,0.029850746268656716,"Other data augmentations aim at promoting some global properties in the model. While
+masking strategies such as time masking, bandstop filter (Mohsenvand et al., 2020) or
+sensors cutout (Cheng et al., 2020) ensure that the model does not rely on speciﬁc time
+segments, frequency bands or sensor, channel symmetry (Deiss et al., 2018) encourages the"
+RELATED WORK,0.03233830845771144,Published as a conference paper at ICLR 2022
+RELATED WORK,0.03482587064676617,"model to account for the brain bilateral symmetry. Likewise, the Fourier Transform (FT)
+surrogate (Schwabedal et al., 2019) consists in replacing the phases of Fourier coeﬃcients by
+random numbers sampled uniformly from [0, 2π). The authors of this transformation argue
+that EEG signals can be approximated by linear stationary processes, which are uniquely
+characterized by their Fourier amplitudes."
+RELATED WORK,0.03731343283582089,"Automatic Data Augmentation Automatic data augmentation (ADA) is about searching
+augmentations that, when applied during the model training, will minimize its validation
+loss, leading to greater generalization. Let Dtrain and Dvalid denote a training and validation
+set respectively, and let T be an augmentation policy, as deﬁned in more detail in Section 4.
+ADA is about ﬁnding algorithms solving the following bilevel optimization problem:"
+RELATED WORK,0.03980099502487562,"min
+T
+L(θ∗|Dvalid)"
+RELATED WORK,0.04228855721393035,"s.t.
+θ∗∈arg min
+θ
+L(θ|T (Dtrain)),
+(1)"
+RELATED WORK,0.04477611940298507,"where θ denotes the parameters of some predictive model, and L(θ|D) its loss over set D."
+RELATED WORK,0.0472636815920398,"One of the ﬁrst inﬂuential works in this area is AutoAugment (Cubuk et al., 2019), where
+problem (1) is solved by fully training multiple times a smaller model on a subset of the
+training set with diﬀerent augmentation policies and using the validation loss as a reward
+function in a reinforcement learning setting. The main drawback of the method is its
+enormous computation cost. Many alternative methods have been proposed since, diﬀering
+mainly in terms of search space, search algorithm, and metric used to assess each policy."
+RELATED WORK,0.04975124378109453,"The ﬁrst attempts to make AutoAugment more eﬃcient consisted in carrying model and
+policy trainings jointly, as done with a genetic algorithm in Population-Based Augmentation
+(Ho et al., 2019). A diﬀerent way of alleviating the computation burden of AutoAugment is
+proposed in Tian et al. (2020). Observing that data augmentation is mostly useful at the
+end of training, the authors propose to pre-train a shared model close to convergence with
+augmentations sampled uniformly, and then to use it to warmstart AutoAugment."
+RELATED WORK,0.05223880597014925,"The previous methods (Cubuk et al., 2019; Ho et al., 2019; Lim et al., 2019) use proxy tasks
+with small models and training subsets to carry the search. This idea is challenged in Ran-
+dAugment (Cubuk et al., 2020), where it is shown that optimal augmentations highly depend
+on the dataset size and model. RandAugment simply samples augmentations uniformly with
+the same shared magnitude, which can be tuned with a grid-search. Competitive results are
+obtained on computer vision tasks with this naive policy. A similar approach is proposed in
+Fons et al. (2021), where all possible augmentations are weighted with learnable parameters
+and used to derive enlarged batches."
+RELATED WORK,0.05472636815920398,"Density Matching While all previously cited ADA methods try to solve in some sense the
+original problem (1), Fast AutoAugment (Lim et al., 2019) suggests to solve a surrogate
+problem, by moving the policy T into the upper-level:"
+RELATED WORK,0.05721393034825871,"min
+T
+L(θ∗|T (Dvalid))"
+RELATED WORK,0.05970149253731343,"s.t.
+θ∗∈arg min
+θ
+L(θ|Dtrain) .
+(2)"
+RELATED WORK,0.06218905472636816,"Problem (2) can be seen as a form of density matching (Lim et al., 2019), where we look for
+augmentation policies such that the augmented validation set has the same distribution as
+the training set, as evaluated through the lens of the trained model. This greatly simpliﬁes
+problem (1) which is no longer bilevel, allowing to train the model only once without
+augmentation. Computation is massively reduced, yet this simpliﬁcation assumes the trained
+model has already captured meaningful invariances. This density matching objective has
+been later reused in Faster AutoAugment (Hataya et al., 2020), where a Wasserstein GAN
+network (Arjovsky et al., 2017) is used instead of the trained classiﬁer to assess the closeness
+between augmented and original data distributions."
+RELATED WORK,0.06467661691542288,"Gradient-based Automatic Data Augmentation Further eﬃciency improvements in
+ADA were obtained by exploring gradient-based optimization. In Online Hyper-parameter
+Learning (Lin et al., 2019) and Adversarial AutoAugment (Zhang et al., 2020), policies are"
+RELATED WORK,0.06716417910447761,Published as a conference paper at ICLR 2022
+RELATED WORK,0.06965174129353234,"0.0
+2.5
+5.0
+7.5
+10.0
+12.5
+15.0
+17.5
+20.0
+Frequency (Hz) 10 20 30 40"
+RELATED WORK,0.07213930348258707,V2/Hz (dB)
+RELATED WORK,0.07462686567164178,Sleep stage N2
+RELATED WORK,0.07711442786069651,"Subject 1
+Subject 2
+Subject 1 w/ 0.5 Hz Freq. shift"
+RELATED WORK,0.07960199004975124,"Figure 1: Averaged power spectral density
+of N2 windows from one night sleep of
+two diﬀerent subjects from the sleep Phy-
+sionet dataset (channel Pz-Oz used here)
+(Goldberger et al., 2000). We notice that
+peak frequencies are shifted.
+Applying
+a 0.5 Hz frequency shift transform to
+subject 1 leads a power spectrum density
+more similar to subject 2."
+RELATED WORK,0.08208955223880597,"modeled as parametrized discrete distributions over possible transformations and updated
+using the REINFORCE gradient estimator (Williams, 1992). As such estimators are quite
+noisy, Faster AutoAugment (Faster AA) and DADA (Li et al., 2020) derive full continuous re-
+laxations of the discrete original formalism of AutoAugment, allowing them to backpropagate
+directly through policies. We have revisited this idea in this work."
+RELATED WORK,0.0845771144278607,"Class-dependent Data Augmentation While class-dependent data generation has been
+studied in the GAN literature (Mirza & Osindero, 2014), to our knowledge, Hauberg et al.
+(2016) is the only work that has explored class-dependent data augmentations. It presents a
+method for learning a distribution of CW spatial distortions, by training a model to ﬁnd the
+C1-diﬀeomorphism allowing to transform one example into another within the same class.
+Although the authors state it is applicable to other domains, it is only demonstrated for digit
+classiﬁcation and its extension to other frameworks seems non-trivial. The main diﬀerence
+with our work is that Hauberg et al. (2016) learns transformations from scratch, while we
+try to learn which one to pick from a pool of existing operations and how to aggregate them."
+NEW EEG DATA AUGMENTATIONS,0.08706467661691543,"3
+New EEG data augmentations"
+NEW EEG DATA AUGMENTATIONS,0.08955223880597014,"In addition to the data augmentations described in Section 2, we investigate in this paper
+three novel operations acting on the time, space and frequency domains."
+NEW EEG DATA AUGMENTATIONS,0.09203980099502487,"Time Reverse As a new time domain transformation, we propose to randomly reverse
+time in certain input examples (i.e., ﬂip the time axis of the signal). Our motivation is the
+belief that most of the sleep stage information encoded in EEG signals resides in relative
+proportions of frequencies and in the presence of certain prototypical short waves. Yet, on
+this last point, it is possible that not all sleep stages are invariant to this transform, as some
+important waves (e.g., K-complexes) are asymmetric and are therefore potentially altered by
+the transformation."
+NEW EEG DATA AUGMENTATIONS,0.0945273631840796,"Sign Flip In the spatial transformations category, we argue that the information encoded
+in the electrical potentials captured by EEG sensors are likely to be invariant to the polarity
+of the electric ﬁeld. Given the physics of EEG, the polarity of the ﬁeld is deﬁned by the
+direction of the ﬂow of electric charges along the neuron dendrites: are charges moving
+towards deeper layers of the cortex or towards superﬁcial ones? As both are likely to happen
+in a brain region, we propose to augment EEG data by randomly ﬂipping the signals sign
+(multiplying all channels’ outputs by −1). This can be interpreted as a spatial transformation,
+since in some conﬁgurations it corresponds to inverting the main and the reference electrode
+(e.g. in the Sleep Physionet dataset)."
+NEW EEG DATA AUGMENTATIONS,0.09701492537313433,"Frequency Shift Reading the sleep scoring manual (Rosenberg & Van Hout, 2013), it is
+clear that dominant frequencies in EEG signals play an important role in characterising
+diﬀerent sleep stages. For instance, it is said that the N2 stage can be recognized by the
+presence of sleep spindles between 11-16 Hz. Such frequency range is quite broad, and
+when looking at the averaged power spectral density of windows in this stage for diﬀerent
+individuals, one can notice that the frequency peaks can be slightly shifted (cf. Figure 1). To
+mimic this phenomena we propose to shift the frequencies of signals by an oﬀset ∆f sampled
+uniformly from a small range (See Appendix B for details)."
+NEW EEG DATA AUGMENTATIONS,0.09950248756218906,Published as a conference paper at ICLR 2022
+CLASS-WISE DATA AUGMENTATION,0.10199004975124377,"4
+Class-wise Data Augmentation"
+CLASS-WISE DATA AUGMENTATION,0.1044776119402985,"Background on auto augmentation framework We adopt the same framework of
+deﬁnitions from AutoAugment (Cubuk et al., 2019), which was also reused in Lim et al.
+(2019) and Hataya et al. (2020). Let X denote the inputs space. We deﬁne an augmentation
+operation O as a mapping from X to X, depending on a magnitude parameter µ and a
+probability parameter p. While µ speciﬁes how strongly the inputs should be transformed, p
+sets the probability of actually transforming them:"
+CLASS-WISE DATA AUGMENTATION,0.10696517412935323,"O(X; p, µ) :=
+O(X; µ)
+with probability p
+,
+X
+with probability 1 −p
+.
+(3)"
+CLASS-WISE DATA AUGMENTATION,0.10945273631840796,"Operations can be chained, forming what we call an augmentation subpolicy of length K:"
+CLASS-WISE DATA AUGMENTATION,0.11194029850746269,"τ(X; µτ, pτ) := (OK ◦· · · ◦O1)(X; µτ, pτ),"
+CLASS-WISE DATA AUGMENTATION,0.11442786069651742,"where µτ and pτ denote the concatenation of the K operations parameters. To increase the
+randomness of the augmentation strategy, L subpolicies are grouped into a set called an
+augmentation policy T , and sampled with uniform probability for each new batch of inputs:"
+CLASS-WISE DATA AUGMENTATION,0.11691542288557213,"T (X) = τi(X; µτi, pτi),
+with i ∼U({1, . . . , L}).
+(4)"
+CLASS-WISE DATA AUGMENTATION,0.11940298507462686,"Note that some operations, such as time reverse and sign flip augmentations described
+in Section 3, may not depend on a magnitude parameter, which reduces the search space."
+CLASS-WISE DATA AUGMENTATION,0.12189054726368159,"Novel class-wise subpolicies and policies We introduce in this paper augmentation
+subpolicies which are conditioned on the input class. Hence, we deﬁne a class-wise subpolicy
+as a mapping between inputs X and labels y to an augmentation subpolicy τy:"
+CLASS-WISE DATA AUGMENTATION,0.12437810945273632,"˜τ : (X, y) 7→τy(X)
+(5)"
+CLASS-WISE DATA AUGMENTATION,0.12686567164179105,"where {τy : y ∈Y} is a set of subpolicies for each possible class in the output space Y. These
+can be grouped into class-wise policies as in (4)."
+CLASS-WISE DATA AUGMENTATION,0.12935323383084577,"Selection for class-wise augmentations In order to illustrate the interest of CW aug-
+mentations, we explore their performances on a sleep staging task using the sleep Physionet
+dataset (Goldberger et al., 2000). Following the standardization and low-pass ﬁltering of
+the the data, 30-seconds labelled time windows were extracted from the recordings. To
+avoid observing the eﬀects due to class imbalance, we sub-sampled the windows to obtain a
+balanced dataset. Indeed, as data augmentation yields more signiﬁcant enhancements in
+low data regime, it tends to beneﬁt underrepresented classes more than others. Out of 83
+subjects, 8 were left out for testing and the remaining ones were then split in training and
+validation sets, with respective proportions of 0.8 and 0.2. The convolutional neural network
+from Chambon et al. (2018) 1 was then trained on 350 randomly selected windows from the
+training set using CW subpolicies made up of two diﬀerent augmentations and this was
+repeated 10 times using diﬀerent folds. We carried this out for all possible combinations
+of two augmentations and kept
+the best CW subpolicy based on the cross- validation
+score compared to the class-agnostic augmentations. The aforementioned model was ﬁnally
+evaluated on the test set."
+CLASS-WISE DATA AUGMENTATION,0.1318407960199005,"Figure 2 (a) reports the improvement of the per-class F1 score for channels dropout, sign
+flip and a CW subpolicy which augments W and N3 stages with channels dropout and
+N1, N2 and REM with sign flip. The relative improvement in overall balanced accuracy
+compared to only augmenting with the class-agnostic augmentations is depicted on Figure 2
+(b), which shows that a better performance is reached with the CW augmentation."
+CLASS-WISE DATA AUGMENTATION,0.13432835820895522,"This experiment suggests that looking for augmentation strategies depending on the label
+of the data being transformed can be relevant to improve prediction performance, but also
+to help discovering some interesting invariances for the task considered. A similar toy
+experiment with MNIST dataset (LeCun et al., 1998) can be found in Appendix C with
+automated CW-policy selection using Random Search."
+CLASS-WISE DATA AUGMENTATION,0.13681592039800994,1See Appendix D for a detailed description of the architecture.
+CLASS-WISE DATA AUGMENTATION,0.13930348258706468,Published as a conference paper at ICLR 2022
+CLASS-WISE DATA AUGMENTATION,0.1417910447761194,"Wake
+N1
+N2
+N3
+REM
+Sleep stage 0.4 0.2 0.0 0.2 0.4 0.6"
+CLASS-WISE DATA AUGMENTATION,0.14427860696517414,"F1
+score"
+CLASS-WISE DATA AUGMENTATION,0.14676616915422885,relative improvement
+CLASS-WISE DATA AUGMENTATION,0.14925373134328357,channels dropout
+CLASS-WISE DATA AUGMENTATION,0.1517412935323383,sign flip
+CLASS-WISE DATA AUGMENTATION,0.15422885572139303,"class
+wise"
+CLASS-WISE DATA AUGMENTATION,0.15671641791044777,Augmentation 0.05 0.00 0.05 0.10 0.15 0.20
+CLASS-WISE DATA AUGMENTATION,0.15920398009950248,balanced accuracy
+CLASS-WISE DATA AUGMENTATION,0.16169154228855723,relatve improvement
+CLASS-WISE DATA AUGMENTATION,0.16417910447761194,"Figure 2: (a) Improvement per class of the F1-score due to channels dropout, sign flip
+and the CW subpolicy, relative to a model trained with no data augmentation.
+Each
+augmentation encodes speciﬁc invariances that can be more relevant for some classes than
+others. (b) Improvement of the multi-class balanced-accuracy relative to a model trained
+with no data augmentation. The CW subpolicy outperforms class-agnostic ones. Both
+boxplots show how values are spread out across 10 folds."
+EFFICIENT AUTOMATIC DATA AUGMENTATION USING GRADIENTS,0.16666666666666666,"5
+Efficient Automatic Data Augmentation using gradients"
+EFFICIENT AUTOMATIC DATA AUGMENTATION USING GRADIENTS,0.1691542288557214,"Although the previous experiment in Figure 2 motivates the interest in CW data augmentation,
+it also illustrates how impractical it can be to search such augmentations manually for each
+new task, dataset and model. Moreover, considering Nµ possible magnitudes, NO operations,
+Np probability values and |Y| (|Y| = 1 in the class-agnostic case) possible classes leads
+to (Np × Nµ × NO)L×K×|Y| possible policies, which becomes very rapidly a huge space to
+explore, especially with gradient-free algorithms. This is typically illustrated in Appendix C
+where even though the setting is quite simple, Random Search requires a very large number
+of draws to ﬁnd interesting policies. Therefore, it is unlikely that such algorithms can scale
+well when considering CW policies, which considerably increase the search space size. This
+motivates the exploration of gradient-based search approaches, which can select policies more
+eﬃciently in such a huge search space."
+DIFFERENTIABLE AUGMENTATION POLICIES,0.17164179104477612,"5.1
+Differentiable Augmentation Policies"
+DIFFERENTIABLE AUGMENTATION POLICIES,0.17412935323383086,"Most ADA approaches are based on gradient-free algorithms, mainly because of the discrete
+structure of augmentation policies (Section 4). For this reason, Faster AA (Hataya et al.,
+2020) and DADA (Li et al., 2020) propose continuous relaxations of the AutoAugment
+policies, inspired by a recent Neural Architecture Search (NAS) method: DARTS (Liu et al.,
+2019). Hereafter we build on these relaxation ideas in the EEG setting."
+DIFFERENTIABLE AUGMENTATION POLICIES,0.17661691542288557,"Background on probabilities and magnitudes relaxation Concerning probabilities,
+equation (3) is relaxed using a Relaxed Bernoulli random variable (Maddison et al., 2017)
+as in Hataya et al. (2020) and Li et al. (2020) (cf. Appendix A for further details). As for
+magnitudes, while some operations don’t depend on any magnitude parameter, most of the
+augmentations described in section Section 2 do and are not diﬀerentiable with respect to it.
+It is argued in Hataya et al. (2020) that using a simple straight-through gradient estimator
+(Bengio et al., 2013) is enough to face this diﬃculty (i.e., approximating the gradient of
+O(X; µ) w.r.t µ by 1). In practice, we found that this approach alone did not allow to
+properly transmit the gradient loss information to tune the magnitudes. For this reason,
+we preferred to carry out a case-by-case relaxation of each operations considered, which is
+detailed in Appendix B."
+DIFFERENTIABLE AUGMENTATION POLICIES,0.1791044776119403,"Novel operations relaxation Operations composing subpolicies also need to be selected
+over a discrete set. For this, Faster AA replaces the sequence of operations by a sequence of"
+DIFFERENTIABLE AUGMENTATION POLICIES,0.18159203980099503,Published as a conference paper at ICLR 2022
+DIFFERENTIABLE AUGMENTATION POLICIES,0.18407960199004975,"stages { ˜Ok : k = 1, . . . , K}, which are a convex combination of all operations:"
+DIFFERENTIABLE AUGMENTATION POLICIES,0.1865671641791045,"˜Ok(X) = NO
+X"
+DIFFERENTIABLE AUGMENTATION POLICIES,0.1890547263681592,"n=1
+[ση(wk)]nO(n)
+k (X; µ(n)
+k , p(n)
+k ),
+(6)"
+DIFFERENTIABLE AUGMENTATION POLICIES,0.19154228855721392,"where wk denote the weights vector of stage k. These weights are passed through a softmax
+activation ση, so that, when parameter η is small, ση(wk) becomes a onehot-like vector."
+DIFFERENTIABLE AUGMENTATION POLICIES,0.19402985074626866,"Algorithm 1: (C)ADDA
+Input : ξ, ϵ > 0, Datasets Dtrain, Dvalid,
+Trainable policy Tα, Model θ
+Result: Policy parameters α
+while not converged do"
+DIFFERENTIABLE AUGMENTATION POLICIES,0.19651741293532338,"// compute the unrolled model
+gθ = L(θ|Tα(Dtrain)).backward(θ)
+θ′ := θ −ξgθ
+// Estimate ∇αL(θ′|Dvalid)
+g′
+θ = L(θ′|Dvalid).backward(θ)
+g+
+α = L(θ + ϵg′
+θ|Tα(Dtrain)).backward(α)
+g−
+α = L(θ −ϵg′
+θ|Tα(Dtrain)).backward(α)
+gα =
+1
+2ϵ(g+
+α −g−
+α )
+// Update Policy parameters α
+α = α −ξgα
+// Update the model parameters θ
+gθ = L(θ|Tα(Dtrain)).backward(θ)
+θ = θ −ξgθ
+end"
+DIFFERENTIABLE AUGMENTATION POLICIES,0.19900497512437812,"We used the same type of architec-
+ture, but replaced the softmax ση by a
+straight-through Gumbel-softmax distri-
+bution (Jang et al., 2017) parametrized
+by {wk}. As shown in experiments of Sec-
+tion 6, this allows to gain in eﬃciency, as
+we only sample one operation at each for-
+ward pass and do not need to evaluate all
+operations each time. Furthermore, given
+that the original Gumbel-softmax gradi-
+ents are biased, we use the unbiased RE-
+LAX gradient estimator (Grathwohl et al.,
+2018). The same idea is used in DADA (Li
+et al., 2020), except that they consider
+a diﬀerent policy architecture where they
+sample whole subpolicies instead of oper-
+ations within subpolicies. These architec-
+ture choices are compared in our ablation
+study in Section 6 and Appendix E."
+POLICY OPTIMIZATION,0.20149253731343283,"5.2
+Policy optimization"
+POLICY OPTIMIZATION,0.20398009950248755,"While Faster AA casts a surrogate density matching problem (2), which is easier and faster
+to solve then (1), Tian et al. (2020) presents empirical evidence suggesting that these metrics
+are not really correlated. Hence, we propose to tackle directly the bilevel optimization from
+(1) as done in DADA and DARTS."
+POLICY OPTIMIZATION,0.2064676616915423,"Let α be the vector grouping all the parameters of a continuously relaxed policy model Tα
+(Section 5.1). We carry alternating optimization steps of the policy parameters α and the
+model parameters θ as described in Algorithm 1. In order to estimate the augmentation
+policy gradient, we approximate the lower-level of (1) by a single optimization step:"
+POLICY OPTIMIZATION,0.208955223880597,"∇αL(θ∗|Dvalid) ≃∇αL(θ′|Dvalid),
+with
+θ′ := θ −ξ∇θL(θ|Tα(Dtrain)),
+(7)"
+POLICY OPTIMIZATION,0.21144278606965175,where ξ denotes the learning rate. By applying the chain rule in Equation (7) we get:
+POLICY OPTIMIZATION,0.21393034825870647,"∇αL(θ′|Dvalid) = −ξ∇2
+α,θL(θ|Tα(Dtrain))∇θ′L(θ′|Dvalid)
+(8)"
+POLICY OPTIMIZATION,0.21641791044776118,≃−ξ ∇αL(θ+|Tα(Dtrain)) −∇αL(θ−|Tα(Dtrain))
+POLICY OPTIMIZATION,0.21890547263681592,"2ϵ
+,
+(9)"
+POLICY OPTIMIZATION,0.22139303482587064,"where ϵ is a small scalar and θ± = θ ± ϵ∇θL(θ′|Dvalid). The second line (9) corresponds to a
+ﬁnite diﬀerence approximation of the Hessian-gradient product."
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.22388059701492538,"6
+Experiments on EEG data during sleep"
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.2263681592039801,"Datasets We used the public dataset MASS - Session 3 (O’reilly et al., 2014). It corresponds
+to 62 nights, each one coming from a diﬀerent subject. Out of the 20 available EEG channels,
+referenced with respect to the A2 electrode, we used 6 (C3, C4, F3, F4, O1, O2). We also used
+the standard sleep Physionet data (Goldberger et al., 2000) which contains 153 recordings
+from 83 subjects. Here two EEG derivations are available (FPz-Cz and Pz-Oz). For both
+datasets, sleep stages were annotated according to the AASM rules (Iber et al., 2007). The
+EEG time series were ﬁrst lowpass ﬁltered at 30 Hz (with 7 Hz transition bandwidth) and"
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.22885572139303484,Published as a conference paper at ICLR 2022
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.23134328358208955,"2
+11
+2
+7
+2
+3"
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.23383084577114427,Training set fraction 0.0 0.2
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.236318407960199,Relative improvement
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.23880597014925373,Frequency transforms
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.24129353233830847,"Bandstop Filter
+FT Surrogate
+Frequency Shift"
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.24378109452736318,"2
+11
+2
+7
+2
+3"
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.2462686567164179,Training set fraction 0.0 0.2
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.24875621890547264,Time transforms
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.2512437810945274,"Time Masking
+Time Reverse
+White Noise"
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.2537313432835821,"2
+11
+2
+7
+2
+3"
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.2562189054726368,Training set fraction 0.0 0.2
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.25870646766169153,Sensors transforms
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.26119402985074625,"Channel Dropout
+Channel Shuffle
+Rotation Z-axis
+Sign Flip"
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.263681592039801,"Figure 3: Median performance gains obtained by individual augmentation strategies on the
+Physionet dataset while increasing the train set size. Results are relative improvements com-
+pared to the baseline without any augmentation. Two frequency transforms (FT surrogate
+and frequency shift) as well as time reverse lead to the best performance."
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.26616915422885573,"standardized. For MASS they were resampled from 256 Hz to 128 Hz, while the Physionet
+dataset was kept at 100 Hz. Further experimental details can be found in Appendix D."
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.26865671641791045,"Manual exploration All EEG data augmentation techniques were ﬁrst tested individually
+on the two datasets without an automatic search strategy. The Physionet dataset was split
+in 5 folds with 16 subjects for Physionet and 12 subjects for MASS in a test set. Among
+the training folds, data were split in 80/20 randomly to obtain a training and a validation
+set. To assess the eﬀect of augmentation at diﬀerent data regimes, the training set was
+sequentially subset using a log2 scale (with stratiﬁed splits). All augmentations tested had
+0.5 probability and a manually ﬁne-tuned magnitude (cf. Section G.2). Results on Physionet
+are presented on Figure 3, while similar plots for MASS can be found in the appendix
+(Figure G.8). As expected, augmentation plays a major role in the low data regime, where
+it teaches invariances to the model which struggles to learn them from the small amount
+of data alone. Transforms like FT surrogate, frequency shift and time reverse lead to
+up to 20% performance improvement on the test set for Physionet and 60% for MASS in
+extremely low data regimes. Surprisingly, rotations and time masking do not seem to
+help a lot."
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.27114427860696516,"More eﬃcient gradient-based search As commonly done (Cubuk et al., 2019; Ho
+et al., 2019; Lim et al., 2019; Hataya et al., 2020), we considered policies of size L = 5,
+made of subpolicies of length K = 2 containing NO = 12 operations (cf. Appendix D).
+The MASS dataset was used for this experiment. Both the training and validation sets
+consisted of 24 nights each, and the test set contained 12 nights. For each method, we
+stopped the search every given number of steps (2 epochs or 5 samplings), used the learned
+policy to retrain from scratch the model (leading to a point in Figure 4) and resumed the
+search from where it stopped. For each run, when the ﬁnal retraining validation accuracy
+improves compared to previous retraining, we report the new test accuracy obtained by
+the retrained model (otherwise, we keep the previous value). Figure 4 (a) shows that our
+novel automatic diﬀerentiable data augmentation method (ADDA) outperforms existing
+gradient-based approaches both in speed and ﬁnal accuracy. In Figure F.4, a comparison
+with other gradient-free approaches in a class-agnostic setting is also provided, where ADDA
+is shown to outperform the state-of-the-art in speed and accuracy."
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.2736318407960199,"Ablation study of diﬀerentiable architecture in the class-agnostic setting In order
+to better understand previous results, we carried out an ablation study in the class-agnostic
+setting, where we sequentially removed from ADDA (green): the RELAX gradient estimator
+(red), followed by the Gumbel-softmax sampling (light blue). We see in Figure 4 (a) that
+RELAX is mainly responsible for the ﬁnal accuracy increase, as it removes the gradients’
+bias induced by the Gumbel-softmax sampling. We also clearly see from curves in red and
+light blue that replacing the softmax ση from the subpolicy stages (6) by a Gumbel-softmax
+sampling is responsible for the considerable 4x speed-up. Note that the core diﬀerence"
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.27611940298507465,Published as a conference paper at ICLR 2022
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.27860696517412936,"0
+5
+10
+15
+20
+GPU hours of search 0.820 0.825 0.830 0.835"
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.2810945273631841,Test balanced accuracy (a)
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.2835820895522388,"DADA
+Faster AutoAugment
+ADDA*
+ADDA w/o RELAX
+ADDA w/o GS sampling"
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.2860696517412935,"0
+5
+10
+15
+20
+GPU hours of search (b)"
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.2885572139303483,"CW AutoAugment
+CW Fast AutoAugment
+CADDA*"
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.291044776119403,"Figure 4: Median performance (over 5 folds) of diﬀerent ADA strategies as a function of
+the computation time. (a) Class-agnostic setting: ADDA is 40% faster than Faster AA and
+reaches a performance 0.6% higher. It also outperforms DADA by 0.6% in accuracy, 4 GPU
+hours earlier. (b) CW setting: CADDA outperforms gradient-free methods in this setting, as
+it is 5x faster than AutoAugment and achieves higher performance than Fast AutoAugment."
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.2935323383084577,"between ADDA and DADA is the fact that the former samples operations within each
+subpolicy, and the latter samples whole subpolicies. Curves in green and dark blue show that
+ADDA converges faster, which means the ﬁrst choice is more eﬃcient. This might be due to
+the fact that our architecture expresses the same possibilities with L×K ×NO = 120 weights
+wk, which in our case is less than the (NO)K = 144 weights in DADA. Most importantly,
+note that during the training DADA will sample and update the probabilities and magnitudes
+of subpolicies with higher weights more often, while ADDA keeps updating all its subpolicies
+with equal probability. This allows ADDA to converge faster to 5 good subpolicies while
+DADA can get stuck with only one or two strong ones."
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.2960199004975124,"Eﬃcient search in class-wise setting Figure 4 (b) compares the best performing gradient-
+based approach in the class-wise setting, namely CADDA, against state-of-the-art gradient-
+free methods (AutoAugment and Fast AutoAugment) optimized with TPE (Bergstra et al.,
+2011), as implemented in optuna (Akiba et al., 2019). CADDA achieves top performance
+while being signiﬁcantly faster than AutoAugment. However, one can observe on this CW
+setting that CADDA does not improve over ADDA in the class-agnostic case. This illustrates
+the diﬃculty of learning CW policies due to the dimensionality of the search space. We also
+hypothesize that this could reﬂect the diﬃculty of the simple CNN model considered here to
+encode the complex invariances promoted by the CW augmentations."
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.29850746268656714,Concluding remarks
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.3009950248756219,"Our work explores the problem of automatic data augmentation beyond images which is
+still rarely considered in the literature. We provided novel transforms for EEG data, and
+a state-of-the-art search algorithm – called (C)ADDA – to address this question. This
+method yields very promising results for sleep stage classiﬁcation, with up to 40% speed up
+and superior accuracy compared to existing gradient-based methods in a standard setting.
+Motivated by the possible impact of CW policies that we illustrated empirically, we proposed
+a framework for the automatic search of such augmentations. Our work shows that gradient-
+based automatic augmentation approaches are possible and necessary in the CW setting due
+to the size of the search space. Finally, while CW does not provide the expected performance
+boost yet, we believe that this framework opens a novel avenue to improve the ﬁeld of data
+augmentation, in particular for neuroscience applications."
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.3034825870646766,Published as a conference paper at ICLR 2022
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.30597014925373134,Acknowledgments and Disclosure of Funding
+EXPERIMENTS ON EEG DATA DURING SLEEP,0.30845771144278605,"This work was supported by the BrAIN grant (ANR-20-CHIA-0016). It was also granted
+access to the HPC resources of IDRIS under the allocation 2021-AD011012284 and 2021-
+AD011011172R1 made by GENCI."
+REFERENCES,0.31094527363184077,References
+REFERENCES,0.31343283582089554,"Takuya Akiba, Shotaro Sano, Toshihiko Yanase, Takeru Ohta, and Masanori Koyama. Optuna:
+A next-generation hyperparameter optimization framework. In Proceedings of the 25rd ACM
+SIGKDD International Conference on Knowledge Discovery and Data Mining, 2019."
+REFERENCES,0.31592039800995025,"Martin Arjovsky, Soumith Chintala, and Leon Bottou. Wasserstein Generative Adversarial Networks.
+In Proceedings of the 34th International Conference on Machine Learning, volume 70 of Proceedings
+of Machine Learning Research, pp. 214–223, 2017."
+REFERENCES,0.31840796019900497,"Yoshua Bengio, Nicholas Léonard, and Aaron C. Courville. Estimating or Propagating Gradients
+Through Stochastic Neurons for Conditional Computation. CoRR, 2013."
+REFERENCES,0.3208955223880597,"James S Bergstra, Rémi Bardenet, Yoshua Bengio, and Balázs Kégl. Algorithms for Hyper-Parameter
+Optimization. In Advances in Neural Information Processing Systems, volume 24, pp. 9, 2011."
+REFERENCES,0.32338308457711445,"G. Bouallegue and R. Djemal. EEG data augmentation using Wasserstein GAN. In 2020 20th Inter-
+national Conference on Sciences and Techniques of Automatic Control and Computer Engineering
+(STA), pp. 40–45, 2020. ISSN: 2573-539X."
+REFERENCES,0.32587064676616917,"Stanislas Chambon, Mathieu Galtier, Pierrick Arnal, Gilles Wainrib, and Alexandre Gramfort. A
+deep learning architecture for temporal sleep stage classiﬁcation using multivariate and multimodal
+time series. IEEE Transactions on Neural Systems and Rehabilitation Engineering, 26(4):758–769,
+2018."
+REFERENCES,0.3283582089552239,"Shuxiao Chen, Edgar Dobriban, and Jane H. Lee. A Group-Theoretic Framework for Data Augmen-
+tation. In Advances in Neural Information Processing Systems (NeurIPS), 2020a."
+REFERENCES,0.3308457711442786,"Ting Chen, Simon Kornblith, Mohammad Norouzi, and Geoﬀrey Everest Hinton. A simple framework
+for contrastive learning of visual representations.
+In Proceedings of the 37th International
+Conference on Machine Learning (ICML), 2020b."
+REFERENCES,0.3333333333333333,"Joseph Y. Cheng, Hanlin Goh, Kaan Dogrusoz, Oncel Tuzel, and Erdrin Azemi. Subject-Aware
+Contrastive Learning for Biosignals. arXiv:2007.04871, 2020."
+REFERENCES,0.3358208955223881,"Ekin D. Cubuk, Barret Zoph, Dandelion Mane, Vijay Vasudevan, and Quoc V. Le. AutoAugment:
+Learning Augmentation Strategies From Data. In IEEE/CVF Conference on Computer Vision
+and Pattern Recognition (CVPR). IEEE, 2019."
+REFERENCES,0.3383084577114428,"Ekin D. Cubuk, Barret Zoph, Jonathon Shlens, and Quoc V. Le. Randaugment: Practical automated
+data augmentation with a reduced search space. In IEEE/CVF Conference on Computer Vision
+and Pattern Recognition Workshops (CVPRW), pp. 3008–3017. IEEE, 2020."
+REFERENCES,0.3407960199004975,"Olivier Deiss, Siddharth Biswal, Jing Jin, Haoqi Sun, M. Brandon Westover, and Jimeng Sun.
+HAMLET: Interpretable Human And Machine co-LEarning Technique. arXiv:1803.09702, 2018."
+REFERENCES,0.34328358208955223,"Elizabeth Fons, Paula Dawson, Xiao-Jun Zeng, John A. Keane, and Alexandros Iosiﬁdis. Adaptive
+weighting scheme for automatic time-series data augmentation. CoRR, 2021."
+REFERENCES,0.34577114427860695,"Lukas A.W. Gemein, Robin T. Schirrmeister, Patryk Chrabąszcz, Daniel Wilson, Joschka Boedecker,
+Andreas Schulze-Bonhage, Frank Hutter, and Tonio Ball. Machine-learning-based diagnostics of
+eeg pathology. NeuroImage, 220:117021, 2020."
+REFERENCES,0.3482587064676617,"Ary L Goldberger, Luis AN Amaral, Leon Glass, Jeﬀrey M Hausdorﬀ, Plamen Ch Ivanov, Roger G
+Mark, Joseph E Mietus, George B Moody, Chung-Kang Peng, and H Eugene Stanley. PhysioBank,
+PhysioToolkit, and PhysioNet: components of a new research resource for complex physiologic
+signals. Circulation, 101(23):e215–e220, 2000."
+REFERENCES,0.35074626865671643,"Alexandre Gramfort, Martin Luessi, Eric Larson, Denis A. Engemann, Daniel Strohmeier, Christian
+Brodbeck, Roman Goj, Mainak Jas, Teon Brooks, Lauri Parkkonen, and Matti S. Hämäläinen.
+MEG and EEG data analysis with MNE-Python. Frontiers in Neuroscience, 7(267):1–13, 2013."
+REFERENCES,0.35323383084577115,Published as a conference paper at ICLR 2022
+REFERENCES,0.35572139303482586,"Will Grathwohl, Dami Choi, Yuhuai Wu, GeoﬀRoeder, and David Duvenaud. Backpropagation
+through the Void: Optimizing control variates for black-box gradient estimation. In International
+Conference on Learning Representations (ICLR), 2018."
+REFERENCES,0.3582089552238806,"Kay Gregor Hartmann, Robin Tibor Schirrmeister, and Tonio Ball. EEG-GAN: Generative adver-
+sarial networks for electroencephalograhic (EEG) brain signals. arXiv:1806.01875, 2018."
+REFERENCES,0.36069651741293535,"Ryuichiro Hataya, Jan Zdenek, Kazuki Yoshizoe, and Hideki Nakayama. Faster AutoAugment:
+Learning Augmentation Strategies Using Backpropagation. In Computer Vision – ECCV 2020.
+Springer International Publishing, 2020."
+REFERENCES,0.36318407960199006,"Søren Hauberg, Oren Freifeld, and Anders Boesen Lindbo Larsen. Dreaming More Data: Class-
+dependent Distributions over Diﬀeomorphisms for Learned Data Augmentation. In Artiﬁcial
+Intelligence and Statistics, pp. 342–350, 2016."
+REFERENCES,0.3656716417910448,"Daniel Ho, Eric Liang, Ion Stoica, Pieter Abbeel, and Xi Chen. Population Based Augmentation:
+Eﬃcient Learning of Augmentation Policy Schedules. In International Conference on Machine
+Learning (ICML), 2019."
+REFERENCES,0.3681592039800995,"C. Iber, S. Ancoli-Israel, A. Chesson, and S. F Quan. The AASM Manual for the Scoring of Sleep
+and Associated Events: Rules, Terminology and Technical Speciﬁcation, 2007."
+REFERENCES,0.3706467661691542,"Eric Jang, Shixiang Gu, and Ben Poole. Categorical Reparameterization with Gumbel-Softmax. In
+International Conference on Learning Representations, 2017."
+REFERENCES,0.373134328358209,"Ziyu Jia, Youfang Lin, Jing Wang, Xuehui Wang, Peiyi Xie, and Yingbin Zhang. Salientsleepnet:
+Multimodal salient wave detection network for sleep staging. In International Joint Conference
+on Artiﬁcial Intelligence (IJCAI), pp. 2614–2620, 2021."
+REFERENCES,0.3756218905472637,"Diederik P. Kingma and Jimmy Ba. Adam: A Method for Stochastic Optimization. In International
+Conference on Learning Representations (ICLR), 2015."
+REFERENCES,0.3781094527363184,"Mario Michael Krell and Su Kyoung Kim. Rotational data augmentation for electroencephalographic
+data. In 2017 39th Annual International Conference of the IEEE Engineering in Medicine and
+Biology Society (EMBC), pp. 471–474. IEEE, 2017."
+REFERENCES,0.3805970149253731,"Alex Krizhevsky, Ilya Sutskever, and Geoﬀrey E. Hinton.
+ImageNet classiﬁcation with deep
+convolutional neural networks. In Advances in neural information processing systems (NeurIPS),
+2012."
+REFERENCES,0.38308457711442784,"Yann LeCun, Léon Bottou, Yoshua Bengio, and Patrick Haﬀner. Gradient-based learning applied to
+document recognition. Proceedings of the IEEE, 86(11):2278–2324, 1998."
+REFERENCES,0.3855721393034826,"Yonggang Li, Guosheng Hu, Yongtao Wang, Timothy Hospedales, Neil M. Robertson, and Yongxin
+Yang. DADA: Diﬀerentiable Automatic Data Augmentation. In ECCV, 2020."
+REFERENCES,0.3880597014925373,"Sungbin Lim, Ildoo Kim, Taesup Kim, Chiheon Kim, and Sungwoong Kim. Fast AutoAugment. In
+Advances in Neural Information Processing Systems (NeurIPS), 2019."
+REFERENCES,0.39054726368159204,"Chen Lin, Minghao Guo, Chuming Li, Xin Yuan, Wei Wu, Junjie Yan, Dahua Lin, and Wanli
+Ouyang. Online Hyper-Parameter Learning for Auto-Augmentation Strategy. In 2019 IEEE/CVF
+International Conference on Computer Vision (ICCV), pp. 6578–6587. IEEE, 2019."
+REFERENCES,0.39303482587064675,"Hanxiao Liu, Karen Simonyan, and Yiming Yang. DARTS: Diﬀerentiable Architecture Search. In
+International Conference on Learning Representations (ICLR), 2019."
+REFERENCES,0.39552238805970147,"Chris J. Maddison, Andriy Mnih, and Yee Whye Teh. The concrete distribution: A continuous
+relaxation of discrete random variables. In International Conference on Learning Representations
+(ICLR), 2017."
+REFERENCES,0.39800995024875624,"Sébastien Marcel and Yann Rodriguez. Torchvision the Machine-Vision Package of Torch. In
+Proceedings of the 18th ACM International Conference on Multimedia, pp. 1485–1488. Association
+for Computing Machinery, 2010."
+REFERENCES,0.40049751243781095,"Mehdi Mirza and Simon Osindero. Conditional Generative Adversarial Nets. arXiv:1411.1784, 2014."
+REFERENCES,0.40298507462686567,"Mostafa Mohsenvand, Mohammad Rasool Izadi, and Pattie Maes. Contrastive Representation
+Learning for Electroencephalogram Classiﬁcation. In Machine Learning for Health, 2020."
+REFERENCES,0.4054726368159204,Published as a conference paper at ICLR 2022
+REFERENCES,0.4079601990049751,"Christian O’reilly, Nadia Gosselin, Julie Carrier, and Tore Nielsen. Montreal archive of sleep studies:
+an open-access resource for instrument benchmarking and exploratory research. Journal of sleep
+research, 23(6):628–635, 2014."
+REFERENCES,0.41044776119402987,"Mathias Perslev, Michael Hejselbak Jensen, Sune Darkner, Poul Jørgen Jennum, and Christian
+Igel. U-time: A fully convolutional network for time series segmentation applied to sleep staging.
+Advances in Neural Information Processing Systems (NeurIPS), 2019."
+REFERENCES,0.4129353233830846,"Mathias Perslev, Sune Darkner, Lykke Kempfner, Miki Nikolic, Poul Jørgen Jennum, and Christian
+Igel. U-sleep: resilient high-frequency sleep staging. NPJ digital medicine, 4(1):1–12, 2021."
+REFERENCES,0.4154228855721393,"Richard S. Rosenberg and Steven Van Hout. The American Academy of Sleep Medicine Inter-scorer
+Reliability Program: Sleep Stage Scoring. Journal of Clinical Sleep Medicine : JCSM : Oﬃcial
+Publication of the American Academy of Sleep Medicine, 9(1):81–87, 2013."
+REFERENCES,0.417910447761194,"Yannick Roy, Hubert Banville, Isabela Albuquerque, Alexandre Gramfort, Tiago H Falk, and Jocelyn
+Faubert. Deep learning-based electroencephalography analysis: a systematic review. Journal of
+Neural Engineering, 16(5):051001, 2019."
+REFERENCES,0.42039800995024873,"Aaqib Saeed, David Grangier, Olivier Pietquin, and Neil Zeghidour. Learning From Heterogeneous
+Eeg Signals with Diﬀerentiable Channel Reordering. In ICASSP 2021 - 2021 IEEE International
+Conference on Acoustics, Speech and Signal Processing (ICASSP), pp. 1255–1259, 2021. ISSN:
+2379-190X."
+REFERENCES,0.4228855721393035,"Robin Tibor Schirrmeister, Jost Tobias Springenberg, Lukas Dominique Josef Fiederer, Martin
+Glasstetter, Katharina Eggensperger, Michael Tangermann, Frank Hutter, Wolfram Burgard, and
+Tonio Ball. Deep learning with convolutional neural networks for EEG decoding and visualization.
+Human Brain Mapping, 2017."
+REFERENCES,0.4253731343283582,"John Schulman, Nicolas Heess, Theophane Weber, and Pieter Abbeel. Gradient Estimation Us-
+ing Stochastic Computation Graphs. In Advances in Neural Information Processing Systems
+(NeurIPS), 2015."
+REFERENCES,0.42786069651741293,"Justus T. C. Schwabedal, John C. Snyder, Ayse Cakmak, Shamim Nemati, and Gari D. Cliﬀord.
+Addressing Class Imbalance in Classiﬁcation Problems of Noisy Signals by using Fourier Transform
+Surrogates. arXiv:1806.08675, 2019."
+REFERENCES,0.43034825870646765,"Patrice Y. Simard, Dave Steinkraus, and John C. Platt. Best practices for convolutional neural
+networks applied to visual document analysis. In International Conference on Document Analysis
+and Recognition, volume 3, pp. 958–963, 2003."
+REFERENCES,0.43283582089552236,"Keyu Tian, Chen Lin, Ming Sun, Luping Zhou, Junjie Yan, and Wanli Ouyang. Improving Auto-
+Augment via Augmentation-Wise Weight Sharing. In Advances in Neural Information Processing
+Systems, volume 33, pp. 19088–19098, 2020."
+REFERENCES,0.43532338308457713,"Laurens van der Maaten, Minmin Chen, Stephen Tyree, and Kilian Q. Weinberger. Learning with
+Marginalized Corrupted Features. In International Conference on Machine Learning (ICML),
+volume 28. PMLR, 2013."
+REFERENCES,0.43781094527363185,"Fang Wang, Sheng-hua Zhong, Jianfeng Peng, Jianmin Jiang, and Yan Liu. Data Augmentation
+for EEG-Based Emotion Recognition with Deep Convolutional Neural Networks. In MultiMedia
+Modeling, volume 10705, pp. 82–93. Springer International Publishing, 2018. Series Title: Lecture
+Notes in Computer Science."
+REFERENCES,0.44029850746268656,"Ronald J Williams. Simple statistical gradient-following algorithms for connectionist reinforcement
+learning. Machine learning, 8(3-4):229–256, 1992."
+REFERENCES,0.4427860696517413,"Larry S Yaeger, Richard F Lyon, and Brandyn J Webb. Eﬀective Training of a Neural Network
+Character Classiﬁer for Word Recognition. In Advances in neural information processing systems,
+volume 9, pp. 807–816, 1996."
+REFERENCES,0.44527363184079605,"Zhong Yin and Jianhua Zhang. Cross-session classiﬁcation of mental workload levels using EEG
+and an adaptive deep learning model. Biomedical Signal Processing and Control, 33:30–47, 2017."
+REFERENCES,0.44776119402985076,"Xinyu Zhang, Qiang Wang, Jian Zhang, and Zhao Zhong. Adversarial AutoAugment. In International
+Conference on Learning Representations (ICLR), 2020."
+REFERENCES,0.4502487562189055,Published as a conference paper at ICLR 2022
+REFERENCES,0.4527363184079602,"A
+Details on operations relaxation"
+REFERENCES,0.4552238805970149,"Hereafter are some general explanations concerning the continuous relaxation of augmentation
+operations."
+REFERENCES,0.4577114427860697,"A.1
+Relaxation regarding probabilities"
+REFERENCES,0.4601990049751244,"Concerning the probabilities, equation (3) can be rewritten as follows:"
+REFERENCES,0.4626865671641791,"O(X; p, µ) = bO(X; µ) + (1 −b)X ,
+(10)"
+REFERENCES,0.4651741293532338,"where b is sampled from a Bernoulli distribution with probability p.
+As the Bernoulli
+distribution is discrete, equation (10) can be made diﬀerentiable with respect to p by using
+a Relaxed Bernoulli random variable (Maddison et al., 2017), i.e., by reparametrizing the
+distribution as a continuous function depending on p and on a uniform random variable
+(Schulman et al., 2015)."
+REFERENCES,0.46766169154228854,"A.2
+Relaxation regarding magnitudes"
+REFERENCES,0.4701492537313433,"As for magnitudes, while some operations don’t depend on any magnitude parameter, most of
+the augmentations described in section Section 2 do and are not diﬀerentiable with respect to
+it. It is argued in Hataya et al. (2020) that using a simple straight-through gradient estimator
+(Bengio et al., 2013) is enough to face this diﬃculty (i.e., approximating the gradient of
+O(X; µ) w.r.t µ by 1). In practice, we found that this approach alone did not allow to
+properly transmit the gradient loss information to tune the magnitudes (cf. Section A.3). For
+this reason, we preferred to carry out a case-by-case relaxation of each operations considered
+(cf. Appendix B). Overall, the same relaxation principles were used in most of them:"
+REFERENCES,0.472636815920398,"1. when µ is used to set some sampling operation, a pathwise gradient estimator is
+used (Schulman et al., 2015), just as for p in Eq. (10);
+2. when some masking is necessary, vector indexing is replaced by element-wise multi-
+plications between the transformed vector and a smooth mask built using sigmoid
+functions;
+3. the straight-through estimator is only used to propagate the gradient through the
+permutation operation in channel shuffle."
+REFERENCES,0.47512437810945274,"A.3
+Further explanation concerning Straight Through magnitude gradient
+estimator"
+REFERENCES,0.47761194029850745,"In order to validate the continuous relaxation of each augmentation operation described in
+Appendix B, we tried to ﬁt the identity, i.e., we minimized the mean squared error between
+augmented and unchanged batches of EEG signals:"
+REFERENCES,0.48009950248756217,"min
+p,µ ∥X −O(X; p, µ)∥2."
+REFERENCES,0.48258706467661694,"This allowed us to realize that using a simple straight-through estimator as suggested by
+Hataya et al. (2020) was not enough to learn good magnitude parameters. Indeed, we
+observed with many diﬀerent learning rates that µ would be modiﬁed but would not converge
+to 0 when p was ﬁxed. This motivated us to propose our own relaxation described in
+Section 5.1 and Appendix B."
+REFERENCES,0.48507462686567165,"B
+Implementation of EEG augmentations"
+REFERENCES,0.48756218905472637,"In this section we review the EEG augmentation that have been proposed and describe their
+precise implementation, including their case-by-case relaxation mentioned in Appendix A.
+Their implementation in python is provided in the supplementary material (braindecode-wip
+folder)."
+REFERENCES,0.4900497512437811,"The most basic form of data augmentation proposed is the addition of Gaussian white
+noise to EEG signals (Wang et al., 2018) or to derived features (Yin & Zhang, 2017). This"
+REFERENCES,0.4925373134328358,Published as a conference paper at ICLR 2022
+REFERENCES,0.49502487562189057,"transformation modiﬁes the waveform shapes in the time domain, while moderately distorting
+the proportions of diﬀerent frequencies in the signals spectra. It simply adds the same power
+to all frequencies equally. It should hence work as an augmentation for tasks where the
+predictive information is well captured by frequency-bands power ratios, as used for pathology
+detection in Gemein et al. (2020)."
+REFERENCES,0.4975124378109453,"Another type of augmentation is time related transformations, such as time shifting
+and time masking (Mohsenvand et al., 2020) (a.k.a. time cutout (Cheng et al., 2020)).
+Both aim to make the predictions more robust, the latter supposing that the label of an
+example must depend on the overall signal, and the former trying to teach the model that
+misalignment between human-annotations and events should be tolerated up to some extent."
+REFERENCES,0.5,"Similarly, transformations acting purely in the frequency domain have been proposed. Just as
+time masking zeros-out a small portion of the signal in the time domain, narrow bandstop
+ﬁltering at random spectra positions (Cheng et al., 2020; Mohsenvand et al., 2020) attempts
+to prevent the model from relying on a single frequency band. Another interesting frequency
+data augmentation is the FT-surrogate transform (Schwabedal et al., 2019). It consists
+in replacing the phases of Fourier coeﬃcients by random numbers sampled uniformly from
+[0, 2π). The authors of this transformation argue that EEG signals can be approximated by
+linear stationary processes, which are uniquely characterized by their Fourier amplitudes."
+REFERENCES,0.5024875621890548,"Another widely explored type of EEG data augmentation are spatial transformations, acting
+on sensors positions. For example, sensors are rotated and shifted in Krell & Kim (2017), to
+simulate small perturbations on how the sensors cap is placed on the head. Likewise, the
+brain bilateral symmetry is exploited in Deiss et al. (2018), where the left and right-side
+signals are switched. Sensors cutout (i.e., zeroing-out signals of sensors in a given zone) is
+studied in Cheng et al. (2020), while Saeed et al. (2021) propose to randomly drop or shuﬄe
+channels to increase the model robustness to diﬀerences in the experimental setting. Mixing
+signals from diﬀerent examples has also been suggested in Mohsenvand et al. (2020)."
+REFERENCES,0.5049751243781094,"B.1
+Frequency domain transforms"
+REFERENCES,0.5074626865671642,"Frequency Shift To shift the frequencies in EEG signals, we carry a time domain modulation
+of the following form:"
+REFERENCES,0.5099502487562189,"FrequencyShift(x)(t) := Re (xa(t) · exp(2πi∆ft)) ,
+(11)"
+REFERENCES,0.5124378109452736,"with xa = x + jH[x] being the analytic signal corresponding to x, where H denotes the
+Hibert transform. At each call, a new shift ∆f is sampled from a range linearly set by the
+magnitude µ, where µ = 1 corresponds to the range [0 −5Hz). This value was chosen after
+carrying data exploration, based on the observed shifts between subjects in the Physionet
+dataset."
+REFERENCES,0.5149253731343284,"Given that Equation 11 is completely diﬀerentiable on ∆f, we only had to relax the sampling
+(using the pathwise derivatives trick (Schulman et al., 2015)) to make it diﬀerentiable w.r.t
+µ. More precisely, we deﬁne ∆f = fmax · u, where fmax = 5µ is the frequencies range
+upper-bound and u is sampled from a uniform distribution over [0, 1)."
+REFERENCES,0.5174129353233831,"FT Surrogate In this transform, we compute the Fourier transform of the signal F (x)
+(using fft) and shift its phase using a random number ∆ϕ:"
+REFERENCES,0.5199004975124378,F (FTSurrogate(x)) [f] := F (x) [f] · exp(2πi∆ϕ).
+REFERENCES,0.5223880597014925,"We then transform it back to the time domain. This was reproduced from the authors
+(Schwabedal et al., 2019) original code.2
+However, in our implementation we added a
+magnitude parameter setting the range in which random phases are sampled [0, ϕmax), with
+ϕmax = 2π when µ = 1."
+REFERENCES,0.5248756218905473,"The procedure used to make this transform diﬀerentiable is very similar to frequency
+shift,3 with ∆ϕ parametrized as ϕmaxu and ϕmax = 2πµ."
+REFERENCES,0.527363184079602,"2https://github.com/cliﬀordlab/sleep-convolutions-tf
+3It requires using Pytorch version 1.8, which now supports fft diﬀerentiation."
+REFERENCES,0.5298507462686567,Published as a conference paper at ICLR 2022
+REFERENCES,0.5323383084577115,"Bandstop Filter This transform was implemented using the FIR notch ﬁlter from MNE-
+Python package (Gramfort et al., 2013) with default parameters. The center of the band
+ﬁltered out is uniformly sampled between 0 Hz and the Nyquist frequency of the signal.
+Here, the magnitude µ is used to set the size of the band, with µ = 1 corresponding to 2 Hz.
+This value was chosen after some small experiments, where we observed that larger bands
+degraded systematically the predictive performance on Physionet. This transformation was
+not relaxed (and hence not available to the gradient-based automatic data augmentation
+searchers)."
+REFERENCES,0.5348258706467661,"B.2
+Temporal domain transforms"
+REFERENCES,0.5373134328358209,"Gaussian Noise This transform adds white Gaussian noise with a standard deviation set
+by the magnitude µ. When µ = 1, the corresponding standard deviation was 0.2. Larger
+standard deviations would degrade systematically the predictive performance in our manual
+exploration on Physionet. The Gaussian noise implementation is straight forward. It’s
+relaxation only included the use of pathwise derivatives for the sampling part: we sample the
+noise from a unit normal distribution and multiply it by the standard deviation σ = 0.2 ∗µ."
+REFERENCES,0.5398009950248757,"Time Masking In this operation, we sample a central masking time tcut with uniform
+probability (shared by all channels) and smoothly set to zero a window between tcut ± ∆t/2,
+where ∆t is the masking length.
+The latter is set by the magnitude µ, where µ = 1
+corresponds to ∆t = 1s. This value was chosen because it corresponds roughly to the length
+of important sleep-related events."
+REFERENCES,0.5422885572139303,"The sampling part of the operation was made diﬀerentiable as above. Masking was computed
+by multiplying the signal by a function valued in [0, 1], built with two opposing steep sigmoid
+functions"
+REFERENCES,0.5447761194029851,"σ±(t) =
+1
+1 + exp
+ 
+−λ(t −tcut ± ∆t"
+REFERENCES,0.5472636815920398,"2 )
+,"
+REFERENCES,0.5497512437810945,where λ was arbitrarily set to 1000.
+REFERENCES,0.5522388059701493,"B.3
+Spatial domain transforms"
+REFERENCES,0.554726368159204,Rotations
+REFERENCES,0.5572139303482587,"In this transform, we use standard sensors positions from a 10-20 montage (using the
+mne.channels.make_standard_montage function from MNE-Python package (Gramfort
+et al., 2013)). The latter are multiplied by a rotation matrix whose angle is uniformly
+sampled between ±ψmax. The value of the maximum angle ψmax is determined by the
+magnitude µ, where µ = 1 corresponds to π"
+REFERENCES,0.5597014925373134,"6 radian (value used in Krell & Kim (2017); Cheng
+et al. (2020)). Signals corresponding to each channel are then interpolated towards the
+rotated sensors positions. While Krell & Kim (2017); Cheng et al. (2020) used radial basis
+functions to carry the interpolation, we obtained better results using a spherical interpolation,
+which also made more sense in our opinion."
+REFERENCES,0.5621890547263682,"The only part that needed to be relaxed to allow automatic diﬀerentiation was the rotation
+angle sampling, which was done as before, with the angle ∆ψ parametrized as ψmax(2u −1),
+u a uniform random variable in [0, 1] and ψmax = π 6 µ."
+REFERENCES,0.5646766169154229,Channel Dropout
+REFERENCES,0.5671641791044776,"Here, each channel is multiplied by a random variable sampled from a relaxed Bernoulli
+distribution (Maddison et al., 2017) with probability 1 −µ, where µ is the magnitude. This
+allows to set the channel to 0 with probability µ and to have a diﬀerentiable transform."
+REFERENCES,0.5696517412935324,Channel Shuﬄe
+REFERENCES,0.572139303482587,"In this operation, channels to be permuted are selected using relaxed Bernoulli variables as
+in the channel dropout, but with probability µ instead of 1 −µ. The selected channels
+are then randomly permuted. As the permutation operation necessarily uses the channels"
+REFERENCES,0.5746268656716418,Published as a conference paper at ICLR 2022
+REFERENCES,0.5771144278606966,"indices, it is not straight-forward to diﬀerentiate it, which is why we used a straight-through
+estimator here to allow gradients to ﬂow from the loss to the magnitude parameter µ."
+REFERENCES,0.5796019900497512,"C
+Illustration of the usefulness of class-wise augmentation on
+MNIST"
+REFERENCES,0.582089552238806,"Motivation In order to illustrate the potential of CW augmentation, we present in this
+section a simple example using the MNIST dataset (LeCun et al., 1998). Intuitively, some
+common image augmentation operations such as horizontal ﬂips or rotations with large
+angles should not be helpful for handwritten digits recognition: if you rotate a 9 too much,
+it might be diﬃcult to distinguish it from a 6. However, some digits have more invariances
+than others. For example, 0’s and 8’s are relatively invariant to vertical and horizontal ﬂips,
+as well as to 180 degrees rotations. We used this framework to compare a naive approach of
+automatic data augmentation search both in a standard and in a CW setting."
+REFERENCES,0.5845771144278606,"Algorithm For simplicity, we used a random search algorithm to look for augmentation
+policies, with operations’ parameters discretized over a grid. More precisely, each new
+candidate subpolicy sampled by the search algorithm is used to train the model from scratch,
+before evaluating it on the validation set. In terms of search space and search metric, this is
+equivalent to what is done in AutoAugment (Cubuk et al., 2019), although the reinforcement
+learning algorithm is replaced by random sampling."
+REFERENCES,0.5870646766169154,"Search space Let Np, Nµ and NO denote the number of possible probability, magnitude
+values and operations in our setting. The search space of both standard and CW policies is
+potentially huge: (Np × Nµ × NO)L×K×|Y|, where the number of classes |Y| is replaced by
+1 in the standard case. Given the simplicity of the algorithm used, we tried to reduce the
+search space as much as possible. Hence, we only considered subpolicies of length K = 1
+(a single operation) and restrained our problem to the classiﬁcation of 4 digits only: 4, 6, 8
+and 9. A pool of four transformations that only depend on a probability parameter (no
+magnitude) was used in the search: horizontal and vertical flip, as well as 90 and 180
+degrees rotation (counter-clockwise)."
+REFERENCES,0.5895522388059702,"Despite this signiﬁcant simpliﬁcation, the search space size for policies made of L = 5
+subpolicies is still immense: around 106 for standard policies and 1.2 × 1024 for CW policies.
+For this reason, 20,000 trials were sampled in both cases. As an additional baseline, we also
+trained the same model without any type of data augmentation."
+REFERENCES,0.5920398009950248,"Experimental setting After the 4-class reduction, the MNIST training set was randomly
+split into a training set containing 1000 images per class and a validation set of 3000 images
+per class. The reduced MNIST test set used to evaluate the ﬁnal performance has 1000
+images per class, as the original one. All transforms were implemented using torchvision
+(Marcel & Rodriguez, 2010). We used the LeNet-1 architecture (LeCun et al., 1998) for the
+classiﬁer. It was trained using batches of 64 images and Adam optimizer (Kingma & Ba,
+2015) with an initial learning rate of 2 × 10−3, β1 = 0.9, β2 = 0.999 and no weight decay.
+Trainings had a maximum number of 50 epochs and were early-stopped with a patience
+of 5 epochs. The code that was used to generate this plots are part of the supplementary
+material (mnist folder)."
+REFERENCES,0.5945273631840796,"Results As seen on Figure C.1, random search converges to the identity policy (no augmen-
+tation). This was expected as none of the available operations describe an invariance shared
+by all four digits. From Figure C.1-right we see that the CW random search does not ﬁnd a
+good augmentation for digits 4 and 6 as well. Yet, it is able to recover that digit 8 is invariant
+to horizontal flip. Interestingly, 90 degree rotation of digit 9 is also selected with a small
+probability. This can be understood, as some people might draw the 9’s leg more horizontally
+than others, so that rotating up to 90 degrees counter-clockwise still preserves in some cases
+the picture semantics. Figure C.1-left shows that the CW algorithm can ﬁnd interesting
+policies in such a constrained setting, but also that it can outperform the baselines. Yet,
+this happens only after 10,000 trials."
+REFERENCES,0.5970149253731343,Published as a conference paper at ICLR 2022
+REFERENCES,0.599502487562189,"100
+101
+102
+103
+104"
+REFERENCES,0.6019900497512438,Number of subpolicies sampled 94.0 94.5 95.0 95.5
+REFERENCES,0.6044776119402985,Test accuracy
+REFERENCES,0.6069651741293532,"Standard setting
+Class-wise setting
+No augmentation"
+REFERENCES,0.6094527363184079,Hor. Flip
+REFERENCES,0.6119402985074627,Ver. Flip
+REFERENCES,0.6144278606965174,90 Rot.
+REFERENCES,0.6169154228855721,180 Rot.
+REFERENCES,0.6194029850746269,Identity
+REFERENCES,0.6218905472636815,All classes 4 6 8 9 Class
+REFERENCES,0.6243781094527363,"0
+0
+0
+0
+1"
+REFERENCES,0.6268656716417911,"0
+0
+0
+0
+1"
+REFERENCES,0.6293532338308457,"0
+0
+0
+0
+1"
+REFERENCES,0.6318407960199005,"0.25
+0
+0
+0
+0.75"
+REFERENCES,0.6343283582089553,"0
+0
+0.05
+0
+0.95 0.0 0.2 0.4 0.6 0.8 1.0"
+REFERENCES,0.6368159203980099,"Figure C.1: (left) Test accuracy obtained using the subpolicy with higher performance
+on validation set. (right) Probability of applying each operation in the best policy found
+(L = 5). First row corresponds to the standard setting and following rows to the CW setting."
+REFERENCES,0.6393034825870647,"This toy experiment suggests that looking for augmentation strategies depending on the label
+of the data being transformed can be relevant to improve prediction performance, but also to
+help discovering some interesting invariances for the task considered. However, despite the
+extremely simpliﬁed setting used, the CW search took 14.4 GPU days (Tesla V100 SXM2).
+It becomes clear that a more eﬃcient search strategy is required for real-world applications."
+REFERENCES,0.6417910447761194,"D
+Experimental setting shared across EEG experiments"
+REFERENCES,0.6442786069651741,"In all EEG experiments, learning was carried using the convolutional network proposed
+in Chambon et al. (2018). The architecture can be found on Table 1 and was chosen as it
+seemed like a good compromise as a simple yet deep and relevant sleep staging architecture.
+The ﬁrst layers (1-4) implements a spatial ﬁlter, computing virtual channels through a linear
+combination of the original input channels. Then, layers 5 to 9 correspond to a standard
+convolutional feature extractor and last layers implement a simple classiﬁer. More details
+can be found in Chambon et al. (2018). Other relevant and recent sleep staging architectures
+are Perslev et al. (2019; 2021); Jia et al. (2021)."
+REFERENCES,0.6467661691542289,"Layer
+# ﬁlters
+# params
+size
+stride
+Output dim.
+Activation
+1
+Input
+(C, T)
+2
+Reshape
+(C, T, 1)
+3
+Conv2D
+C
+C * C
+(C, 1)
+(1, 1)
+(1, T, C)
+Linear
+4
+Permute
+(C, T, 1)
+5
+Conv2D
+8
+8 * 64 + 8
+(1, 64)
+(1, 1)
+(C, T, 8)
+Relu
+6
+Maxpool2D
+(1, 16)
+(1, 16)
+(C, T // 16, 8)
+7
+Conv2D
+8
+8 * 8 * 64 + 8
+(1, 64)
+(1, 1)
+(C, T // 16, 8)
+Relu
+8
+Maxpool2D
+(1, 16)
+(1, 16)
+(C, T // 256, 8)
+9
+Flatten
+(C * (T // 256) * 8)
+10
+Dropout (50%)
+(C * (T // 256) * 8)
+11
+Dense
+5 * (C * T // 256 * 8)
+5
+Softmax"
+REFERENCES,0.6492537313432836,"Table 1: Detailed architecture from Chambon et al. (2018), where C is the number of EEG
+channels and T the time series length."
+REFERENCES,0.6517412935323383,"The optimizer used to train the model above was Adam with a learning rate of 10−3, β1 = 0.
+and β2 = 0.999. At most 300 epochs were used for training. Early stopping was implemented
+with a patience of 30 epochs. For automatic search experiments, the policy learning rate
+ξ introduced in (7) was set to 5 × 104 based on a grid-search carried using the validation
+set. Concerning the batch size, it was always set to 16, except for CADDA, for which it
+was doubled to 32, which was necessary to stabilize its noisier gradients. The motivation
+for such small values was to avoid memory saturation when training Faster AutoAugment"
+REFERENCES,0.654228855721393,Published as a conference paper at ICLR 2022
+REFERENCES,0.6567164179104478,"and to preserve the stochasticity of the gradient descent in the learning curve experiments
+(Figures 3 and G.8), even in very low data regimes."
+REFERENCES,0.6592039800995025,"Balanced accuracy was used as performance metric using the inverse of original class
+frequencies as balancing weights. The MNE-Python (Gramfort et al., 2013) and Braindecode
+software (Schirrmeister et al., 2017) were used to preprocess and learn on the EEG
+data. Training was carried on single Tesla V100 GPUs. The NO = 13 operations con-
+sidered were: time reverse, sing flip, FT surrogate, frequency shift, bandstop
+filtering, time masking, Gaussian noise, channel dropout, channel shuffle,
+channel symmetry and rotations around each cartesian axis.
+In automatic search
+experiments, bandstop filter was not included in the diﬀerentiable strategies (Faster AA,
+DADA, ADDA and CADDA) because we did not implement a diﬀerentiable relaxation of it."
+REFERENCES,0.6616915422885572,"E
+Architecture details and comparison between ADDA, DADA
+and Faster AA"
+REFERENCES,0.664179104477612,Subpolicy
+REFERENCES,0.6666666666666666,Subpolicy
+REFERENCES,0.6691542288557214,Subpolicy DADA
+REFERENCES,0.6716417910447762,"ADDA
+Possible operations:"
+REFERENCES,0.6741293532338308,Subpolicy
+REFERENCES,0.6766169154228856,Subpolicy
+REFERENCES,0.6791044776119403,Subpolicy
+REFERENCES,0.681592039800995,ADDA Stage
+REFERENCES,0.6840796019900498,All possible
+REFERENCES,0.6865671641791045,subpolicies
+REFERENCES,0.6890547263681592,Faster AA Stage
+REFERENCES,0.6915422885572139,Faster AA
+REFERENCES,0.6940298507462687,": learnable parameters
+: uniform sampling"
+REFERENCES,0.6965174129353234,: sampling with log-probability
+REFERENCES,0.6990049751243781,Subpolicy
+REFERENCES,0.7014925373134329,Subpolicy
+REFERENCES,0.7039800995024875,Subpolicy
+REFERENCES,0.7064676616915423,"Figure E.2: Diﬀerent diﬀerentiable policy structures of ADDA, DADA and Faster AA. DADA
+samples whole subpolicies according to learnable log probabilities, whereas ADDA and Faster
+AA sample from L subpolicies with uniform probability. Also, while subpolicy are sequences
+of parametrized operations in DADA, their are made of stages in ADDA and Faster AA. In
+Faster AA stages, a convex combination of all possible operations is computed. In ADDA,
+however, operations are sampled with learnable log probabilities."
+REFERENCES,0.7089552238805971,"As depicted on Figure E.2, DADA policies will sample a subpolicy according to a Gumbel-
+softmax distribution parametrized by learnable weights w:"
+REFERENCES,0.7114427860696517,"TDADA(X) = τi(X),
+with i ∼Gumbel-Softmax({1, . . . , (NO)K}; w)."
+REFERENCES,0.7139303482587065,"Each subpolicy τi is just a sequence of operations diﬀerentiable wrt its parameters (cf. Ap-
+pendix A). However, in ADDA and Faster AA, only a predetermined number of L subpolicies"
+REFERENCES,0.7164179104477612,Published as a conference paper at ICLR 2022
+REFERENCES,0.7189054726368159,are considered and sampled uniformly:
+REFERENCES,0.7213930348258707,"TADDA(X) = ˜τi,
+with i ∼U({1, . . . , L})."
+REFERENCES,0.7238805970149254,"In this case, subpolicies ˜τi are sequences of stages ˜Ok, as described in equation (6). While these
+stages compute a convex combination of all possible operations in Faster AA, using learnable
+weights w mapped through a softmax function ση, ADDA stages carry a diﬀerentiable sample
+(i.e. ση is exactly equal to 1 for exactly one out of NO in (6)). In this case, the weights
+correspond to the log probabilities of sampling each operation."
+REFERENCES,0.7263681592039801,"F
+Complementary automatic data augmentation results on EEG
+sleep staging"
+REFERENCES,0.7288557213930348,Class-wise policies selected by CADDA and other approaches
+REFERENCES,0.7313432835820896,time reverse
+REFERENCES,0.7338308457711443,sign flip
+REFERENCES,0.736318407960199,FT surrogate
+REFERENCES,0.7388059701492538,frequency shift
+REFERENCES,0.7412935323383084,bandstop filter
+REFERENCES,0.7437810945273632,time masking
+REFERENCES,0.746268656716418,Gaussian noise
+REFERENCES,0.7487562189054726,channel dropout
+REFERENCES,0.7512437810945274,channel shuffle
+REFERENCES,0.753731343283582,channel symmetry
+REFERENCES,0.7562189054726368,"rotation z
+axis
+rotation y
+axis
+rotation x
+axis
+identity"
+REFERENCES,0.7587064676616916,AutoAugment
+REFERENCES,0.7611940298507462,Fast AA
+REFERENCES,0.763681592039801,Faster AA DADA ADDA
+REFERENCES,0.7661691542288557,CADDA - W
+REFERENCES,0.7686567164179104,CADDA - N1
+REFERENCES,0.7711442786069652,CADDA - N2
+REFERENCES,0.7736318407960199,CADDA - N3
+REFERENCES,0.7761194029850746,CADDA - REM
+REFERENCES,0.7786069651741293,0.04 0.00 0.00 0.01 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.01 0.00 0.93
+REFERENCES,0.7810945273631841,0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.01 0.00 0.99
+REFERENCES,0.7835820895522388,0.04 0.02 0.06 0.07 0.00 0.03 0.17 0.00 0.01 0.04 0.00 0.03 0.05 0.49
+REFERENCES,0.7860696517412935,0.03 0.06 0.06 0.08 0.00 0.09 0.00 0.07 0.04 0.02 0.06 0.04 0.02 0.44
+REFERENCES,0.7885572139303483,0.04 0.03 0.05 0.09 0.00 0.06 0.04 0.04 0.02 0.04 0.01 0.05 0.07 0.45
+REFERENCES,0.7910447761194029,0.01 0.02 0.04 0.03 0.00 0.04 0.06 0.02 0.05 0.04 0.06 0.06 0.10 0.46
+REFERENCES,0.7935323383084577,0.03 0.05 0.05 0.02 0.00 0.09 0.02 0.02 0.02 0.07 0.05 0.03 0.04 0.53
+REFERENCES,0.7960199004975125,0.07 0.05 0.07 0.05 0.00 0.05 0.00 0.03 0.01 0.03 0.06 0.01 0.08 0.48
+REFERENCES,0.7985074626865671,0.05 0.03 0.08 0.12 0.00 0.03 0.05 0.04 0.04 0.05 0.03 0.02 0.02 0.44
+REFERENCES,0.8009950248756219,0.05 0.04 0.02 0.03 0.00 0.03 0.08 0.04 0.05 0.02 0.04 0.01 0.03 0.55
+REFERENCES,0.8034825870646766,"0
+10
+2 10
+1 10
+0"
+REFERENCES,0.8059701492537313,"Figure F.3: Probability of applying each operation in the best policies obtained by the diﬀerent
+search strategies. For each method, probabilities of all subpolicies are grouped. Methods
+based on diﬀerentiable augmentation policies discover relevant augmentation strategies such
+as time reverse, sign flip, FT surrogate etc. CADDA suggests that each class beneﬁts
+diﬀerently from the diﬀerent strategies."
+REFERENCES,0.8084577114427861,Published as a conference paper at ICLR 2022
+REFERENCES,0.8109452736318408,"Complete comparison of gradient-based and gradient-free methods in the class-
+agnostic setting"
+REFERENCES,0.8134328358208955,"0.0
+2.5
+5.0
+7.5
+10.0
+12.5
+15.0
+17.5
+20.0"
+REFERENCES,0.8159203980099502,GPU Hours of search 0.820 0.825 0.830 0.835
+REFERENCES,0.818407960199005,Test balanced accuracy
+REFERENCES,0.8208955223880597,"RandomSearch
+AutoAugment
+Fast AutoAugment
+Faster AutoAugment
+DADA
+ADDA*"
+REFERENCES,0.8233830845771144,"Figure F.4: Median performance obtained by diﬀerent automatic data augmentation strategies
+as a function of the computation time. ADDA outperforms the state-of-the-art in speed and
+ﬁnal accuracy in the class agnostic setting."
+REFERENCES,0.8258706467661692,75% conﬁdence interval
+REFERENCES,0.8283582089552238,"0.0
+2.5
+5.0
+7.5
+10.0
+12.5
+GPU Hours of search 0.820 0.825 0.830 0.835 0.840"
+REFERENCES,0.8308457711442786,Test balanced accuracy (a)
+REFERENCES,0.8333333333333334,"DADA
+Faster AutoAugment
+ADDA*"
+REFERENCES,0.835820895522388,"0
+5
+10
+15
+20
+GPU Hours of search (b)"
+REFERENCES,0.8383084577114428,"CW AutoAugment
+CW Fast AutoAugment
+CADDA*"
+REFERENCES,0.8407960199004975,"Figure F.5: Median balanced accuracy (over 5 folds) on the test set of diﬀerent ADA
+strategies as a function of the computation time. This ﬁgure is the same as Figure 4 with
+error bars representing 75% conﬁdence intervals estimated with bootstrap."
+REFERENCES,0.8432835820895522,Published as a conference paper at ICLR 2022
+REFERENCES,0.845771144278607,Macro F1-score plots
+REFERENCES,0.8482587064676617,"0.0
+2.5
+5.0
+7.5
+10.0
+12.5
+GPU Hours of search 0.785 0.790 0.795 0.800 0.805 0.810"
+REFERENCES,0.8507462686567164,Test macro F1 (a)
+REFERENCES,0.8532338308457711,"DADA
+Faster AutoAugment
+ADDA*
+ADDA w/o RELAX
+ADDA w/o GS sampling"
+REFERENCES,0.8557213930348259,"0.0
+2.5
+5.0
+7.5
+10.0
+12.5
+15.0
+GPU Hours of search (b)"
+REFERENCES,0.8582089552238806,"CW AutoAugment
+CW Fast AutoAugment
+CADDA*"
+REFERENCES,0.8606965174129353,"Figure F.6: Median macro F1-score (over 5 folds) on the test set of diﬀerent ADA strategies
+as a function of the computation time. (a) Class-agnostic setting: ADDA is 40% faster than
+Faster AA and leads to a ﬁnal performance 0.5% higher. It also outperforms DADA by 1%.
+(b) CW setting: CADDA is 5x faster than AutoAugment and achieves higher performance
+than gradient-free methods."
+REFERENCES,0.8631840796019901,Impact of data regime on density matching approaches
+REFERENCES,0.8656716417910447,"0
+5
+10
+15
+GPU Hours of search 0.74 0.76 0.78 0.80"
+REFERENCES,0.8681592039800995,Test balanced accuracy
+NIGHTS OF SLEEP,0.8706467661691543,6 nights of sleep
+NIGHTS OF SLEEP,0.8731343283582089,"AutoAugment
+Faster AutoAugment
+Fast AutoAugment"
+NIGHTS OF SLEEP,0.8756218905472637,"0
+5
+10
+15
+20
+GPU Hours of search 0.820 0.825 0.830 0.835 0.840 0.845"
+NIGHTS OF SLEEP,0.8781094527363185,24 nights of sleep
+NIGHTS OF SLEEP,0.8805970149253731,"AutoAugment
+Faster AutoAugment
+Fast AutoAugment"
+NIGHTS OF SLEEP,0.8830845771144279,"Figure F.7: Median performance obtained by diﬀerent automatic data augmentation strategies
+as a function of the computation time with 6 and 24 nights of sleep for training and validation.
+With 6 nights, Fast AutoAugment fails to learn relevant augmentation policies and is not
+competitive against AutoAugment and Faster AutoAugment. This eﬀect is mitigated with
+24 nights, when the classiﬁer is trained on suﬃcient data to be able to capture relevant
+invariances."
+NIGHTS OF SLEEP,0.8855721393034826,Published as a conference paper at ICLR 2022
+NIGHTS OF SLEEP,0.8880597014925373,"G
+Further manual exploration details"
+NIGHTS OF SLEEP,0.8905472636815921,"G.1
+Manual search results on MASS dataset"
+NIGHTS OF SLEEP,0.8930348258706468,"2
+11
+2
+7
+2
+3"
+NIGHTS OF SLEEP,0.8955223880597015,Training set fraction 0.0 0.2 0.4
+NIGHTS OF SLEEP,0.8980099502487562,Relative improvement
+NIGHTS OF SLEEP,0.900497512437811,Frequency transforms
+NIGHTS OF SLEEP,0.9029850746268657,"Bandstop Filter
+FT Surrogate
+Frequency Shift"
+NIGHTS OF SLEEP,0.9054726368159204,"2
+11
+2
+7
+2
+3"
+NIGHTS OF SLEEP,0.9079601990049752,Training set fraction 0.0 0.2 0.4
+NIGHTS OF SLEEP,0.9104477611940298,Time transforms
+NIGHTS OF SLEEP,0.9129353233830846,"Time Masking
+Time Reverse
+White Noise"
+NIGHTS OF SLEEP,0.9154228855721394,"2
+11
+2
+7
+2
+3"
+NIGHTS OF SLEEP,0.917910447761194,Training set fraction 0.0 0.2 0.4
+NIGHTS OF SLEEP,0.9203980099502488,Sensors transforms
+NIGHTS OF SLEEP,0.9228855721393034,"Channel Dropout
+Rotation Y-axis
+Rotation Z-axis
+Sign Flip"
+NIGHTS OF SLEEP,0.9253731343283582,"Figure G.8: Median performance gains obtained by individual augmentation strategies on
+the MASS dataset. Best transforms obtained on Physionet (cf. Fig. 3) give here consistent
+improvements, while sensors transformation like Channel Dropout are more relevant when
+using 6 channels. Here also using more training data mitigates the need for data augmentation,
+although it still improves the predictive performance."
+NIGHTS OF SLEEP,0.927860696517413,"G.2
+Magnitudes fine-tuning for manual exploration"
+NIGHTS OF SLEEP,0.9303482587064676,"In this section we explain the ﬁne-tuning of magnitudes used for the manual exploration
+results presented in Section 6."
+NIGHTS OF SLEEP,0.9328358208955224,"A ﬁrst training with probability p = 0.5 and magnitude µ = 0.5 was carried over the same
+training subsets as in Figure 3 and Figure G.8. Then we selected the subset where the eﬀects
+of augmentation were maximized (2−11 times the original training set for both Physionet and
+MASS datasets). Finally, for each operation, we carried a grid-search over the magnitude
+parameter (with ﬁxed probability p = 0.5) with the selected training subsets (over 5-folds,
+as described in Section 6). The result of the grid-search can be seen on Figure G.9 and
+Figure G.10."
+NIGHTS OF SLEEP,0.9353233830845771,Published as a conference paper at ICLR 2022 0.0 0.1 0.2 0.3 0.4 0.5
+NIGHTS OF SLEEP,0.9378109452736318,Balanced test accuracy improvement
+NIGHTS OF SLEEP,0.9402985074626866,Frequency transforms
+NIGHTS OF SLEEP,0.9427860696517413,"transform
+Bandstop Filter
+FT Surrogate
+Frequency Shift 0.04 0.02 0.00 0.02 0.04 0.06"
+NIGHTS OF SLEEP,0.945273631840796,Balanced test accuracy improvement
+NIGHTS OF SLEEP,0.9477611940298507,Time transforms
+NIGHTS OF SLEEP,0.9502487562189055,transform
+NIGHTS OF SLEEP,0.9527363184079602,"Time Masking
+White Noise"
+NIGHTS OF SLEEP,0.9552238805970149,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Magnitude 0.05 0.00 0.05 0.10"
+NIGHTS OF SLEEP,0.9577114427860697,Balanced test accuracy improvement
+NIGHTS OF SLEEP,0.9601990049751243,Sensors transforms
+NIGHTS OF SLEEP,0.9626865671641791,"transform
+Random Rotation X-axis
+Random Rotation Y-axis
+Random Rotation Z-axis
+Channel Shuffle
+Channel Dropout"
+NIGHTS OF SLEEP,0.9651741293532339,"Figure G.9: Magnitudes grid-search results for Physionet dataset. Balanced accuracy values
+are relative to a training without any augmentation."
+NIGHTS OF SLEEP,0.9676616915422885,Published as a conference paper at ICLR 2022 0.25 0.00 0.25 0.50 0.75 1.00 1.25
+NIGHTS OF SLEEP,0.9701492537313433,Balanced test accuracy improvement
+NIGHTS OF SLEEP,0.972636815920398,Frequency transforms
+NIGHTS OF SLEEP,0.9751243781094527,"transform
+Bandstop Filter
+FT Surrogate
+Frequency Shift 0.10 0.05 0.00 0.05 0.10 0.15 0.20"
+NIGHTS OF SLEEP,0.9776119402985075,Balanced test accuracy improvement
+NIGHTS OF SLEEP,0.9800995024875622,Time transforms
+NIGHTS OF SLEEP,0.9825870646766169,transform
+NIGHTS OF SLEEP,0.9850746268656716,"White Noise
+Time Masking"
+NIGHTS OF SLEEP,0.9875621890547264,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Magnitude 0.1 0.0 0.1 0.2 0.3 0.4"
+NIGHTS OF SLEEP,0.9900497512437811,Balanced test accuracy improvement
+NIGHTS OF SLEEP,0.9925373134328358,Sensors transforms
+NIGHTS OF SLEEP,0.9950248756218906,"transform
+Random Rotation X-axis
+Random Rotation Y-axis
+Random Rotation Z-axis
+Channel Dropout
+Channel Shuffle"
+NIGHTS OF SLEEP,0.9975124378109452,"Figure G.10: Magnitudes grid-search results for MASS dataset. Balanced accuracy values
+are relative to a training without any augmentation."

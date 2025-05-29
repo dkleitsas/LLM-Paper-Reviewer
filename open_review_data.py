@@ -13,7 +13,7 @@ def save_paper(pdf_url, filename):
 
 def get_convention_papers(convention_id, client, paper_limit=10, file_path="paper_pdfs", use_api2=False):
 
-    papers = client.get_notes(invitation=convention_id, limit=paper_limit, offset=2000)
+    papers = client.get_notes(invitation=convention_id, limit=paper_limit, offset=1000)
 
     papers_downloaded = 0
     accepted_count = 0
@@ -36,11 +36,12 @@ def get_convention_papers(convention_id, client, paper_limit=10, file_path="pape
 
         decision_notes = client.get_notes(
             forum=paper.forum,
-            invitation=f'{convention_id.replace("/-/Submission", "")}/Submission{paper.number}/-/Decision'
+            invitation=f'{convention_id.replace("/-/Blind_Submission", "")}/Paper{paper.number}/-/Decision'
             )
-
+        
         if decision_notes:
-            decision_value = decision_notes[0].content.get('decision', {}).get('value', None)
+            # decision_value = decision_notes[0].content.get('decision', {}).get('value', None) Depends on API version idc enough to make it dynamic
+            decision_value = decision_notes[0].content.get('decision', {})
         else:
             decision_value = None
 
@@ -48,7 +49,7 @@ def get_convention_papers(convention_id, client, paper_limit=10, file_path="pape
 
 
 
-        if decision_class == "other" or (decision_class == "accepted" and (accepted_count - rejected_count >= 1)):
+        if decision_class == "other" or (decision_class == "rejected" and (accepted_count - rejected_count < 50)):
             print(f"Decision for paper '{title}' is not clear: {decision_value}. Skipping. Or too many accepted papers.")
             continue
         if decision_class == "accepted":
@@ -72,15 +73,15 @@ def get_convention_papers(convention_id, client, paper_limit=10, file_path="pape
 
 
 def main():
-    # convention_id = 'ICLR.cc/2023/Conference/-/Blind_Submission'              # ICLR 2023 10 papers
-    convention_id = "NeurIPS.cc/2023/Conference/-/Submission"           # NeurIPS 2022 10 papers
+    convention_id = "ICLR.cc/2022/Conference/-/Blind_Submission"              # ICLR 2023 10 papers
+    # convention_id = "NeurIPS.cc/2022/Conference/-/Blind_Submission"           # NeurIPS 2022 10 papers
     # convention_id = "Computo/-/Submission"                                    # Computo 2024 6 papers   
     # convention_id = "logconference.io/LOG/2022/Conference/-/Blind_Submission" # LOG 2022 10 papers
     # convention_id = "XJTU.edu.cn/2024/CSUC/-/Submission"                      # ΧJTU CSUC 2024 10 papers        
     # convention_id = "ICOMP.cc/2024/Conference/-/Submission"                   # ICOMP 2024 10 papers   
     # convention_id = 'MIDL.io/2024/Conference/-/Submission'
     paper_limit = 1000
-    file_path = "paper_pdfs/NeurIPS"
+    file_path = "paper_pdfs/ICLR"
         
     # Some older venues only available with old API
     # Some newer venues only with new API 
@@ -89,13 +90,13 @@ def main():
     # Utility func to check what the invitation looks like
     try:
         client = OpenReviewClient(baseurl='https://api2.openreview.net')
-        note = client.get_note('u1b1dJtyxc')
+        note = client.get_note('youe3QQepVB')
         use_api2 = True
         print(note.invitations)
     except Exception as e:
         print("Not available with API2. Trying API1.")
         client = openreview.Client(baseurl='https://api.openreview.net')
-        note = client.get_note('u1b1dJtyxc')
+        note = client.get_note('youe3QQepVB')
         use_api2 = False
         print(note.invitation)
 

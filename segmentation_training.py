@@ -22,6 +22,7 @@ from utils import set_seed
 
 import seaborn as sns
 from sklearn.metrics import confusion_matrix
+from sklearn.metrics import precision_recall_fscore_support, classification_report
 import matplotlib.pyplot as plt
 
 set_seed(2)
@@ -122,6 +123,27 @@ accuracy = accuracy_score(all_labels.numpy(), all_preds.numpy())
 print(f"Validation Accuracy: {accuracy:.4f}")
 
 wait = input("Waiting...")
+
+precision, recall, f1, _ = precision_recall_fscore_support(
+    all_labels.numpy(), all_preds.numpy(), average=None
+)
+print("\nPer-class Precision, Recall, F1:")
+for i, (p, r, f) in enumerate(zip(precision, recall, f1)):
+    print(f"Class {i}: Precision: {p:.4f}, Recall: {r:.4f}, F1: {f:.4f}")
+
+# Compute micro and macro averages
+for avg in ['micro', 'macro']:
+    p, r, f, _ = precision_recall_fscore_support(
+        all_labels.numpy(), all_preds.numpy(), average=avg
+    )
+    print(f"\n{avg.capitalize()} Average:")
+    print(f"Precision: {p:.4f}, Recall: {r:.4f}, F1: {f:.4f}")
+
+# Optional: Full classification report
+print("\nClassification Report:\n")
+print(classification_report(all_labels.numpy(), all_preds.numpy()))
+
+wait = input("If you continue, model is saved...")
 
 torch.save(model.state_dict(), 'model_weights.pth')
 
