@@ -25,7 +25,7 @@ from sklearn.metrics import confusion_matrix
 from sklearn.metrics import precision_recall_fscore_support, classification_report
 import matplotlib.pyplot as plt
 
-set_seed(2)
+set_seed(0)
 
 folder_path = "segmentation_labeled_csvs/" 
 model_name = "allenai/scibert_scivocab_uncased"
