@@ -143,8 +143,8 @@ def run_segmentation_inference(model, dataset, output_folder, label_for_doc):
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-accepted_folder = "paper_csvs/NeurIPS/accepted"
-rejected_folder = "paper_csvs/NeurIPS/rejected"
+accepted_folder = "paper_csvs/ICLR/accepted"
+rejected_folder = "paper_csvs/ICLR/rejected"
 output_folder = "classification_csvs/"
 
 tokenizer_name = "allenai/scibert_scivocab_uncased"
