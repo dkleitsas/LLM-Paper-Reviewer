@@ -4,7 +4,11 @@ import numpy as np
 from collections import Counter, defaultdict
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 import pandas as pd
+
+from scipy.special import softmax
+from sklearn.metrics import classification_report
 
 from datasets import load_dataset, concatenate_datasets
 from transformers import (
@@ -138,9 +142,9 @@ logits = predictions.predictions
 predicted_labels = np.argmax(logits, axis=-1)
 
 # === SECTION-LEVEL CONFUSION MATRIX ===
-section_cm = confusion_matrix(predictions.label_ids, predicted_labels)
+section_cm = confusion_matrix(predictions.label_ids, predicted_labels, normalize='true')
 plt.figure(figsize=(6, 5))
-sns.heatmap(section_cm, annot=True, fmt='d', cmap='Blues',
+sns.heatmap(section_cm, annot=True, fmt='.2f', cmap='Purples',
             xticklabels=list(id2label.values()), yticklabels=list(id2label.values()))
 plt.title("Section-Level Confusion Matrix")
 plt.xlabel("Predicted Label")
@@ -157,45 +161,107 @@ df["TrueLabel"] = df["label"]
 # Optional: Save section-level results
 df.to_csv("section_level_predictions.csv", index=False)
 
-# Group and aggregate
-paper_preds = defaultdict(list)
-true_labels_per_paper = {}
+# Get softmax scores
+probs = softmax(logits, axis=1)
 
-for _, row in df.iterrows():
-    pid = row["PaperID"]
-    paper_preds[pid].append(row["PredictedLabel"])
-    if pid not in true_labels_per_paper:
-        true_labels_per_paper[pid] = row["TrueLabel"]
+# Attach predictions
+test_with_preds = tokenized_test.add_column("PredictedLabel", predicted_labels)
+test_with_preds = test_with_preds.add_column("ConfidenceRejected", probs[:, label2id['rejected']])
+test_with_preds = test_with_preds.add_column("ConfidenceAccepted", probs[:, label2id['accepted']])
+df = pd.DataFrame(test_with_preds)
+df["TrueLabel"] = df["label"]
+df.to_csv("section_level_predictions.csv", index=False)
 
-paper_level_preds = {
-    pid: Counter(preds).most_common(1)[0][0]
-    for pid, preds in paper_preds.items()
+# Group by paper
+grouped = df.groupby("PaperID")
+paper_results = {}
+
+for pid, group in grouped:
+    section_preds = list(group["PredictedLabel"])
+    confidences_rej = list(group["ConfidenceRejected"])
+    confidences_acc = list(group["ConfidenceAccepted"])
+    true_label = group["TrueLabel"].iloc[0]
+
+    # Aggregation strategies
+    majority_label = Counter(section_preds).most_common(1)[0][0]
+    any_rejected_label = label2id['rejected'] if label2id['rejected'] in section_preds else label2id['accepted']
+    all_rejected_label = label2id['rejected'] if all(p == label2id['rejected'] for p in section_preds) else label2id['accepted']
+    confidence_weighted_label = label2id['rejected'] if sum(confidences_rej) > sum(confidences_acc) else label2id['accepted']
+
+    paper_results[pid] = {
+        "TrueLabel": true_label,
+        "MajorityVote": majority_label,
+        "AnyRejected": any_rejected_label,
+        "AllRejected": all_rejected_label,
+        "ConfidenceWeighted": confidence_weighted_label
+    }
+
+# Evaluate each strategy
+strategy_names = ["MajorityVote", "AnyRejected", "AllRejected", "ConfidenceWeighted"]
+
+print("\n=== Paper-Level Aggregation Metrics ===")
+for strategy in strategy_names:
+    y_true = [v["TrueLabel"] for v in paper_results.values()]
+    y_pred = [v[strategy] for v in paper_results.values()]
+    print(f"\n--- {strategy} ---")
+    print(classification_report(y_true, y_pred, target_names=list(id2label.values())))
+
+    # Confusion matrix
+    cm = confusion_matrix(y_true, y_pred, normalize='true')
+    plt.figure(figsize=(6, 5))
+    sns.heatmap(cm, annot=True, fmt='.2f', cmap='Purples',
+                xticklabels=list(id2label.values()), yticklabels=list(id2label.values()))
+    plt.title(f"{strategy} Confusion Matrix")
+    plt.xlabel("Predicted Label")
+    plt.ylabel("True Label")
+    plt.tight_layout()
+    plt.savefig(f"{strategy.lower()}_confusion_matrix.png")
+    plt.close()
+
+# Save paper-level predictions
+paper_df = pd.DataFrame.from_dict(paper_results, orient="index").reset_index().rename(columns={"index": "PaperID"})
+paper_df["TrueLabelName"] = paper_df["TrueLabel"].map(id2label)
+for strategy in strategy_names:
+    paper_df[strategy + "Name"] = paper_df[strategy].map(id2label)
+paper_df.to_csv("paper_level_predictions.csv", index=False)
+
+# Metrics per strategy
+strategy_scores = {
+    "Strategy": [],
+    "Accuracy": [],
+    "Precision": [],
+    "Recall": [],
+    "F1": []
 }
 
-y_true = [true_labels_per_paper[pid] for pid in paper_level_preds]
-y_pred = [paper_level_preds[pid] for pid in paper_level_preds]
+for strategy in strategy_names:
+    y_true = [v["TrueLabel"] for v in paper_results.values()]
+    y_pred = [v[strategy] for v in paper_results.values()]
+    
+    strategy_scores["Strategy"].append(strategy)
+    strategy_scores["Accuracy"].append(accuracy_score(y_true, y_pred))
+    strategy_scores["Precision"].append(precision_score(y_true, y_pred))
+    strategy_scores["Recall"].append(recall_score(y_true, y_pred))
+    strategy_scores["F1"].append(f1_score(y_true, y_pred))
 
-acc = accuracy_score(y_true, y_pred)
-prec, recall, f1, _ = precision_recall_fscore_support(y_true, y_pred, average="binary")
+# Convert to DataFrame
+scores_df = pd.DataFrame(strategy_scores)
+scores_df = scores_df.set_index("Strategy").reset_index().melt(id_vars="Strategy", var_name="Metric", value_name="Score")
 
-print("\n=== Paper-Level Metrics ===")
-print(f"Accuracy : {acc:.4f}")
-print(f"Precision: {prec:.4f}")
-print(f"Recall   : {recall:.4f}")
-print(f"F1 Score : {f1:.4f}")
-
-
-paper_cm = confusion_matrix(y_true, y_pred)
-plt.figure(figsize=(6, 5))
-sns.heatmap(paper_cm, annot=True, fmt='d', cmap='Blues',
-            xticklabels=list(id2label.values()), yticklabels=list(id2label.values()))
-plt.title("Paper-Level Confusion Matrix")
-plt.xlabel("Predicted Label")
-plt.ylabel("True Label")
+# Plot
+plt.figure(figsize=(10, 6))
+sns.barplot(data=scores_df, x="Strategy", y="Score", hue="Metric")
+plt.ylim(0, 1.05)
+plt.title("Paper-Level Evaluation Metrics by Aggregation Strategy")
+plt.ylabel("Score")
+plt.xlabel("Aggregation Strategy")
+plt.legend(title="Metric")
 plt.tight_layout()
-plt.savefig("paper_level_confusion_matrix.png")
+plt.savefig("paper_level_strategy_comparison.png")
 plt.close()
 
 # === SAVE FINAL MODEL ===
 trainer.save_model(output_dir)
 tokenizer.save_pretrained(output_dir)
+
+
