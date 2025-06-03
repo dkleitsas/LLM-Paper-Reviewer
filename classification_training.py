@@ -1,13 +1,22 @@
 import os
 import glob
 import numpy as np
+from collections import Counter, defaultdict
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from sklearn.model_selection import train_test_split
+import pandas as pd
+
 from datasets import load_dataset, concatenate_datasets
 from transformers import (
-    AutoTokenizer, AutoModelForSequenceClassification,
-    TrainingArguments, Trainer
+    AutoTokenizer,
+    AutoModelForSequenceClassification,
+    Trainer,
+    TrainingArguments,
 )
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support
-import torch
+
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+import seaborn as sns
 
 # === CONFIGURATION ===
 csv_folder = "classification_csvs"  # Folder where all CSV files are located
@@ -21,8 +30,14 @@ output_dir = "classifier"
 csv_files = glob.glob(os.path.join(csv_folder, "**", "*.csv"), recursive=True)
 print(f"Found {len(csv_files)} CSV files.")
 
-# Load and merge datasets
-datasets_list = [load_dataset("csv", data_files=file)["train"] for file in csv_files]
+datasets_list = []
+
+for i, file in enumerate(csv_files):
+    dataset = load_dataset("csv", data_files=file)["train"]
+    paper_id = os.path.splitext(os.path.basename(file))[0]
+    dataset = dataset.map(lambda ex: {**ex, "PaperID": paper_id})
+    datasets_list.append(dataset)
+
 combined_dataset = concatenate_datasets(datasets_list)
 
 # === LABEL ENCODING ===
@@ -43,8 +58,17 @@ def encode_labels(example):
 
 combined_dataset = combined_dataset.map(encode_labels)
 
-# === TRAIN/TEST SPLIT ===
-dataset = combined_dataset.train_test_split(test_size=0.2, seed=42)
+# === GROUPED TRAIN/TEST SPLIT BY PAPER ===
+all_paper_ids = list(set(combined_dataset['PaperID']))
+train_ids, test_ids = train_test_split(all_paper_ids, test_size=0.2, random_state=42)
+
+train_dataset = combined_dataset.filter(lambda ex: ex['PaperID'] in train_ids)
+test_dataset = combined_dataset.filter(lambda ex: ex['PaperID'] in test_ids)
+
+dataset = {"train": train_dataset, "test": test_dataset}
+
+print(f"Train papers: {len(set(train_dataset['PaperID']))}")
+print(f"Test papers : {len(set(test_dataset['PaperID']))}")
 
 # === TOKENIZATION ===
 tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -57,7 +81,8 @@ def tokenize_function(examples):
         max_length=max_length
     )
 
-tokenized_dataset = dataset.map(tokenize_function, batched=True)
+tokenized_train = dataset["train"].map(tokenize_function, batched=True)
+tokenized_test = dataset["test"].map(tokenize_function, batched=True)
 
 # === LOAD MODEL ===
 model = AutoModelForSequenceClassification.from_pretrained(
@@ -99,14 +124,77 @@ training_args = TrainingArguments(
 trainer = Trainer(
     model=model,
     args=training_args,
-    train_dataset=tokenized_dataset["train"],
-    eval_dataset=tokenized_dataset["test"],
+    train_dataset=tokenized_train,
+    eval_dataset=tokenized_test,
     tokenizer=tokenizer,
     compute_metrics=compute_metrics
 )
 
 # === TRAIN ===
 trainer.train()
+
+predictions = trainer.predict(tokenized_test)
+logits = predictions.predictions
+predicted_labels = np.argmax(logits, axis=-1)
+
+# === SECTION-LEVEL CONFUSION MATRIX ===
+section_cm = confusion_matrix(predictions.label_ids, predicted_labels)
+plt.figure(figsize=(6, 5))
+sns.heatmap(section_cm, annot=True, fmt='d', cmap='Blues',
+            xticklabels=list(id2label.values()), yticklabels=list(id2label.values()))
+plt.title("Section-Level Confusion Matrix")
+plt.xlabel("Predicted Label")
+plt.ylabel("True Label")
+plt.tight_layout()
+plt.savefig("section_level_confusion_matrix.png")
+plt.close()
+
+# === PAPER-LEVEL AGGREGATION ===
+test_with_preds = tokenized_test.add_column("PredictedLabel", predicted_labels)
+df = pd.DataFrame(test_with_preds)
+df["TrueLabel"] = df["label"]
+
+# Optional: Save section-level results
+df.to_csv("section_level_predictions.csv", index=False)
+
+# Group and aggregate
+paper_preds = defaultdict(list)
+true_labels_per_paper = {}
+
+for _, row in df.iterrows():
+    pid = row["PaperID"]
+    paper_preds[pid].append(row["PredictedLabel"])
+    if pid not in true_labels_per_paper:
+        true_labels_per_paper[pid] = row["TrueLabel"]
+
+paper_level_preds = {
+    pid: Counter(preds).most_common(1)[0][0]
+    for pid, preds in paper_preds.items()
+}
+
+y_true = [true_labels_per_paper[pid] for pid in paper_level_preds]
+y_pred = [paper_level_preds[pid] for pid in paper_level_preds]
+
+acc = accuracy_score(y_true, y_pred)
+prec, recall, f1, _ = precision_recall_fscore_support(y_true, y_pred, average="binary")
+
+print("\n=== Paper-Level Metrics ===")
+print(f"Accuracy : {acc:.4f}")
+print(f"Precision: {prec:.4f}")
+print(f"Recall   : {recall:.4f}")
+print(f"F1 Score : {f1:.4f}")
+
+
+paper_cm = confusion_matrix(y_true, y_pred)
+plt.figure(figsize=(6, 5))
+sns.heatmap(paper_cm, annot=True, fmt='d', cmap='Blues',
+            xticklabels=list(id2label.values()), yticklabels=list(id2label.values()))
+plt.title("Paper-Level Confusion Matrix")
+plt.xlabel("Predicted Label")
+plt.ylabel("True Label")
+plt.tight_layout()
+plt.savefig("paper_level_confusion_matrix.png")
+plt.close()
 
 # === SAVE FINAL MODEL ===
 trainer.save_model(output_dir)
