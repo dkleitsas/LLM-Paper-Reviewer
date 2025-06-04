@@ -145,8 +145,7 @@ predicted_labels = np.argmax(logits, axis=-1)
 section_cm = confusion_matrix(predictions.label_ids, predicted_labels, normalize='true')
 plt.figure(figsize=(6, 5))
 sns.heatmap(section_cm, annot=True, fmt='.2f', cmap='Purples',
-            xticklabels=list(id2label.values()), yticklabels=list(id2label.values()))
-plt.title("Section-Level Confusion Matrix")
+            xticklabels=["Rejected", "Accepted"], yticklabels=["Rejected", "Accepted"])
 plt.xlabel("Predicted Label")
 plt.ylabel("True Label")
 plt.tight_layout()
@@ -210,8 +209,7 @@ for strategy in strategy_names:
     cm = confusion_matrix(y_true, y_pred, normalize='true')
     plt.figure(figsize=(6, 5))
     sns.heatmap(cm, annot=True, fmt='.2f', cmap='Purples',
-                xticklabels=list(id2label.values()), yticklabels=list(id2label.values()))
-    plt.title(f"{strategy} Confusion Matrix")
+                xticklabels=["Rejected", "Accepted"], yticklabels=["Rejected", "Accepted"])
     plt.xlabel("Predicted Label")
     plt.ylabel("True Label")
     plt.tight_layout()
@@ -224,6 +222,13 @@ paper_df["TrueLabelName"] = paper_df["TrueLabel"].map(id2label)
 for strategy in strategy_names:
     paper_df[strategy + "Name"] = paper_df[strategy].map(id2label)
 paper_df.to_csv("paper_level_predictions.csv", index=False)
+
+strategy_label_map = {
+    "MajorityVote": "Majority Voting",
+    "AnyRejected": "Any Rejected",
+    "AllRejected": "All Rejected",
+    "ConfidenceWeighted": "Confidence Weighted"
+}
 
 # Metrics per strategy
 strategy_scores = {
@@ -238,7 +243,7 @@ for strategy in strategy_names:
     y_true = [v["TrueLabel"] for v in paper_results.values()]
     y_pred = [v[strategy] for v in paper_results.values()]
     
-    strategy_scores["Strategy"].append(strategy)
+    strategy_scores["Strategy"].append(strategy_label_map[strategy])
     strategy_scores["Accuracy"].append(accuracy_score(y_true, y_pred))
     strategy_scores["Precision"].append(precision_score(y_true, y_pred))
     strategy_scores["Recall"].append(recall_score(y_true, y_pred))
@@ -252,10 +257,9 @@ scores_df = scores_df.set_index("Strategy").reset_index().melt(id_vars="Strategy
 plt.figure(figsize=(10, 6))
 sns.barplot(data=scores_df, x="Strategy", y="Score", hue="Metric")
 plt.ylim(0, 1.05)
-plt.title("Paper-Level Evaluation Metrics by Aggregation Strategy")
-plt.ylabel("Score")
-plt.xlabel("Aggregation Strategy")
 plt.legend(title="Metric")
+plt.xlabel("")
+plt.ylabel("")
 plt.tight_layout()
 plt.savefig("paper_level_strategy_comparison.png")
 plt.close()
