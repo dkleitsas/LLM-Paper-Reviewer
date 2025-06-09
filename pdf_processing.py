@@ -46,9 +46,9 @@ def extract_sections(blocks):
                 else:
                     current_section = match.group(2).strip().upper()
                
-                buffer = []  # Reset buffer for new section
+                buffer = []
 
-                break  # Stop checking patterns once a match is found
+                break 
        
         # Add text to the current section only if it's not a section heading
         if current_section:
@@ -77,29 +77,6 @@ def extract_sections(blocks):
     return merged_sections, paragraph_count
 
 
-"""
-doc = fitz.open(file_path)
-blocks = []
-for page_num in range(doc.page_count):
-    page = doc.load_page(page_num)
-    blocks += page.get_text("blocks")[:-1]
-
-sections, paragraph_count = extract_sections(blocks)
-
-wait = input("PRESS ENTER TO CONTINUE.")
-filename = "output.csv"
-with open(filename, mode="a", newline="", encoding="utf-8") as file:
-    writer = csv.writer(file)
-    writer.writerow(["Paper ID", "Section", "Section Appearance Order", "Paragraph"])  # Write header
-    app_order = 0
-
-    for section, paragraphs in sections:
-        for paragraph in paragraphs:
-            if paragraph:  # Avoid writing empty paragraphs
-                writer.writerow([section, app_order/paragraph_count, paragraph])
-                app_order += 1
-"""
-
 folder_path = "paper_pdfs/ICLR/rejected/"
 
 for filename in os.listdir(folder_path):
@@ -116,7 +93,6 @@ for filename in os.listdir(folder_path):
                 blocks = []
                 for page_num in range(doc.page_count):
                     page = doc.load_page(page_num)
-                    # Maybe make it check if it's nubmer just in case?
                     blocks += page.get_text("blocks")[:-1]
 
                 sections, paragraph_count = extract_sections(blocks)

@@ -1,18 +1,5 @@
-import pandas as pd
-from datasets import Dataset
-from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import accuracy_score
-from transformers import AutoTokenizer
-from datasets import DatasetDict
-from transformers import AutoModelForSequenceClassification
-from transformers import TrainingArguments
-import numpy as np
-import evaluate
 import torch
-from transformers import Trainer
-from transformers import AutoModel, PreTrainedModel, PretrainedConfig
-from torch import nn
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 
@@ -25,7 +12,7 @@ from sklearn.metrics import confusion_matrix
 from sklearn.metrics import precision_recall_fscore_support, classification_report
 import matplotlib.pyplot as plt
 
-set_seed(4)
+set_seed(42)
 
 folder_path = "segmentation_labeled_csvs/" 
 model_name = "allenai/scibert_scivocab_uncased"
@@ -54,21 +41,20 @@ model = ParagraphClassifier(
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
 criterion = torch.nn.CrossEntropyLoss()
-
-
-
 num_epochs = 6
 scaler = torch.cuda.amp.GradScaler()
+
+# TRAINING
 
 for epoch in range(num_epochs):
     model.train()
     total_train_loss = 0
 
     for batch in tqdm(train_loader):
-        input_ids = batch["input_ids"].to(device)             # [batch=1, paragraphs, tokens]
-        attention_mask = batch["attention_mask"].to(device)   # [batch=1, paragraphs, tokens]
-        positional_values = batch["positional_value"].to(device) # [batch=1, paragraphs]
-        labels = batch["label"].to(device)                   # [batch=1, paragraphs]
+        input_ids = batch["input_ids"].to(device)
+        attention_mask = batch["attention_mask"].to(device)
+        positional_values = batch["positional_value"].to(device)
+        labels = batch["label"].to(device)
 
         optimizer.zero_grad()
         with torch.cuda.amp.autocast():
@@ -90,16 +76,19 @@ for epoch in range(num_epochs):
     print(f"Epoch {epoch+1}: Average Training Loss = {avg_train_loss:.4f}")
 
 
+
+# EVALUATION
+
 model.eval()
 all_preds = []
 all_labels = []
 
 with torch.no_grad():
-    for batch in tqdm(val_loader):  # this loader yields one document per batch
-        input_ids = batch["input_ids"].to(device)             # [1, paragraphs, tokens]
-        attention_mask = batch["attention_mask"].to(device)   # [1, paragraphs, tokens]
-        positional_values = batch["positional_value"].to(device)  # [1, paragraphs]
-        labels = batch["label"].to(device)                   # [1, paragraphs]
+    for batch in tqdm(val_loader):
+        input_ids = batch["input_ids"].to(device)
+        attention_mask = batch["attention_mask"].to(device)
+        positional_values = batch["positional_value"].to(device)
+        labels = batch["label"].to(device)
 
 
         outputs = model(
@@ -109,29 +98,27 @@ with torch.no_grad():
             labels=None
         )
 
-        logits = outputs["logits"]        # [1, paragraphs, num_classes]
-        preds = torch.argmax(logits, dim=-1)  # [1, paragraphs]
+        logits = outputs["logits"]
+        preds = torch.argmax(logits, dim=-1)
 
         all_preds.append(preds.squeeze(0).cpu())
         all_labels.append(labels.squeeze(0).cpu())
 
-# Stack and evaluate
-all_preds = torch.cat(all_preds, dim=0)   # [total_paragraphs]
-all_labels = torch.cat(all_labels, dim=0) # [total_paragraphs]
+
+all_preds = torch.cat(all_preds, dim=0)
+all_labels = torch.cat(all_labels, dim=0)
 
 accuracy = accuracy_score(all_labels.numpy(), all_preds.numpy())
 print(f"Validation Accuracy: {accuracy:.4f}")
 
-wait = input("Waiting...")
-
 precision, recall, f1, _ = precision_recall_fscore_support(
     all_labels.numpy(), all_preds.numpy(), average=None
 )
+
 print("\nPer-class Precision, Recall, F1:")
 for i, (p, r, f) in enumerate(zip(precision, recall, f1)):
     print(f"Class {i}: Precision: {p:.4f}, Recall: {r:.4f}, F1: {f:.4f}")
 
-# Compute micro and macro averages
 for avg in ['micro', 'macro']:
     p, r, f, _ = precision_recall_fscore_support(
         all_labels.numpy(), all_preds.numpy(), average=avg
@@ -139,7 +126,7 @@ for avg in ['micro', 'macro']:
     print(f"\n{avg.capitalize()} Average:")
     print(f"Precision: {p:.4f}, Recall: {r:.4f}, F1: {f:.4f}")
 
-# Optional: Full classification report
+
 print("\nClassification Report:\n")
 print(classification_report(all_labels.numpy(), all_preds.numpy()))
 
@@ -153,8 +140,5 @@ sns.heatmap(cm, annot=True, fmt=".2f", cmap="Purples", cbar=True, xticklabels=cl
 
 plt.tight_layout()
 plt.savefig("confusion_matrix.png")
-
-
-wait = input("If you continue, model is saved...")
 
 torch.save(model.state_dict(), 'model_weights.pth')

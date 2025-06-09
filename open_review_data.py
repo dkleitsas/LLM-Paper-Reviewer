@@ -40,7 +40,8 @@ def get_convention_papers(convention_id, client, paper_limit=10, file_path="pape
             )
         
         if decision_notes:
-            # decision_value = decision_notes[0].content.get('decision', {}).get('value', None) Depends on API version idc enough to make it dynamic
+            # decision_value = decision_notes[0].content.get('decision', {}).get('value', None) Depends on API version
+            # but right now I don't care enough to make this part dynamic as well
             decision_value = decision_notes[0].content.get('decision', {})
         else:
             decision_value = None

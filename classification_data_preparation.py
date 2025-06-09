@@ -1,33 +1,23 @@
-import pandas as pd
-from datasets import Dataset
-from sklearn.preprocessing import LabelEncoder
-from transformers import AutoTokenizer
-from datasets import DatasetDict
-from transformers import AutoModelForSequenceClassification
-from transformers import TrainingArguments
-import numpy as np
-import evaluate
 import torch
-from transformers import Trainer
-from transformers import AutoModel, PreTrainedModel, PretrainedConfig
-from torch import nn
-import torch.nn.functional as F
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-from torch.utils.data import DataLoader, random_split
-
-from segmentation_datasets import DocumentDataset
-from segmentation_models import ParagraphClassifier
+from torch.utils.data import DataLoader
 
 from collections import Counter, defaultdict
-
 
 import csv
 from tqdm import tqdm
 import os
 import re
 
+from segmentation_datasets import DocumentDataset
+from segmentation_models import ParagraphClassifier
+
 
 def filter_short_runs(labels, min_run_length=6):
+    """
+    Filter out short runs of the same label in the sequence.
+    If a run of the same label is shorter than `min_run_length`, it will be replaced
+    with the label of the previous or next run if they are the same.
+    """
     corrected = labels.copy()
     i = 0
     while i < len(labels):
@@ -39,7 +29,6 @@ def filter_short_runs(labels, min_run_length=6):
         run_length = run_end - run_start + 1
 
         if run_length < min_run_length:
-            # Look at neighbors
             prev_label = labels[run_start - 1] if run_start > 0 else None
             next_label = labels[run_end + 1] if run_end + 1 < len(labels) else None
 
@@ -52,6 +41,9 @@ def filter_short_runs(labels, min_run_length=6):
 
 
 def sliding_window_smooth(labels, window_size=8):
+    """
+    Smooth the labels using a sliding window majority vote.
+    """
     smoothed = []
     for i in range(len(labels)):
         start = max(0, i - window_size // 2)
@@ -60,6 +52,7 @@ def sliding_window_smooth(labels, window_size=8):
         majority_label = Counter(window).most_common(1)[0][0]
         smoothed.append(majority_label)
     return smoothed
+
 
 def clean_references_and_below(paragraphs, section_labels, references_labels):
     """
@@ -72,6 +65,11 @@ def clean_references_and_below(paragraphs, section_labels, references_labels):
 
 
 def remove_trailing_numbers(paragraphs):
+    """
+    Remove trailing numbers and whitespace at the end of each paragraph.
+    Some papers in certain conferences have trailing numbers at the end of paragraphs,
+    which can introduce noise into the classification.
+    """
     cleaned_paragraphs = []
     for para in paragraphs:
         # Remove trailing numbers and whitespace at end of paragraph
@@ -79,7 +77,11 @@ def remove_trailing_numbers(paragraphs):
         cleaned_paragraphs.append(cleaned)
     return cleaned_paragraphs
 
+
 def aggregate_sections_global(paragraphs, section_labels, acceptance_label):
+    """
+    Aggregate paragraphs by their section labels, creating a single paragraph for each section.
+    """
     section_map = defaultdict(list)
 
     for para, label in zip(paragraphs, section_labels):
@@ -98,6 +100,11 @@ def aggregate_sections_global(paragraphs, section_labels, acceptance_label):
 
 
 def run_segmentation_inference(model, dataset, output_folder, label_for_doc):
+    """
+    The main segmentation step. It receives the dataset CSVs and for each paper
+    it runs the model to classify paragraphs, aggregates them by section, and saves
+    the results in a new csv file.
+    """
     model.eval()
     dataloader = DataLoader(dataset, batch_size=1, collate_fn=dataset.collate_fn)
 
@@ -129,8 +136,6 @@ def run_segmentation_inference(model, dataset, output_folder, label_for_doc):
             )
             
 
-                
-            # Save to CSV
             original_path = dataset.file_paths[batch_idx]
             filename = os.path.basename(original_path)
             output_path = os.path.join(output_folder, filename)
@@ -141,25 +146,28 @@ def run_segmentation_inference(model, dataset, output_folder, label_for_doc):
                 for para, sec, lab in zip(aggregated_pars, aggregated_sections, aggregated_labels):
                     writer.writerow([para, sec, lab])
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-accepted_folder = "paper_csvs/ICLR/accepted"
-rejected_folder = "paper_csvs/ICLR/rejected"
-output_folder = "classification_csvs/"
 
-tokenizer_name = "allenai/scibert_scivocab_uncased"
-model = ParagraphClassifier(
-    model_name="allenai/scibert_scivocab_uncased",
-    num_labels=8,
-    lstm_hidden_size=128,
-)
+if __name__ == "__main__":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-model.load_state_dict(torch.load("model_weights.pth", weights_only=True, map_location=device))
+    accepted_folder = "paper_csvs/ICLR/accepted"
+    rejected_folder = "paper_csvs/ICLR/rejected"
+    output_folder = "classification_csvs/"
 
-model.to(device)
+    tokenizer_name = "allenai/scibert_scivocab_uncased"
+    model = ParagraphClassifier(
+        model_name="allenai/scibert_scivocab_uncased",
+        num_labels=8,
+        lstm_hidden_size=128,
+    )
 
-for folder, label in [(accepted_folder, "accepted"), (rejected_folder, "rejected")]:
-    dataset = DocumentDataset(folder, tokenizer_name, max_tokens=124, training=False)
-    run_segmentation_inference(model, dataset, output_folder, label)
+    model.load_state_dict(torch.load("model_weights.pth", weights_only=True, map_location=device))
+
+    model.to(device)
+
+    for folder, label in [(accepted_folder, "accepted"), (rejected_folder, "rejected")]:
+        dataset = DocumentDataset(folder, tokenizer_name, max_tokens=124, training=False)
+        run_segmentation_inference(model, dataset, output_folder, label)
 
 

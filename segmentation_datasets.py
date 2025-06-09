@@ -1,11 +1,10 @@
 import os
 import pandas as pd
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoTokenizer
 from sklearn.preprocessing import LabelEncoder
-from torch.utils.data import random_split
 
 
 class DocumentDataset(Dataset):
@@ -101,51 +100,3 @@ class DocumentDataset(Dataset):
                 "positional_value": positional_values,
                 "original_paragraphs": original_paragraphs  
             }
-
-
-
-"""
-class ParagraphDataset(Dataset):
-    def __init__(self, folder_path, tokenizer_name="allenai/scibert_scivocab_uncased", max_tokens=128):
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-        self.max_tokens = max_tokens
-
-        # Read and combine all CSVs
-        all_data = []
-        for fname in os.listdir(folder_path):
-            if fname.endswith(".csv"):
-                df = pd.read_csv(os.path.join(folder_path, fname))
-                all_data.append(df)
-        df = pd.concat(all_data, ignore_index=True)
-
-        df["Section"] = df["Section"].astype(str).str.strip()
-
-        # Label encode
-        self.label_encoder = LabelEncoder()
-        df["label"] = self.label_encoder.fit_transform(df["Section"])
-
-        print("Classes:", self.label_encoder.classes_)
-
-        # Tokenize
-        self.encodings = self.tokenizer(
-            df["Paragraph"].tolist(),
-            padding="max_length",
-            truncation=True,
-            max_length=self.max_tokens,
-            return_tensors="pt"
-        )
-
-        self.labels = torch.tensor(df["label"].tolist(), dtype=torch.long)
-        self.positional_values = torch.tensor(df["Section Appearance Order"].tolist(), dtype=torch.float)
-
-    def __len__(self):
-        return len(self.labels)
-
-    def __getitem__(self, idx):
-        return {
-            "input_ids": self.encodings["input_ids"][idx],
-            "attention_mask": self.encodings["attention_mask"][idx],
-            "positional_value": self.positional_values[idx],
-            "label": self.labels[idx]
-        }
-"""

@@ -109,22 +109,20 @@ def compute_metrics(eval_pred):
         "f1": f1
     }
 
-# === TRAINING ARGS ===
 training_args = TrainingArguments(
     output_dir=output_dir,
     eval_strategy="epoch",
     save_strategy="epoch",
     learning_rate=2e-5,
-    per_device_train_batch_size=64,  # adjust based on available VRAM
+    per_device_train_batch_size=64,
     per_device_eval_batch_size=64,
     num_train_epochs=3,
     weight_decay=0.01,
     load_best_model_at_end=True,
     logging_dir=os.path.join(output_dir, "logs"),
-    fp16=True,  # set to False if using CPU or older GPU
+    fp16=True,
 )
 
-# === TRAINER ===
 trainer = Trainer(
     model=model,
     args=training_args,
@@ -134,7 +132,6 @@ trainer = Trainer(
     compute_metrics=compute_metrics
 )
 
-# === TRAIN ===
 trainer.train()
 
 predictions = trainer.predict(tokenized_test)
