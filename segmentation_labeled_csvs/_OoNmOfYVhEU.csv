@@ -1,0 +1,806 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,Abstract
+ABSTRACT,0.0029585798816568047,"This paper presents a novel nearest neighbor search algorithm achieving TPU
+(Google Tensor Processing Unit) peak performance, outperforming state-of-the-
+art GPU algorithms with similar level of recall. The design of the proposed
+algorithm is motivated by an accurate accelerator performance model that takes into
+account both the memory and instruction bottlenecks. Our algorithm comes with
+an analytical guarantee of recall in expectation and does not require maintaining
+sophisticated index data structure or tuning, making it suitable for applications
+with frequent updates. Our work is available in the open-source package of Jax and
+Tensorﬂow on TPU."
+INTRODUCTION,0.005917159763313609,"1
+Introduction"
+INTRODUCTION,0.008875739644970414,"The K-nearest neighbor (K-NN) search problem has a wide range of applications in machine learning
+and information retrieval systems, including image search (Jia et al., 2021; Babenko and Lempitsky,
+2016), semantic textual retrieval (Liu et al., 2009; Cer et al., 2018), anomaly detection (Gu et al.,
+2019; Omar et al., 2013), recommendation systems (Sarwar et al., 2002; Zhao et al., 2019), as well as
+serving as a component for a downstream tasks (Borgeaud et al., 2021; Guu et al., 2020; Lindgren
+et al., 2021; Shazeer et al., 2017). Given a query, the objective of K-NN is to identify K closest
+datapoints from a database of ﬁnite number of data points in a vector space. The main challenge of
+designing a good K-NN algorithm is to compute accurate K-NN results while being computationally
+efﬁcient."
+INTRODUCTION,0.011834319526627219,"Solving the K-NN problem on accelerators has emerging interests from both the academia and the
+industry (Johnson et al., 2021; Shanbhag et al., 2018; Zhao et al., 2020). Many accelerators can
+deliver hundreds of Tera Floating Point Operations Per Seconds (TFLOPS) vital to the neighbor
+distance computation. However, utilizing accelerators in K-NN problems is not straightforward;
+multiple issues in data locality, memory bandwidth, and multiple types of hardware parallelism need
+to be carefully considered to achieve high utilization. In this paper we extend the rooﬂine performance
+model (Williams et al., 2009) to quantify the hardware characteristics accurately. As a result, we
+designed a K-NN algorithm to reach peak performance by the precise modeling of the accelerators,
+and our TPU implementation aligned with our predicted performance."
+INTRODUCTION,0.014792899408284023,The main contributions of this work are:
+INTRODUCTION,0.01775147928994083,⇤Equal contributions.
+INTRODUCTION,0.020710059171597635,• We extend the rooﬂine model to address the operation throughput differences of the instruc-
+INTRODUCTION,0.023668639053254437,"tions, essential to the algorithm analysis in this paper.
+• We design an approximate K-NN algorithm with recall and performance guarantees based"
+INTRODUCTION,0.026627218934911243,"on our proposed rooﬂine model.
+• We conduct experiments verifying our TPU implementation of the algorithm accurately"
+INTRODUCTION,0.029585798816568046,"aligned with the performance model and achieves state-of-the-art speed-recall trade-offs on
+standard nearest neighbor search benchmarks."
+LIT REVIEW,0.03254437869822485,"2
+Preliminaries"
+LIT REVIEW,0.03550295857988166,"This section covers the necessary notations to work with the nearest neighbor search problem. Given
+a matrix A 2 RM⇥N, we let ai,j denote the item at the ith row and jth column of A, and ai denote
+the ith row-vector of A. We use the matrix X 2 RN⇥D to abbreviate a set-representation of a
+database X = {xi}i=1,2,...,N with N data points, where each data point xi 2 RD is a row vector of
+the matrix X in a D dimensional vector space. The set and matrix representation of database X are
+used interchangeably in this paper."
+LIT REVIEW,0.038461538461538464,"The K nearest neighbor search problem is stated as follows. Given a database X 2 RN⇥D and a
+query vector q 2 RD, ﬁnd the subset S⇤⇢X collecting the K-closest data points to q: Sq"
+LIT REVIEW,0.04142011834319527,⇤= K-argmin x2X
+LIT REVIEW,0.04437869822485207,"D(q, x),
+(1)"
+LIT REVIEW,0.047337278106508875,"where D(x, y) is a distance measure such as Euclidean distance D`2(x, y) := kx−yk2 or the cosine
+distance Dcos(x, y) := 1 −
+hx,yi
+kxkkyk. A related problem is the maximum inner product search (MIPS),
+where the goal is to ﬁnd the data points that have the highest inner products with the query: Sq"
+LIT REVIEW,0.05029585798816568,⇤= K-argmax x2X
+LIT REVIEW,0.05325443786982249,"hq, xi.
+(2)"
+LIT REVIEW,0.05621301775147929,MIPS is equivalent to the cosine similarity search when all data points are `2-normalized.
+LIT REVIEW,0.05917159763313609,"3
+Related work"
+LIT REVIEW,0.0621301775147929,"Exhaustively searching all pair-wise distances between the query and the entire database is compute-
+intensive and often infeasible on many platforms. Therefore, a problem extensively discussed in the
+literature (Wang et al., 2014, 2015) is to ﬁnd approximate nearest neighbors (ANN) in exchange of
+speed. By convention, the quality of ANN is measured by"
+LIT REVIEW,0.0650887573964497,Recall := |Sq \ Sq
+LIT REVIEW,0.06804733727810651,"⇤|
+|Sq"
+LIT REVIEW,0.07100591715976332,"⇤|
+,
+(3)"
+LIT REVIEW,0.07396449704142012,where Sq ⇢X denotes the set of data points retrieved by the search method.
+LIT REVIEW,0.07692307692307693,"Compressed domain search
+One class of ANN approaches is to search on a lossy-compressed
+problem domain. These methods are composed in two steps: a) search on compressed representation2
+of the original problem to ﬁnd a set of candidate data points, b) compute the distances between the
+query and the candidate data points to select the top-K results. Since only a subset of data points
+requires the exact distance computation, the overall cost is reduced."
+LIT REVIEW,0.07988165680473373,"The two steps can be composed in arbitrary ways. Locality sensitive hashing (Andoni et al., 2015;
+Neyshabur and Srebro, 2015) applies search followed by scoring; tree-search (Muja and Lowe, 2014;
+Dasgupta and Freund, 2008) applies the two steps recursively; graph-search (Malkov and Yashunin,
+2018) iterates between two steps until the stopping condition is met. And the inverted ﬁle (IVF)"
+LIT REVIEW,0.08284023668639054,"2Here we mean data structures like tree, graph, locality sensitive hash etc."
+LIT REVIEW,0.08579881656804733,"method (Jegou et al., 2010; Babenko and Lempitsky, 2014; Baranchuk et al., 2018; Guo et al., 2020)
+search on subset of data points indexed by the k-means centroids."
+LIT REVIEW,0.08875739644970414,We see that there are two major challenges with the compressed domain search:
+LIT REVIEW,0.09171597633136094,• Fractional search has a poor cache reuse rate because the candidate data points for each query
+LIT REVIEW,0.09467455621301775,"rarely overlaps. We show optimizing the cache usage has a huge headroom for accelerators
+in Section 4.2.
+• Tweaking the speed-recall trade-off is data-dependent and non-trivial to tune. The key"
+LIT REVIEW,0.09763313609467456,"result of Beyer et al. (1999) states that the distance contrast of neighbors diminishes with
+increasing dimensionality (also known as the curse of high dimensionality). Furthermore,
+the key result of Rubinstein (2018) states that sub-linear time nearest neighbor search with
+high recall is impossible for Euclidean, Manhattan, or Hamming distance; otherwise, it
+contradicts the Strong Exponential Time Hypothesis (Impagliazzo and Paturi, 1999)."
+LIT REVIEW,0.10059171597633136,"Our work takes an opposite approach to focus on machine efﬁciency with zero search space prun-
+ing. Moreover, since our method computes all the distances, it is immune to the curse of high
+dimensionality."
+LIT REVIEW,0.10355029585798817,"Accelerators
+In this paper, the phrase accelerators represents a class of specialized hardware to
+accelerate machine learning workloads. In particular, we are interested in the novel platforms that
+deliver high FLOP/s for distance computation, namely Google TPU V3, V4, Nvidia GPU V100, and
+A100 in our analysis and evaluation."
+LIT REVIEW,0.10650887573964497,"Modern accelerators have special computation units for matrix multiplication, providing a higher
+operation throughput over the regular coefﬁcient-wise operations. The corresponding units are tensor
+cores in Nvidia GPUs (Markidis et al., 2018) and systolic arrays in Google TPUs (Jouppi et al., 2017;
+Norrie et al., 2021). Addressing these operation throughput differences is essential to our algorithm
+design."
+LIT REVIEW,0.10946745562130178,"While accelerators excel in parallelism, developing an efﬁcient K-selection algorithm on accelerators
+is still an active research area (Monroe et al., 2011; Shanbhag et al., 2018; Johnson et al., 2021; Zhao
+et al., 2020). Accelerators with higher FLOP/s introduce a higher opportunity cost of computing the
+K-selection problem instead of the distance computation. The trend of the increasing FLOP/s in
+accelerators motivated us to optimize the FLOP/s usage by reducing the time required for computing
+K-selection."
+IMPLEMENTATION/METHODS,0.11242603550295859,"4
+Methodology"
+IMPLEMENTATION/METHODS,0.11538461538461539,"This section presents a performance model to identify non-trivial bottlenecks on multiple plat-
+forms and demonstrates some fundamental limits when designing algorithms for K-NN and related
+problems, and we see that the cache inefﬁciency of the compressed domain methods introduces a
+signiﬁcant cost on accelerators."
+IMPLEMENTATION/METHODS,0.11834319526627218,"We model the accelerator’s runtime as executing a sequence of computation kernels, where each
+kernel is a compiled subroutine on the accelerator used by the main program on the CPU. A kernel
+may be composed of one or several high-level operators: Einsum, ReLU, ArgMax, etc., and each
+kernel can have different performance characteristics."
+IMPLEMENTATION/METHODS,0.12130177514792899,"Given a sequence of kernels ki, we let Wi denotes the total amount of work and Pi denotes the
+operational speed. Our goal is to estimate the total time of a program: t = X i Wi Pi .
+(4)"
+IMPLEMENTATION/METHODS,0.1242603550295858,"In the following example, we focus on the MIPS problem. Let Q 2 RM⇥D and X 2 RN⇥D denote
+the queries and the database, the runtime of a generic approximate-MIPS program can be modeled as"
+IMPLEMENTATION/METHODS,0.12721893491124261,t = λWD
+IMPLEMENTATION/METHODS,0.1301775147928994,"P
++ O(Auxiliary) ≥λWD"
+IMPLEMENTATION/METHODS,0.13313609467455623,"P
+,
+(5)"
+IMPLEMENTATION/METHODS,0.13609467455621302,Table 1: Hardware speciﬁcations for the generalized rooﬂine model
+IMPLEMENTATION/METHODS,0.1390532544378698,"Name
+⇡(TFLOP/s)
+β (GB/s)
+γ (TCOP/s)"
+IMPLEMENTATION/METHODS,0.14201183431952663,"GPU V100
+125
+900
+15.7
+GPU A100
+312
+1555
+19.5
+TPU V3
+126
+858
+4.0
+TPU V4
+274
+1144
+4.3"
+IMPLEMENTATION/METHODS,0.14497041420118342,"where WD denotes the total FLOPs required for searching the entire database, and λ denotes the
+search fraction. We note that P varies by algorithm and platform. Traditionally, compressed domain
+search methods minimize λ but sacriﬁce cache efﬁciency. Our method use an alternative route to
+optimize P instead."
+IMPLEMENTATION/METHODS,0.14792899408284024,"4.1
+Instruction throughput-aware rooﬂine model"
+IMPLEMENTATION/METHODS,0.15088757396449703,"This subsection describes how we model the kernel-dependent performance P on multiple platforms
+with a small extension of the rooﬂine model."
+IMPLEMENTATION/METHODS,0.15384615384615385,"The classic rooﬂine model (Williams et al., 2009) is a function of machine peak performance ⇡
+measured in FLOP/s, machine peak memory bandwidth β measured in bytes/s, and arithmetic
+intensity IMEM expressed as the ratio of ﬂoating-point operations performed to data movement
+(FLOP/byte). The model states the performance is bounded by P min(⇡, β ⇥IMEM)."
+IMPLEMENTATION/METHODS,0.15680473372781065,"We desire to model kernels that has a mixture of ﬂoating point operations accelerated by dedicated
+hardware as well as other coefﬁcient-wise operations. The coefﬁcient-wise operations are abbreviated
+as COPs. Almost every non matrix multiplication operations are COPs, including vectorized add,
+multiply, compare, conditional-move, etc. We use the symbol γ for peak COP/s on platforms, and
+deﬁne the instruction throughput intensity ICOP as the ratio between the number FLOPs and the
+number of COPs performed in a kernel (FLOP/COP). The attainable performance of a kernel is
+bounded by:"
+IMPLEMENTATION/METHODS,0.15976331360946747,"P min 8
+< :"
+IMPLEMENTATION/METHODS,0.16272189349112426,"⇡
+β ⇥IMEM
+γ ⇥ICOP. (6)"
+IMPLEMENTATION/METHODS,0.16568047337278108,"The statement is self-explanatory because the inadequate resources impede the kernel throughput.
+Table 1 lists the properties of selected accelerators for our analysis3. The rooﬂine model is commonly
+used in accelerator proﬁling tools but not as frequently discussed in algorithm designs. The following
+sections show how the model prevents pitfalls due to the hardware constraints."
+IMPLEMENTATION/METHODS,0.16863905325443787,"4.2
+The memory bandwidth bound"
+IMPLEMENTATION/METHODS,0.17159763313609466,"This subsection demonstrates how to evaluate if a kernel hits the memory bandwidth wall. We
+associate the distance computation with three levels of BLAS (Dongarra et al., 1990). Level 1 BLAS
+describes vector operations on non-consecutive memory access, such as computing distances while
+traversing through a graph. Level 2 BLAS represents scoring a query with consecutively stored
+data points. Level 3 BLAS expresses batched query-database distance computation, often used in
+brute-force scoring."
+IMPLEMENTATION/METHODS,0.17455621301775148,"Compressed domain searches are either level 1 or 2 BLAS due to the cache inefﬁciency. It has
+O(1) memory arithmetic intensity because the number of FLOPs is proportion to the bytes read.
+Combining (5) and (6) we have the following remark:"
+IMPLEMENTATION/METHODS,0.17751479289940827,"Remark 1. Distance computations in compressed domain searches are memory bandwidth bounded.
+In our model, the runtime is lower bounded by: t ≥O (λWD/β)."
+IMPLEMENTATION/METHODS,0.1804733727810651,3Readers can ﬁnd these numbers from the accelerators’ speciﬁcation sheets. 0 50000
+IMPLEMENTATION/METHODS,0.1834319526627219,100000
+IMPLEMENTATION/METHODS,0.1863905325443787,150000
+IMPLEMENTATION/METHODS,0.1893491124260355,200000
+IMPLEMENTATION/METHODS,0.19230769230769232,250000
+IMPLEMENTATION/METHODS,0.1952662721893491,300000
+IMPLEMENTATION/METHODS,0.19822485207100593,350000
+IMPLEMENTATION/METHODS,0.20118343195266272,"4700
+4750
+4800
+0
+50
+100
+150"
+IMPLEMENTATION/METHODS,0.20414201183431951,⇡= 6.7 TFLOP/s
+IMPLEMENTATION/METHODS,0.20710059171597633,⇡= 125 TFLOP/s
+IMPLEMENTATION/METHODS,0.21005917159763313,⇡= 312 TFLOP/s
+IMPLEMENTATION/METHODS,0.21301775147928995,⇡= 126 TFLOP/s
+IMPLEMENTATION/METHODS,0.21597633136094674,⇡= 274 TFLOP/s
+IMPLEMENTATION/METHODS,0.21893491124260356,β = 156 GB/s
+IMPLEMENTATION/METHODS,0.22189349112426035,β = 900 GB/s
+IMPLEMENTATION/METHODS,0.22485207100591717,β = 1555 GB/s
+IMPLEMENTATION/METHODS,0.22781065088757396,β = 858.4 GB/s
+IMPLEMENTATION/METHODS,0.23076923076923078,β = 1144.4 GB/s
+IMPLEMENTATION/METHODS,0.23372781065088757,"BLAS 1,2, IMEM = O(1)"
+IMPLEMENTATION/METHODS,0.23668639053254437,"BLAS 3, D = 128, IMEM = 64"
+IMPLEMENTATION/METHODS,0.23964497041420119,ApproxTopK
+IMPLEMENTATION/METHODS,0.24260355029585798,Performance P (GFLOP/s)
+IMPLEMENTATION/METHODS,0.2455621301775148,Memory arithmetic intensity IMEM (FLOP/byte)
+IMPLEMENTATION/METHODS,0.2485207100591716,"GPU V100
+GPU A100"
+IMPLEMENTATION/METHODS,0.2514792899408284,"TPU V3
+TPU V4"
+IMPLEMENTATION/METHODS,0.25443786982248523,Skylake
+IMPLEMENTATION/METHODS,0.257396449704142,"Figure 1: Memory rooﬂines of accelerators and a dual-sockets Intel skylake machine as a baseline.
+Each colored line denotes the maximum performance a platform could achieve, and each vertical line
+represents the memory arithmetic intensity of an algorithm. The intersections of the lines show the
+maximum performance of an algorithm could achieve on a platform. We label three levels of BLAS
+kernels and our algorithm described in Section 5."
+IMPLEMENTATION/METHODS,0.2603550295857988,"To estimate the memory arithmetic intensity for level 3 BLAS, we continue to use Q 2 RM⇥D and
+X 2 RN⇥D for denoting queries and database. In many K-NN applications N and M are much
+greater than D. The corresponding memory arithmetic intensity is:"
+IMPLEMENTATION/METHODS,0.26331360946745563,"IMEM =
+2MND
+4MN + o(MN) ⇡D"
+IMPLEMENTATION/METHODS,0.26627218934911245,"2 .
+(7)"
+IMPLEMENTATION/METHODS,0.2692307692307692,"The largest term in the denominator of (7) is the 4MN bytes of the query-database distances. We
+omit the insigniﬁcant terms and refer readers to (Golub and Van Loan, 2013, Section 1.5.4) for a
+comprehensive review on memory transfers in block matrix multiplications."
+IMPLEMENTATION/METHODS,0.27218934911242604,"Figure 1 shows that the distance scoring kernels of different BLAS levels can easily hit the memory
+bandwidth wall. In order to attain high performance, we designed our algorithm to aggregate the
+results within the kernel to avoid writing the O(MN) bytes into memory."
+IMPLEMENTATION/METHODS,0.27514792899408286,"4.3
+The instruction bandwidth bound"
+IMPLEMENTATION/METHODS,0.2781065088757396,"The use of COPs (non matrix multiplication instructions) introduce another slowdown. We let C
+denotes the number of COPs used per dot-product score in a kernel equipped with COPs and matrix
+multiplication instructions. There are M ⇥N dot-product scores, so the total COPs used in a kernel
+is CMN. To prevent hitting the COPs bandwidth wall, we must satisfy:"
+IMPLEMENTATION/METHODS,0.28106508875739644,"ICOP = 2⇠⇠
+⇠
+MND
+C⇠⇠
+⇠
+MN ≥⇡"
+IMPLEMENTATION/METHODS,0.28402366863905326,"γ ,
+(8)"
+IMPLEMENTATION/METHODS,0.2869822485207101,) C 2D ⇥γ
+IMPLEMENTATION/METHODS,0.28994082840236685,"⇡
+.
+(9)"
+IMPLEMENTATION/METHODS,0.29289940828402367,"The number of COPs we can afford in the kernels is scarce. We take D = 128 as an example and
+substitute it into (9). We can only use 4 coefﬁcient-wise instructions per dot-product for TPU V4,
+and 16 for GPU A100. We conclude with the following remark:
+Remark 2. Exact and generic K-selection algorithm cannot be efﬁciently implemented with the
+coefﬁcient-wise operations for the selected platforms (GPU V100, A100, TPU V3 and V4)."
+IMPLEMENTATION/METHODS,0.2958579881656805,"Because of Remark 2, we develop an approximate approach to achieve the peak performances."
+IMPLEMENTATION/METHODS,0.2988165680473373,"5
+Algorithm"
+IMPLEMENTATION/METHODS,0.30177514792899407,Algorithm 1: PartialReduce for MIPS
+IMPLEMENTATION/METHODS,0.3047337278106509,"Input: Q 2 RM⇥D Batch queries
+Input: X 2 RN⇥D Database
+Input: 2W Bin size
+Output: V 2 RM⇥L Top-K values
+Output: A 2 NM⇥L Top-K indices"
+IMPLEMENTATION/METHODS,0.3076923076923077,1 for i  1 to M do
+IMPLEMENTATION/METHODS,0.3106508875739645,"2
+for j  1 to N do"
+IMPLEMENTATION/METHODS,0.3136094674556213,"3
+yi,j  hqi, xji ;"
+IMPLEMENTATION/METHODS,0.3165680473372781,"4
+l  ShiftRight(j, W) ;
+/* Unrolled and does not cost COP */"
+IMPLEMENTATION/METHODS,0.31952662721893493,"5
+b  yi,j > vi,l ;
+/* COP 1:
+Vectorized compare */"
+IMPLEMENTATION/METHODS,0.3224852071005917,"6
+vi,l  if b then yi,j else vi,l ;
+/* COP 2:
+Vectorized conditional move */"
+IMPLEMENTATION/METHODS,0.3254437869822485,"7
+ai,l  if b then j else ai,l ;
+/* COP 3:
+Vectorized conditional move */"
+IMPLEMENTATION/METHODS,0.32840236686390534,"8
+end"
+IMPLEMENTATION/METHODS,0.33136094674556216,9 end
+IMPLEMENTATION/METHODS,0.3343195266272189,Our algorithm consists of two kernels:
+IMPLEMENTATION/METHODS,0.33727810650887574,1. PartialReduce kernel computes the distances and partially aggregate the results from M ⇥N
+IMPLEMENTATION/METHODS,0.34023668639053256,distances to M ⇥L distances with original indices.
+IMPLEMENTATION/METHODS,0.3431952662721893,2. ExactRescoring kernel is an optional kernel that aggregates the ﬁnal top-K results. The
+IMPLEMENTATION/METHODS,0.34615384615384615,complexity is O(ML log2(L)) by a bitonic sort followed by a truncation.
+IMPLEMENTATION/METHODS,0.34911242603550297,"The PartialReduce kernel is where most of the time and compute takes place. See Algorithm 1 for an
+outline of the algorithm. We collect top-1 distances from the L non-overlapping bins of size 2W for
+each query, resulting high arithmetic intensities:"
+IMPLEMENTATION/METHODS,0.3520710059171598,"IMEM ⇡O (min (M, N)) ,
+(10)"
+IMPLEMENTATION/METHODS,0.35502958579881655,"ICOP = 2⇠⇠
+⇠
+MND
+C⇠⇠
+⇠
+MN = 2D"
+IMPLEMENTATION/METHODS,0.35798816568047337,"C .
+(11)"
+IMPLEMENTATION/METHODS,0.3609467455621302,"We show these arithmetic intensities can achieve high performance on real world database in section
+6.1. See Appendix A.3 for the detailed expansion of the algorithm and how the arithmetic intensities
+are derived."
+IMPLEMENTATION/METHODS,0.363905325443787,"5.1
+Recall estimation"
+IMPLEMENTATION/METHODS,0.3668639053254438,"This section shows the PartialReduce kernel can achieve high recall with good speed. We reformulate
+our problem in terms of balls and bins. We have K balls representing the top-K distances that are
+thrown into L bins. The location of each ball is chosen independently and uniformly at random. We
+let Z denotes the random variable of the number of balls that do not have collisions. Following the
+recall deﬁnition (3) we have:"
+IMPLEMENTATION/METHODS,0.3698224852071006,Recall ≥Z
+IMPLEMENTATION/METHODS,0.3727810650887574,"K ,
+(12)"
+IMPLEMENTATION/METHODS,0.3757396449704142,which is a standard Birthday problem:
+IMPLEMENTATION/METHODS,0.378698224852071,"E[Recall] ≥E[Z] K
+= ✓L −1 L ◆K−1"
+IMPLEMENTATION/METHODS,0.3816568047337278,".
+(13) 0 50000"
+IMPLEMENTATION/METHODS,0.38461538461538464,100000
+IMPLEMENTATION/METHODS,0.3875739644970414,150000
+IMPLEMENTATION/METHODS,0.3905325443786982,200000
+IMPLEMENTATION/METHODS,0.39349112426035504,250000
+IMPLEMENTATION/METHODS,0.39644970414201186,300000
+IMPLEMENTATION/METHODS,0.3994082840236686,"0
+1000 2000 3000 4000 5000 6000 MIPS MIPS `2 `2 0 50000"
+IMPLEMENTATION/METHODS,0.40236686390532544,100000
+IMPLEMENTATION/METHODS,0.40532544378698226,150000
+IMPLEMENTATION/METHODS,0.40828402366863903,200000
+IMPLEMENTATION/METHODS,0.41124260355029585,250000
+IMPLEMENTATION/METHODS,0.41420118343195267,300000
+IMPLEMENTATION/METHODS,0.4171597633136095,"10
+20
+30
+40
+50
+60
+70
+80 MIPS MIPS `2 `2"
+IMPLEMENTATION/METHODS,0.42011834319526625,GFLOP/s
+IMPLEMENTATION/METHODS,0.4230769230769231,IMEM (FLOP/byte)
+IMPLEMENTATION/METHODS,0.4260355029585799,"TPU V3
+TPU V4"
+IMPLEMENTATION/METHODS,0.4289940828402367,Memory bandwidth rooﬂine (Williams et al.)
+IMPLEMENTATION/METHODS,0.4319526627218935,ICOP (FLOP/COP)
+IMPLEMENTATION/METHODS,0.4349112426035503,Instruction bandwidth rooﬂine (Ours)
+IMPLEMENTATION/METHODS,0.4378698224852071,"Figure 2: Rooﬂine plots for MIPS and `2 search benchmarks using the PartialReduce kernel. The
+colored lines denotes the attainable performance derived from Table 1. The ﬁgure on the left shows
+none of the benchmark is memory bandwidth limited. The ﬁgure on the right shows that our model
+gives a much tighter bound for `2 on TPU V4. See also Appendix A.5 for detailed deviation of the
+numbers."
+IMPLEMENTATION/METHODS,0.4408284023668639,"Our goal is to ﬁnd the minimal L such that the expected recall is greater equals to the target recall r.
+Finding L is simple because (13) is invertible in the natural range 0 < r < 1."
+IMPLEMENTATION/METHODS,0.4437869822485207,"E[Recall] ≥r ) L ≥
+1
+1 −r1/(K−1) ⇡K −1"
+IMPLEMENTATION/METHODS,0.4467455621301775,"1 −r .
+(14)"
+IMPLEMENTATION/METHODS,0.44970414201183434,"The approximation in (14) follows from Appendix A.4. Since L is at the order of K, and in most
+applications K ⌧N, the cost of the ExactRescoring kernel is amortized out. Thus we afﬁrm the
+claim that our method attains high performance with an analytical recall guarantee."
+RESULTS/EXPERIMENTS,0.4526627218934911,"6
+Evaluation"
+RESULTS/EXPERIMENTS,0.4556213017751479,"In this section, we show that our proposed algorithm and implementation are near the hardware limit
+and lead to superior performance over the baselines of similar recalls. We applied our algorithm to
+two datasets from the public ANN benchmarks (Aumüller et al., 2020). In our ﬁrst evaluation, we
+compare the measured FLOP/s to the theoretical peak governed by the proposed reﬁnement of the
+rooﬂine model (6), proclaiming our implementation is reaching the hardware peak performance. In
+the second benchmark, we compare the end-to-end performance with competitive baselines with
+pre-tuned parameters. We plot each algorithm’s speed-recall curve and show ours achieves the
+state-of-the-art. Finally, we measure the algorithm’s scalability by varying the dataset size and
+number of TPUs used."
+RESULTS/EXPERIMENTS,0.45857988165680474,"6.1
+Comparison with the theoretical peak"
+RESULTS/EXPERIMENTS,0.46153846153846156,"This section shows that our reﬁned rooﬂine model (6) captures additional performance characteristic
+over the classic rooﬂine model, and demonstrates our kernels are having near optimal performances.
+We select the Glove4 (Pennington et al., 2014) and Sift5 (Jegou et al., 2010) datasets from the ANN
+benchmarks. Their corresponding distances are the cosine distance and the Euclidean distance. See
+the code snippets in Appendix A.1 and A.2."
+RESULTS/EXPERIMENTS,0.46449704142011833,"4Released in Apache license 2.0.
+5Released in CC0 public domain."
+RESULTS/EXPERIMENTS,0.46745562130177515,"0.0
+100.0k
+200.0k
+300.0k
+400.0k
+500.0k
+600.0k
+700.0k
+800.0k"
+RESULTS/EXPERIMENTS,0.47041420118343197,"0.6
+0.7
+0.8
+0.9
+1"
+RESULTS/EXPERIMENTS,0.47337278106508873,"Glove1.2M
+D=50"
+RESULTS/EXPERIMENTS,0.47633136094674555,"0.0
+100.0k
+200.0k
+300.0k
+400.0k
+500.0k
+600.0k
+700.0k"
+RESULTS/EXPERIMENTS,0.47928994082840237,"0.6
+0.7
+0.8
+0.9
+1"
+RESULTS/EXPERIMENTS,0.4822485207100592,"Glove1.2M
+D=100"
+RESULTS/EXPERIMENTS,0.48520710059171596,"0.0
+50.0k
+100.0k
+150.0k
+200.0k
+250.0k
+300.0k"
+RESULTS/EXPERIMENTS,0.4881656804733728,"0.6
+0.7
+0.8
+0.9
+1"
+RESULTS/EXPERIMENTS,0.4911242603550296,"Glove1.2M
+D=200"
+RESULTS/EXPERIMENTS,0.4940828402366864,"0.0
+100.0k
+200.0k
+300.0k
+400.0k
+500.0k
+600.0k
+700.0k"
+RESULTS/EXPERIMENTS,0.4970414201183432,"0.6
+0.7
+0.8
+0.9
+1"
+RESULTS/EXPERIMENTS,0.5,"Sift1M
+D=128"
+RESULTS/EXPERIMENTS,0.5029585798816568,"0.0
+200.0k
+400.0k
+600.0k
+800.0k"
+RESULTS/EXPERIMENTS,0.5059171597633136,"1.0M
+1.2M"
+RESULTS/EXPERIMENTS,0.5088757396449705,"0.6
+0.7
+0.8
+0.9
+1"
+RESULTS/EXPERIMENTS,0.5118343195266272,"Nytimes0.3M
+D=256"
+RESULTS/EXPERIMENTS,0.514792899408284,"0.0
+200.0k
+400.0k
+600.0k
+800.0k"
+RESULTS/EXPERIMENTS,0.5177514792899408,"1.0M
+1.2M
+1.4M
+1.6M
+1.8M"
+RESULTS/EXPERIMENTS,0.5207100591715976,"0.6
+0.7
+0.8
+0.9
+1"
+RESULTS/EXPERIMENTS,0.5236686390532544,"Lastfm0.3M
+D=65 QPS"
+RESULTS/EXPERIMENTS,0.5266272189349113,"IVF,Flat V100"
+RESULTS/EXPERIMENTS,0.5295857988165681,"IVF,PQ V100"
+RESULTS/EXPERIMENTS,0.5325443786982249,Flat V100
+RESULTS/EXPERIMENTS,0.5355029585798816,"IVF,Flat A100"
+RESULTS/EXPERIMENTS,0.5384615384615384,"IVF,PQ A100"
+RESULTS/EXPERIMENTS,0.5414201183431953,Flat A100
+RESULTS/EXPERIMENTS,0.5443786982248521,"Ours TPU V3
+Ours TPU V4"
+RESULTS/EXPERIMENTS,0.5473372781065089,"QPS
+QPS"
+RESULTS/EXPERIMENTS,0.5502958579881657,"QPS
+QPS
+QPS"
+RESULTS/EXPERIMENTS,0.5532544378698225,"Figure 3: Recall-speed trade-off benchmarks. The x-axis is recall for k = 10; up and to the right the
+better of the trade-off. The GPU methods (IVF-Flat, IVF-QP, and Flat) are released by Faiss (Johnson
+et al., 2021). For each IVF⇤benchmark, the search fractions are λ = {0.24%, 0.61%, 1.22%}."
+RESULTS/EXPERIMENTS,0.5562130177514792,"See Figure 2, the colored lines represent machines’ max performances, and the dots represent
+each benchmark with its measured FLOP/s. The classic rooﬂine on the left shows that our in-
+cache aggregation strategy has a large memory arithmetic intensity (⇠4,700) exceeding the memory
+bandwidth ridge points ⇡/β. However, it is difﬁcult to diagnose why the Euclidean distance search
+does not perform well on TPU V4 from the classic rooﬂine plot."
+RESULTS/EXPERIMENTS,0.5591715976331361,"Fortunately, when combined with the instruction bandwidth rooﬂine we can tell the performance
+regression is caused by hitting the coefﬁcient-wise operation throughput wall. Therefore we afﬁrms
+the claim that our MIPS solution is reaching the peak FLOP/s, and our Euclidean distance search
+solution is meeting the compute bound on TPU V4 and attaining the peak FLOP/s on TPU V3."
+RESULTS/EXPERIMENTS,0.5621301775147929,"6.2
+Recall-speed benchmark"
+RESULTS/EXPERIMENTS,0.5650887573964497,"To evaluate the effectiveness of the K-NN algorithm in a realistic setting, we adopted the methodology
+of public ANN benchmarks (Aumüller et al., 2020) to compare the end-to-end performance against
+other methods on the following datasets: Glove (Pennington et al., 2014), Sift (Jegou et al., 2010),
+NYTimes (Dua and Graff, 2017), and Last.fm (Bertin-Mahieux et al., 2011). The typical ANN
+benchmarks are only performed on a single platform. However, it is non-trivial to either port our TPU
+algorithm to GPU or vice versa. Alternatively, we selected the following GPUs with parity in peak
+performance to TPU (Table 1)."
+RESULTS/EXPERIMENTS,0.5680473372781065,"We select the Faiss GPU (Johnson et al., 2021) implementation as our baseline. Faiss provides three
+algorithms: Flat, IVF-Flat, and IVF-PQ. The Flat algorithm performs a brute-force search, and the
+IVF-Flat and IVF-PQ algorithms corresponds to the inverted ﬁle method with and without the product
+quantization (Jegou et al., 2010; Johnson et al., 2021). We use the repository’s suggested inverted ﬁle
+size (16384) in the IVF methods. 0.0"
+RESULTS/EXPERIMENTS,0.5710059171597633,500.0k
+RESULTS/EXPERIMENTS,0.5739644970414202,1.0M
+RESULTS/EXPERIMENTS,0.5769230769230769,1.5M
+RESULTS/EXPERIMENTS,0.5798816568047337,2.0M
+RESULTS/EXPERIMENTS,0.5828402366863905,2.5M
+RESULTS/EXPERIMENTS,0.5857988165680473,3.0M
+RESULTS/EXPERIMENTS,0.5887573964497042,"1M
+2M
+3M
+4M
+5M
+6M
+7M
+8M
+9M
+10M QPS"
+RESULTS/EXPERIMENTS,0.591715976331361,Database size N
+RESULTS/EXPERIMENTS,0.5946745562130178,"Faiss IVF,Flat A100 0.97"
+RESULTS/EXPERIMENTS,0.5976331360946746,"0.97
+0.98
+0.98
+0.98
+0.98
+0.98
+0.98
+0.98
+0.98"
+RESULTS/EXPERIMENTS,0.6005917159763313,Ours TPU V4 1 chip 0.98 0.97
+RESULTS/EXPERIMENTS,0.6035502958579881,"0.97
+0.97
+0.97
+0.97
+0.97
+0.97
+0.97
+0.97"
+RESULTS/EXPERIMENTS,0.606508875739645,Ours TPU V4 2 chips 0.98 0.98 0.98
+RESULTS/EXPERIMENTS,0.6094674556213018,"0.98
+0.98
+0.98
+0.98
+0.98
+0.98
+0.98"
+RESULTS/EXPERIMENTS,0.6124260355029586,Ours TPU V4 4 chips 0.99 0.99 0.99 0.98
+RESULTS/EXPERIMENTS,0.6153846153846154,"0.98
+0.98
+0.98
+0.98
+0.98
+0.98"
+RESULTS/EXPERIMENTS,0.6183431952662722,Yandex Deep D = 96
+RESULTS/EXPERIMENTS,0.621301775147929,"Figure 4: Scalability benchmark. The labeled numbers are the measured recalls. The multi-TPU
+implementation is listed in Appendix A.6."
+RESULTS/EXPERIMENTS,0.6242603550295858,"Figure 3 shows our performance signiﬁcantly outperforms competing methods in the high recall
+regions. We highlight that our method has a consistent recall-speed trade-off over different datasets,
+because our recall only rely on the order statistics instead of the information encoded in the com-
+pression domain search methods, which may vary by the datasets. Since our method scores all the
+pair-wise distances, our method is immune from the curse of high dimensionality."
+RESULTS/EXPERIMENTS,0.6272189349112426,"6.3
+Scalability benchmark"
+RESULTS/EXPERIMENTS,0.6301775147928994,"In the ﬁnal benchmark, we examine the scalability of the algorithm from three aspects. First, we
+verify if the measured performance is inverse proportional to the database size. Second, we compare
+the scaling characteristics to the fastest GPU implementation. Last but not least, we are interested in
+knowing if our algorithm can horizontally scale by the number of TPUs."
+RESULTS/EXPERIMENTS,0.6331360946745562,"We conduct our evaluation on TPU V4 and Nvidia GPU A100, which have similar peak performance
+and memory bandwidth. We sample the Yandex Deep dataset6 (Babenko and Lempitsky, 2016) into
+ten different scales and measure the QPS of each approach with a similar recall. Figure 4 veriﬁes all
+measurements align with the ideal scalability model: QPS / #chips/N. Our method remains top
+performance on all database sizes and linearly scales with the number of TPU chips."
+CONCLUSION/DISCUSSION,0.636094674556213,"7
+Discussion and future work"
+CONCLUSION/DISCUSSION,0.6390532544378699,"In Section 6, we benchmark our method against others on platforms with similar performances.
+Some questions might arise: ""Is the performance gain an algorithmic optimization or due to platform
+efﬁciency?"" ""Can we achieve the same performance gain on GPU?"" ""The existence of efﬁcient
+fractional-search on accelerators?"" We address these questions in this section."
+CONCLUSION/DISCUSSION,0.6420118343195266,"7.1
+Platform discussions"
+CONCLUSION/DISCUSSION,0.6449704142011834,"We ﬁrst discuss the modeling perspective of performance differences between platforms. In Section
+4, we show that the memory bandwidth and instruction throughput bound applies to both GPU and
+TPU. For instance, it follows that to attain peak performance on every hardware platform, having the
+number of instructions used for collecting (approximate) top-k elements within 2γ · D/⇡per distance
+computation is a necessary condition."
+CONCLUSION/DISCUSSION,0.6479289940828402,"Although our Algorithm 1 is platform-independent, achieving the hardware peak performance requires
+many low level implementation details at the machine level, including cache management, preventing
+cross-core memory synchronization, in-register accumulation, and instruction scheduling. Typical
+high-performance libraries such as MKL, cuBLAS, and Google TPU compiler use platform-speciﬁc
+assembly to take full control of the stated requirements."
+CONCLUSION/DISCUSSION,0.650887573964497,6Released in CC BY 4.0.
+CONCLUSION/DISCUSSION,0.6538461538461539,"Nevertheless, we cannot use the high-level interface of these libraries, because Algorithm 1 only
+performs well when it is integrated into the inner loop of distance computations7. Moreover, these
+libraries are all close-sourced, thus increases the difﬁculty on the implementation."
+CONCLUSION/DISCUSSION,0.6568047337278107,"Fortunately, we have the access to TPU compiler internals, and we have integrated Algorithm 1
+into the compiler to generate the desired assembly code to solidify our analysis. Thus we leave
+implementations of other platforms to future works."
+CONCLUSION/DISCUSSION,0.6597633136094675,"7.2
+Algorithm discussions"
+CONCLUSION/DISCUSSION,0.6627218934911243,"The rooﬂine complexity of the fractional search is identical to BLAS-2 (matrix-vector multiplication),
+which is memory bandwidth bound. When the cycles spend on data transfer are mutually exclusive
+to our method, it introduces an enormous opportunity cost. Nevertheless, we see an opportunity in
+a heterogeneous architecture because a fractional search on the host is not mutually exclusive to
+applying our method to accelerators."
+CONCLUSION/DISCUSSION,0.665680473372781,"A motivating example is the multi-billion nearest neighbor search, where ﬁtting the dataset into
+device memory is possible (through device sharding, which TensorFlow and Jax have native support)
+but not economical. Since brute-force distance computations are often involved in the auxiliary data
+structures when performing the fractional search, we may replace the brute-force portion with TPU
+in conduction with the remaining search off-device. We note that heterogeneous architectures with
+off-device storage such as host-RAM or even SSD (Jayaram Subramanya et al., 2019; Ren et al.,
+2020; Chen et al., 2021) are great starting points for future research."
+CONCLUSION/DISCUSSION,0.6686390532544378,"8
+Conclusion"
+CONCLUSION/DISCUSSION,0.6715976331360947,"Accelerator-based machine learning has become the mainstream in academics and industries. How-
+ever, the performance characteristics of accelerators are counter-intuitive and difﬁcult to program.
+In this paper, we propose a rooﬂine-based complexity analysis framework to discuss the optimality
+of the algorithms without low-level optimization details: unrolling factors, batch window sizes,
+vectorization, and systolic array scheduling, which are platform-dependent and lengthy to read. We
+demonstrated several examples of inferring the hardware performance limits by simply addressing
+the kernel’s total FLOPs, byte transferred, and the number of coefﬁcient-wise instructions used. Our
+reﬁned model foreshadowed non-trivial performance regression caused by the coefﬁcient-wise in-
+structions bandwidth. We took it into account to design a new algorithm for K-NN and achieved peak
+performance on TPU. Finally, our experiments showed that our method outperformed state-of-the-art
+baselines on platforms with similar performance characteristics, which are known to be hard to beat."
+CONCLUSION/DISCUSSION,0.6745562130177515,Acknowledgments and Disclosure of Funding
+CONCLUSION/DISCUSSION,0.6775147928994083,"We would like to thank the XLA team for the continuous effort on developing the state-of-the-art
+compiler and the full support on enabling our new op: approx_max_k. We are also grateful to the
+Google ScaNN team for the joint effort on bridging the impactful K-NN problem into the accelerator
+ecosystem. Last but not least, we thank to Peter Hawkins, Edward Schwartz, and Mani Varadarajan
+for code reviews in Jax and Tensorﬂow, and Erik Lindgren for the proof reading of this paper."
+CONCLUSION/DISCUSSION,0.6804733727810651,This work was performed and funded by Google.
+REFERENCES,0.6834319526627219,References
+REFERENCES,0.6863905325443787,"Andoni, A., Indyk, P., Laarhoven, T., Razenshteyn, I., and Schmidt, L. (2015). Practical and optimal"
+REFERENCES,0.6893491124260355,"lsh for angular distance. Advances in neural information processing systems, 28."
+REFERENCES,0.6923076923076923,"Aumüller, M., Bernhardsson, E., and Faithfull, A. (2020). Ann-benchmarks: A benchmarking tool"
+REFERENCES,0.6952662721893491,"for approximate nearest neighbor algorithms. Information Systems, 87:101374."
+REFERENCES,0.6982248520710059,"Babenko, A. and Lempitsky, V. (2014). The inverted multi-index. IEEE transactions on pattern"
+REFERENCES,0.7011834319526628,"analysis and machine intelligence, 37(6):1247–1260."
+REFERENCES,0.7041420118343196,7See Appendix A.3.3 for the performance analysis and comparisons.
+REFERENCES,0.7071005917159763,"Babenko, A. and Lempitsky, V. (2016). Efﬁcient indexing of billion-scale datasets of deep descriptors."
+REFERENCES,0.7100591715976331,"In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition, pages
+2055–2063."
+REFERENCES,0.7130177514792899,"Baranchuk, D., Babenko, A., and Malkov, Y. (2018). Revisiting the inverted indices for billion-scale"
+REFERENCES,0.7159763313609467,"approximate nearest neighbors. In Proceedings of the European Conference on Computer Vision
+(ECCV), pages 202–216."
+REFERENCES,0.7189349112426036,"Bertin-Mahieux, T., Ellis, D. P., Whitman, B., and Lamere, P. (2011). The million song dataset. In"
+REFERENCES,0.7218934911242604,Proceedings of the 12th International Conference on Music Information Retrieval (ISMIR 2011).
+REFERENCES,0.7248520710059172,"Beyer, K., Goldstein, J., Ramakrishnan, R., and Shaft, U. (1999). When is “nearest neighbor”"
+REFERENCES,0.727810650887574,"meaningful? In International conference on database theory, pages 217–235. Springer."
+REFERENCES,0.7307692307692307,"Borgeaud, S., Mensch, A., Hoffmann, J., Cai, T., Rutherford, E., Millican, K., Driessche, G. v. d.,"
+REFERENCES,0.7337278106508875,"Lespiau, J.-B., Damoc, B., Clark, A., et al. (2021). Improving language models by retrieving from
+trillions of tokens. arXiv preprint arXiv:2112.04426."
+REFERENCES,0.7366863905325444,"Cer, D., Yang, Y., Kong, S.-y., Hua, N., Limtiaco, N., John, R. S., Constant, N., Guajardo-Cespedes,"
+REFERENCES,0.7396449704142012,"M., Yuan, S., Tar, C., et al. (2018). Universal sentence encoder. arXiv preprint arXiv:1803.11175."
+REFERENCES,0.742603550295858,"Chen, Q., Zhao, B., Wang, H., Li, M., Liu, C., Li, Z., Yang, M., and Wang, J. (2021). Spann: Highly-"
+REFERENCES,0.7455621301775148,"efﬁcient billion-scale approximate nearest neighborhood search. Advances in Neural Information
+Processing Systems, 34:5199–5212."
+REFERENCES,0.7485207100591716,"Dasgupta, S. and Freund, Y. (2008). Random projection trees and low dimensional manifolds. In"
+REFERENCES,0.7514792899408284,"Proceedings of the fortieth annual ACM symposium on Theory of computing, pages 537–546."
+REFERENCES,0.7544378698224852,"Dongarra, J. J., Du Croz, J., Hammarling, S., and Duff, I. S. (1990). A set of level 3 basic linear"
+REFERENCES,0.757396449704142,"algebra subprograms. ACM Transactions on Mathematical Software (TOMS), 16(1):1–17."
+REFERENCES,0.7603550295857988,"Dua, D. and Graff, C. (2017). UCI machine learning repository."
+REFERENCES,0.7633136094674556,"Golub, G. H. and Van Loan, C. F. (2013). Matrix computations. JHU press."
+REFERENCES,0.7662721893491125,"Gu, X., Akoglu, L., and Rinaldo, A. (2019). Statistical analysis of nearest neighbor methods for"
+REFERENCES,0.7692307692307693,"anomaly detection. Advances in Neural Information Processing Systems, 32."
+REFERENCES,0.772189349112426,"Guo, R., Sun, P., Lindgren, E., Geng, Q., Simcha, D., Chern, F., and Kumar, S. (2020). Accelerating"
+REFERENCES,0.7751479289940828,"large-scale inference with anisotropic vector quantization. In International Conference on Machine
+Learning, pages 3887–3896. PMLR."
+REFERENCES,0.7781065088757396,"Guu, K., Lee, K., Tung, Z., Pasupat, P., and Chang, M.-W. (2020). Realm: Retrieval-augmented"
+REFERENCES,0.7810650887573964,language model pre-training. arXiv preprint arXiv:2002.08909.
+REFERENCES,0.7840236686390533,"Impagliazzo, R. and Paturi, R. (1999). The complexity of k-sat. In Proceedings. Fourteenth Annual"
+REFERENCES,0.7869822485207101,"IEEE Conference on Computational Complexity (Formerly: Structure in Complexity Theory
+Conference)(Cat. No. 99CB36317), pages 237–237. IEEE Computer Society."
+REFERENCES,0.7899408284023669,"Jayaram Subramanya, S., Devvrit, F., Simhadri, H. V., Krishnawamy, R., and Kadekodi, R. (2019)."
+REFERENCES,0.7928994082840237,"Diskann: Fast accurate billion-point nearest neighbor search on a single node. Advances in Neural
+Information Processing Systems, 32."
+REFERENCES,0.7958579881656804,"Jegou, H., Douze, M., and Schmid, C. (2010). Product quantization for nearest neighbor search."
+REFERENCES,0.7988165680473372,"IEEE transactions on pattern analysis and machine intelligence, 33(1):117–128."
+REFERENCES,0.8017751479289941,"Jia, C., Yang, Y., Xia, Y., Chen, Y.-T., Parekh, Z., Pham, H., Le, Q., Sung, Y.-H., Li, Z., and Duerig, T."
+REFERENCES,0.8047337278106509,"(2021). Scaling up visual and vision-language representation learning with noisy text supervision.
+In International Conference on Machine Learning, pages 4904–4916. PMLR."
+REFERENCES,0.8076923076923077,"Johnson, J., Douze, M., and Jégou, H. (2021). Billion-scale similarity search with gpus. IEEE"
+REFERENCES,0.8106508875739645,"Transactions on Big Data, 7(3):535–547."
+REFERENCES,0.8136094674556213,"Jouppi, N. P., Young, C., Patil, N., Patterson, D., Agrawal, G., Bajwa, R., Bates, S., Bhatia, S., Boden,"
+REFERENCES,0.8165680473372781,"N., Borchers, A., et al. (2017). In-datacenter performance analysis of a tensor processing unit. In
+Proceedings of the 44th annual international symposium on computer architecture, pages 1–12."
+REFERENCES,0.8195266272189349,"Lindgren, E., Reddi, S., Guo, R., and Kumar, S. (2021). Efﬁcient training of retrieval models using"
+REFERENCES,0.8224852071005917,"negative cache. Advances in Neural Information Processing Systems, 34."
+REFERENCES,0.8254437869822485,"Liu, T.-Y. et al. (2009). Learning to rank for information retrieval. Foundations and Trends® in"
+REFERENCES,0.8284023668639053,"Information Retrieval, 3(3):225–331."
+REFERENCES,0.8313609467455622,"Malkov, Y. A. and Yashunin, D. A. (2018). Efﬁcient and robust approximate nearest neighbor search"
+REFERENCES,0.834319526627219,"using hierarchical navigable small world graphs. IEEE transactions on pattern analysis and
+machine intelligence, 42(4):824–836."
+REFERENCES,0.8372781065088757,"Markidis, S., Der Chien, S. W., Laure, E., Peng, I. B., and Vetter, J. S. (2018). Nvidia tensor core"
+REFERENCES,0.8402366863905325,"programmability, performance & precision. In 2018 IEEE international parallel and distributed
+processing symposium workshops (IPDPSW), pages 522–531. IEEE."
+REFERENCES,0.8431952662721893,"Monroe, L., Wendelberger, J., and Michalak, S. (2011). Randomized selection on the gpu. In"
+REFERENCES,0.8461538461538461,"Proceedings of the ACM SIGGRAPH Symposium on High Performance Graphics, pages 89–98."
+REFERENCES,0.849112426035503,"Muja, M. and Lowe, D. G. (2014). Scalable nearest neighbor algorithms for high dimensional data."
+REFERENCES,0.8520710059171598,"IEEE transactions on pattern analysis and machine intelligence, 36(11):2227–2240."
+REFERENCES,0.8550295857988166,"Neyshabur, B. and Srebro, N. (2015). On symmetric and asymmetric lshs for inner product search."
+REFERENCES,0.8579881656804734,"In International Conference on Machine Learning, pages 1926–1934. PMLR."
+REFERENCES,0.8609467455621301,"Norrie, T., Patil, N., Yoon, D. H., Kurian, G., Li, S., Laudon, J., Young, C., Jouppi, N., and Patterson,"
+REFERENCES,0.863905325443787,"D. (2021). The design process for google’s training chips: Tpuv2 and tpuv3. IEEE Micro,
+41(2):56–63."
+REFERENCES,0.8668639053254438,"Omar, S., Ngadi, A., and Jebur, H. H. (2013). Machine learning techniques for anomaly detection: an"
+REFERENCES,0.8698224852071006,"overview. International Journal of Computer Applications, 79(2)."
+REFERENCES,0.8727810650887574,"Pennington, J., Socher, R., and Manning, C. D. (2014). Glove: Global vectors for word representation."
+REFERENCES,0.8757396449704142,"In Empirical Methods in Natural Language Processing (EMNLP), pages 1532–1543."
+REFERENCES,0.878698224852071,"Ren, J., Zhang, M., and Li, D. (2020). Hm-ann: Efﬁcient billion-point nearest neighbor search on"
+REFERENCES,0.8816568047337278,"heterogeneous memory. Advances in Neural Information Processing Systems, 33:10672–10684."
+REFERENCES,0.8846153846153846,"Rubinstein, A. (2018). Hardness of approximate nearest neighbor search. In Proceedings of the 50th"
+REFERENCES,0.8875739644970414,"annual ACM SIGACT symposium on theory of computing, pages 1260–1268."
+REFERENCES,0.8905325443786982,"Sarwar, B. M., Karypis, G., Konstan, J., and Riedl, J. (2002). Recommender systems for large-"
+REFERENCES,0.893491124260355,"scale e-commerce: Scalable neighborhood formation using clustering. In Proceedings of the ﬁfth
+international conference on computer and information technology, volume 1, pages 291–324.
+Citeseer."
+REFERENCES,0.8964497041420119,"Shanbhag, A., Pirk, H., and Madden, S. (2018). Efﬁcient top-k query processing on massively parallel"
+REFERENCES,0.8994082840236687,"hardware. In Proceedings of the 2018 International Conference on Management of Data, pages
+1557–1570."
+REFERENCES,0.9023668639053254,"Shazeer, N., Mirhoseini, A., Maziarz, K., Davis, A., Le, Q., Hinton, G., and Dean, J. (2017)."
+REFERENCES,0.9053254437869822,"Outrageously large neural networks: The sparsely-gated mixture-of-experts layer. arXiv preprint
+arXiv:1701.06538."
+REFERENCES,0.908284023668639,"Wang, J., Liu, W., Kumar, S., and Chang, S.-F. (2015). Learning to hash for indexing big data—a"
+REFERENCES,0.9112426035502958,"survey. Proceedings of the IEEE, 104(1):34–57."
+REFERENCES,0.9142011834319527,"Wang, J., Shen, H. T., Song, J., and Ji, J. (2014). Hashing for similarity search: A survey. arXiv"
+REFERENCES,0.9171597633136095,preprint arXiv:1408.2927.
+REFERENCES,0.9201183431952663,"Williams, S., Waterman, A., and Patterson, D. (2009). Rooﬂine: an insightful visual performance"
+REFERENCES,0.9230769230769231,"model for multicore architectures. Communications of the ACM, 52(4):65–76."
+REFERENCES,0.9260355029585798,"Zhao, W., Tan, S., and Li, P. (2020). Song: Approximate nearest neighbor search on gpu. In 2020"
+REFERENCES,0.9289940828402367,"IEEE 36th International Conference on Data Engineering (ICDE), pages 1033–1044."
+REFERENCES,0.9319526627218935,"Zhao, Z., Hong, L., Wei, L., Chen, J., Nath, A., Andrews, S., Kumthekar, A., Sathiamoorthy, M., Yi,"
+REFERENCES,0.9349112426035503,"X., and Chi, E. (2019). Recommending what video to watch next: a multitask ranking system. In
+Proceedings of the 13th ACM Conference on Recommender Systems, pages 43–51."
+OTHER,0.9378698224852071,1. For all authors...
+OTHER,0.9408284023668639,(a) Do the main claims made in the abstract and introduction accurately reﬂect the paper’s
+OTHER,0.9437869822485208,"contributions and scope? [Yes]
+(b) Did you describe the limitations of your work? [Yes] See Section 4 for how we model"
+OTHER,0.9467455621301775,"the hardware limitations and Section 6.1 for real world evaluations.
+(c) Did you discuss any potential negative societal impacts of your work? [N/A]
+(d) Have you read the ethics review guidelines and ensured that your paper conforms to"
+OTHER,0.9497041420118343,"them? [Yes]
+2. If you are including theoretical results..."
+OTHER,0.9526627218934911,(a) Did you state the full set of assumptions of all theoretical results? [Yes] See Section
+OTHER,0.9556213017751479,"5.1, we formulate the problems in terms of the classic balls into bins.
+(b) Did you include complete proofs of all theoretical results? [Yes] See Section 5.1 and"
+OTHER,0.9585798816568047,"Appendix A.4.
+3. If you ran experiments..."
+OTHER,0.9615384615384616,"(a) Did you include the code, data, and instructions needed to reproduce the main experi-"
+OTHER,0.9644970414201184,"mental results (either in the supplemental material or as a URL)? [Yes] See Appendix
+A.1 and A.2
+(b) Did you specify all the training details (e.g., data splits, hyperparameters, how they"
+OTHER,0.9674556213017751,"were chosen)? [N/A]
+(c) Did you report error bars (e.g., with respect to the random seed after running experi-"
+OTHER,0.9704142011834319,"ments multiple times)? [N/A]
+(d) Did you include the total amount of compute and the type of resources used (e.g., type"
+OTHER,0.9733727810650887,"of GPUs, internal cluster, or cloud provider)? [Yes] See Table 1 and 2.
+4. If you are using existing assets (e.g., code, data, models) or curating/releasing new assets..."
+OTHER,0.9763313609467456,"(a) If your work uses existing assets, did you cite the creators? [Yes] See Section 6.1.
+(b) Did you mention the license of the assets? [Yes] See the footnotes in Section 6.1."
+OTHER,0.9792899408284024,"(c) Did you include any new assets either in the supplemental material or as a URL? [No]
+(d) Did you discuss whether and how consent was obtained from people whose data you’re"
+OTHER,0.9822485207100592,"using/curating? [N/A]
+(e) Did you discuss whether the data you are using/curating contains personally identiﬁable"
+OTHER,0.985207100591716,"information or offensive content? [N/A]
+5. If you used crowdsourcing or conducted research with human subjects..."
+OTHER,0.9881656804733728,"(a) Did you include the full text of instructions given to participants and screenshots, if"
+OTHER,0.9911242603550295,"applicable? [N/A]
+(b) Did you describe any potential participant risks, with links to Institutional Review"
+OTHER,0.9940828402366864,"Board (IRB) approvals, if applicable? [N/A]
+(c) Did you include the estimated hourly wage paid to participants and the total amount"
+OTHER,0.9970414201183432,spent on participant compensation? [N/A]
