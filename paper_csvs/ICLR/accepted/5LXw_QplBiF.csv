@@ -1,0 +1,1297 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,Abstract
+ABSTRACT,0.004464285714285714,"Learning hierarchical structures in sequential data—from simple algorithmic
+patterns to natural language—in a reliable, generalizable way remains a challenging
+problem for neural language models. Past work has shown that recurrent neural
+networks (RNNs) struggle to generalize on held-out algorithmic or syntactic patterns
+without supervision or some inductive bias. To remedy this, many papers have
+explored augmenting RNNs with various diﬀerentiable stacks, by analogy with
+ﬁnite automata and pushdown automata (PDAs). In this paper, we improve the
+performance of our recently proposed Nondeterministic Stack RNN (NS-RNN),
+which uses a diﬀerentiable data structure that simulates a nondeterministic PDA,
+with two important changes. First, the model now assigns unnormalized positive
+weights instead of probabilities to stack actions, and we provide an analysis of
+why this improves training. Second, the model can directly observe the state of
+the underlying PDA. Our model achieves lower cross-entropy than all previous
+stack RNNs on ﬁve context-free language modeling tasks (within 0.05 nats of
+the information-theoretic lower bound), including a task on which the NS-RNN
+previously failed to outperform a deterministic stack RNN baseline. Finally, we
+propose a restricted version of the NS-RNN that incrementally processes inﬁnitely
+long sequences, and we present language modeling results on the Penn Treebank."
+INTRODUCTION,0.008928571428571428,"1
+Introduction"
+INTRODUCTION,0.013392857142857142,"Many machine learning problems involve sequential data with hierarchical structures, such as modeling
+context-free languages (Grefenstette et al., 2015; DuSell & Chiang, 2020), evaluating mathematical
+expressions (Nangia & Bowman, 2018; Hao et al., 2018), logical inference (Bowman et al., 2015), and
+modeling syntax in natural language (Dyer et al., 2016; Shen et al., 2019b; Kim et al., 2019). However,
+recurrent neural networks (RNNs) have diﬃculty learning to solve these tasks, or generalizing to
+held-out sequences, unless they have supervision or a hierarchical inductive bias (van Schijndel
+et al., 2019; Wilcox et al., 2019; McCoy et al., 2020). A limiting factor of RNNs is their reliance on
+memory whose size is constant across time. For example, to predict the second half of a string of
+the form 푤#푤R, a simple RNN would need to store all of 푤in its hidden state before predicting its
+reversal 푤R; a memory of ﬁnite size will inevitably fail to do this for inputs exceeding a certain length."
+INTRODUCTION,0.017857142857142856,"To remedy this, some previous work has investigated the addition of diﬀerentiable stack data structures
+to RNNs (Sun et al., 1995; Grefenstette et al., 2015; Joulin & Mikolov, 2015; DuSell & Chiang,
+2020), which is closely related to work on neural networks that model shift-reduce parsers (Bowman
+et al., 2016; Dyer et al., 2016; Shen et al., 2019a). Just as adding a stack to a ﬁnite state machine,
+which makes it a pushdown automaton (PDA), enables it to recognize context-free languages (CFLs),
+the hope is that adding stacks to RNNs will increase the range of problems on which they can be
+used eﬀectively. We also expect stacks to aid training by introducing an inductive bias for learning
+hierarchical patterns, and to increase generalization power by structuring the model’s memory in a
+way that better predicts held-out hierarchical data."
+INTRODUCTION,0.022321428571428572,"Previously (DuSell & Chiang, 2020), we proposed a stack-based RNN called the Nondeterministic
+Stack RNN (NS-RNN) that outperformed other stack RNNs on a range of CFL language modeling
+tasks. Its deﬁning feature is that its external data structure is a nondeterministic PDA, allowing it to
+simulate an exponential number of sequences of stack operations in parallel. This is in contrast to prior"
+INTRODUCTION,0.026785714285714284,Published as a conference paper at ICLR 2022
+INTRODUCTION,0.03125,"stack RNNs (Grefenstette et al., 2015; Joulin & Mikolov, 2015) which model deterministic stacks,
+being designed to learn one correct stack operation at each time step. One reason nondeterminism is
+important is that deterministic CFLs are a proper subset of CFLs. If the analogy with PDAs holds
+true, then equipping an RNN with a deterministic stack would only enable it to model deterministic
+CFLs, whereas a nondeterministic stack should enable it to model all CFLs. This is important for
+natural language processing, as human language is known to be high in syntactic ambiguity."
+INTRODUCTION,0.03571428571428571,"Another beneﬁt of nondeterminism, even on deterministic CFLs, applies to training. In order for a
+model to receive a reward for an action, it must try the action (that is, give it nonzero probability
+so that it receives gradient during backpropagation). For example, in the digit-recognition task, a
+classiﬁer tries all ten digits, and is rewarded for the correct one. But in a stack-augmented model, the
+space of possible action sequences is very large. Whereas a deterministic stack can only try one of
+them, a nondeterministic stack can try all of them and always receives a reward for the correct one.
+But as explained in §3.1, because the NS-RNN’s probability for an action sequence is the product of
+many probabilities, it can be extremely small, so the NS-RNN sometimes learns very slowly."
+INTRODUCTION,0.04017857142857143,"In this paper we present a new model, the Renormalizing NS-RNN (RNS-RNN), which is based on the
+NS-RNN, but improves its performance on all of the CFL tasks it was originally tested on, thanks to
+two key changes. The ﬁrst is that stack actions have weights that do not necessarily form a probability
+distribution (§3.1). They deﬁne an unnormalized distribution over stacks that is renormalized whenever
+the model queries it. Second, the RNS-RNN includes not only top stack symbols but also PDA states
+in this query (§3.2). These changes allow the RNS-RNN to attain lower cross-entropy on CFL tasks
+(in fact, very close to the information-theoretic lower bound) and to surpass deterministic stack RNNs
+on a task on which the NS-RNN fails to do so (“padded reversal”). Finally, as a third modiﬁcation, we
+present a memory-restricted version of the RNS-RNN that requires only 푂(푛) time and space (§5).
+This restricted RNS-RNN can be run incrementally on arbitrarily long sequences, which is a necessity
+for language modeling on natural language, for which we provide experimental results. Our code is
+available at https://github.com/bdusell/nondeterministic-stack-rnn."
+PREVIOUS STACK RNNS,0.044642857142857144,"2
+Previous stack RNNs"
+PREVIOUS STACK RNNS,0.049107142857142856,"We begin by discussing three previously proposed stack RNNs, each of which uses a diﬀerent style
+of diﬀerentiable stack: stratiﬁcation (Das et al., 1992; Sun et al., 1995; Grefenstette et al., 2015),
+superposition (Joulin & Mikolov, 2015), and nondeterminism (DuSell & Chiang, 2020)."
+CONTROLLER-STACK INTERFACE,0.05357142857142857,"2.1
+Controller-stack interface"
+CONTROLLER-STACK INTERFACE,0.05803571428571429,"Each type of stack RNN consists of a simple RNN (or variant such as LSTM), called the controller,
+connected to a diﬀerentiable stack. The stack has no parameters of its own; its role is to accept actions
+from the controller to push and pop elements at each time step, simulate those actions, and return a
+reading to the controller as an extra input to the next time step that serves as a representation of the
+updated top element of the stack. The stack actions and stack reading take on continuous values so
+that they may be diﬀerentiable; their form and interpretation vary with architecture."
+CONTROLLER-STACK INTERFACE,0.0625,"Following prior work (DuSell & Chiang, 2020), we make minor changes to the original model
+deﬁnitions given by Grefenstette et al. (2015) and Joulin & Mikolov (2015) to ensure that all three
+of these stack RNN models conform to the same controller-stack interface. This allows us to isolate
+diﬀerences in the style of stack data structure employed while keeping other parts of the network the
+same. We assume the input 푤= 푤1 · · · 푤푛is encoded as a sequence of vectors x1, · · · , x푛. In all of our
+experiments, we use an LSTM (Hochreiter & Schmidhuber, 1997) as the controller, whose memory
+consists of a hidden state h푡and memory cell c푡. The controller computes the next state (h푡, c푡) given
+the previous state (h푡−1, c푡−1), input vector x푡, and stack reading r푡−1:"
+CONTROLLER-STACK INTERFACE,0.06696428571428571,"(h푡, c푡) = LSTM
+
+(h푡−1, c푡−1),
+
+x푡
+r푡−1 
+."
+CONTROLLER-STACK INTERFACE,0.07142857142857142,"We set h0 = c0 = 0. The hidden state is used to compute the stack actions 푎푡and predict the logits y푡
+for the next word 푤푡+1. The previous stack and new actions are used to compute a new stack 푠푡, which
+in turn is used to produce a new reading r푡:"
+CONTROLLER-STACK INTERFACE,0.07589285714285714,"푎푡= Actions(h푡)
+y푡= Whyh푡+ bhy
+푠푡= Stack(푠푡−1, 푎푡−1)
+r푡= Reading(푠푡)"
+CONTROLLER-STACK INTERFACE,0.08035714285714286,Published as a conference paper at ICLR 2022
+CONTROLLER-STACK INTERFACE,0.08482142857142858,"In order to change the stack data structure, we need only change the deﬁnitions of Actions, Stack,
+Reading, and 푠0, which may depend on parameters of the model; for our changes to the NS-RNN, we
+will only need to change Actions and Reading."
+STRATIFICATION,0.08928571428571429,"2.2
+Stratification"
+STRATIFICATION,0.09375,"Based on work by Das et al. (1992) and Sun et al. (1995), the stack of Grefenstette et al. (2015) relies
+on a strategy we have dubbed “stratiﬁcation” (DuSell & Chiang, 2020). The elements of the stack are
+vectors, each of which is associated with a “thickness” between 0 and 1, which represents the degree
+to which the vector element is present on the stack. A helpful analogy is that of layers of a cake; the
+stack elements are like cake layers of varying thickness. In this model, 푎푡= (푢푡, 푑푡, v푡), where the
+pop signal 푢푡∈(0, 1) indicates the amount to be removed from the top of the stack, v푡is a learned
+vector to be pushed as a new element onto the stack, and the push signal 푑푡∈(0, 1) is the thickness of
+that newly pushed vector. This model has quadratic time and space complexity with respect to input
+length. We refer the reader to Appendix A.1 for full details."
+SUPERPOSITION,0.09821428571428571,"2.3
+Superposition"
+SUPERPOSITION,0.10267857142857142,"The stack of Joulin & Mikolov (2015) simulates a combination of partial stack actions by computing
+three new, separate stacks: one with all cells shifted down (push), kept the same (no-op), and shifted
+up (pop). The new stack is then an element-wise interpolation (“superposition”) of these three stacks.
+In this model, stack elements are again vectors, and 푎푡= (a푡, v푡), where the vector a푡is a probability
+distribution over three stack operations: push a new vector, no-op, and pop the top vector; v푡is the
+vector to be pushed. The vector v푡can be learned or can be set to h푡(Yogatama et al., 2018). The
+stack reading is the top cell of the stack. This model has quadratic time and space complexity with
+respect to input length. We refer the reader to Appendix A.2 for full details."
+NONDETERMINISM,0.10714285714285714,"2.4
+Nondeterminism"
+NONDETERMINISM,0.11160714285714286,"The stack module in the Nondeterministic Stack RNN (NS-RNN) model (DuSell & Chiang, 2020)
+maintains a probability distribution over whole stacks by simulating a weighted PDA. It has cubic time
+complexity and quadratic space complexity with respect to input length, leading to higher wall-clock
+run time than other stack RNNs, but often better task performance."
+NONDETERMINISM,0.11607142857142858,"The simulated weighted PDA maintains a state drawn from a ﬁnite set 푄, which includes an initial
+state 푞0, and a stack with symbols drawn from an alphabet Γ, which includes an initial symbol ⊥. At
+each time step, the PDA executes a weighted transition that changes its state and manipulates the
+stack. Stack operations are drawn from the set Op(Γ) = •Γ ∪Γ ∪{휖}, where for any 푦∈Γ, •푦means
+“push 푦,” 푦means “replace top element with 푦,” and 휖means “pop top element.” A valid sequence of
+transitions is called a run, and the weight of a run is the product of the weights of its transitions."
+NONDETERMINISM,0.12053571428571429,"The RNN controller emits transition weights to the stack module. Note that the stack module, not the
+controller, keeps track of PDA states and stack conﬁgurations, so the controller emits distributions over
+transitions conditioned on the PDA’s current state and top stack symbol. More precisely, 푎푡= Δ[푡]
+is a tensor where the meaning of element Δ[푡][푞, 푥→푟, 휐] is: if the PDA is in state 푞and the top
+stack symbol is 푥, then, with weight Δ[푡][푞, 푥→푟, 휐], go to state 푟and perform stack operation
+휐∈Op(Γ). The original NS-RNN deﬁnition requires that for all 푡, 푞, and 푥, the weights form a
+probability distribution. Accordingly, they are computed from the hidden state using a softmax layer:"
+NONDETERMINISM,0.125,"Δ[푡] = softmax
+푞,푥
+(Whah푡+ bha).
+(1)"
+NONDETERMINISM,0.12946428571428573,"The stack module marginalizes over all runs ending at time step 푡and returns the distribution over
+top stack symbols at 푡to the controller. It may appear that computing this distribution is intractable
+because the number of possible runs is exponential in 푡, but Lang (1974) gives a dynamic programming
+algorithm that simulates all runs of a nondeterministic PDA in cubic time and quadratic space. Lang’s
+algorithm exploits structural similarities in PDA runs. First, multiple runs can result in the same stack.
+Second, for 푘> 0, a stack of height 푘must have been derived from a stack of height 푘−1, so in
+principle representing a stack of height 푘requires only storing its top symbol and a pointer to a stack
+of height 푘−1. The resulting data structure is a weighted graph where edges represent individual
+stack symbols, and paths (of which there are exponentially many) represent stacks."
+NONDETERMINISM,0.13392857142857142,Published as a conference paper at ICLR 2022
+NONDETERMINISM,0.13839285714285715,"We may equivalently view this graph as a weighted ﬁnite automaton (WFA) that encodes a distribution
+over stacks, and accordingly the NS-RNN’s stack module is called the stack WFA. Indeed, the language
+of stacks at a given time step 푡is always regular (Autebert et al., 1997), and Lang’s algorithm gives an
+explicit construction for the WFA encoding this language. Its states are PDA conﬁgurations of the form
+(푖, 푞, 푥), where 0 ≤푖≤푛, 푞∈푄, and 푥∈Γ is the stack top. A stack WFA transition from (푖, 푞, 푥) to
+(푡, 푟, 푦) means the PDA went from conﬁguration (푖, 푞, 푥) to (푡, 푟, 푦) (possibly via multiple time steps),
+where the only diﬀerence in the stack is that a single 푦was pushed, and the 푥was never modiﬁed in
+between. The weights of these transitions are stored in a tensor 훾of shape 푛× 푛× |푄| × |Γ| × |푄| × |Γ|,
+where elements are written 훾[푖−→푡][푞, 푥−→푟, 푦]. For 0 ≤푖< 푡≤푛,"
+NONDETERMINISM,0.14285714285714285,"훾[푖−→푡][푞, 푥−→푟, 푦] ="
+NONDETERMINISM,0.14732142857142858,"I[푖= 푡−1] Δ[푡][푞, 푥→푟, •푦]
+push +
+Õ"
+NONDETERMINISM,0.15178571428571427,"푠,푧
+훾[푖−→푡−1][푞, 푥−→푠, 푧] Δ[푡][푠, 푧→푟, 푦]
+repl. + 푡−2
+Õ 푘=푖+1 Õ 푢 Õ"
+NONDETERMINISM,0.15625,"푠,푧
+훾[푖−→푘][푞, 푥−→푢, 푦] 훾[푘−→푡−1][푢, 푦−→푠, 푧] Δ[푡][푠, 푧→푟, 휖]
+pop (2)"
+NONDETERMINISM,0.16071428571428573,"The NS-RNN sums over all stacks (accepting paths in the stack WFA) using a tensor 훼of forward
+weights of shape 푛×|푄|×|Γ|. The weight 훼[푡][푟, 푦] is the total weight of reaching conﬁguration (푡, 푟, 푦).
+These weights are normalized to get the distribution over top stack symbols at 푡:"
+NONDETERMINISM,0.16517857142857142,"훼[0][푟, 푦] = I[푟= 푞0 ∧푦= ⊥]
+(3)"
+NONDETERMINISM,0.16964285714285715,"훼[푡][푟, 푦] = 푡−1
+Õ 푖=1 Õ"
+NONDETERMINISM,0.17410714285714285,"푞,푥
+훼[푖][푞, 푥] 훾[푖−→푡][푞, 푥−→푟, 푦]
+(1 ≤푡≤푛)
+(4)"
+NONDETERMINISM,0.17857142857142858,"r푡[푦] =
+Í
+푟훼[푡][푟, 푦]
+Í
+푦′ Í
+푟훼[푡][푟, 푦′] .
+(5)"
+NONDETERMINISM,0.18303571428571427,"We refer the reader to our earlier paper (DuSell & Chiang, 2020) for details of deriving these equations
+from Lang’s algorithm. To avoid underﬂow and overﬂow, in practice, Δ, 훾, and 훼are computed in log
+space. The model’s time complexity is 푂(|푄|4|Γ|3푛3), and its space complexity is 푂(|푄|2|Γ|2푛2)."
+RENORMALIZING NS-RNN,0.1875,"3
+Renormalizing NS-RNN"
+RENORMALIZING NS-RNN,0.19196428571428573,"Here, we introduce the Renormalizing NS-RNN, which diﬀers from the NS-RNN in two ways."
+UNNORMALIZED TRANSITION WEIGHTS,0.19642857142857142,"3.1
+Unnormalized transition weights"
+UNNORMALIZED TRANSITION WEIGHTS,0.20089285714285715,"To make a good prediction at time 푡, the model may need a certain top stack symbol 푦, which may in
+turn require previous actions to be orchestrated correctly. For example, consider the language {푣#푣R},
+where 푛is odd and 푤푡= 푤푛−푡+1 for all 푡. In order to do better than chance when predicting 푤푡(for 푡
+in the second half), the model has to push a stack symbol that encodes 푤푡at time (푛−푡+ 1), and that
+same symbol must be on top at time 푡. How does the model learn to do this? Assume that the gradient
+of the log-likelihood with respect to r푡[푦] is positive; this gradient “ﬂows” to the PDA transition
+probabilities via (among other things) the partial derivatives of log 훼with respect to log Δ."
+UNNORMALIZED TRANSITION WEIGHTS,0.20535714285714285,"To calculate these derivatives more easily, we express 훼directly (albeit less eﬃciently) in terms of Δ:"
+UNNORMALIZED TRANSITION WEIGHTS,0.20982142857142858,"훼[푡][푟, 푦] =
+Õ"
+UNNORMALIZED TRANSITION WEIGHTS,0.21428571428571427,"훿1···훿푡{푟,푦 Ö"
+UNNORMALIZED TRANSITION WEIGHTS,0.21875,"푖=1,...,푡
+Δ[푖][훿푖]"
+UNNORMALIZED TRANSITION WEIGHTS,0.22321428571428573,"where each 훿푖is a PDA transition of the form 푞1, 푥1 →푞2, 푥2, Δ[푖][훿푖] = Δ[푖][푞1, 푥1 →푞2, 푥2], and
+the summation over 훿1 · · · 훿푡{ 푟, 푦means that after following transitions 훿1, . . . , 훿푡, then the PDA
+will be in state 푟and its top stack symbol will be 푦. Then the partial derivatives are:"
+UNNORMALIZED TRANSITION WEIGHTS,0.22767857142857142,"휕log 훼[푡][푟, 푦]"
+UNNORMALIZED TRANSITION WEIGHTS,0.23214285714285715,"휕log Δ[푖][훿]
+="
+UNNORMALIZED TRANSITION WEIGHTS,0.23660714285714285,"Í
+훿1···훿푡{푟,푦
+ Î푡
+푖′=1 Δ[푖′][훿푖′] I[훿푖= 훿]
+Í
+훿1···훿푡{푟,푦
+Î푡
+푖′=1 Δ[푖][훿푖′]
+."
+UNNORMALIZED TRANSITION WEIGHTS,0.24107142857142858,Published as a conference paper at ICLR 2022
+UNNORMALIZED TRANSITION WEIGHTS,0.24553571428571427,"This is the posterior probability of having used transition 훿at time 푖, given that the PDA has read the
+input up to time 푡and reached state 푟and top stack symbol 푦."
+UNNORMALIZED TRANSITION WEIGHTS,0.25,"So if a correct prediction at time 푡depends on a stack action at an earlier time 푖, the gradient ﬂow to
+that action is proportional to its probability given the correct prediction. This probability is always
+nonzero, as desired. However, this probability is the product of individual action probabilities, which
+are always strictly less than one. If a correct prediction depends on orchestrating many stack actions,
+then this probability may become very small. Returning to our example, we expect the model to begin
+by learning to predict the middle of the string, where only a few stack actions must be orchestrated,
+then working its way outwards, more and more slowly as more and more actions must be orchestrated.
+In §4 we verify empirically that this is the case."
+UNNORMALIZED TRANSITION WEIGHTS,0.2544642857142857,"The solution we propose is to use unnormalized (non-negative) transition weights, not probabilities,
+and to normalize weights only when reading. Equation (1) now becomes"
+UNNORMALIZED TRANSITION WEIGHTS,0.25892857142857145,Δ[푡] = exp(Whah푡+ bha).
+UNNORMALIZED TRANSITION WEIGHTS,0.26339285714285715,"The gradient ﬂowing to a transition is still proportional to its posterior probability, but now each
+transition weight has the ability to “amplify” (Laﬀerty et al., 2001) other transitions in shared runs.
+Equation (5) is not changed (yet), but its interpretation is. The NS-RNN maintains a probability
+distribution over stacks and updates it by performing probabilistic operations. Now, the model
+maintains an unnormalized weight distribution, and when it reads from the stack at each time step, it
+renormalizes this distribution and marginalizes it to get a probability distribution over readings. For
+this reason, we call our new model a Renormalizing NS-RNN (RNS-RNN)."
+PDA STATES INCLUDED IN STACK READING,0.26785714285714285,"3.2
+PDA states included in stack reading"
+PDA STATES INCLUDED IN STACK READING,0.27232142857142855,"In the NS-RNN, the controller can read the distribution over the PDA’s current top stack symbol,
+but it cannot observe its current state. To see why this is a problem, consider the language {푣푣R}.
+While reading 푣, the controller should predict the uniform distribution, but while reading 푣R, it should
+predict based on the top stack symbol. A PDA with two states can nondeterministically guess whether
+the current position is in 푣or 푣R. The controller should interpolate the two distributions based on the
+weight of being in each state, but it cannot do this without input from the stack WFA, since the state is
+entangled with the stack contents. We solve this in the RNS-RNN by computing a joint distribution
+over top stack symbols and PDA states, making r푡a vector of size |푄||Γ|. Equation 5 becomes"
+PDA STATES INCLUDED IN STACK READING,0.2767857142857143,"r푡[(푟, 푦)] =
+훼[푡][푟, 푦]
+Í
+푟′,푦′ 훼[푡][푟′, 푦′] ."
+EXPERIMENTS ON FORMAL LANGUAGES,0.28125,"4
+Experiments on formal languages"
+EXPERIMENTS ON FORMAL LANGUAGES,0.2857142857142857,"In order to assess the beneﬁts of using unnormalized transition weights and including PDA states in
+the stack reading, we ran the RNS-RNN with and without the two proposed modiﬁcations on the
+same ﬁve CFL language modeling tasks used previously (DuSell & Chiang, 2020). We use the same
+experimental setup and PCFG settings, except for one important diﬀerence: we require the model to
+predict an end-of-sequence (EOS) symbol at the end of every string. This way, the model deﬁnes a
+proper probability distribution over strings, improving the interpretability of the results."
+EXPERIMENTS ON FORMAL LANGUAGES,0.29017857142857145,Each task is a weighted CFL speciﬁed as a PCFG:
+EXPERIMENTS ON FORMAL LANGUAGES,0.29464285714285715,"Marked reversal The palindrome language with a middle marker ({푣#푣R | 푣∈{0, 1}∗})."
+EXPERIMENTS ON FORMAL LANGUAGES,0.29910714285714285,"Unmarked reversal The palindrome language without a middle marker ({푣푣R | 푣∈{0, 1}∗})."
+EXPERIMENTS ON FORMAL LANGUAGES,0.30357142857142855,"Padded reversal Like unmarked reversal, but with a long stretch of repeated symbols in the middle
+({푣푎푝푣R | 푣∈{0, 1}∗, 푎∈{0, 1}, 푝≥0})."
+EXPERIMENTS ON FORMAL LANGUAGES,0.3080357142857143,Dyck language The language 퐷2 of strings with balanced brackets (two bracket types).
+EXPERIMENTS ON FORMAL LANGUAGES,0.3125,Hardest CFL A language shown by Greibach (1973) to be at least as hard to parse as any other CFL.
+EXPERIMENTS ON FORMAL LANGUAGES,0.3169642857142857,"The marked reversal and Dyck languages are deterministic tasks that could be solved optimally with a
+deterministic PDA. On the other hand, the unmarked reversal, padded reversal, and hardest CFL tasks"
+EXPERIMENTS ON FORMAL LANGUAGES,0.32142857142857145,Published as a conference paper at ICLR 2022
+EXPERIMENTS ON FORMAL LANGUAGES,0.32589285714285715,"require nondeterminism, with hardest CFL requiring the most (DuSell & Chiang, 2020, Appendix A).
+We randomly sample from these languages to create training, validation, and test sets. All strings
+are represented as sequences of one-hot vectors. Please see Appendix B for additional experimental
+details."
+EXPERIMENTS ON FORMAL LANGUAGES,0.33035714285714285,"We evaluate models according to per-symbol cross-entropy (lower is better). For any set of strings 푆
+and probability distribution 푝, it is deﬁned as"
+EXPERIMENTS ON FORMAL LANGUAGES,0.33482142857142855,"퐻(푆, 푝) = −Í
+푤∈푆log 푝(푤· EOS)
+Í
+푤∈푆(|푤| + 1)
+."
+EXPERIMENTS ON FORMAL LANGUAGES,0.3392857142857143,"Since the validation and test strings are all sampled from known distributions, we can also use this
+formula to compute the per-symbol entropy of the true distribution (DuSell & Chiang, 2020). In our
+experiments we measure performance as the diﬀerence between the model cross-entropy and the true
+entropy, per-symbol and measured in nats (lower is better, and zero is optimal)."
+EXPERIMENTS ON FORMAL LANGUAGES,0.34375,"We compare seven models on the CFL tasks, each of which consists of an LSTM connected to a
+diﬀerent type of stack: none (“LSTM”); stratiﬁcation (“Gref”); superposition (“JM”); nondeterministic,
+aka NS-RNN (“NS”); NS with PDA states in the reading and normalized action weights (“NS+S”);
+NS with no states in the reading and unnormalized action weights (“NS+U”); and NS with PDA states
+and unnormalized action weights, or RNS-RNN (“NS+S+U”)."
+EXPERIMENTS ON FORMAL LANGUAGES,0.3482142857142857,"Results
+We show validation set performance as a function of training time in Figure 1, and test
+performance binned by string length in Figure 2 (see also Appendix C for wall-clock training times).
+For all tasks, we see that our RNS-RNN (denoted NS+S+U) attains near-optimal cross-entropy (within
+0.05 nats) on the validation set. All stack models eﬀectively solve the deterministic marked reversal
+and Dyck tasks, although we note that on marked reversal the NS models do not generalize well
+on held-out lengths. Our new model excels on the three nondeterministic tasks: unmarked reversal,
+padded reversal, and hardest CFL. We ﬁnd that the combination of both enhancements (+S+U) greatly
+improves performance on unmarked reversal and hardest CFL over previous work. For unmarked
+reversal, merely changing the task by adding EOS causes the baseline NS model to perform worse
+than Gref and JM; this may be because it requires the NS-RNN to learn a correlation between the two
+most distant time steps. Both enhancements (+S+U) in the RNS-RNN are essential here; without
+unnormalized weights, the model does not ﬁnd a good solution during training, and without PDA
+states, the model does not have enough information to make optimal decisions. For padded reversal, we
+see that the addition of PDA states in the stack reading (+S) proves essential to improving performance.
+Although NS+S and NS+S+U have comparable performance on padded reversal, NS+S+U converges
+much faster. On hardest CFL, using unnormalized weights by itself (+U) improves performance, but
+only both modiﬁcations together (+S+U) achieve the best performance."
+EXPERIMENTS ON FORMAL LANGUAGES,0.35267857142857145,"In Figure 3, we show the evolution of stack actions for the NS+S (normalized) and NS+S+U
+(unnormalized) models over training time on the simplest of the CFL tasks: marked reversal. We see
+that the normalized model begins solving the task by learning to push and pop symbols close to the
+middle marker. It then gradually learns to push and pop matching pairs of symbols further and further
+away from the middle marker. On the other hand, the unnormalized model learns the correct actions
+for all time steps almost immediately."
+INCREMENTAL EXECUTION,0.35714285714285715,"5
+Incremental execution"
+INCREMENTAL EXECUTION,0.36160714285714285,"Having demonstrated improvements on synthetic tasks, we now turn to language modeling on natural
+language. For standard language modeling benchmarks, during both training and evaluation, RNN
+language models customarily process the entire data set in order as if it were one long sequence, since
+being able to retain contextual knowledge of past sentences signiﬁcantly improves predictions for
+future sentences. Running a full forward and backward pass during training on such a long sequence
+would be infeasible, so the data set is processed incrementally using a technique called truncated
+backpropagation through time (BPTT). This technique is feasible for models whose time and space
+complexity is linear with respect to sequence length, but for memory-augmented models such as stack
+RNNs, something must be done to limit the time and storage requirements. Yogatama et al. (2018)
+did this for the superposition stack by limiting the stack to 10 elements. In this section, we propose a
+technique for limiting the space and time requirements of the RNS-RNN (or NS-RNN), allowing us
+to use truncated BPTT and retain contextual information."
+INCREMENTAL EXECUTION,0.36607142857142855,Published as a conference paper at ICLR 2022
+INCREMENTAL EXECUTION,0.3705357142857143,"LSTM
+Gref
+JM
+NS
+NS+S
+NS+U
+NS+S+U"
+INCREMENTAL EXECUTION,0.375,"0
+20
+40
+60
+80
+100
+0 0.1 0.2 0.3 0.4"
+INCREMENTAL EXECUTION,0.3794642857142857,Diﬀerence in Cross Entropy
+INCREMENTAL EXECUTION,0.38392857142857145,Marked Reversal
+INCREMENTAL EXECUTION,0.38839285714285715,"40
+50
+60
+70
+80
+90
+100
+0 0.1 0.2"
+INCREMENTAL EXECUTION,0.39285714285714285,Marked Reversal
+INCREMENTAL EXECUTION,0.39732142857142855,"0
+50
+100
+150
+0 0.1 0.2 0.3"
+INCREMENTAL EXECUTION,0.4017857142857143,Diﬀerence in Cross Entropy
+INCREMENTAL EXECUTION,0.40625,Unmarked Reversal
+INCREMENTAL EXECUTION,0.4107142857142857,"40
+50
+60
+70
+80
+90
+100
+0 0.1 0.2 0.3 0.4"
+INCREMENTAL EXECUTION,0.41517857142857145,Unmarked Reversal
+INCREMENTAL EXECUTION,0.41964285714285715,"0
+50
+100
+150
+200
+0 0.1 0.2 0.3"
+INCREMENTAL EXECUTION,0.42410714285714285,Diﬀerence in Cross Entropy
+INCREMENTAL EXECUTION,0.42857142857142855,Padded Reversal
+INCREMENTAL EXECUTION,0.4330357142857143,"40
+50
+60
+70
+80
+90
+100
+0 0.1 0.2"
+PADDED REVERSAL,0.4375,"0.3
+Padded Reversal"
+PADDED REVERSAL,0.4419642857142857,"0
+20
+40
+60
+80
+100
+0 0.1 0.2 0.3 0.4"
+PADDED REVERSAL,0.44642857142857145,Diﬀerence in Cross Entropy Dyck
+PADDED REVERSAL,0.45089285714285715,"40
+50
+60
+70
+80
+90
+100
+0 0.1 Dyck"
+PADDED REVERSAL,0.45535714285714285,"0
+50
+100
+150
+200
+0 0.1 0.2 Epoch"
+PADDED REVERSAL,0.45982142857142855,Diﬀerence in Cross Entropy
+PADDED REVERSAL,0.4642857142857143,Hardest CFL
+PADDED REVERSAL,0.46875,"40
+50
+60
+70
+80
+90
+100
+0 0.1 0.2"
+PADDED REVERSAL,0.4732142857142857,Length
+PADDED REVERSAL,0.47767857142857145,Hardest CFL
+PADDED REVERSAL,0.48214285714285715,"Figure 1: Cross-entropy diﬀerence in nats be-
+tween model and source distribution on valida-
+tion set vs. training time. Each line corresponds
+to the model which attains the lowest diﬀerence
+in cross-entropy out of all random restarts."
+PADDED REVERSAL,0.48660714285714285,"Figure 2: Cross-entropy diﬀerence in nats on
+the test set, binned by string length. These
+models are the same as those shown in Figure 1."
+PADDED REVERSAL,0.49107142857142855,Published as a conference paper at ICLR 2022
+PADDED REVERSAL,0.4955357142857143,"0
+10
+20
+30
+40 0 10 20 30 푡"
+PADDED REVERSAL,0.5,←Epochs Elapsed NS+S
+PADDED REVERSAL,0.5044642857142857,"0
+10
+20
+30
+40 0 10 20 30 푡"
+PADDED REVERSAL,0.5089285714285714,NS+S+U
+PADDED REVERSAL,0.5133928571428571,"Figure 3: Visualization of the ﬁrst 30 epochs of training (top to bottom) on the marked reversal task. In
+each plot, the horizontal axis is the string position (time step). Darkness indicates the weight assigned
+to the correct stack action type, normalized by the weight of all actions at time 푡(black = correct,
+white = incorrect). The white band in the middle occurs because “replace” is considered the correct
+action type for the middle time step, but the models apparently learned to perform a diﬀerent action
+without aﬀecting the results. Both models were trained with learning rate 0.005."
+MEMORY-LIMITED RNS-RNN,0.5178571428571429,"5.1
+Memory-limited RNS-RNN"
+MEMORY-LIMITED RNS-RNN,0.5223214285714286,"We introduce the constraint that the stack WFA can only contain transitions 훾[푖−→푡][푞, 푥−→푟, 푦]
+where 푡−푖does not exceed a hyperparameter 퐷; all other transitions are treated as having zero weight.
+It may be easier to get an intuition for this constraint in terms of CFGs. The stack WFA formulation is
+based on Lang’s algorithm (1974), which can be thought of as converting a PDA to a CFG and then
+parsing with a CKY-style algorithm. The equation for 훾(Equation 2) has three terms, corresponding
+to rules of the form (퐴→푏) (push), (퐴→퐵푐) (replace), and (퐴→퐵퐶푑) (pop). The constraint
+푡−푖≤퐷on 훾means that these rules can only be used when they span at most 퐷positions."
+MEMORY-LIMITED RNS-RNN,0.5267857142857143,"The equations for 훼(3–4) have two cases, which correspond to rules of the form (퐴→휖) and
+(퐴→퐴퐵). The deﬁnition of 훼allows these rules to be used for spans starting at 0 and ending
+anywhere. This is essentially equivalent to the constraint used in the Hiero machine translation
+system (Chiang, 2005), which uses synchronous CFGs under the constraint that no nonterminal spans
+more than 10 symbols, with the exception of so-called glue rules 푆→푋, 푆→푆푋."
+MEMORY-LIMITED RNS-RNN,0.53125,"As a consequence of this constraint, if we consider the tensor 훾, which contains the weights of the
+stack WFA, as a matrix with axes for the variables 푖and 푡, then the only non-zero entries in 훾lie
+in a band of height 퐷along the diagonal. Crucially, column 푡of 훾depends only on 훾[푖−→푡′] for
+푡−퐷≤푖≤푡−2 and 푡−퐷+ 1 ≤푡′ ≤푡−1. Similarly, 훼[푡] depends only on 훼[푖] for 푡−퐷≤푖≤푡−1
+and 훾[푖−→푡] for 푡−푖≤퐷. So, just as truncated BPTT for an RNN involves freezing the hidden state
+and forwarding it to the next forward-backward pass, truncated BPTT for the (R)NS-RNN involves
+forwarding the hidden state of the controller and forwarding a slice of 훾and 훼. This reduces the time
+complexity of the (R)NS-RNN to 푂(|푄|4|Γ|3퐷2푛) and its space complexity to 푂(|푄|2|Γ|2퐷푛)."
+EXPERIMENTS,0.5357142857142857,"5.2
+Experiments"
+EXPERIMENTS,0.5401785714285714,"Limiting the memory of the (R)NS-RNN now makes it feasbile to run experiments on natural language
+modeling benchmarks, although the high computational cost of increasing |푄| and |Γ| still limits us
+to settings with little information bandwidth in the stack. We believe this will make it diﬃcult for the
+(R)NS-RNN to store lexical information on the stack, but it might succeed in using Γ as a small set of
+syntactic categories. To this end, we ran exploratory experiments with the NS-RNN, RNS-RNN, and
+other language models on the Penn Treebank (PTB) as preprocessed by Mikolov et al. (2011)."
+EXPERIMENTS,0.5446428571428571,"We compare four types of model: LSTM, superposition (“JM”) with a maximum stack depth of
+10, and memory-limited NS-RNNs (“NS”) and RNS-RNNs (“RNS”) with 퐷= 35. We based the
+hyperparameters for our LSTM baseline and training schedule on those of Semeniuta et al. (2016)
+(details in Appendix D). We also test two variants of JM, pushing either the hidden state or a learned"
+EXPERIMENTS,0.5491071428571429,Published as a conference paper at ICLR 2022
+EXPERIMENTS,0.5535714285714286,"Table 1: Language modeling results on PTB, measured by perplexity and SG score. The setting
+|푄| = 1, |Γ| = 2 represents minimal capacity in the (R)NS-RNN models and is meant to serve as
+a baseline for the other settings. The other two settings are meant to test the upper limits of model
+capacity before computational cost becomes too great. The setting |푄| = 1, |Γ| = 11 represents the
+greatest number of stack symbol types we can aﬀord to use, using only one PDA state. We selected the
+setting |푄| = 3, |Γ| = 4 by increasing the number of PDA states, and then the number of stack symbol
+types, until computational cost became too great (recall that the time complexity is 푂(|푄|4|Γ|3), so
+adding states is more expensive than adding stack symbol types)."
+EXPERIMENTS,0.5580357142857143,"Model
+# Params
+Val
+Test
+SG Score"
+EXPERIMENTS,0.5625,"LSTM, 256 units
+5,656,336
+125.78
+120.95
+0.433
+LSTM, 258 units
+5,704,576
+122.08
+118.20
+0.420
+LSTM, 267 units
+5,922,448
+125.20
+120.22
+0.437
+JM (push hidden state), 247 units
+5,684,828
+121.24
+115.35
+0.387
+JM (push learned), |v푡| = 22
+5,685,289
+122.87
+117.93
+0.431
+NS, |푄| = 1, |Γ| = 2
+5,660,954
+126.10
+122.62
+0.414
+NS, |푄| = 1, |Γ| = 11
+5,732,621
+129.11
+124.98
+0.431
+NS, |푄| = 3, |Γ| = 4
+5,743,700
+126.71
+122.53
+0.447
+RNS, |푄| = 1, |Γ| = 2
+5,660,954
+122.64
+117.56
+0.435
+RNS, |푄| = 1, |Γ| = 11
+5,732,621
+127.21
+121.84
+0.386
+RNS, |푄| = 3, |Γ| = 4
+5,751,892
+122.67
+118.09
+0.408"
+EXPERIMENTS,0.5669642857142857,"vector. Unless otherwise noted, the LSTM controller has 256 units, one layer, and no dropout. For
+each model, we randomly search for initial learning rate and gradient clipping threshold; we report
+results for the model with the best validation perplexity out of 10 random restarts. In addition to
+perplexity, we also report the recently proposed Syntactic Generalization (SG) score metric (Hu et al.,
+2020; Gauthier et al., 2020). This score, which ranges from 0 to 1, puts a language model through a
+battery of psycholinguistically-motivated tests that test how well a model generalizes to non-linear,
+nested syntactic patterns. Hu et al. (2020) noted that perplexity does not, in general, agree with SG
+score, so we hypothesized the SG score would provide crucial insight into the stack’s eﬀectiveness."
+EXPERIMENTS,0.5714285714285714,"Results
+We show the results of our experiments on the Penn Treebank in Table 1. We reproduce
+the ﬁnding of Yogatama et al. (2018) that JM can achieve lower perplexity than an LSTM with a
+comparable number of parameters, but this does not translate into a better SG score. The results for
+NS and RNS do not show a clear trend in perplexity or SG score as the number of states or stack
+symbols increases, or as the modiﬁcations in RNS are applied, even when breaking down SG score by
+type of syntactic test (see Appendix E). We hypothesize that this is due to the information bottleneck
+caused by using a small discrete set of symbols Γ in both models, a limitation we hope to address in
+future work. The interested reader can ﬁnd experiments for additional model sizes in Appendix E.
+For all models we ﬁnd that SG score is highly variable and uncorrelated to perplexity, corroborating
+ﬁndings by Hu et al. (2020). In fact, when we inspected all randomly searched LSTMs, we found
+that it is sometimes able to attain scores higher than 0.48 (see Appendix E for details). From this we
+conclude that improving syntax generalization on natural language remains elusive for all stack RNNs
+we tested, and that we may need to look beyond cross-entropy/perplexity as a training criterion."
+CONCLUSION,0.5758928571428571,"6
+Conclusion"
+CONCLUSION,0.5803571428571429,"The Renormalizing NS-RNN (RNS-RNN) builds upon the strengths of the NS-RNN by letting stack
+action weights remain unnormalized and providing information about PDA states to the controller.
+Both of these changes substantially improve learning, allowing the RNS-RNN to surpass other stack
+RNNs on a range of CFL modeling tasks. Our memory-limited version of the RNS-RNN is a crucial
+modiﬁcation towards practical use on natural language. We tested this model on the Penn Treebank,
+although we did not see performance improvements with the model sizes we were able to test, and in
+fact no stack RNNs excel in terms of syntactic generalization. We are encouraged by the RNS-RNN’s
+large improvements on CFL tasks and leave improvements on natural language to future work."
+CONCLUSION,0.5848214285714286,Published as a conference paper at ICLR 2022
+REPRODUCIBILITY STATEMENT,0.5892857142857143,Reproducibility Statement
+REPRODUCIBILITY STATEMENT,0.59375,"In order to foster reproducibility, we have released all code and scripts used to generate our experi-
+mental results and ﬁgures at https://github.com/bdusell/nondeterministic-stack-rnn.
+To ensure that others can replicate our software environment, we developed and ran our code in
+a Docker container, whose image deﬁnition is included in the code repository (see the README
+for more details). The repository includes the original commands we used to run our experiments,
+scripts for downloading and preprocessing the PTB dataset of Mikolov et al. (2011), and the test
+suite deﬁnitions needed to compute SG scores. All experimental settings for the CFL experiments are
+described in §4 and our previous paper (DuSell & Chiang, 2020), and all experimental settings for the
+PTB experiments may be found in §5.2 and Appendix D."
+REPRODUCIBILITY STATEMENT,0.5982142857142857,Acknowledgements
+REPRODUCIBILITY STATEMENT,0.6026785714285714,This research was supported in part by a Google Faculty Research Award to Chiang.
+REFERENCES,0.6071428571428571,References
+REFERENCES,0.6116071428571429,"Jean-Michel Autebert, Jean Berstel, and Luc Boasson. Context-free languages and pushdown automata.
+In Grzegorz Rozenberg and Arto Salomaa (eds.), Handbook of Formal Languages, pp. 111–174.
+Springer, 1997. doi: 10.1007/978-3-642-59136-5_3."
+REFERENCES,0.6160714285714286,"Samuel R. Bowman, Christopher D. Manning, and Christopher Potts. Tree-structured composition
+in neural networks without tree-structured architectures. In Proc. International Conference on
+Cognitive Computation (CoCo): Integrating Neural and Symbolic Approaches, pp. 37–42, 2015."
+REFERENCES,0.6205357142857143,"Samuel R. Bowman, Jon Gauthier, Abhinav Rastogi, Raghav Gupta, Christopher D. Manning, and
+Christopher Potts. A fast uniﬁed model for parsing and sentence understanding. In Proceedings
+of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long
+Papers), pp. 1466–1477, Berlin, Germany, August 2016. Association for Computational Linguistics.
+doi: 10.18653/v1/P16-1139. URL https://aclanthology.org/P16-1139."
+REFERENCES,0.625,"David Chiang. A hierarchical phrase-based model for statistical machine translation. In Proc. ACL, pp.
+263–270, 2005. doi: 10.3115/1219840.1219873. URL https://www.aclweb.org/anthology/
+P05-1033."
+REFERENCES,0.6294642857142857,"Sreerupa Das, C. Lee Giles, and Guo-Zheng Sun. Learning context-free grammars: Capabilities and
+limitations of a recurrent neural network with an external stack memory. In Proc. CogSci, 1992."
+REFERENCES,0.6339285714285714,"Brian DuSell and David Chiang. Learning context-free languages with nondeterministic stack RNNs.
+In Proc. Conference on Computational Natural Language Learning, pp. 507–519, 2020. URL
+https://www.aclweb.org/anthology/2020.conll-1.41."
+REFERENCES,0.6383928571428571,"Chris Dyer, Adhiguna Kuncoro, Miguel Ballesteros, and Noah A. Smith. Recurrent neural network
+grammars. In Proc. NAACL HLT, pp. 199–209, 2016. doi: 10.18653/v1/N16-1024. URL
+https://aclanthology.org/N16-1024."
+REFERENCES,0.6428571428571429,"Jon Gauthier, Jennifer Hu, Ethan Wilcox, Peng Qian, and Roger Levy. SyntaxGym: An online platform
+for targeted evaluation of language models. In Proc. ACL: System Demonstrations, pp. 70–76,
+2020. doi: 10.18653/v1/2020.acl-demos.10. URL https://www.aclweb.org/anthology/
+2020.acl-demos.10."
+REFERENCES,0.6473214285714286,"Edward Grefenstette, Karl Moritz Hermann, Mustafa Suleyman, and Phil Blunsom. Learning to trans-
+duce with unbounded memory. In Proc. NeurIPS, volume 2, pp. 1828–1836, 2015. URL https:
+//papers.nips.cc/paper/5648-learning-to-transduce-with-unbounded-memory.
+pdf."
+REFERENCES,0.6517857142857143,"Sheila A. Greibach. The hardest context-free language. SIAM J. Comput., 2(4):304–310, 1973. doi:
+10.1137/0202025."
+REFERENCES,0.65625,Published as a conference paper at ICLR 2022
+REFERENCES,0.6607142857142857,"Yiding Hao, William Merrill, Dana Angluin, Robert Frank, Noah Amsel, Andrew Benz, and Simon
+Mendelsohn. Context-free transductions with neural stacks. In Proc. BlackboxNLP, pp. 306–315,
+November 2018. doi: 10.18653/v1/W18-5433. URL https://www.aclweb.org/anthology/
+W18-5433."
+REFERENCES,0.6651785714285714,"Sepp Hochreiter and Jürgen Schmidhuber. Long short-term memory. Neural Computation, 9
+(8):1735–1780, November 1997. ISSN 0899-7667. doi: 10.1162/neco.1997.9.8.1735. URL
+https://doi.org/10.1162/neco.1997.9.8.1735."
+REFERENCES,0.6696428571428571,"Jennifer Hu, Jon Gauthier, Peng Qian, Ethan Wilcox, and Roger Levy. A systematic assessment of
+syntactic generalization in neural language models. In Proc. ACL, pp. 1725–1744, July 2020. URL
+https://www.aclweb.org/anthology/2020.acl-main.158."
+REFERENCES,0.6741071428571429,"Armand Joulin and Tomas Mikolov. Inferring algorithmic patterns with stack-augmented recurrent
+nets. In Proc. NeurIPS, volume 1, pp. 190–198, 2015. URL https://papers.nips.cc/paper/
+5857-inferring-algorithmic-patterns-with-stack-augmented-recurrent-nets.
+pdf."
+REFERENCES,0.6785714285714286,"Yoon Kim, Chris Dyer, and Alexander Rush. Compound probabilistic context-free grammars for
+grammar induction. In Proc. ACL, pp. 2369–2385, 2019. doi: 10.18653/v1/P19-1228. URL
+https://aclanthology.org/P19-1228."
+REFERENCES,0.6830357142857143,"John D. Laﬀerty, Andrew McCallum, and Fernando C. N. Pereira. Conditional random ﬁelds:
+Probabilistic models for segmenting and labeling sequence data. In Proceedings of the Eighteenth
+International Conference on Machine Learning, pp. 282—-289, 2001."
+REFERENCES,0.6875,"Bernard Lang. Deterministic techniques for eﬃcient non-deterministic parsers. In Proc. Colloquium on
+Automata, Languages, and Programming, pp. 255–269, 1974. doi: 10.1007/978-3-662-21545-6_18."
+REFERENCES,0.6919642857142857,"Richard McCoy, Robert H. Frank, and Tal Linzen. Does syntax need to grow on trees? Sources of
+hierarchical inductive bias in sequence-to-sequence networks. Trans. ACL, 8:125–140, 2020. URL
+https://www.mitpressjournals.org/doi/pdf/10.1162/tacl_a_00304."
+REFERENCES,0.6964285714285714,"Stephen Merity, Nitish Shirish Keskar, and Richard Socher. Regularizing and optimizing LSTM lan-
+guage models. In Proc. ICLR, 2018. URL https://openreview.net/forum?id=SyyGPP0TZ."
+REFERENCES,0.7008928571428571,"William Merrill, Lenny Khazan, Noah Amsel, Yiding Hao, Simon Mendelsohn, and Robert Frank.
+Finding hierarchical structure in neural stacks using unsupervised parsing. In Proceedings of
+the 2019 ACL Workshop BlackboxNLP: Analyzing and Interpreting Neural Networks for NLP,
+pp. 224–232, Florence, Italy, August 2019. Association for Computational Linguistics. URL
+https://www.aclweb.org/anthology/W19-4823."
+REFERENCES,0.7053571428571429,"Tomas Mikolov, Anoop Deoras, Stefan Kombrink, L. Burget, and J. Cernocký. Empirical evaluation
+and combination of advanced language modeling techniques. In Proc. INTERSPEECH, 2011."
+REFERENCES,0.7098214285714286,"Nikita Nangia and Samuel Bowman. ListOps: A diagnostic dataset for latent tree learning. In
+Proc. NAACL Student Research Workshop, pp. 92–99, 2018. doi: 10.18653/v1/N18-4013. URL
+https://www.aclweb.org/anthology/N18-4013."
+REFERENCES,0.7142857142857143,"Stanislau Semeniuta, Aliaksei Severyn, and Erhardt Barth. Recurrent dropout without memory loss. In
+Proc. COLING, pp. 1757–1766, 2016. URL https://www.aclweb.org/anthology/C16-1165."
+REFERENCES,0.71875,"Yikang Shen, Shawn Tan, Arian Hosseini, Zhouhan Lin, Alessandro Sordoni, and Aaron C Courville.
+Ordered memory. In Proc. NeurIPS, volume 32, 2019a. URL https://proceedings.neurips.
+cc/paper/2019/file/d8e1344e27a5b08cdfd5d027d9b8d6de-Paper.pdf."
+REFERENCES,0.7232142857142857,"Yikang Shen, Shawn Tan, Alessandro Sordoni, and Aaron Courville. Ordered neurons: Integrating
+tree structures into recurrent neural networks. In Proc. ICLR, 2019b. URL https://openreview.
+net/forum?id=B1l6qiR5F7."
+REFERENCES,0.7276785714285714,"G. Z. Sun, C. Lee Giles, H. H. Chen, and Y. C. Lee. The neural network pushdown automaton: Model,
+stack, and learning simulations. Technical Report UMIACS-TR-93-77 and CS-TR-3118, University
+of Maryland, 1995. URL https://arxiv.org/abs/1711.05738. revised version."
+REFERENCES,0.7321428571428571,Published as a conference paper at ICLR 2022
+REFERENCES,0.7366071428571429,"Mirac Suzgun, Sebastian Gehrmann, Yonatan Belinkov, and Stuart M. Shieber. Memory-augmented
+recurrent neural networks can learn generalized Dyck languages, 2019. URL https://arxiv.
+org/abs/1911.03329. arXiv:1922.03329."
+REFERENCES,0.7410714285714286,"Marten van Schijndel, Aaron Mueller, and Tal Linzen. Quantity doesn’t buy quality syntax with neural
+language models. In Proc. EMNLP-IJCNLP, pp. 5831–5837, 2019. doi: 10.18653/v1/D19-1592.
+URL https://www.aclweb.org/anthology/D19-1592."
+REFERENCES,0.7455357142857143,"Ethan Wilcox, Roger Levy, and Richard Futrell. Hierarchical representation in neural language
+models: Suppression and recovery of expectations. In Proc. BlackboxNLP, pp. 181–190, August
+2019. doi: 10.18653/v1/W19-4819. URL https://www.aclweb.org/anthology/W19-4819."
+REFERENCES,0.75,"Dani Yogatama, Yishu Miao, Gábor Melis, Wang Ling, Adhiguna Kuncoro, Chris Dyer, and Phil
+Blunsom. Memory architectures in recurrent neural network language models. In Proc. ICLR,
+2018. URL https://openreview.net/pdf?id=SkFqf0lAZ."
+REFERENCES,0.7544642857142857,"A
+Baseline stack RNNs"
+REFERENCES,0.7589285714285714,"A.1
+Stratification stack"
+REFERENCES,0.7633928571428571,"We implement the stratiﬁcation stack of Grefenstette et al. (2015) with the following equations. In the
+original deﬁnition, the controller produces a hidden state h푡and a separate output o′
+푡that is used to
+compute 푎푡and y푡, but for simplicity and parity with DuSell & Chiang (2020), we set o′
+푡= h푡. Let
+푚= |v푡| be the stack embedding size."
+REFERENCES,0.7678571428571429,"푎푡= Actions(h푡) = (푢푡, 푑푡, v푡)
+푢푡= 휎(Whuh푡+ bhu)
+푑푡= 휎(Whdh푡+ bhd)
+v푡= tanh(Whvh푡+ bhv)
+푠푡= Stack(푠푡−1, 푎푡−1) = (푉푡, s푡)"
+REFERENCES,0.7723214285714286,"푉푡[푖] =
+푉푡−1[푖]
+1 ≤푖< 푡
+v푡
+푖= 푡"
+REFERENCES,0.7767857142857143,s푡[푖] =
+REFERENCES,0.78125,"(
+max(0, s푡−1[푖] −max(0, 푢푡−Í푡−1
+푗=푖+1 s푡−1[ 푗]))
+1 ≤푖< 푡
+푑푡
+푖= 푡"
+REFERENCES,0.7857142857142857,"푉0 is a 0 × 푚matrix
+s0 is a vector of size 0"
+REFERENCES,0.7901785714285714,r푡= Reading(푠푡) = 푡Õ
+REFERENCES,0.7946428571428571,"푖=1
+(min(s푡[푖], max(0, 1 − 푡Õ"
+REFERENCES,0.7991071428571429,"푗=푖+1
+s푡[ 푗]))) · 푉푡[푖]"
+REFERENCES,0.8035714285714286,"Yogatama et al. (2018) noted that the straﬁcation stack can implement multiple pops per time step by
+allowing 푢푡> 1, although the push action immediately following would still be conditioned on the
+previous stack top r푡. Hao et al. (2018) augmented this model with diﬀerentiable queues that allow it
+to buﬀer input and output and act as a transducer. Merrill et al. (2019) experimented with variations
+of this model where 푢푡= 1 and 푑푡∈(0, 4), 푑푡= 1 and 푢푡= (0, 4), and 푢푡∈(0, 4) and 푑푡∈(0, 1)."
+REFERENCES,0.8080357142857143,"A.2
+Superposition stack"
+REFERENCES,0.8125,"We implement the superposition stack of Joulin & Mikolov (2015) with the following equations.
+We deviate slightly from the original deﬁnition by adding the bias terms bha and bhv. The original
+deﬁnition also connects the controller to multiple stacks that push scalars; instead, we push a vector to
+a single stack, which is equivalent to multiple scalar stacks whose push/pop actions are synchronized.
+The original deﬁnition includes the top 푘stack elements in the stack reading, but we only include the"
+REFERENCES,0.8169642857142857,Published as a conference paper at ICLR 2022
+REFERENCES,0.8214285714285714,top element. We also treat the value of the bottom of the stack as 0 instead of −1.
+REFERENCES,0.8258928571428571,"푎푡= Actions(h푡) = (a푡, v푡)"
+REFERENCES,0.8303571428571429,"a푡=
+"
+REFERENCES,0.8348214285714286,"푎push
+푡
+푎noop
+푡
+푎pop
+푡"
+REFERENCES,0.8392857142857143,
+REFERENCES,0.84375,= softmax(Whah푡+ bha)
+REFERENCES,0.8482142857142857,"v푡= 휎(Whvh푡+ bhv)
+Stack(푠푡−1, 푎푡−1) = 푠푡"
+REFERENCES,0.8526785714285714,푠푡[푖] =  
+REFERENCES,0.8571428571428571,"v푡
+푖= 0
+푎push
+푡
+푠푡−1[푖−1] + 푎noop
+푡
+푠푡−1[푖] + 푎pop
+푡
+푠푡−1[푖+ 1]
+0 < 푖< 푡
+0
+푖= 푡"
+REFERENCES,0.8616071428571429,r푡= Reading(푠푡) = 푠푡[1]
+REFERENCES,0.8660714285714286,"Yogatama et al. (2018) developed an extension to this model called the Multipop Adaptive Computation
+Stack that executes a variable number of pops per time step, up to a ﬁxed limit 퐾. They also restricted
+the stack to a maximum size of 10 elements, where the bottom element of a full stack is discarded
+when a new element is pushed; in other words, 푠푡[푖] = 0 for 푖> 퐾. Suzgun et al. (2019) experimented
+with a modiﬁcation of the parameterization of a푡and diﬀerent softmax operators for normalizing the
+weights used to compute a푡."
+REFERENCES,0.8705357142857143,"B
+Details of formal language experiments"
+REFERENCES,0.875,"For every training run, we sample a training set of 10,000 strings from the PCFG, with lengths drawn
+uniformly from [40, 80]. Similarly, we sample a validation set of 1,000 strings with lengths drawn
+uniformly from [40, 80]. For each task, we sample a test set of 100 strings per length for each length
+in [40, 100]. Whereas the training and validation sets are randomized for each experiment, the test
+sets are the same across all models and random restarts."
+REFERENCES,0.8794642857142857,"In all cases, the LSTM has a single layer with 20 hidden units. We grid-search the initial learning
+rate from {0.01, 0.005, 0.001, 0.0005}. For Gref and JM, we search for stack vector element sizes in
+{2, 20, 40} (the pushed vector in JM is learned). For the NS models, we manually choose a small
+number of PDA states and stack symbol types based on how we would expect a PDA to solve the
+task. For marked reversal, unmarked reversal, and Dyck, we use |푄| = 2 and |Γ| = 3; and for padded
+reversal and hardest CFL, we use |푄| = 3 and |Γ| = 3. For each hyperparameter setting searched,
+we run ﬁve random restarts. For each type of model, we select the model with the lowest diﬀerence
+in cross-entropy between the model and true distribution on the validation set. We use the same
+initialization and optimization settings as in our earlier paper (DuSell & Chiang, 2020) and train for a
+maximum of 200 epochs."
+REFERENCES,0.8839285714285714,"C
+Wall-clock training time"
+REFERENCES,0.8883928571428571,"We report wall-clock execution time for each model on the marked reversal task in Table 2. We ran
+the LSTM, Gref, and JM models in CPU mode, as this was faster than running on GPU due to the
+small model size. We ran experiments for the NS models in GPU mode on a pool of the following
+NVIDIA GPU models, automatically selected based on availability: GeForce GTX TITAN X, TITAN
+X (Pascal), and GeForce GTX 1080 Ti."
+REFERENCES,0.8928571428571429,"D
+Details of natural language experiments"
+REFERENCES,0.8973214285714286,"The hyperparameters for our baseline LSTM, initialization, and optimization scheme are based on
+the unregularized LSTM experiments of Semeniuta et al. (2016). We train all models using simple
+stochastic gradient descent (SGD) as recommended by prior language modeling work (Merity et al.,
+2018) and truncated BPTT with a sequence length of 35. For all models, we use a minibatch size of
+32. We randomly initialize all parameters uniformly from the interval [−0.05, 0.05]. We divide the"
+REFERENCES,0.9017857142857143,Published as a conference paper at ICLR 2022
+REFERENCES,0.90625,"Table 2: Wall-clock execution time for each model on the marked reversal task, measured in seconds
+per epoch of training (averaged over all epochs). The speed of the NS models is roughly the same;
+there is some variation here due to diﬀerences in training data and GPU model."
+REFERENCES,0.9107142857142857,"Model
+Time per epoch (s)"
+REFERENCES,0.9151785714285714,"LSTM
+51
+Gref
+801
+JM
+169
+NS
+1022
+NS+S
+980
+NS+U
+960
+NS+S+U
+1060"
+REFERENCES,0.9196428571428571,"learning rate by 1.5 whenever the validation perplexity does not improve, and we stop training after 2
+epochs of no improvement in validation perplexity."
+REFERENCES,0.9241071428571429,"For each model, we randomly search for initial learning rate and gradient clipping threshold; we
+report results for the model with the best validation perplexity out of 10 randomly searched models.
+The learning rate, which is divided by batch size and sequence length, is drawn from a log-uniform
+distribution over [1, 100], and the gradient clipping threshold, which is multiplied by batch size and
+sequence length, is drawn from a log-uniform distribution over [1 × 10−5, 1 × 10−3]. (We scale the
+learning rate and gradient clipping threshold this way because, under our implementation, sequence
+length and batch size can vary when the data set is not evenly divisible by the prescribed values.
+Other language modeling papers follow a diﬀerent scaling convention for these two hyperparameters,
+typically scaling the learning rate by sequence length but not by batch size, and not rescaling
+the gradient clipping threshold. Under this convention the learning rate would be drawn from
+[0.03125, 3.125] and the gradient clipping threshold from [0.0112, 1.12].)"
+REFERENCES,0.9285714285714286,"E
+Additional results for natural language experiments"
+REFERENCES,0.9330357142857143,"In Table 3 we show additional experimental results on the Penn Treebank. In Table 4 we show the
+same experiments with SG score broken down by syntactic “circuit” as deﬁned by Hu et al. (2020),
+oﬀering a more ﬁne-grained look at the classes of errors the models make. We see that SG score is
+highly variable and does not follow the same trends as perplexity. In Figure 4, we plot SG score vs.
+test perplexity for all 10 random restarts of an LSTM and an RNS-RNN. We see that many of the
+models that were not selected actually have a much higher SG score (even above 0.48), suggesting
+that the standard validation perplexity criterion is a poor choice for syntactic generalization."
+REFERENCES,0.9375,Published as a conference paper at ICLR 2022
+REFERENCES,0.9419642857142857,"Table 3: Language modeling results on PTB, measured by perplexity and SG score, with additional
+experiments included."
+REFERENCES,0.9464285714285714,"Model
+# Params
+Val
+Test
+SG Score"
+REFERENCES,0.9508928571428571,"LSTM, 256 units
+5,656,336
+125.78
+120.95
+0.433
+LSTM, 258 units
+5,704,576
+122.08
+118.20
+0.420
+LSTM, 267 units
+5,922,448
+125.20
+120.22
+0.437
+JM (push hidden state), 247 units
+5,684,828
+121.24
+115.35
+0.387
+JM (push learned), |v푡| = 22
+5,685,289
+122.87
+117.93
+0.431
+NS, |푄| = 1, |Γ| = 2
+5,660,954
+126.10
+122.62
+0.414
+NS, |푄| = 1, |Γ| = 3
+5,664,805
+123.41
+119.25
+0.430
+NS, |푄| = 1, |Γ| = 4
+5,669,684
+121.66
+117.91
+0.432
+NS, |푄| = 1, |Γ| = 5
+5,675,591
+123.01
+119.54
+0.452
+NS, |푄| = 1, |Γ| = 6
+5,682,526
+129.94
+125.45
+0.432
+NS, |푄| = 1, |Γ| = 7
+5,690,489
+126.11
+121.94
+0.443
+NS, |푄| = 1, |Γ| = 11
+5,732,621
+129.11
+124.98
+0.431
+NS, |푄| = 2, |Γ| = 2
+5,668,664
+128.16
+123.52
+0.412
+NS, |푄| = 2, |Γ| = 3
+5,680,996
+129.51
+126.00
+0.471
+NS, |푄| = 2, |Γ| = 4
+5,697,440
+124.28
+120.18
+0.433
+NS, |푄| = 2, |Γ| = 5
+5,717,996
+124.24
+119.34
+0.429
+NS, |푄| = 3, |Γ| = 2
+5,681,514
+125.32
+120.62
+0.470
+NS, |푄| = 3, |Γ| = 3
+5,707,981
+122.96
+118.89
+0.420
+NS, |푄| = 3, |Γ| = 4
+5,743,700
+126.71
+122.53
+0.447
+RNS, |푄| = 1, |Γ| = 2
+5,660,954
+122.64
+117.56
+0.435
+RNS, |푄| = 1, |Γ| = 3
+5,664,805
+121.83
+116.46
+0.430
+RNS, |푄| = 1, |Γ| = 4
+5,669,684
+127.99
+123.06
+0.437
+RNS, |푄| = 1, |Γ| = 5
+5,675,591
+126.41
+122.25
+0.441
+RNS, |푄| = 1, |Γ| = 6
+5,682,526
+122.57
+117.79
+0.416
+RNS, |푄| = 1, |Γ| = 7
+5,690,489
+123.51
+120.48
+0.430
+RNS, |푄| = 1, |Γ| = 11
+5,732,621
+127.21
+121.84
+0.386
+RNS, |푄| = 2, |Γ| = 2
+5,670,712
+122.11
+117.22
+0.399
+RNS, |푄| = 2, |Γ| = 3
+5,684,068
+131.46
+127.57
+0.463
+RNS, |푄| = 2, |Γ| = 4
+5,701,536
+124.96
+121.61
+0.431
+RNS, |푄| = 2, |Γ| = 5
+5,723,116
+122.92
+117.87
+0.423
+RNS, |푄| = 3, |Γ| = 2
+5,685,610
+129.48
+124.66
+0.433
+RNS, |푄| = 3, |Γ| = 3
+5,714,125
+127.57
+123.00
+0.434
+RNS, |푄| = 3, |Γ| = 4
+5,751,892
+122.67
+118.09
+0.408"
+REFERENCES,0.9553571428571429,Published as a conference paper at ICLR 2022
+REFERENCES,0.9598214285714286,"Table 4: SG scores broken down by circuit. Agr. = Agreement, Lic. = Licensing, GPE = Garden-Path
+Eﬀects, GSE = Gross Syntactic Expectation, CE = Center Embedding, LDD = Long-Distance
+Dependencies."
+REFERENCES,0.9642857142857143,"Model
+Agr.
+Lic.
+GPE
+GSE
+CE
+LDD"
+REFERENCES,0.96875,"LSTM, 256 units
+0.667
+0.446
+0.330
+0.397
+0.482
+0.414
+LSTM, 258 units
+0.658
+0.447
+0.335
+0.375
+0.518
+0.357
+LSTM, 267 units
+0.667
+0.497
+0.343
+0.446
+0.411
+0.350
+JM (push hidden state)
+0.640
+0.408
+0.296
+0.310
+0.464
+0.352
+JM (push learned)
+0.684
+0.439
+0.340
+0.408
+0.482
+0.395
+NS, |푄| = 1, |Γ| = 2
+0.588
+0.452
+0.298
+0.391
+0.339
+0.418
+NS, |푄| = 1, |Γ| = 3
+0.623
+0.467
+0.400
+0.413
+0.393
+0.354
+NS, |푄| = 1, |Γ| = 4
+0.640
+0.497
+0.331
+0.375
+0.571
+0.340
+NS, |푄| = 1, |Γ| = 5
+0.605
+0.514
+0.394
+0.413
+0.589
+0.344
+NS, |푄| = 1, |Γ| = 6
+0.632
+0.424
+0.408
+0.391
+0.464
+0.399
+NS, |푄| = 1, |Γ| = 7
+0.719
+0.470
+0.351
+0.473
+0.500
+0.344
+NS, |푄| = 1, |Γ| = 11
+0.640
+0.432
+0.329
+0.424
+0.500
+0.413
+NS, |푄| = 2, |Γ| = 2
+0.702
+0.388
+0.329
+0.446
+0.446
+0.371
+NS, |푄| = 2, |Γ| = 3
+0.658
+0.527
+0.367
+0.446
+0.518
+0.411
+NS, |푄| = 2, |Γ| = 4
+0.632
+0.464
+0.345
+0.386
+0.518
+0.387
+NS, |푄| = 2, |Γ| = 5
+0.711
+0.464
+0.307
+0.413
+0.518
+0.355
+NS, |푄| = 3, |Γ| = 2
+0.711
+0.528
+0.349
+0.435
+0.518
+0.406
+NS, |푄| = 3, |Γ| = 3
+0.746
+0.439
+0.316
+0.375
+0.411
+0.376
+NS, |푄| = 3, |Γ| = 4
+0.702
+0.450
+0.364
+0.484
+0.536
+0.369
+RNS, |푄| = 1, |Γ| = 2
+0.702
+0.460
+0.280
+0.451
+0.464
+0.404
+RNS, |푄| = 1, |Γ| = 3
+0.649
+0.427
+0.438
+0.418
+0.446
+0.347
+RNS, |푄| = 1, |Γ| = 4
+0.658
+0.412
+0.342
+0.565
+0.339
+0.418
+RNS, |푄| = 1, |Γ| = 5
+0.728
+0.449
+0.370
+0.429
+0.482
+0.371
+RNS, |푄| = 1, |Γ| = 6
+0.614
+0.422
+0.314
+0.435
+0.518
+0.377
+RNS, |푄| = 1, |Γ| = 7
+0.649
+0.460
+0.374
+0.337
+0.411
+0.404
+RNS, |푄| = 1, |Γ| = 11
+0.614
+0.447
+0.291
+0.266
+0.446
+0.338
+RNS, |푄| = 2, |Γ| = 2
+0.649
+0.417
+0.365
+0.375
+0.339
+0.334
+RNS, |푄| = 2, |Γ| = 3
+0.640
+0.474
+0.411
+0.446
+0.554
+0.408
+RNS, |푄| = 2, |Γ| = 4
+0.658
+0.469
+0.336
+0.326
+0.500
+0.403
+RNS, |푄| = 2, |Γ| = 5
+0.693
+0.420
+0.339
+0.370
+0.607
+0.376
+RNS, |푄| = 3, |Γ| = 2
+0.579
+0.435
+0.295
+0.440
+0.554
+0.445
+RNS, |푄| = 3, |Γ| = 3
+0.632
+0.444
+0.356
+0.418
+0.482
+0.403
+RNS, |푄| = 3, |Γ| = 4
+0.588
+0.427
+0.342
+0.353
+0.482
+0.373"
+REFERENCES,0.9732142857142857,Published as a conference paper at ICLR 2022
+REFERENCES,0.9776785714285714,"100
+200
+300
+400
+500
+600 0.4 0.42 0.44 0.46 0.48"
+REFERENCES,0.9821428571428571,Perplexity
+REFERENCES,0.9866071428571429,SG Score
+REFERENCES,0.9910714285714286,"LSTM, 258 units
+RNS, |푄| = 2, |Γ| = 3"
+REFERENCES,0.9955357142857143,"Figure 4: SG score vs. test perplexity, shown on all 10 random restarts for an LSTM and an RNS-RNN.
+SG score is uncorrelated with perplexity, and models that narrowly miss out on having the best
+perplexity often have much higher SG scores."

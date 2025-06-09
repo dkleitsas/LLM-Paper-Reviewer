@@ -1,0 +1,1546 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.002570694087403599,"In this paper we propose a new generative model of text, Step-unrolled Denoising
+Autoencoder (SUNDAE), that does not rely on autoregressive models. Similarly
+to denoising diffusion techniques, SUNDAE is repeatedly applied on a sequence
+of tokens, starting from random inputs and improving them each time until con-
+vergence. We present a simple new improvement operator that converges in fewer
+iterations than diffusion methods, while qualitatively producing better samples
+on natural language datasets. SUNDAE achieves state-of-the-art results (among
+non-autoregressive methods) on the WMT’14 English-to-German translation task
+and good qualitative results on unconditional language modeling on the Colossal
+Cleaned Common Crawl dataset and a dataset of Python code from GitHub. The
+non-autoregressive nature of SUNDAE opens up possibilities beyond left-to-right
+prompted generation, by ﬁlling in arbitrary blank patterns in a template."
+INTRODUCTION,0.005141388174807198,"1
+INTRODUCTION"
+INTRODUCTION,0.007712082262210797,"Autoregressive (AR) models have shown excellent results in generating text (e.g., GPT-3, Brown
+et al., 2020). However, while their training scales very well, sampling is prohibitively slow for many
+practical applications. Moreover, there are limitations to the kinds of conditioning AR models can
+seamlessly handle: the left-to-right restriction makes it hard to “ﬁll in the gaps” in a partially written
+text draft. Even more importantly, this prohibits iterative reﬁnement of complete text drafts to make
+them more self-consistent, which is a common task for human writers. Finally, AR models require
+network architectures to be causal, severely limiting the kinds of neural network architectures that
+can be used for text-modeling. All of these motivated the machine learning community to make
+extensive efforts to propose alternatives to AR models."
+INTRODUCTION,0.010282776349614395,"Machine translation (MT) was perhaps one of the ﬁrst tasks where non-AR approaches were shown
+to seriously rival the AR-based state of the art: methods like CMLM (Ghazvininejad et al., 2019) and
+DisCo (Kasai et al., 2020) show promising results and their decoding speed is excellent compared to
+AR. However, while their performance is competitive, they are still behind the AR benchmark and
+actually require distillation of a larger AR model — without which, performance drops considerably."
+INTRODUCTION,0.012853470437017995,"Non-AR methods have proven hard to apply to the general unconditional language modeling (LM)
+task. When there is no conditioning, the multi-modality problem becomes paramount, as shown
+by Gu et al. (2017), which likely makes it problematic to use methods like CMLM and DisCo be-
+cause their decoding mechanism is deterministic and does not model uncertainty. Yet, recently the
+community has seen promising results from non-AR models like Multinomial Diffusion (Hooge-
+boom et al., 2021) and D3PM (Austin et al., 2021). These methods optimize a lower bound (ELBO)
+on likelihoods and have shown negative log-likelihood (NLL) results approaching AR models on
+several benchmarks like text8 (Mahoney, 2011) and LM1B (Chelba et al., 2013). However, a major
+gap in NLL persists, and samples from those models lack coherence."
+INTRODUCTION,0.015424164524421594,"In this paper we propose a novel non-autoregressive method which shows state-of-the-art results in
+machine translation on WMT’14 EN→DE raw data (without distillation from AR) amongst non-AR
+methods and good qualitative results on unconditional language modeling on the Colossal Clean
+Common Crawl (C4) dataset (Raffel et al., 2019) and a dataset of Python code from GitHub. Our
+model operates as a time-homogeneous Markov Chain similar to that of Lee et al. (2018): condi-
+tioned on the corrupted data, it tries to approximate the original uncorrupted samples by a per-token"
+INTRODUCTION,0.017994858611825194,∗Shared ﬁrst authorship.
+INTRODUCTION,0.02056555269922879,Published as a conference paper at ICLR 2022
+INTRODUCTION,0.02313624678663239,A sundae is an ice cream dessert that typically consists of one or
+INTRODUCTION,0.02570694087403599,A sunday is of optical cream piece that may at as one p
+INTRODUCTION,0.028277634961439587,A sund loop Ga genes ice greatly photograp that76fen $30 oneFrench
+INTRODUCTION,0.030848329048843187,denoising
+INTRODUCTION,0.033419023136246784,"unrolled 
+denoising"
+INTRODUCTION,0.03598971722365039,corrupt
+INTRODUCTION,0.038560411311053984,generative unroll
+INTRODUCTION,0.04113110539845758,"Figure 1: The difference between denoising and unrolled denoising. Original text (top) is randomly
+corrupted, producing a text (middle) where some tokens are original (green) and others are corrupted
+(red). This text is denoised by sampling from the generative model to produce another noisy text
+(bottom). While standard denoising autoencoders only learn a mapping from the middle text to
+the top text, Step-unrolled Denoising Autoencoder learns a mapping from bottom to top (including
+middle as a special case of zero unroll steps). This has an intuitive meaning: during generation time,
+the network will mostly (right after the ﬁrst step) encounter texts like the bottom one, not like the
+middle one — so unrolls prepare the model during training for inputs it will get at generation time."
+INTRODUCTION,0.043701799485861184,"factorised distribution. During generation, we unroll the chain by sampling from the transition dis-
+tribution and feeding samples back into the input. We propose a new training mechanism called un-
+rolled denoising, which uses unrolls of the chain during training as well, and which we empirically
+show to be crucial for practical performance of the algorithm in ablation studies. This feature mo-
+tivates the name for the model, Step-unrolled Denoising Autoencoder (SUNDAE). The difference
+between usual denoising and unrolled denoising is illustrated in Figure 1."
+INTRODUCTION,0.04627249357326478,To summarize our contributions:
+INTRODUCTION,0.04884318766066838,"• We present SUNDAE, a new generative model of text that unrolls the denoising process
+during training."
+INTRODUCTION,0.05141388174807198,"• SUNDAE achieves state-of-the-art results on WMT’14 English-to-German translation task
+among non-AR methods."
+INTRODUCTION,0.05398457583547558,"• We demonstrate good qualitative results for unconditional generation and inpainting on
+Colossal Clean Common Crawl dataset and a dataset of Python code from GitHub."
+INTRODUCTION,0.056555269922879174,"• We carefully ablate and analyze the properties of the proposed method, and show that
+unrolls during training are crucial for the model’s performance."
+METHOD,0.05912596401028278,"2
+METHOD"
+METHOD,0.061696658097686374,"We approach the problem of generative modelling of discrete sequences by bringing together the
+framework of denoising autoencoders and Markov chain models. In this section, we ﬁrst discuss the
+deﬁnition of the generative model, and then describe the training process, which includes our main
+contribution, unrolled denoising."
+METHOD,0.06426735218508997,"For a ﬁxed prior distribution p0 on some space X consider a process xt ∼fθ(·|xt−1), where fθ is
+a parametric transition function. Then {xt}t is a time-homogeneous Markov chain, and transition
+t-steps ahead has the following form1"
+METHOD,0.06683804627249357,"pt(xt|x0) =
+X"
+METHOD,0.06940874035989718,"x1,x2,...,xt−1∈X tY"
+METHOD,0.07197943444730077,"s=1
+fθ(xs|xs−1).
+(1)"
+METHOD,0.07455012853470437,"For a ﬁxed number of steps T, the prior p0 and decoder pT together determine our model distribution
+pT (xT ) = pT (xT |x0)p0(x0)."
+METHOD,0.07712082262210797,"We assume X = {1, . . . , v}N to be the space of sequences of length N with values at all positions
+coming from a vocabulary of size v, and the prior p0 to be uniform over X. Let pdata be a distribution
+of the data and assume that fθ induces a conditional probability distribution fθ(·|x′) that can be"
+METHOD,0.07969151670951156,"1for formal derivation, see Appendix A."
+METHOD,0.08226221079691516,Published as a conference paper at ICLR 2022
+METHOD,0.08483290488431877,factorised into a conditionally-indepedent product as follows:
+METHOD,0.08740359897172237,"fθ(x|x′) = f (1)
+θ
+(x(1)|x′)f (2)
+θ
+(x(2)|x′) · · · f (N)
+θ
+(x(N)|x′),
+for x, x′ ∈X.
+(2)"
+METHOD,0.08997429305912596,"Note that although for t = 1 the distribution p1(·|x0) is limited by product structure (Eq. 2), the
+subsequent pts are not restricted in the same way, and after each step they belong to potentially more
+and more expressive family."
+"TRAINING WITH UNROLLED DENOISING
+DUE TO INTRACTABILITY OF THE LIKELIHOOD OF THE MODEL PT AS WELL AS THE COMPUTATIONAL REQUIREMENTS",0.09254498714652956,"2.1
+TRAINING WITH UNROLLED DENOISING
+Due to intractability of the likelihood of the model pT as well as the computational requirements
+of optimising the whole chain {pt}t, we propose an efﬁcient two-step training method which we
+term unrolled denosing and visualise in Figure 1. We consider a smaller number of steps than T
+that we intend to use at sampling, but to compensate for that, we unroll the chain starting from
+corrupted data samples, rather than the prior p0. This way, the model learns to denoise the samples
+it is likely to encounter during the full unroll used at sample time. While using a single step would
+resemble the training strategy of BERT (Devlin et al., 2018), using at least two steps is essential for
+the performance of our model."
+"TRAINING WITH UNROLLED DENOISING
+DUE TO INTRACTABILITY OF THE LIKELIHOOD OF THE MODEL PT AS WELL AS THE COMPUTATIONAL REQUIREMENTS",0.09511568123393316,"Consider a corruption distribution q(xc|x) that replaces a random proportion of tokens in a sentence
+x with ones randomly sampled from a uniform distribution. Our objective is given by L(1:2) =
+1
+2
+ 
+L(1) + L(2)
+where"
+"TRAINING WITH UNROLLED DENOISING
+DUE TO INTRACTABILITY OF THE LIKELIHOOD OF THE MODEL PT AS WELL AS THE COMPUTATIONAL REQUIREMENTS",0.09768637532133675,"L(t)(θ) := −E
+x∼pdata
+x0∼q(·|x)
+x1∼fθ(·|x0)
+...
+xt−1∼fθ(·|xt−2)"
+"TRAINING WITH UNROLLED DENOISING
+DUE TO INTRACTABILITY OF THE LIKELIHOOD OF THE MODEL PT AS WELL AS THE COMPUTATIONAL REQUIREMENTS",0.10025706940874037,"[log fθ(x|xt−1)],
+(3)"
+"TRAINING WITH UNROLLED DENOISING
+DUE TO INTRACTABILITY OF THE LIKELIHOOD OF THE MODEL PT AS WELL AS THE COMPUTATIONAL REQUIREMENTS",0.10282776349614396,"i.e. the reconstruction loss of the chain after t steps, starting from a corrupted sample x0. In Ap-
+pendix A.1 we show that L(t) is an upper bound on the actual negative log-likelihood from the model
+distribution pt:
+g
+L(t)(θ) := −E x∼pdata
+xc∼q(·|x)[log pt(x|xc)].
+(4)"
+"TRAINING WITH UNROLLED DENOISING
+DUE TO INTRACTABILITY OF THE LIKELIHOOD OF THE MODEL PT AS WELL AS THE COMPUTATIONAL REQUIREMENTS",0.10539845758354756,"Note that g
+L(T ) is the actual term we would like to minimise if pT were tractable, and in fact is closely
+related to evidence lower bound (ELBO) via a ﬁxed encoder q(xc|x) (Appendix A.2). However,
+due to the inherent non-differentiable nature of discrete Markov chain models, optimisation of g
+L(T )
+would not only be costly, but also limit the gradient ﬂow to the last step of the chain. We found
+instead that optimising several steps together without propagating the gradient through sampling is
+sufﬁcient for obtaining good results. Averaging more L(t) terms can lead to minor improvements in
+performance (see Figure 4d in Appendix C), but it considerably slows down the training speed. We
+discuss these and other loss variants further in Section 3.1."
+"TRAINING WITH UNROLLED DENOISING
+DUE TO INTRACTABILITY OF THE LIKELIHOOD OF THE MODEL PT AS WELL AS THE COMPUTATIONAL REQUIREMENTS",0.10796915167095116,"Since function fθ is modelled as a neural network, the logarithm under expectation on the right hand
+side of Eq. 3 is obtained from predicted logits, thus we term L(1)(θ) and L(2)(θ) logits loss and
+unrolled logits loss, respectively."
+"TRAINING WITH UNROLLED DENOISING
+DUE TO INTRACTABILITY OF THE LIKELIHOOD OF THE MODEL PT AS WELL AS THE COMPUTATIONAL REQUIREMENTS",0.11053984575835475,"Corruption function.
+To corrupt texts, we ﬁrst sample a proportion of tokens uniformly from
+[0, 1], randomly select positions according to this proportion and then change tokens at those posi-
+tions to random tokens sampled uniformly from the vocabulary. This way, we want to ensure that
+samples seen at various steps during a generative unroll (including the ﬁrst one, sampled from the
+uniform prior) are well-represented in corruptions applied during training. More details and relations
+to the forward diffusion process (Hoogeboom et al., 2021) are presented in Appendix A.3."
+SAMPLING,0.11311053984575835,"2.2
+SAMPLING
+At sampling time we follow the structure of the Markov process and sample sequentially xt ∼
+fθ(xt|xt−1) for some ﬁxed number of steps T, beginning from a random sequence x0 (potentially
+starting with a prompt or a template for conditional generation). To control the speed of convergence,
+we propose three improved strategies which allow the use of a much smaller number of steps:"
+SAMPLING,0.11568123393316196,"• Low-temperature sampling. For temperature τ and trained network fθ we consider modiﬁed
+function f τ
+θ such that log f τ
+θ (·|x) ∝
+1
+τ log fθ(·|x). We found that sampling with tempera-
+tures lower than 1 leads to much faster convergence than with the original logits, and allowed
+generation of high-quality samples in a matter of 10-16 steps."
+SAMPLING,0.11825192802056556,Published as a conference paper at ICLR 2022
+SAMPLING,0.12082262210796915,"Raw BLEU
+AR-distilled BLEU"
+SAMPLING,0.12339331619537275,"Model
+Steps (T)
+EN→DE
+DE→EN
+EN→DE
+DE→EN"
+SAMPLING,0.12596401028277635,"AR Models
+Transformer Base (65M) (Vaswani et al., 2017) (n=4)
+-
+27.3
+31.78∗
+-
+-"
+SAMPLING,0.12853470437017994,"Non-AR Models
+NAT (Gu et al., 2017) (n=100)
+1
+-
+-
+19.17
+23.20
+LVM-DAE (Lee et al., 2018)
+-
+-
+-
+21.54
+25.43
+NAT-REG (Wang et al., 2019) (n=9)
+1
+-
+-
+24.61
+28.90
+LV-NAR (Shu et al., 2020) (n=50)
+1
+11.8
+-
+25.10
+-
+NART w/ hints (Li et al., 2019)(n=9)
+1
+-
+-
+25.20
+29.52
+FlowSeq (Ma et al., 2019) (n=30)
+1
+23.64
+28.29
+25.31
+30.68
+ReorderNAT (Ran et al., 2019)
+1
+-
+-
+26.49
+31.13
+NART (Sun et al., 2019) (n=19)
+1
+-
+-
+26.80
+30.04
+CMLM (Ghazvininejad et al., 2019) + Mask-Predict (n=5)
+4
+22.25
+-
+25.94
+29.90
+CMLM (Ghazvininejad et al., 2019) + Mask-Predict (n=5)
+10
+24.61
+-
+27.03
+30.53
+DisCo (Kasai et al., 2020) + Mask-Predict (n=5)
+4
+-
+-
+25.83
+30.15
+DisCo (Kasai et al., 2020) + Mask-Predict (n=5)
+10
+-
+-
+27.06
+30.89
+DisCo (Kasai et al., 2020) + Easy-First (n=5)
+4-5†
+24.8
+-
+27.34
+31.31
+NARLVM (Lee et al., 2020) (n=25)
+4
+-
+-
+27.40
+-
+JM-NAT (Guo et al., 2020) (n=3)
+4
+-
+-
+27.05
+31.51
+JM-NAT (Guo et al., 2020) (n=3)
+10
+-
+-
+27.69
+32.54
+SMART (Ghazvininejad et al., 2020) (n=5)
+4
+-
+-
+27.03
+30.87
+SMART (Ghazvininejad et al., 2020) (n=5)
+10
+-
+-
+27.65
+31.27
+Imputer (Saharia et al., 2020) (n=1)
+4
+24.7
+-
+28.0
+31.0
+Imputer (Saharia et al., 2020) (n=1)
+8
+25.2
+-
+28.2
+31.3"
+SAMPLING,0.13110539845758354,"SUNDAE (ours 63M)
+Deterministic (n=16)
+4
+25.01
+29.53
+28.33
+32.25
+Deterministic (n=16)
+8
+25.53
+30.01
+28.32
+32.27
+Deterministic (n=16)
+10
+25.54
+30.11
+28.32
+32.27
+Stochastic (n=16)
+4
+23.05
+28.13
+27.94
+32.10
+Stochastic (n=16)
+8
+26.08
+30.48
+28.23
+32.33
+Stochastic (n=16)
+10
+26.25
+30.80
+28.33
+32.29
+Stochastic (n=16)
+16
+26.24
+30.76
+28.46
+32.30"
+SAMPLING,0.13367609254498714,"Table 1: Test BLEU scores of AR and non-AR systems on the WMT’14 English-to-German
+(EN→DE) and German-to-English (DE→EN) translation tasks. The number of reranked candi-
+dates is denoted n. SUNDAE does not use an AR model for re-ranking. We highlight BLEU scores
+of the best non-AR systems in bold font. All the entries are ordered based on the EN→DE BLEU
+score.
+∗indicates the results of the Transformer baselines implemented by the authors of DisCo.
+†DisCo has a dynamic inference mode for which we report the average number of steps."
+SAMPLING,0.13624678663239073,"• Argmax-unrolled decoding. At the limit τ →0 sampling with temperature reduces to deter-
+ministic argmax decoding where the most probable token is chosen at each step. Relatedly to
+our unrolled logits loss, we modify this strategy by resampling the low-certainty tokens in ac-
+cordance with unrolled logits. This heuristic allowed further improvements to sampling speed
+while maintaining the high quality of the samples. We discuss it in detail in Section 3.1."
+SAMPLING,0.13881748071979436,"• Updating fewer tokens. In tasks where diversity is paramount (like unconditional text gener-
+ation), we found that updating a random subset of tokens at each decoding step leads to faster
+convergence. This likely happens because independent sampling of all tokens might create un-
+coordinated changes which could take some time to ﬁx in the subsequent steps. We use this
+strategy in Section 3.2."
+EXPERIMENTS,0.14138817480719795,"3
+EXPERIMENTS"
+MACHINE TRANSLATION,0.14395886889460155,"3.1
+MACHINE TRANSLATION"
+MACHINE TRANSLATION,0.14652956298200515,"We ﬁrst evaluate SUNDAE on Machine Translation (MT) benchmarks. We compare SUNDAE
+against AR and non-AR models in terms of the translation quality using BLEU (Papineni et al.,
+2002) as the metric. We demonstrate that without using techniques like sequence-level knowledge
+distillation (Kim & Rush, 2016), SUNDAE performs almost as well as the AR model and outper-
+forms all other methods that do not rely on AR models."
+MACHINE TRANSLATION,0.14910025706940874,"Target Length Prediction.
+Unlike their AR counterparts, non-AR models do not explicitly learn
+to predict an end of sequence, but instead have been shown to beneﬁt from auxiliary target length"
+MACHINE TRANSLATION,0.15167095115681234,Published as a conference paper at ICLR 2022
+MACHINE TRANSLATION,0.15424164524421594,"prediction (Lee et al., 2018; Ghazvininejad et al., 2019; Kasai et al., 2020). A common approach
+is to treat it as a classiﬁcation task, predicting either the exact length or the difference between the
+source and target lengths. The decoding process has to commit to the predicted length, and often
+multiple length beams are used to get the best translation results. In our models, we use a separate
+network that receives source encodings as input and predicts corresponding target length. Target
+length embedding vector is prepended to source embeddings so that decoder can attend to it. During
+training, we use the reference target length, while at sampling, a predicted one, although the model
+does not need to fully commit to the predicted length like some previous non-AR models (Saharia
+et al., 2020). Note that the length classiﬁcation loss does not affect the encoder parameters. Our
+models are also trained to predict the padding tokens at the end of the text. For more details, see
+Appendix B."
+MACHINE TRANSLATION,0.15681233933161953,"Experiment Settings.
+We conduct experiments on WMT’14 parallel corpora using EN↔DE
+(4.5M pairs) and EN→FR (36M pairs) translation tasks. The raw texts are encoded using BPE (Sen-
+nrich et al., 2015) as the subword units, and we use the same preprocessed data as in Vaswani et al.
+(2017) for fair comparisons. We evaluate the performance by measuring BLEU (Papineni et al.,
+2002; Post, 2018) on the test split of each translation task2. We use the encoder-decoder Trans-
+former architecture for MT (Vaswani et al., 2017), but remove the causality masking in the decoder.
+There are 6 attention layers for both encoder and decoder, 8 attention heads, 512 model dimen-
+sion and 2048 feedforward hidden dimension. The total number of parameters is 63M including
+the target length prediction module described in 3.1. We use dropout (p = 0.1) and label smooth-
+ing (ϵ = 0.1) during training for all tasks, except for AR-distilled EN→DE, where we found lower
+dropout (p=0.05) and no label smoothing produces better results on validation. The training batch
+size is 4096, and we use Adam (Kingma & Ba, 2014) with β1 =0.9, β2 =0.999, ϵ=10−6 and weight
+decay of 0.1 (Loshchilov & Hutter, 2017). We warm up the learning rate from 10−7 to 10−4 in the
+ﬁrst 5K steps and decay it to 10−5 using cosine annealing (Loshchilov & Hutter, 2016). Our models
+were trained for 106 steps using 16 TPU accelerators using bﬂoat16 precision. We crop sequences
+that have more than 128 tokens (this occurs less than 0.2% in training data). Finally, we average
+the last 10 checkpoints to obtain a single model for the evaluation. All hyperparameter tuning is
+performed on a held-out validation set."
+MACHINE TRANSLATION,0.15938303341902313,"Decoding.
+We decode translations from SUNDAE using two different types of heuristic decoding
+methods in MT experiments. The decoding process always begins with an array of random integers
+sampled from the discrete uniform prior y0 ∼p0, while the encoder input - the source sentence -
+remains the same throughout the process. The ﬁrst decoding method is low-temperature sampling,
+where we iteratively sample yt ∼f τ
+θ (·|yt−1) for T iterations (with the decoder output logits di-
+vided by τ, see Section 2.2), with T ≤16 and τ ∈[0.1, 0.6] determined based on the validation
+performance. The second method is argmax-unrolled decoding, which requires a smaller number of
+iterations compared to its stochastic counterpart. In argmax-unrolled decoding, we ﬁrst compute the
+logits λ1 = fθ(·|y0) of the initial sample array y0 and obtain the samples y1, pass a tuple (y1, λ1)
+to the next iteration. At each step t ≥2, the method ﬁnds top-ρ share of the tokens that are sorted
+by the log-probability in descending order (i.e. uncertain tokens) from λt−1, where ρ ∈[0.1, 0.6] is
+another hyperparameter searched for in the validation stage. We compute unrolled logits for those
+top-ρ tokens and then apply arg max to obtain unrolled tokens. For the rest of the input tokens
+of yt−1 we compute logits once and obtain λt = fθ(·|yt−1) and then apply arg max to obtain
+predicted tokens. Finally, we combine unrolled tokens for uncertain input positions with predicted
+tokens for remaining positions to obtain yt, and the tuple (yt, λt) is provided as the input to the
+next iteration. This procedure is repeated over a ﬁxed number of iterations T. We always decode
+n samples in parallel and rerank them based on the model score. We show the relative speed gain
+of SUNDAE in Table 2, the Transformer base is used as the AR baseline, for which we perform
+incremental sampling by caching the previous attention states."
+MACHINE TRANSLATION,0.16195372750642673,"Baselines.
+We compare SUNDAE with Transformer base (Vaswani et al., 2017) as the AR baseline
+and several non-AR models including CMLM (Ghazvininejad et al., 2019) and DisCo (Kasai et al.,
+2020). The last two are both iterative non-AR models that share a substantial amount of common
+ground with SUNDAE. However, their best results come from the variants distilled from Trans-
+former large (Vaswani et al., 2017), with only few test results available without distillation. As we
+aim to remove any kinds of dependencies on AR approaches, we would like to make a distinction"
+MACHINE TRANSLATION,0.16452442159383032,"2Due to limited space, we report BLEU using SacreBLEU in Appendix G."
+MACHINE TRANSLATION,0.16709511568123395,Published as a conference paper at ICLR 2022
+MACHINE TRANSLATION,0.16966580976863754,"0.6
+0.5
+0.4
+0.3
+0.2
+0.1
+0.0
+Negative BLEU-5 (quality) 0.0 0.2 0.4 0.6 0.8"
+MACHINE TRANSLATION,0.17223650385604114,SBLEU-5 (diversity)
+MACHINE TRANSLATION,0.17480719794344474,SeqGAN
+MACHINE TRANSLATION,0.17737789203084833,MaliGAN
+MACHINE TRANSLATION,0.17994858611825193,RankGAN
+MACHINE TRANSLATION,0.18251928020565553,LeakGAN
+MACHINE TRANSLATION,0.18508997429305912,Training data
+MACHINE TRANSLATION,0.18766066838046272,"ScratchGAN
+AR model
+SUNDAE (ours)"
+MACHINE TRANSLATION,0.19023136246786632,"Figure 2: BLEU scores on EMNLP2017 News.
+Left is better, lower is better. Quality/variation is
+controlled by changing the temperature."
+MACHINE TRANSLATION,0.1928020565552699,"Steps (T)
+Relative Speed Improvement
+4
+4.7x
+8
+2.6x
+10
+2.2x
+16
+1.4x"
+MACHINE TRANSLATION,0.1953727506426735,"Table 2: Relative speed gain of SUNDAE over
+AR Transformer base (greedy decoding) on
+WMT’14 EN→DE validation set."
+MACHINE TRANSLATION,0.19794344473007713,"between raw, fully-non-AR models, and AR-distilled ones, i.e. those trained via distillation from
+large AR teachers (which typically perform better than the student models), or via AR reranking."
+MACHINE TRANSLATION,0.20051413881748073,"Results and Ablation Studies.
+In Table 1, we show test BLEU scores from SUNDAE and other
+baselines. On EN→DE, SUNDAE achieved 26.25 BLEU, and it performed the best among the raw
+non-AR models. To the best of our knowledge, SUNDAE achieved the closest result (△= 1.05)
+to the score of Transformer base (Vaswani et al., 2017) without the aid of AR models.3 In the raw
+setting, argmax-unrolled decoding outperforms mask-predict (Ghazvininejad et al., 2019) and easy-
+ﬁrst (Kasai et al., 2020) by 0.74 BLEU when using the same amount of the worst-case compute
+budget. At T = 8, SUNDAE performs better than Imputer (Saharia et al., 2020), which is a strong
+baseline that can generate high-quality translation within few (4-8) iterations. We discovered that as
+T increases, low-temperature sampling outperforms argmax-unrolled decoding, and at T =10, low-
+temperature sampling outperforms Mask-Predict (Ghazvininejad et al., 2019) and Easy-First (Kasai
+et al., 2020) by 1.5 BLEU score. SUNDAE achieved 30.80 BLEU on DE→EN, where there are not
+that many raw baselines to compare with. The difference between SUNDAE and the AR baseline
+on DE→EN is 0.98. Finally, SUNDAE achieved 37.53 BLEU on EN→FR at T = 10, while the
+Transformer base (Vaswani et al., 2017) reported 38.1 BLEU on this task. Thus, SUNDAE without
+distillation is only 0.57 BLEU behind the standard AR baseline on EN→FR. We present more details
+on EN→FR scores in Table 7 in Appendix G."
+MACHINE TRANSLATION,0.20308483290488433,"While knowledge distillation was outside our main focus, we also report scores for AR-distilled
+SUNDAE.4 It again performed well, establishing new SotA on EN→DE translation among AR–
+distilled models, and being second only to JM-NAT (Guo et al., 2020) in DE→EN task."
+MACHINE TRANSLATION,0.20565552699228792,"We ablate the number of steps of unrolled denoising on EN→DE test split. We observe that having
+at least one unrolled denoising step is crucial to obtain good performance in translation. With only
+the L(1) loss, SUNDAE achieves 11.19 BLEU, whereas using L(1:2), the score improves to 26.57
+BLEU. Using L(1:3), i.e. averaging more unrolled denoising loss terms, did not improve the perfor-
+mance further, scoring 26.25 BLEU. The target length prediction also turned out to be an important
+component of our model: without it, the translation performance degrades on average by 2 BLEU
+score points on EN→DE (see Appendix C). Finally, we qualitatively show how translation improves
+along the sampling steps by elimination of incoherent/repeated tokens in Table 5 in Appendix E."
+TEXT GENERATION,0.20822622107969152,"3.2
+TEXT GENERATION
+Unconditional Text Generation (Qualitative).
+We train our method on a large high-quality pub-
+licly available Colossal Clean Common Crawl (C4) dataset (Raffel et al., 2019) to demonstrate
+samples. We tokenize the data using SentencePiece (Kudo & Richardson, 2018) 5 with vocabulary
+size 32K and train on randomly cropped sequences of length 32. The network is the same as the
+Transformer decoder part for MT in Section 3.1 but is much larger — 335M parameters: 24 layers,"
+TEXT GENERATION,0.21079691516709512,"3As shown in Table 7 in Appendix G, allowing larger compute reduces the gap even further, to △=0.73.
+4For distillation, we follow the protocol used by Saharia et al. (2020). Scores in Table 1 were obtained with
+distillation from Transformer–Big to allow direct comparisons with CMLM (Ghazvininejad et al., 2019) and
+SMART Ghazvininejad et al. (2020); for Transformer–Base–distilled scores see Table 6 in Appendix F.
+5https://github.com/google/sentencepiece"
+TEXT GENERATION,0.2133676092544987,Published as a conference paper at ICLR 2022
+TEXT GENERATION,0.2159383033419023,"Index
+Type
+Text"
+PROMPT,0.2185089974293059,"1
+Prompt
+Seeing * * * * * * for any visitor to a national park. While it is an exciting moment, a bear can * * * * * * *"
+PROMPT,0.2210796915167095,"Completion
+Seeing a big bear is a must for any visitor to a national park. While it is an exciting moment, a bear can be intimidating as it will come"
+PROMPT,0.2236503856041131,"2
+Prompt
+Seeing * * * * * * for any visitor to a national park. While it is an exciting moment, a moose can * * * * * *"
+PROMPT,0.2262210796915167,"Completion
+Seeing moose is a unique experience for any visitor to a national park. While it is an exciting moment, a moose can navigate its way through a forest"
+PROMPT,0.22879177377892032,Table 3: Inpainting from our model trained on C4 (cherry-picked).
+PROMPT,0.23136246786632392,"1024 embedding size, 4096 hidden size, 16 attention heads. Same as in the MT setup, we remove the
+causal mask since our model is non-autoregressive. We train up to 400K steps with Adam optimizer
+with batch size 4096 and use cosine annealing for scheduling the learning rate with minimum 10−5,
+maximum 2 ∗10−3 and linear warm-up of 10K steps from starting value of 10−7."
+PROMPT,0.23393316195372751,"The trained model is then used for unconditional sampling. Starting with 32 random tokens, we iter-
+atively perform up to 1K steps from our model, stopping earlier if samples do not change anymore.
+To make convergence faster, we use temperature 0.8 and update only 30% of all tokens at each step,
+chosen randomly — as explained in Section 2.2. We show 10 non-cherry-picked samples from our
+model in Table 8 of Appendix H. Of those samples, all but one resemble reasonable internet texts."
+PROMPT,0.2365038560411311,"Unconditional Text Generation (Quantitative).
+While C4 is one of the largest high-quality
+datasets publicly available, it does not have an established benchmark among non-AR methods.
+To quantitatively evaluate our algorithm, we train it on the EMNLP2017 News6 dataset, which has
+numerous text GAN baselines, including a strong ScratchGAN method (d’Autume et al., 2019). We
+also compare to several other baselines reported in (d’Autume et al., 2019; Caccia et al., 2020): Se-
+qGAN (Yu et al., 2017), LeakGAN (Guo et al., 2017), RankGAN (Lin et al., 2017), MaliGAN (Che
+et al., 2017) and autoregressive (AR) language models."
+PROMPT,0.2390745501285347,"We use the same architecture and optimizer as in qualitative experiments and train with batch size
+1024 for 8K steps (chosen to achieve the lowest validation loss). We follow the same tokenization
+strategy as d’Autume et al. (2019), with vocabulary size of 5.7K and maximum length 52 tokens,
+padding shorter sequences to this maximum length. During sampling, we perform 1K steps and
+update all the tokens at each step (which we found beneﬁcial for the chosen metrics). The quality/-
+variation trade-off is controlled by changing the sampling temperature in the range [0.1, 2.0], using
+60 values overall. For every temperature, we sample 10K texts for evaluating quality and another
+10K texts for evaluating diversity, as done by d’Autume et al. (2019)."
+PROMPT,0.2416452442159383,"The results are shown in Figure 2. SUNDAE demonstrates good quality/variation trade-off, as
+measured by BLEU/self-BLEU metrics, outperforming 4 out of 5 GAN baselines, and competing
+with ScratchGAN and AR model. In the higher quality region, SUNDAE outperforms ScratchGAN,
+while in higher diversity region it slightly underperforms. The advantage of ScratchGAN in higher
+diversity region could be explained by its autoregressive decoding (it is a hybrid between AR and
+GAN). Interestingly, the curve for SUNDAE has a more complicated shape than the baselines —
+possibly because of its Markov Chain sampling, which can empirically exhibit something akin to
+“phase transitions”. We show samples from SUNDAE in Table 9 of Appendix I."
+PROMPT,0.2442159383033419,"Text In-painting.
+The non-autoregressive nature of our model opens up possibilities beyond left-
+to-right prompted generation, such as ﬁlling in arbitrary blank patterns in a template.
+In this
+section, we qualitatively investigate this new capability, using the C4-trained model described
+in previous sections, and another one, trained on a dataset of Python code from GitHub.
+All
+the architecture/training settings remain the same, except we train twice longer: up to 800K
+steps.
+Sampling settings are also the same, except we update all the tokens at each step as
+diversity is less of an issue with stronger conditioning.
+We construct the code dataset by ex-
+tracting ﬁles ending in .py from open source GitHub repositories with licenses that are one
+of apache-2.0, mit, bsd-3-clause, bsd-2-clause, unlicense, cc0-1.0,
+isc, artistic-2.0. We perform document level de-duplication checking for exact matches."
+PROMPT,0.2467866323907455,"For
+the
+C4
+dataset,
+we
+present
+a
+model
+with
+a
+particular
+type
+of
+prompt
+[CTX1][MSK1][CTX2][MSK2], where [CTX] stands for “context” and [MSK] for “masked”,
+in Table 3, which shows how information can be “teleported” from arbitrary location to another
+arbitrary location, while taking into account bidirectional context. We change a species of the
+animal in [CTX2] and observe that the model actually uses the right word while in-painting"
+PROMPT,0.2493573264781491,6http://www.statmt.org/wmt17/
+PROMPT,0.2519280205655527,Published as a conference paper at ICLR 2022
+PROMPT,0.2544987146529563,"Index
+Type
+Text"
+PROMPT,0.2570694087403599,"1
+Prompt
+def trunc len(x, t):
+* * * * * * * * * * * * * * * return min(n, t)"
+PROMPT,0.2596401028277635,"Completion
+def trunc len(x, t):"
+PROMPT,0.2622107969151671,"n = len(x)
+return min(n, t)"
+PROMPT,0.2647814910025707,"2
+Prompt
+is even = lambda x:
+* * * * * *
+is odd = lambda x:
+not * * * * * * # reuse"
+PROMPT,0.26735218508997427,"Completion
+is even = lambda x:
+x % 2 == 0
+is odd = lambda x:
+not is even(x) # reuse"
+PROMPT,0.2699228791773779,Table 4: Inpainting from our model trained on GitHub (cherry-picked).
+PROMPT,0.27249357326478146,"[MSK1] and plausibly continues [MSK2] according to the species. This kind of task would be
+impossible to perform for an AR model: with left-to-right causality it would be unable to correctly
+guess the name of the animal, while with a right-to-left one it would have to start ﬁlling [MSK2]
+tokens ﬁrst, so it would just ignore the conditioning. By contrast, our model succeeds in this task."
+PROMPT,0.2750642673521851,"For GitHub Python data, we use two different kinds of prompts for our model in Table 4:
+[CTX1][MSK1][CTX2] and [CTX1][MSK1][CTX2][MSK2][CTX3]. In the ﬁrst example,
+our model guesses that n should be the length of the input sequence and correctly in-paints [MSK1]
+region. This would again be impossible to do for AR models. Looking from left-to-right, it is im-
+possible to guess that n will be the name of the length variable and t is meant to be a threshold.
+Looking from right-to-left, it is unclear what variables n and t represent and what is the function
+being computed. Only a bidirectional model can perform well in this task. In the second example,
+our model correctly follows the suggestion to reuse the function which it also has to in-paint."
+RELATED WORK,0.2776349614395887,"4
+RELATED WORK"
+RELATED WORK,0.2802056555269923,"In this section we provide an overview of generative models, focusing on applications in text domain."
+AUTOREGRESSIVE MODELS,0.2827763496143959,"4.1
+AUTOREGRESSIVE MODELS"
+AUTOREGRESSIVE MODELS,0.2853470437017995,"Early attempts to perform autoregressive modelling of text using neural networks began with Bengio
+et al. (2003); later Sutskever et al. (2011) extended this approach with RNNs. Since then, improve-
+ments in neural network architecture, such as the Transformer (Vaswani et al., 2017), and scaling up
+as with GPT-3 (Brown et al., 2020) dramatically improved the performance of AR models. While
+the architectures evolved, the loss function remained the same with minor modiﬁcations."
+AUTOREGRESSIVE MODELS,0.2879177377892031,"Insertion (Stern et al., 2019) and Levenshtein (Gu et al., 2019) Transformers are deviations from the
+standard paradigm of training and could potentially overcome some of AR problems. However, in
+the parallel decoding regime, they have to rely on AR distillation for obtaining competitive results."
+NON-AUTOREGRESSIVE MODELS IN GENERAL,0.29048843187660667,"4.2
+NON-AUTOREGRESSIVE MODELS IN GENERAL"
+NON-AUTOREGRESSIVE MODELS IN GENERAL,0.2930591259640103,"Non-autoregressive models evolved in parallel with autoregressive ones but have so far struggled to
+address the same spectrum of tasks with the same quality as AR models."
+NON-AUTOREGRESSIVE MODELS IN GENERAL,0.29562982005141386,"Diffusion
+for generative models was originally introduced by Sohl-Dickstein et al. (2015). Re-
+cently Ho et al. (2020) proposed a different parametrization: instead of modeling one-step tran-
+sitions, one could instead model p(x0|xt) and later convert those to p(xt−1|xt) by probabilistic
+reasoning. This was recently up-scaled for image modeling by Nichol & Dhariwal (2021) and ex-
+tended to continuous time by Song et al. (2020). In terms of applications to text generation, two
+recent works addressed this: Hoogeboom et al. (2021) and Austin et al. (2021). Likelihoods ob-
+tained in those works are promising, but still behind AR and lacking sample quality as well."
+NON-AUTOREGRESSIVE MODELS IN GENERAL,0.2982005141388175,"Some diffusion works like Mittal et al. (2021) also approached modeling discrete sequences in an-
+other way: ﬁrst encode sequences with a VAE into a continuous space and then apply continuous
+diffusion approaches commonly used for image generation."
+NON-AUTOREGRESSIVE MODELS IN GENERAL,0.30077120822622105,"Variational Autoencoders (VAEs)
+were proposed by Rezende et al. (2014) and Kingma &
+Welling (2013) as a likelihood-based extension of autoencoders. Application of such methods to
+text has been problematic empirically: as it was ﬁrst noted in Bowman et al. (2015), good results
+come from using a strong AR decoder instead of a simple factorised one, but the latents are of-"
+NON-AUTOREGRESSIVE MODELS IN GENERAL,0.3033419023136247,Published as a conference paper at ICLR 2022
+NON-AUTOREGRESSIVE MODELS IN GENERAL,0.3059125964010283,"ten ignored — which was named “posterior collapse problem”. This problem was later tackled by
+Delta-VAEs (Razavi et al., 2019), with limited success in the text domain (Bosc & Vincent, 2020)."
+NON-AUTOREGRESSIVE MODELS IN GENERAL,0.30848329048843187,"Normalising Flows
+(Dinh et al., 2014; Rezende & Mohamed, 2015; Dinh et al., 2016) are an-
+other prominent family of generative models, originally proposed for real-valued data and recently
+revisited for text generation by Hoogeboom et al. (2021). While conceptually interesting, the text
+samples of such methods lack in ﬁdelity."
+NON-AUTOREGRESSIVE MODELS IN GENERAL,0.3110539845758355,"Generative Adversarial Networks (GANs)
+were originally introduced by Goodfellow et al.
+(2014) and remain one of the dominant methods for image generation. They were later adapted to
+text generation in Yu et al. (2017); Guo et al. (2017); Lin et al. (2017); Che et al. (2017). However,
+text generation with such methods is still a challenge, with a more recent ScratchGAN (d’Autume
+et al., 2019) showing relatively low-quality samples. At least part of the problem with applying
+GANs to text generation comes from non-differentiability of discrete text samples, which requires
+usage of zeroth order optimization methods."
+NON-AUTOREGRESSIVE MODELS IN GENERAL,0.31362467866323906,"Energy-Based models
+have a long history dating back to Hopﬁeld (1982); Hinton (2002); LeCun
+et al. (2006); Ranzato et al. (2007). Recently, Deng et al. (2020) shows promising results for text."
+NON-AUTOREGRESSIVE MODELS FOR MACHINE TRANSLATION,0.3161953727506427,"4.3
+NON-AUTOREGRESSIVE MODELS FOR MACHINE TRANSLATION
+There have been many attempts to apply non-autoregressive methods to machine translation. Latent
+transformer (Kaiser et al., 2018) generated latent variables autoregressively and then decoded feed-
+forwardly. NAT (Gu et al., 2017) was the ﬁrst to characterize a problem with non-autoregressive
+generation — “multi-modality”. FlowSeq (Ma et al., 2019) applied Normalising Flows to machine
+translation. LVM-DAEs (Lee et al., 2018) are perhaps most related to our method, but these models
+do not have unrolled denoising and their decoding method is deterministic. The leading methods in
+this area are CMLM (Ghazvininejad et al., 2019) and DisCo (Kasai et al., 2020). While conceptually
+similar to LVM-DAEs (Lee et al., 2018), these works have introduced signiﬁcant improvements to
+the training and decoding procedure, and, as a result, shown strong competition to AR methods.
+Both of them also do not have unrolled denoising and sampling like we do, but they are still powerful
+baselines. Later, there were attempts to combine CMLM with local AR (Kong et al., 2020). Perhaps
+the most related to our work is the SMART (Ghazvininejad et al., 2020) follow-up of the CMLM.
+However, this method is not probabilistic and it does not show unconditional generation capabilities.
+Finally, a recent line of work called Imputer (Chan et al., 2020; Saharia et al., 2020) achieves strong
+results in machine translation by aligning target to source via dynamic programming."
+DENOISING OBJECTIVE IN GENERAL,0.31876606683804626,"4.4
+DENOISING OBJECTIVE IN GENERAL
+With the advent of BERT (Devlin et al., 2018), the denoising objective became very popular for
+text representation learning. The original idea was later simpliﬁed in RoBERTa (Liu et al., 2019)
+by removing the unnecessary next-sentence-prediction task and only retaining the denoising task
+(the cloze task). This is similar to our work, however, we do not apply masking to corrupt the
+input tokens, and instead only switch them to random ones. More importantly, RoBERTa does not
+use unrolled denoising. Another work, Electra (Clark et al., 2020a), deals with the same kind of
+corruption that we use, but instead of predicting the original token before the corruption, Electra
+predicts whether it was corrupted or not. Electric (Clark et al., 2020b) does not perform masking,
+but instead uses noise-contrastive loss to learn a representation of text. BART (Lewis et al., 2019)
+uses both BERT-style denoising and autoregressive modeling for learning representations. All of
+these methods were originally motivated by improving representation learning of text. There were
+a few attempts to heuristically decode models like BERT and turn them into text generative models
+such as in Wang & Cho (2019), however, samples from these models lack coherence."
+CONCLUSION,0.3213367609254499,"5
+CONCLUSION"
+CONCLUSION,0.32390745501285345,"In this paper we have proposed a novel non-autoregressive method that operates within the frame-
+work of denoising autoencoders and, crucially, unrolls the denoising process during training. Un-
+rolled denoising allows us to achieve state-of-the art results in WMT’14 English-to-German transla-
+tion task amongst non-AR methods (without distillation from large AR models) and good qualitative
+results in unconditional text modeling on C4 dataset. We have also qualitatively demonstrated new
+inpainting capabilities on C4 and GitHub Python data, which opens up new avenues for creative
+text editing where a human could more naturally collaborate with a machine on writing and even
+programming."
+CONCLUSION,0.3264781491002571,Published as a conference paper at ICLR 2022
+AUTHOR CONTRIBUTIONS,0.32904884318766064,AUTHOR CONTRIBUTIONS
+AUTHOR CONTRIBUTIONS,0.33161953727506427,"Nikolay Savinov came up with the idea of unrolled denoising, wrote the ﬁrst prototype of uncondi-
+tional generation, contributed to the machine translation codebase and co-led the project. Junyoung
+Chung wrote most of the machine translation codebase, came up with the length prediction con-
+ditioning, suggested argmax-unrolled decoding and co-led the project. Mikołaj Bi´nkowski came
+up with theoretical insights about our model, wrote most of the evaluation codebase, implemented
+model improvements and co-led the project. All three ﬁrst authors contributed equally to writing the
+paper. Erich Elsen gave high-level scientiﬁc guidance, suggested text in-painting experiments and
+made substantial edits to the paper draft. A¨aron van den Oord originally suggested to look into de-
+noising generative models for text, gave high-level scientiﬁc guidance, proposed machine translation
+experiments and made substantial edits to the paper draft."
+AUTHOR CONTRIBUTIONS,0.3341902313624679,ACKNOWLEDGMENTS
+AUTHOR CONTRIBUTIONS,0.33676092544987146,"We would like to thank Jean-Baptiste Alayrac and Miruna Pˆıslar for valuable discussions on the
+machine translation experiments, William Chan and Chitwan Saharia for sharing distilled translation
+datasets, Mihaela Rosca and Cyprien de Masson d’Autume for sharing text GAN evaluation code,
+Yujia Li and Jack Rae for sharing a dataset of Python code from GitHub, Sander Dieleman and
+Oriol Vinyals for in-depth feedback about our work, Jungo Kasai for responses to our questions
+about DisCo, Dani Yogatama for sharing knowledge on machine translation evaluation, and Jeff
+Donahue for feedback and discussions."
+REFERENCES,0.3393316195372751,REFERENCES
+REFERENCES,0.34190231362467866,"Jacob Austin, Daniel Johnson, Jonathan Ho, Danny Tarlow, and Rianne van den Berg. Structured
+denoising diffusion models in discrete state-spaces. arXiv preprint arXiv:2107.03006, 2021."
+REFERENCES,0.3444730077120823,"Yoshua Bengio, R´ejean Ducharme, Pascal Vincent, and Christian Janvin. A neural probabilistic
+language model. The journal of machine learning research, 3:1137–1155, 2003."
+REFERENCES,0.34704370179948585,"Tom Bosc and Pascal Vincent. Do sequence-to-sequence vaes learn global features of sentences?
+arXiv preprint arXiv:2004.07683, 2020."
+REFERENCES,0.3496143958868895,"Samuel R Bowman, Luke Vilnis, Oriol Vinyals, Andrew M Dai, Rafal Jozefowicz, and Samy Ben-
+gio. Generating sentences from a continuous space. arXiv preprint arXiv:1511.06349, 2015."
+REFERENCES,0.35218508997429304,"Tom B Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal,
+Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al. Language models are
+few-shot learners. arXiv preprint arXiv:2005.14165, 2020."
+REFERENCES,0.35475578406169667,"Massimo Caccia, Lucas Caccia, William Fedus, Hugo Larochelle, Joelle Pineau, and Laurent Char-
+lin.
+Language gans falling short.
+In 8th International Conference on Learning Representa-
+tions, ICLR 2020, Addis Ababa, Ethiopia, April 26-30, 2020. OpenReview.net, 2020.
+URL
+https://openreview.net/forum?id=BJgza6VtPB."
+REFERENCES,0.35732647814910024,"William Chan, Chitwan Saharia, Geoffrey Hinton, Mohammad Norouzi, and Navdeep Jaitly. Im-
+puter: Sequence modelling via imputation and dynamic programming. In International Confer-
+ence on Machine Learning, pp. 1403–1413. PMLR, 2020."
+REFERENCES,0.35989717223650386,"Tong Che, Yanran Li, Ruixiang Zhang, R Devon Hjelm, Wenjie Li, Yangqiu Song, and Yoshua
+Bengio. Maximum-likelihood augmented discrete generative adversarial networks. arXiv preprint
+arXiv:1702.07983, 2017."
+REFERENCES,0.36246786632390743,"Ciprian Chelba, Tomas Mikolov, Mike Schuster, Qi Ge, Thorsten Brants, and Phillipp Koehn.
+One billion word benchmark for measuring progress in statistical language modeling. CoRR,
+abs/1312.3005, 2013. URL http://arxiv.org/abs/1312.3005."
+REFERENCES,0.36503856041131105,"Kevin Clark, Minh-Thang Luong, Quoc V Le, and Christopher D Manning. Electra: Pre-training
+text encoders as discriminators rather than generators. arXiv preprint arXiv:2003.10555, 2020a."
+REFERENCES,0.3676092544987147,Published as a conference paper at ICLR 2022
+REFERENCES,0.37017994858611825,"Kevin Clark, Minh-Thang Luong, Quoc V Le, and Christopher D Manning. Pre-training transform-
+ers as energy-based cloze models. arXiv preprint arXiv:2012.08561, 2020b."
+REFERENCES,0.37275064267352187,"Cyprien de Masson d’Autume, Mihaela Rosca, Jack Rae, and Shakir Mohamed. Training language
+gans from scratch. arXiv preprint arXiv:1905.09922, 2019."
+REFERENCES,0.37532133676092544,"Yuntian Deng, Anton Bakhtin, Myle Ott, Arthur Szlam, and Marc’Aurelio Ranzato.
+Residual
+energy-based models for text generation. arXiv preprint arXiv:2004.11714, 2020."
+REFERENCES,0.37789203084832906,"Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. Bert: Pre-training of deep
+bidirectional transformers for language understanding. arXiv preprint arXiv:1810.04805, 2018."
+REFERENCES,0.38046272493573263,"Laurent Dinh, David Krueger, and Yoshua Bengio. Nice: Non-linear independent components esti-
+mation. arXiv preprint arXiv:1410.8516, 2014."
+REFERENCES,0.38303341902313626,"Laurent Dinh, Jascha Sohl-Dickstein, and Samy Bengio. Density estimation using real nvp. arXiv
+preprint arXiv:1605.08803, 2016."
+REFERENCES,0.3856041131105398,"Marjan Ghazvininejad, Omer Levy, Yinhan Liu, and Luke Zettlemoyer. Mask-predict: Parallel
+decoding of conditional masked language models. arXiv preprint arXiv:1904.09324, 2019."
+REFERENCES,0.38817480719794345,"Marjan Ghazvininejad, Omer Levy, and Luke Zettlemoyer. Semi-autoregressive training improves
+mask-predict decoding. arXiv preprint arXiv:2001.08785, 2020."
+REFERENCES,0.390745501285347,"Ian Goodfellow, Jean Pouget-Abadie, Mehdi Mirza, Bing Xu, David Warde-Farley, Sherjil Ozair,
+Aaron Courville, and Yoshua Bengio. Generative adversarial nets. Advances in neural information
+processing systems, 27, 2014."
+REFERENCES,0.39331619537275064,"Jiatao Gu, James Bradbury, Caiming Xiong, Victor OK Li, and Richard Socher. Non-autoregressive
+neural machine translation. arXiv preprint arXiv:1711.02281, 2017."
+REFERENCES,0.39588688946015427,"Jiatao Gu, Changhan Wang, and Jake Zhao.
+Levenshtein transformer.
+arXiv preprint
+arXiv:1905.11006, 2019."
+REFERENCES,0.39845758354755784,"Jiaxian Guo, Sidi Lu, Han Cai, Weinan Zhang, Yong Yu, and Jun Wang. Long text generation via
+adversarial training with leaked information. arxiv e-prints, art. arXiv preprint arXiv:1709.08624,
+2017."
+REFERENCES,0.40102827763496146,"Junliang Guo, Linli Xu, and Enhong Chen. Jointly masked sequence-to-sequence model for non-
+autoregressive neural machine translation. In Proceedings of the 58th Annual Meeting of the
+Association for Computational Linguistics, pp. 376–385, 2020."
+REFERENCES,0.40359897172236503,"Geoffrey E Hinton. Training products of experts by minimizing contrastive divergence. Neural
+computation, 14(8):1771–1800, 2002."
+REFERENCES,0.40616966580976865,"Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. arXiv preprint
+arXiv:2006.11239, 2020."
+REFERENCES,0.4087403598971722,"Emiel Hoogeboom, Didrik Nielsen, Priyank Jaini, Patrick Forr´e, and Max Welling.
+Argmax
+ﬂows and multinomial diffusion: Towards non-autoregressive language models. arXiv preprint
+arXiv:2102.05379, 2021."
+REFERENCES,0.41131105398457585,"John J Hopﬁeld. Neural networks and physical systems with emergent collective computational
+abilities. Proceedings of the national academy of sciences, 79(8):2554–2558, 1982."
+REFERENCES,0.4138817480719794,"Lukasz Kaiser, Samy Bengio, Aurko Roy, Ashish Vaswani, Niki Parmar, Jakob Uszkoreit, and Noam
+Shazeer. Fast decoding in sequence models using discrete latent variables. In International Con-
+ference on Machine Learning, pp. 2390–2399. PMLR, 2018."
+REFERENCES,0.41645244215938304,"Jungo Kasai, James Cross, Marjan Ghazvininejad, and Jiatao Gu. Non-autoregressive machine trans-
+lation with disentangled context transformer. In International Conference on Machine Learning,
+pp. 5144–5155. PMLR, 2020."
+REFERENCES,0.4190231362467866,"Yoon Kim and Alexander M Rush.
+Sequence-level knowledge distillation.
+arXiv preprint
+arXiv:1606.07947, 2016."
+REFERENCES,0.42159383033419023,Published as a conference paper at ICLR 2022
+REFERENCES,0.4241645244215938,"Diederik P Kingma and Jimmy Ba. Adam: A method for stochastic optimization. arXiv preprint
+arXiv:1412.6980, 2014."
+REFERENCES,0.4267352185089974,"Diederik P Kingma and Max Welling.
+Auto-encoding variational bayes.
+arXiv preprint
+arXiv:1312.6114, 2013."
+REFERENCES,0.42930591259640105,"Xiang Kong, Zhisong Zhang, and Eduard Hovy. Incorporating a local translation mechanism into
+non-autoregressive translation. arXiv preprint arXiv:2011.06132, 2020."
+REFERENCES,0.4318766066838046,"Taku Kudo and John Richardson. Sentencepiece: A simple and language independent subword
+tokenizer and detokenizer for neural text processing. arXiv preprint arXiv:1808.06226, 2018."
+REFERENCES,0.43444730077120824,"Yann LeCun, Sumit Chopra, Raia Hadsell, M Ranzato, and F Huang. A tutorial on energy-based
+learning. Predicting structured data, 1(0), 2006."
+REFERENCES,0.4370179948586118,"Jason Lee, Elman Mansimov, and Kyunghyun Cho. Deterministic non-autoregressive neural se-
+quence modeling by iterative reﬁnement. arXiv preprint arXiv:1802.06901, 2018."
+REFERENCES,0.43958868894601544,"Jason Lee, Raphael Shu, and Kyunghyun Cho. Iterative reﬁnement in the continuous space for
+non-autoregressive neural machine translation. arXiv preprint arXiv:2009.07177, 2020."
+REFERENCES,0.442159383033419,"Mike Lewis, Yinhan Liu, Naman Goyal, Marjan Ghazvininejad, Abdelrahman Mohamed, Omer
+Levy, Ves Stoyanov, and Luke Zettlemoyer.
+Bart:
+Denoising sequence-to-sequence pre-
+training for natural language generation, translation, and comprehension.
+arXiv preprint
+arXiv:1910.13461, 2019."
+REFERENCES,0.44473007712082263,"Zhuohan Li, Zi Lin, Di He, Fei Tian, Tao Qin, Liwei Wang, and Tie-Yan Liu. Hint-based training
+for non-autoregressive machine translation. arXiv preprint arXiv:1909.06708, 2019."
+REFERENCES,0.4473007712082262,"Kevin Lin, Dianqi Li, Xiaodong He, Zhengyou Zhang, and Ming-Ting Sun. Adversarial ranking for
+language generation. arXiv preprint arXiv:1705.11001, 2017."
+REFERENCES,0.4498714652956298,"Yinhan Liu, Myle Ott, Naman Goyal, Jingfei Du, Mandar Joshi, Danqi Chen, Omer Levy, Mike
+Lewis, Luke Zettlemoyer, and Veselin Stoyanov. Roberta: A robustly optimized bert pretraining
+approach. arXiv preprint arXiv:1907.11692, 2019."
+REFERENCES,0.4524421593830334,"Ilya Loshchilov and Frank Hutter. Sgdr: Stochastic gradient descent with warm restarts. arXiv
+preprint arXiv:1608.03983, 2016."
+REFERENCES,0.455012853470437,"Ilya Loshchilov and Frank Hutter.
+Decoupled weight decay regularization.
+arXiv preprint
+arXiv:1711.05101, 2017."
+REFERENCES,0.45758354755784064,"Xuezhe Ma,
+Chunting Zhou,
+Xian Li,
+Graham Neubig,
+and Eduard Hovy.
+Flowseq:
+Non-autoregressive conditional sequence generation with generative ﬂow.
+arXiv preprint
+arXiv:1909.02480, 2019."
+REFERENCES,0.4601542416452442,"Matt Mahoney. Text 8 dataset. http://mattmahoney.net/dc/textdata, 2011. Accessed:
+2021-09-29."
+REFERENCES,0.46272493573264784,"Gautam Mittal, Jesse Engel, Curtis Hawthorne, and Ian Simon. Symbolic music generation with
+diffusion models. arXiv preprint arXiv:2103.16091, 2021."
+REFERENCES,0.4652956298200514,"Alex Nichol and Prafulla Dhariwal.
+Improved denoising diffusion probabilistic models.
+arXiv
+preprint arXiv:2102.09672, 2021."
+REFERENCES,0.46786632390745503,"Kishore Papineni, Salim Roukos, Todd Ward, and Wei-Jing Zhu. Bleu: a method for automatic
+evaluation of machine translation. In Proceedings of the 40th annual meeting of the Association
+for Computational Linguistics, pp. 311–318, 2002."
+REFERENCES,0.4704370179948586,"Matt Post. A call for clarity in reporting bleu scores. arXiv preprint arXiv:1804.08771, 2018."
+REFERENCES,0.4730077120822622,"Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang, Michael Matena, Yanqi
+Zhou, Wei Li, and Peter J. Liu. Exploring the limits of transfer learning with a uniﬁed text-to-text
+transformer. arXiv e-prints, 2019."
+REFERENCES,0.4755784061696658,Published as a conference paper at ICLR 2022
+REFERENCES,0.4781491002570694,"Qiu Ran, Yankai Lin, Peng Li, and Jie Zhou. Guiding non-autoregressive neural machine translation
+decoding with reordering information. arXiv preprint arXiv:1911.02215, 2019."
+REFERENCES,0.480719794344473,"Marc’Aurelio Ranzato, Y-Lan Boureau, Sumit Chopra, and Yann LeCun. A uniﬁed energy-based
+framework for unsupervised learning.
+In Artiﬁcial Intelligence and Statistics, pp. 371–379.
+PMLR, 2007."
+REFERENCES,0.4832904884318766,"Ali Razavi, A¨aron van den Oord, Ben Poole, and Oriol Vinyals. Preventing posterior collapse with
+delta-vaes. arXiv preprint arXiv:1901.03416, 2019."
+REFERENCES,0.48586118251928023,"Danilo Rezende and Shakir Mohamed. Variational inference with normalizing ﬂows. In Interna-
+tional conference on machine learning, pp. 1530–1538. PMLR, 2015."
+REFERENCES,0.4884318766066838,"Danilo Jimenez Rezende, Shakir Mohamed, and Daan Wierstra. Stochastic backpropagation and ap-
+proximate inference in deep generative models. In International conference on machine learning,
+pp. 1278–1286. PMLR, 2014."
+REFERENCES,0.4910025706940874,"Chitwan Saharia, William Chan, Saurabh Saxena, and Mohammad Norouzi. Non-autoregressive
+machine translation with latent alignments. arXiv preprint arXiv:2004.07437, 2020."
+REFERENCES,0.493573264781491,"Rico Sennrich, Barry Haddow, and Alexandra Birch. Neural machine translation of rare words with
+subword units. arXiv preprint arXiv:1508.07909, 2015."
+REFERENCES,0.4961439588688946,"Raphael Shu, Jason Lee, Hideki Nakayama, and Kyunghyun Cho.
+Latent-variable non-
+autoregressive neural machine translation with deterministic inference using a delta posterior. In
+Proceedings of the AAAI Conference on Artiﬁcial Intelligence, volume 34, pp. 8846–8853, 2020."
+REFERENCES,0.4987146529562982,"Jascha Sohl-Dickstein, Eric Weiss, Niru Maheswaranathan, and Surya Ganguli. Deep unsupervised
+learning using nonequilibrium thermodynamics. In International Conference on Machine Learn-
+ing, pp. 2256–2265. PMLR, 2015."
+REFERENCES,0.5012853470437018,"Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano Ermon, and Ben
+Poole. Score-based generative modeling through stochastic differential equations. arXiv preprint
+arXiv:2011.13456, 2020."
+REFERENCES,0.5038560411311054,"Mitchell Stern, William Chan, Jamie Kiros, and Jakob Uszkoreit. Insertion transformer: Flexible
+sequence generation via insertion operations. In International Conference on Machine Learning,
+pp. 5976–5985. PMLR, 2019."
+REFERENCES,0.506426735218509,"Zhiqing Sun, Zhuohan Li, Haoqing Wang, Zi Lin, Di He, and Zhi-Hong Deng. Fast structured
+decoding for sequence models. arXiv preprint arXiv:1910.11555, 2019."
+REFERENCES,0.5089974293059126,"Ilya Sutskever, James Martens, and Geoffrey E Hinton. Generating text with recurrent neural net-
+works. In ICML, 2011."
+REFERENCES,0.5115681233933161,"Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez,
+Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Advances in neural information
+processing systems, pp. 5998–6008, 2017."
+REFERENCES,0.5141388174807198,"Alex Wang and Kyunghyun Cho. Bert has a mouth, and it must speak: Bert as a markov random
+ﬁeld language model. arXiv preprint arXiv:1902.04094, 2019."
+REFERENCES,0.5167095115681234,"Yiren Wang, Fei Tian, Di He, Tao Qin, ChengXiang Zhai, and Tie-Yan Liu. Non-autoregressive
+machine translation with auxiliary regularization. In Proceedings of the AAAI Conference on
+Artiﬁcial Intelligence, volume 33, pp. 5377–5384, 2019."
+REFERENCES,0.519280205655527,"Lantao Yu, Weinan Zhang, Jun Wang, and Yong Yu. Seqgan: Sequence generative adversarial nets
+with policy gradient. In Proceedings of the AAAI conference on artiﬁcial intelligence, volume 31,
+2017."
+REFERENCES,0.5218508997429306,Published as a conference paper at ICLR 2022
+REFERENCES,0.5244215938303342,"A
+METHOD DETAILS"
+REFERENCES,0.5269922879177378,"Using Markov property and the form of pt = fθ(·|xt−1), for any t > 0 we obtain"
+REFERENCES,0.5295629820051414,"pt(xt|x0) =
+X"
+REFERENCES,0.532133676092545,"xt−1∈X
+pt−1(xt−1|x0)fθ(xt|xt−1)
+(5)"
+REFERENCES,0.5347043701799485,"= Ext−1∼pt−1(·|x0)fθ(xt|xt−1).
+(6)"
+REFERENCES,0.5372750642673522,"By induction, we can keep unrolling the chain for all steps s = t −1, t −2, . . . , 1, eventually
+obtaining"
+REFERENCES,0.5398457583547558,"pt(xt|x0) =
+X"
+REFERENCES,0.5424164524421594,"x1,...,xt−1
+∈X tY"
+REFERENCES,0.5449871465295629,"s=1
+fθ(xs|xs−1)"
+REFERENCES,0.5475578406169666,"= E
+x1∼p1(·|x0)
+···
+xt−1∼pt−1(·|xt−2)
+[fθ(xt|xt−1)] ,
+(7)"
+REFERENCES,0.5501285347043702,which proves the from of the model distribution (Eq. 1).
+REFERENCES,0.5526992287917738,"A.1
+UPPER BOUND ON THE LOSS."
+REFERENCES,0.5552699228791774,Using Jensen’s inequality we can swap log and expectation in Eq. 7 to obtain
+REFERENCES,0.5578406169665809,"−log pt(x|x0) ≤−E
+x1∼p1(·|x0)
+···
+xt−1∼p(·|xt−2)
+[log fθ(x|xt−1)] ,
+(8) hence"
+REFERENCES,0.5604113110539846,"g
+L(t)(θ) = −E x∼pdata
+x0∼q(·|x)[log pt(x|x0)] ≤−E
+x∼pdata
+x0∼q(·|x)
+x1∼fθ(·|x0)
+...
+xt−1∼fθ(·|xt−2)"
+REFERENCES,0.5629820051413882,"[log fθ(x|xt−1)] = L(t)(θ).
+(9)"
+REFERENCES,0.5655526992287918,"A.2
+RELATION TO VAE"
+REFERENCES,0.5681233933161953,"Variational Autoencoders (Kingma & Welling, 2013; Rezende et al., 2014) optimise the expected
+evidence lower bound (ELBO) on the marginal likelihood"
+REFERENCES,0.570694087403599,"log p(x) ≥−DKL(q(z|x)∥p0(z)) + Ez∼q(·|x) [log p(x|z)] ,
+(10)"
+REFERENCES,0.5732647814910026,"with respect to parameters of both the variational distribution q and generative distribution p, where
+p0 remains the prior for for the latent variables. Denosing autoencoders limit the optimisation to the
+second term, assuming a ﬁxed encoder q, which is also the case with SUNDAE: identifying encoder
+with our corruption distribution and generative distribution p with the distribution of our chain at the
+last step pT , expected ELBO becomes"
+REFERENCES,0.5758354755784062,"Ex∼pdata[log pT (x)] ≥−Ex∼pdata [DKL(q(z|x)∥p0(z))] + E x∼pdata
+xc∼q(·|x)[log pt(x|xc)]"
+REFERENCES,0.5784061696658098,"≥−Ex∼pdata [DKL(q(z|x)∥p0(z))] −L(T )(θ).
+(11)"
+REFERENCES,0.5809768637532133,"where the second inequality is a consequence of the upper bound 3. Hence, minimizing L(T ) would
+lead to maximisation of the lower bound on the model likelihood."
+REFERENCES,0.583547557840617,"A.3
+CORRUPTION FUNCTION"
+REFERENCES,0.5861182519280206,Our corruption function is obtained in stages:
+REFERENCES,0.5886889460154242,"• sample uniform expected corruption proportion α ∼U([0, 1]),"
+REFERENCES,0.5912596401028277,"• sample Bernoulli mask, independently for each token m ∼(Bernoulli(α))N,"
+REFERENCES,0.5938303341902313,"• sample noise η ∼(U({1, 2, . . . , v})N,"
+REFERENCES,0.596401028277635,Published as a conference paper at ICLR 2022
+REFERENCES,0.5989717223650386,A sundae is an ice cream dessert.
+REFERENCES,0.6015424164524421,A sunday is of optical ice.
+REFERENCES,0.6041131105398457,Ein Eisbecher ist ein Eisdessert.
+REFERENCES,0.6066838046272494,"Source sentence
+Noisy translation"
+REFERENCES,0.609254498714653,True translation
+REFERENCES,0.6118251928020566,"Encoder network
+Decoder network"
+REFERENCES,0.6143958868894601,Length predictor network
+REFERENCES,0.6169665809768637,Stop gradient
+REFERENCES,0.6195372750642674,"5
+6
+7
+8
+7"
+REFERENCES,0.622107969151671,"Predicted lengths
+True length"
+REFERENCES,0.6246786632390745,A sund loop Ga genes ice greatly.
+REFERENCES,0.6272493573264781,"Loss
+Loss"
+REFERENCES,0.6298200514138818,"Figure 3: Overview of target length prediction. During SUNDAE training, we simultaneously train
+the length predictor with cross-entropy loss and give ground-truth target length as input to the de-
+coder (green dashed arrow), thus teacher-forcing it. During sampling, we give the most likely target
+length prediction from the network to the decoder (red dashed arrow)."
+REFERENCES,0.6323907455012854,"• compute corruption xc = cα,m,η(x) = (1 −m) · x + m · η (with multiplications taken
+element-wise)."
+REFERENCES,0.6349614395886889,"The distribution pc(·|x)pdata(x) obtained in this process covers the entire input space X, with
+probability skewed towards samples whose parts come from pdata. Note that except for corruption
+proportion, all steps are independent for all individual tokens. Given α, pcα(y|x) can be factorised
+as
+Y"
+REFERENCES,0.6375321336760925,"n
+pcα(y(n)|x(n)) =
+Y"
+REFERENCES,0.6401028277634961,"n
+h(y(n))T Qαh(x(n)),"
+REFERENCES,0.6426735218508998,"where Qα = αI + (1 −α)V is a transition matrix, V is a v × v matrix with all entries equal to
+1
+v, and h(a) denotes one-hot vector representation of a ∈{1, 2, . . . , v}. In this context, corruption
+with rate α corresponds to a multinomial-diffusion forward process with probability α of remaining
+in the same state, as proposed by (Hoogeboom et al., 2021)."
+REFERENCES,0.6452442159383034,"B
+DETAILS OF TARGET LENGTH PREDICTION"
+REFERENCES,0.6478149100257069,"We provide a simpliﬁed high-level overview of the target length predictor in Figure 3. In the rest of
+this section we focus on implementation details."
+REFERENCES,0.6503856041131105,"The target length prediction module consists of 6 residual blocks. The length prediction module
+takes the source encodings hx = encoder(x) as the input, where x is a sequence of source tokens.
+We ﬁrst project hx into a vector vx ∈RdLP , where dLP = 128 is the hidden size of the target
+length prediction module. We add a source length embedding vector vlen = S(Nsource×dLP )(lx)
+to vx and obtain the ﬁnal encoder state representation v′
+x = vx + vlen, where lx is the number of
+the source tokens, and Nsource = 128 is the maximum number of the source tokens. The target
+length prediction module then takes vx as the input and predicts the (downsampled) target length
+˜ld. We found beneﬁcial downsampling the target lengths for the length prediction by a factor of 2,
+i.e. ld = ⌈l/2⌉as compared to exact prediction of l; since the maximum number of target tokens is
+N =128, the maximum size of the outcome of length prediction is Nd =64."
+REFERENCES,0.6529562982005142,"We prepend an embedding hlen
+∈
+Rdenc of target length to the source encodings hx
+∈
+RNsource×denc for each source example x and allow the decoder to attend to it (denc here denotes
+the dimensionality of the encoder). hlen is obtained by applying an embedding matrix V(Nd×denc)
+to ground truth (downsampled) length ld at training time, or to predicted one ˜ld during sampling.
+Note that optimisation of the length classiﬁcation loss does not affect the encoder parameters."
+REFERENCES,0.6555269922879178,"C
+EFFECTS OF TARGET LENGTH PREDICTION"
+REFERENCES,0.6580976863753213,"It is shown empirically that the length of the translated results can affect BLEU score. Approximate
+search methods such as beam search usually incorporate a length normalization term in order to pre-
+vent the search algorithm to prefer shorter sentences. This is due to the fact that the scoring function"
+REFERENCES,0.6606683804627249,Published as a conference paper at ICLR 2022
+REFERENCES,0.6632390745501285,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+step
+1e6 0 5 10 15 20 BLEU"
+REFERENCES,0.6658097686375322,"with length prediction
+without length prediction"
+REFERENCES,0.6683804627249358,(a) EN→DE with and without length prediction
+REFERENCES,0.6709511568123393,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+step
+1e6 0 5 10 15 20 25 BLEU"
+REFERENCES,0.6735218508997429,"with length prediction
+without length prediction"
+REFERENCES,0.6760925449871465,(b) DE→EN with and without length prediction
+REFERENCES,0.6786632390745502,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+step
+1e6 0 5 10 15 20 25 BLEU"
+REFERENCES,0.6812339331619537,"with length prediction
+without length prediction"
+REFERENCES,0.6838046272493573,(c) EN→FR with and without length prediction
+REFERENCES,0.6863753213367609,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+step
+1e6 0 5 10 15 20 BLEU"
+REFERENCES,0.6889460154241646,"L(1)
+L(2)
+L(3)
+L(4)
+L(5)"
+REFERENCES,0.6915167095115681,(d) EN→DE with increasing number of unrolls
+REFERENCES,0.6940874035989717,"Figure 4: Validation BLEU curves during training with and without target length prediction on
+WMT’14 EN→DE, DE→EN and EN→FR tasks shown in Figure 4a, 4b and 4c, respectively. Fig-
+ure 4d shows the effect of unrolled denoising terms on translation quality, here L(k) = L(1:k). All
+models are trained with a batch size of 256 using 20 different random seeds to display uncertainty."
+REFERENCES,0.6966580976863753,"Source
+Ich habe dort Dinge gesehen, aus denen ich gest¨arkt hervorgegangen bin."
+REFERENCES,0.699228791773779,"Initialization
+ThirVerschlMarta moderatopposed frameworks solidierweitert [...]
+Step 1
+I saw things there that which I I stronger..
+Step 2
+I saw things there from which I me stronger..
+Step 3
+I saw things there from which I emerged stronger.
+Step 4
+I saw things there from which I emerged stronger."
+REFERENCES,0.7017994858611826,"Reference
+I saw some things there and came out stronger."
+REFERENCES,0.7043701799485861,"Table 5: German-to-English translation process. Since initialization is quite long, we substitute the
+trailing tokens with [...]. Tokens changed from previous step are highlighted in gray. The process
+converges after 3 steps, while AR would take 10 steps (one for each token in the translation)."
+REFERENCES,0.7069408740359897,"is usually chosen as the likelihood modelled by the translation system, and beams containing shorter
+sequences tend to score higher likelihoods. In non-AR models, the end of sequence is not explicitly
+learned by the models, thus they can beneﬁt by knowing the target sequence length in advance to
+generating the translation. However, the length of the target sequence cannot be known at inference
+time, therefore, a model should predict it instead. We show how BLEU scores can differ in WMT’14
+translation tasks with and without the target length prediction in Figure 4a-4c."
+REFERENCES,0.7095115681233933,"D
+EFFECTS OF UNROLLED LOGITS LOSSES"
+REFERENCES,0.712082262210797,We show how varying the number of unrolled logits can affect the MT performance in Figure 4d.
+REFERENCES,0.7146529562982005,Published as a conference paper at ICLR 2022
+REFERENCES,0.7172236503856041,"0
+5
+10
+15
+20
+25
+30
+Sampling Step 0.1 0.2 0.3 0.4 0.5 0.6"
+REFERENCES,0.7197943444730077,Model Score
+REFERENCES,0.7223650385604113,reference
+REFERENCES,0.7249357326478149,(a) Model score evolution throughout sampling.
+REFERENCES,0.7275064267352185,"0
+5
+10
+15
+20
+25
+30
+Sampling Step 0 5 10 15 20 25 BLEU 0.0 0.2 0.4 0.6 0.8 1.0"
+REFERENCES,0.7300771208226221,Sampling Temperature
+REFERENCES,0.7326478149100257,(b) BLEU evolution throughout sampling.
+REFERENCES,0.7352185089974294,"Figure 5: Model score (left) and BLEU (right) evolution throughout sampling for various tempera-
+tures. The reference score on the left hand side denotes the model score obtained for ground truth
+inputs. Overall, medium-low temperatures give the best results."
+REFERENCES,0.7377892030848329,"E
+TRANSLATION ANALYSIS"
+REFERENCES,0.7403598971722365,"We show how our algorithm works step-by-step for translation in Table 5. It is interesting to ob-
+serve how the multimodality problem (Gu et al., 2017) gets resolved with more steps. Multimodality
+usually manifests in repeated tokens in translation, which intrinsically comes from inability to coor-
+dinate decisions when independently sampling multiple tokens at once. However, after a few steps
+all repetitions are corrected, because the model conditions on the previous step and hence can better
+coordinate further changes."
+REFERENCES,0.7429305912596401,"Figure 5 shows how the model and the BLEU scores evolve during sampling for various tempera-
+tures. The model score here refers to the cross-entropy between translation and model logits pro-
+duced by giving this translation as the input. While for very low temperatures the scores initially
+improve faster, they are eventually outperformed by scores for higher temperatures, possibly due
+to low diversity induced by near-deterministic sampling. For very high temperatures, on the other
+hand, the scores improve slowly, and hence using such temperatures is rather impractical."
+REFERENCES,0.7455012853470437,"F
+DISTILLATION SCORES OBTAINED WITH TRANSFORMER–BASE"
+REFERENCES,0.7480719794344473,"In Table 6 we also present results for SUNDAE trained on data distilled from autoregressive
+Transformer-Base model, which allows direct comparison with similarly obtained Imputer scores
+(Saharia et al., 2020). The results show that SUNDAE noticeably outperforms Imputer at 8 steps for
+both EN→DE and DE→EN language pairs."
+REFERENCES,0.7506426735218509,"AR-distilled BLEU
+Model
+Steps (T)
+EN→DE
+DE→EN"
+REFERENCES,0.7532133676092545,"Imputer (Saharia et al., 2020) (n=1)
+4
+27.9
+30.9
+Imputer (Saharia et al., 2020) (n=1)
+8
+27.9
+31.1"
+REFERENCES,0.7557840616966581,"SUNDAE (63M)
+Deterministic (n=16)
+4
+28.00
+31.82
+Deterministic (n=16)
+8
+28.01
+31.84
+Deterministic (n=16)
+10
+28.01
+31.84
+Stochastic (n=16)
+4
+27.78
+31.42
+Stochastic (n=16)
+8
+28.14
+31.78
+Stochastic (n=16)
+10
+28.11
+31.87
+Stochastic (n=16)
+16
+28.11
+31.87
+Stochastic (n=16)
+32
+28.02
+31.92"
+REFERENCES,0.7583547557840618,"Table 6: Test BLEU scores of SUNDAE and Imputer (Saharia et al., 2020) distilled from AR
+Transformer–Base model on English-to-German (EN→DE) and German-to-English (DE→EN)
+translation tasks."
+REFERENCES,0.7609254498714653,Published as a conference paper at ICLR 2022
+REFERENCES,0.7634961439588689,"G
+SACREBLEU SCORES FOR WMT’14 EXPERIMENTS"
+REFERENCES,0.7660668380462725,"SacreBLEU (Post, 2018) is a library for computing BLEU score7 that does not require the user to
+manually tokenize the reference and candidate translations. We report BLEU scores measured with
+SacreBLEU library in order to provide a reference for future studies. We show all the BLEU scores
+in Table 7."
+REFERENCES,0.7686375321336761,"EN→DE
+DE→EN
+EN→FR
+Model
+Steps (T)
+BLEU
+BLEU⋆
+BLEU
+BLEU⋆
+BLEU
+BLEU⋆"
+REFERENCES,0.7712082262210797,"Deterministic (n=16)
+2
+20.29
+20.13
+25.28
+24.83
+31.60
+30.51
+Deterministic (n=16)
+3
+24.07
+23.84
+28.64
+28.12
+35.88
+34.68
+Deterministic (n=16)
+4
+25.01
+24.75
+29.53
+28.99
+36.85
+35.61
+Deterministic (n=16)
+10
+25.54
+25.25
+30.11
+29.54
+37.15
+35.92
+Stochastic (n=16)
+4
+23.05
+22.75
+28.13
+27.62
+35.27
+34.03
+Stochastic (n=16)
+8
+26.22
+26.08
+30.48
+30.00
+37.45
+36.16
+Stochastic (n=16)
+10
+26.25
+25.99
+30.80
+30.24
+27.53
+36.23
+Stochastic (n=16)
+32
+26.57
+26.31
+30.74
+30.11
+37.60
+36.20"
+REFERENCES,0.7737789203084833,"Table 7: Test BLEU without AR distillation (raw). Scores computed with SacreBLEU library are
+denoted as BLEU⋆."
+REFERENCES,0.7763496143958869,"H
+UNCONDITIONAL SAMPLES FOR C4"
+REFERENCES,0.7789203084832905,"We provide samples for our model trained on C4 dataset as described in the main text (Section 3.2).
+All of them resemble reasonable-quality internet texts, except perhaps sample #4."
+REFERENCES,0.781491002570694,"Index
+Sample from our model"
+REFERENCES,0.7840616966580977,"1
+I had to go back and forth and start over to see what had happened, what was working, and all the pieces were in the right places."
+REFERENCES,0.7866323907455013,"2
+tossed in a delicious sauce."
+REFERENCES,0.7892030848329049,Beef brisket is a hearty cut of meat – thick and tender. When you make a lot of meat
+REFERENCES,0.7917737789203085,"3
+can expect to see more of the same in ’Wild Herring’, although not very often enough to achieve the same effect."
+REFERENCES,0.794344473007712,"In ’Herring’,"
+REFERENCES,0.7969151670951157,"4
+, she was considered to be a fake."
+REFERENCES,0.7994858611825193,"Dr. Deborah Chienna has 93 in the last 365 days., headaches, stomach pain, sore 5"
+REFERENCES,0.8020565552699229,as an artist.
+REFERENCES,0.8046272493573264,"printing photo cards, artwork, and posters."
+REFERENCES,0.8071979434447301,email me for some ideas.
+REFERENCES,0.8097686375321337,”Rebecca’s studio
+REFERENCES,0.8123393316195373,"6
+Jersey, Philadelphia and Washington DC. This is a conference attended by residents, physicians, graduate medical students, and others in the ﬁeld of public health."
+REFERENCES,0.8149100257069408,"7
+’s location."
+REFERENCES,0.8174807197943444,This research was supported by a grant from the National Association for the Advancement of Science through the U.S. Department of Energy
+REFERENCES,0.8200514138817481,"8
+different artists, we would love to show you the piece we have in our shop!"
+REFERENCES,0.8226221079691517,Keep an eye on our Gallery – all you have to do is
+REFERENCES,0.8251928020565553,"9
+6.3 million from $88.8 million reported by Zacks.com back in February."
+REFERENCES,0.8277634961439588,"Brad Brickley, general manager of Irvine, Calif.-based"
+REFERENCES,0.8303341902313625,"10
+to writing with the Autumns. Together, some of the class will spend time in the classroom to read a poem from the original book. From there we"
+REFERENCES,0.8329048843187661,"Table 8: Unconditional samples from our model trained on C4 (without cherry-picking). Since C4
+was crawled from the web, newline symbols are abundant both in the training data and the samples."
+REFERENCES,0.8354755784061697,7https://github.com/mjpost/sacrebleu
+REFERENCES,0.8380462724935732,Published as a conference paper at ICLR 2022
+REFERENCES,0.8406169665809768,"I
+UNCONDITIONAL SAMPLES FOR EMNLP2017 NEWS"
+REFERENCES,0.8431876606683805,"We provide samples from our model trained on EMNLP2017 News dataset in Table 9, accompany-
+ing the quantitative results in the main text (Section 3.2). These samples are obtained at temperature
+0.8. None of them appear in the training set, so the model does not merely memorize the data it is
+given. To provide a point of reference, we also include samples from ScratchGAN (d’Autume et al.,
+2019)."
+REFERENCES,0.8457583547557841,"Index
+Sample"
+REFERENCES,0.8483290488431876,"ScratchGAN
+1
+We are pleased for the trust and it was incredible , our job quickly learn the shape and get on that way .
+2
+But I obviously have him with the guys , maybe in Melbourne , the players that weren ’ t quite clear there .
+3
+There is task now that the UK will make for the society to seek secure enough government budget fund reduce the economy .
+4
+Keith is also held in 2005 and Ted ’ s a successful campaign spokeswoman for students and a young brothers has took an advantage of operator .
+5
+Police said how a Democratic police ofﬁcer , would choose the honor of alcohol and reduce his defense and foundation .
+6
+We do not go the Blues because that I spent in ten months and so I didn ’ t have a great job in a big revolution .
+7
+The 28 - year - old - son Dr Price said she would have been invited to Britain for her ” friend ” in a lovely family .
+8
+And as long as it is lower about , our families are coming from a friend of a family ."
+REFERENCES,0.8508997429305912,"SUNDAE
+1
+Ms Sturgeon was quoted as saying that she is prepared to quit the EU by the end of March next year .
+2
+They ’ ve been around a long time , but it ’ s too natural to ignore what has happened .
+3
+” It ’ s a busy road , and we ’ ve got to get through it , ” he said .
+4
+That means some voters will decide if they ’ ll change their minds before the ﬁrst day of the debate .
+5
+” We don ’ t learn very much from my point of view because we live here , ” he said .
+6
+” I spent my whole life at the stage and now I ’ m a normal father , ” he continued .
+7
+Whether your phone is near or online , you can check if your phone is tied to your Instagram account .
+8
+” It is only too early to know why the incident occurred shortly after it happened , ” he told the Associated Press .
+9
+The website will be updated on a day - to - day basis , as well as other special services .
+10
+So it ’ s too early to know exactly what each candidate has to say in terms of the American election ."
+REFERENCES,0.8534704370179949,"Table 9: Unconditional samples from our model SUNDAE trained on EMNLP2017 News (without
+cherry-picking). We also provide samples from ScratchGAN (d’Autume et al., 2019) for compari-
+son."
+REFERENCES,0.8560411311053985,"J
+PSEUDOCODE OF SUNDAE"
+REFERENCES,0.8586118251928021,"We provide Python-like pseudocode for our method in Listing 1.
+The main functions are
+build loss fn, which should be used for training, and sampling fn which should be used
+for sampling. For simplicity, we consider the decoder-only setup as in unconditional generation
+experiments (Section 3.2)."
+REFERENCES,0.8611825192802056,"1 def get_random_text(shape, vocab_size):"
+REFERENCES,0.8637532133676092,"2
+random_text = rand_int(shape, minval=0, maxval=vocab_size)"
+REFERENCES,0.8663239074550129,"3
+return random_text 4 5"
+REFERENCES,0.8688946015424165,"6 def corrupt_text(batched_text, vocab_size):"
+REFERENCES,0.87146529562982,"7
+corruption_prob_per_sequence = rand_uniform([batched_text.shape[0], 1])"
+REFERENCES,0.8740359897172236,"8
+rand = rand_uniform(batched_text.shape)"
+REFERENCES,0.8766066838046273,"9
+mask = rand < corruption_prob_per_sequence"
+REFERENCES,0.8791773778920309,"10
+random_text = get_random_text(batched_text.shape, vocab_size)"
+REFERENCES,0.8817480719794345,"11
+corrupted = mask * random_text + (1 - mask) * batched_text"
+RETURN CORRUPTED,0.884318766066838,"12
+return corrupted 13 14"
+RETURN CORRUPTED,0.8868894601542416,"15 def build_logits_fn(vocab_size, n_unrolled_steps, enable_sampling): 16"
+RETURN CORRUPTED,0.8894601542416453,"17
+def logits_fn(batched_text):"
+RETURN CORRUPTED,0.8920308483290489,"18
+model = Transformer(vocab_size, use_causal_mask=False) 19"
+RETURN CORRUPTED,0.8946015424164524,"20
+def fn(input_batched_text):"
+RETURN CORRUPTED,0.897172236503856,"21
+logits = model(input_batched_text)"
+RETURN LOGITS,0.8997429305912596,"22
+return logits 23"
+RETURN LOGITS,0.9023136246786633,"24
+def unrolled_fn(input_batched_text):"
+RETURN LOGITS,0.9048843187660668,"25
+samples = corrupt_text(input_batched_text, vocab_size)"
+RETURN LOGITS,0.9074550128534704,"26
+all_logits = []"
+RETURN LOGITS,0.910025706940874,"27
+for _ in range(n_unrolled_steps):"
+RETURN LOGITS,0.9125964010282777,Published as a conference paper at ICLR 2022
+RETURN LOGITS,0.9151670951156813,"28
+logits = fn(samples)"
+RETURN LOGITS,0.9177377892030848,"29
+samples = stop_grad(rand_categorical(logits))"
+RETURN LOGITS,0.9203084832904884,"30
+all_logits += [logits]"
+RETURN LOGITS,0.922879177377892,"31
+final_logits = concatenate(all_logits, axis=0)"
+RETURN LOGITS,0.9254498714652957,"32
+return final_logits 33"
+RETURN LOGITS,0.9280205655526992,"34
+if enable_sampling:"
+RETURN LOGITS,0.9305912596401028,"35
+return fn(batched_text)"
+RETURN LOGITS,0.9331619537275064,"36
+else:"
+RETURN LOGITS,0.9357326478149101,"37
+return unrolled_fn(batched_text) 38"
+RETURN LOGITS,0.9383033419023136,"39
+return logits_fn 40 41"
+RETURN LOGITS,0.9408740359897172,"42 def build_loss_fn(vocab_size, n_unrolled_steps=2):"
+RETURN LOGITS,0.9434447300771208,"43
+logits_fn = build_logits_fn("
+RETURN LOGITS,0.9460154241645244,"44
+vocab_size, n_unrolled_steps, enable_sampling=False) 45"
+RETURN LOGITS,0.9485861182519281,"46
+def loss_fn(batched_text):"
+RETURN LOGITS,0.9511568123393316,"47
+logits = logits_fn(batched_text)"
+RETURN LOGITS,0.9537275064267352,"48
+# repeat batched_text to fit unrolled logits"
+RETURN LOGITS,0.9562982005141388,"49
+targets = concatenate([batched_text] * n_unrolled_steps, axis=0)"
+RETURN LOGITS,0.9588688946015425,"50
+one_hot_targets = one_hot(targets, vocab_size)"
+RETURN LOGITS,0.961439588688946,"51
+loss_per_token = -sum("
+RETURN LOGITS,0.9640102827763496,"52
+one_hot_targets * log_softmax(logits), axis=-1)"
+RETURN LOGITS,0.9665809768637532,"53
+loss = mean(loss_per_token)"
+RETURN LOSS,0.9691516709511568,"54
+return loss 55"
+RETURN LOSS,0.9717223650385605,"56
+return loss_fn 57 58"
+RETURN LOSS,0.974293059125964,"59 def sampling_fn(logits_fn, steps, temperature, batch_size,"
+RETURN LOSS,0.9768637532133676,"60
+sequence_length, vocab_size):"
+RETURN LOSS,0.9794344473007712,"61
+batched_text = get_random_text("
+RETURN LOSS,0.9820051413881749,"62
+shape=[batch_size, sequence_length], vocab_size)"
+RETURN LOSS,0.9845758354755784,"63
+for _ in range(steps):"
+RETURN LOSS,0.987146529562982,"64
+logits = logits_fn(batched_text)"
+RETURN LOSS,0.9897172236503856,"65
+samples = rand_categorical(logits / temperature)"
+RETURN LOSS,0.9922879177377892,"66
+batched_text = samples"
+RETURN LOSS,0.9948586118251928,"67
+return batched_text"
+RETURN LOSS,0.9974293059125964,Listing 1: Pseudocode of SUNDAE.

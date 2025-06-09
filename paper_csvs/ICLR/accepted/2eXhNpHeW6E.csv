@@ -1,0 +1,1900 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.0028735632183908046,"Systematicity, i.e., the ability to recombine known parts and rules to form new se-
+quences while reasoning over relational data, is critical to machine intelligence. A
+model with strong systematicity is able to train on small-scale tasks and generalize
+to large-scale tasks. In this paper, we propose R5, a relational reasoning frame-
+work based on reinforcement learning that reasons over relational graph data and
+explicitly mines underlying compositional logical rules from observations. R5 has
+strong systematicity and being robust to noisy data. It consists of a policy value
+network equipped with Monte Carlo Tree Search to perform recurrent relational
+prediction and a backtrack rewriting mechanism for rule mining. By alternately
+applying the two components, R5 progressively learns a set of explicit rules from
+data and performs explainable and generalizable relation prediction. We conduct
+extensive evaluations on multiple datasets. Experimental results show that R5 out-
+performs various embedding-based and rule induction baselines on relation pre-
+diction tasks while achieving a high recall rate in discovering ground truth rules."
+INTRODUCTION,0.005747126436781609,"1
+INTRODUCTION"
+INTRODUCTION,0.008620689655172414,"While deep learning has achieved great success in various applications, it was pointed out that
+there is a debate over the problem of systematicity in connectionist models (Fodor & Pylyshyn,
+1988; Fodor & McLaughlin, 1990; Hadley, 1994; Jansen & Watter, 2012; Dong et al., 2018). To
+concretely explain systematicity (Hupkes et al., 2020), let us consider the kinship problem shown
+in Figure 1.
+By training on the small-scale observed examples of family relationships where
+the rule paths are short (in Figure 1a&b, both of the rule paths have the length of 2), our ob-
+jective is to extract the underlying rules as general principles and generalize to large-scale tasks
+where the rule paths are long (in Figure 1c, the rule path has the length of 3). The rules in the
+training examples are a) Mother(X, Y ) ←−Mother(X, Z), Sister(Z, Y ), b) Grandma(X, Y ) ←−
+Mother(X, Z), Father(Z, Y ). And the necessary rule in order to conclude the relation between
+Mary and Ann is c) Grandma(X, Y ) ←−Mother(X, U), Sister(U, Z), Father(Z, Y ), which does not
+explicitly show up in the training examples. Successfully giving prediction in c) shows the ability
+of systematicity, i.e., model’s ability to recombine known parts and rules to form new sequences."
+INTRODUCTION,0.011494252873563218,"Some attempts on the graph relational data grounded in Graph Neural Networks (Schlichtkrull et al.,
+2018; Sinha et al., 2020; Pan et al., 2020) rely on learning embedding vectors of entities and rela-
+tions, and have shown some capability of systematicity, However, since the rules are implicitly
+encapsulated in the neural networks, these models are lack of interpretability."
+INTRODUCTION,0.014367816091954023,"Inductive Logic Programming (ILP) (Muggleton, 1992; Muggleton et al., 1996; Getoor, 2000; Yang
+et al., 2017; Evans & Grefenstette, 2018) is a subfield of symbolic rule learning, which naturally
+learns symbolic rules and provides interpretable explanations for labels prediction as well as being
+able to generalize to other tasks. A traditional ILP system learns a set of rules from a collection of
+positive and negative examples, which entails all the positives and none of the negatives. However,"
+INTRODUCTION,0.017241379310344827,∗Equal contribution.
+INTRODUCTION,0.020114942528735632,Published as a conference paper at ICLR 2022
+INTRODUCTION,0.022988505747126436,"Mother(Mary,Peter) <- Mother(Mary,Sue), Sister(Sue,Peter)
+Grandma(Mary,Ann) <- Mother(Mary,Peter), Father(Peter,Ann)
+Grandma(X,Y) <- Mother(X,Z), Father(Z,Y)
+Mother(X,Y) <- Mother(X,Z), Sister(Z,Y) +
+➔"
+INTRODUCTION,0.02586206896551724,"a. Training graph 1
+b. Training graph 2"
+INTRODUCTION,0.028735632183908046,c. Inductive relation prediction
+INTRODUCTION,0.031609195402298854,Mother
+INTRODUCTION,0.034482758620689655,Sister
+INTRODUCTION,0.03735632183908046,Brother
+INTRODUCTION,0.040229885057471264,Grandma Uncle Child
+INTRODUCTION,0.04310344827586207,Mother
+INTRODUCTION,0.04597701149425287,Sister
+INTRODUCTION,0.04885057471264368,Brother
+INTRODUCTION,0.05172413793103448,Grandma Child
+INTRODUCTION,0.05459770114942529,"Father
+Grandma ?"
+INTRODUCTION,0.05747126436781609,Father
+INTRODUCTION,0.0603448275862069,Brother
+INTRODUCTION,0.06321839080459771,Husband
+INTRODUCTION,0.06609195402298851,Grandchild
+INTRODUCTION,0.06896551724137931,Mother
+INTRODUCTION,0.07183908045977011,Sister
+INTRODUCTION,0.07471264367816093,"Mother X Y Z B C A
+X D Z B Y A Mary Peter Sue Ann"
+INTRODUCTION,0.07758620689655173,"Jack
+John Kate"
+INTRODUCTION,0.08045977011494253,Figure 1: Illustration of rule extraction and relational reasoning over family relationship graphs.
+INTRODUCTION,0.08333333333333333,"these methods face the challenge that the search space of the compositional rules is exponentially
+large, making it hard to scale beyond small rule sets."
+INTRODUCTION,0.08620689655172414,"Extending the idea of ILP, Neural-Symbolic Learning (Garcez et al., 2015; Besold et al., 2017)
+seeks to integrate principles from neural networks learning and logical reasoning, among which
+Neural Logic Machines (Dong et al., 2018; Zimmer et al., 2021) and Theorem Provers (Rockt¨aschel
+& Riedel, 2017; Minervini et al., 2020a;b) aim to overcome the problems of systematicity. On one
+hand, the Neural Logic Machines approximate the logic predicates using a probabilistic tensor repre-
+sentation, and the conclusion tensors are generated by applying the neural operators over the premise
+tensors. These approaches have done a great job in reasoning the decision-making tasks including
+sorting tasks, finding the shortest paths, and so on. However, in terms of the relational reasoning
+tasks on graphs, Neural Logic Machines reason only the single relation prediction tasks, i.e. deter-
+mining whether a single relation exists between all the queried entities or entity pairs. On the other
+hand, Theorem Provers jointly learn representations and rules from data via backpropagation, given
+a pre-defined task-specific rule template and a set of possible rules following the template. Theorem
+Provers are able to solve and reason the relation prediction tasks instead of only determining the
+existence of a single relation. However, the performance is not satisfying."
+INTRODUCTION,0.08908045977011494,"In this paper, we focus on model’s systematicity for relational reasoning over graph relational predic-
+tion tasks and present a new reasoning framework named R5, i.e., Rule discovery with Reinforced
+and Recurrent Relational Reasoning, for rule induction and reasoning on relational data with strong
+systematicity. R5 formulates the problem of relational reasoning from the perspective of sequential
+decision-making, and performs rule extraction and logical reasoning with deep reinforcement learn-
+ing equipped with a dynamic rule memory. More concretely, R5 learns the short definite clauses that
+are in the form u ←−pi ∧pj. Since long Horn clauses (Horn, 1951) can be decomposed into short
+Horn clauses, a long definite clause outcome ←−p0 ∧p1...pi ∧pj...pk used in prediction tasks is
+represented with a sequence of short definite clauses while performing decision-making, i.e. pi ∧pj
+is replaced by u. Specifically, we make the following contributions:"
+INTRODUCTION,0.09195402298850575,"First, R5 performs explicit reasoning for relation prediction via composition and achieves ex-
+plainability.
+Instead of learning embeddings for entities and relations, (Hamilton et al., 2017;
+Schlichtkrull et al., 2018; Wang et al., 2019; Pan et al., 2020) and performing implicit reasoning,
+we perform explicit relational reasoning by modeling it as sequential decision-making. Specifically,
+given a query (usually consists of two queried entities) and the related relationship graph, the agent
+recurrently selects a relation pair ri, rj from the input graph to combine into a compound relation
+rk and updates the graph, until the target relation for the query is reached. Trained by reinforcement
+learning, the agent learns to take actions, i.e., which pair of relations to combine, given the state
+representations of all possible pairs of relations."
+INTRODUCTION,0.09482758620689655,"Second, we propose a dynamic rule memory module to maintain and score candidate rules during
+the training of the reasoning agent. Each item in the rule memory is a candidate rule in the format
+of rk ←−ri, rj. ri, rj serve as the key, and rk serves as the value. In each step of decision-
+making, the agent queries the rule memory to re-use already stored rules for reasoning, i.e., deducing
+compound relations, or insert new candidate rules into it if no existing rule matches the agent’s
+action. Each rule is associated with a score that indicates the confidence for the rule. The rules and
+their scores in the memory are dynamically updated during training. Finally, a set of candidate rules
+with scores above a threshold are kept. By recurrently applying the learned rules, R5 demonstrates
+strong compositional generalization ability (i.e. systematicity) in relational reasoning tasks."
+INTRODUCTION,0.09770114942528736,"Third, rather than only taking the observed relations into account, we introduce extra invented re-
+lations into the reasoning process. For example, R5 may learn to combine r1 and r2 by a rule
+r ←r1, r2, where r is an intentionally introduced relation. The invented relations can appear on
+both the left or right side of a rule clause. Such a design enables our model to learn intermediate
+relations that do not explicitly appear in the training data to model underlying complex relations
+between entities, which are sometimes necessary to discover complex rules in the relational data."
+INTRODUCTION,0.10057471264367816,"Published as a conference paper at ICLR 2022 r1 r2 r3 r5 r3 r1
+r2 r4 r5
+r3 r5 r3 r6
+r6 r7 r2"
+INTRODUCTION,0.10344827586206896,Path 1
+INTRODUCTION,0.10632183908045977,Path L ...
+INTRODUCTION,0.10919540229885058,Input graph Score
+INTRODUCTION,0.11206896551724138,"4.303
+-0.197"
+INTRODUCTION,0.11494252873563218,"0.789
+-1.239
+...
+…
+…
+… !""
+r5"
+INTRODUCTION,0.11781609195402298,"(r1, r2) →r3
+(r5, r3) →r21"
+INTRODUCTION,0.1206896551724138,"Monte Carlo
+tree search"
+INTRODUCTION,0.1235632183908046,Dynamic Rule Memory
+INTRODUCTION,0.12643678160919541,"Target
+relation"
+INTRODUCTION,0.12931034482758622,Remove bad rules
+INTRODUCTION,0.13218390804597702,"Backtrack
+rewriting !"
+INTRODUCTION,0.13505747126436782,"fθ(s)
+fθ(s) s1
+s2"
+INTRODUCTION,0.13793103448275862,"ρ1 ≈π1
+ρ2 ≈π2"
+INTRODUCTION,0.14080459770114942,"...
+..."
+INTRODUCTION,0.14367816091954022,"ν1 ≈z
+ν2 ≈z m m n n k π1
+π2 z"
+INTRODUCTION,0.14655172413793102,"known
+relations"
+INTRODUCTION,0.14942528735632185,"unknown
+relations"
+INTRODUCTION,0.15229885057471265,features
+INTRODUCTION,0.15517241379310345,Paths between query nodes
+INTRODUCTION,0.15804597701149425,Enumerate or sample
+INTRODUCTION,0.16091954022988506,"Policy Value
+Network"
+INTRODUCTION,0.16379310344827586,"Lookup
+Update
+r1 r4 r5 r2 r5 r3 r7 r6"
+INTRODUCTION,0.16666666666666666,r1 r4 r5 r2 r5 r3 r7 r6 X Y
+INTRODUCTION,0.16954022988505746,"r3 r5 r6 r6
+r1 r2 r5 r6 r6"
+INTRODUCTION,0.1724137931034483,r1 r2 r5 r6 r6
+INTRODUCTION,0.1752873563218391,"Body 0 Body 1 r1
+r2"
+INTRODUCTION,0.1781609195402299,"r3
+r21"
+INTRODUCTION,0.1810344827586207,"r1 r4 r5 r2 r5 r6 r6
+r1 r4 r5 r2 r5 r6 r6 Head"
+INTRODUCTION,0.1839080459770115,"r3
+r21 r6"
+INTRODUCTION,0.1867816091954023,Relation pairs to states
+INTRODUCTION,0.1896551724137931,r1 r2 r5 r3 r7 r6
+INTRODUCTION,0.1925287356321839,"r3 r5 r3 r7 r6
+r1 r2 r5 r3 r7 r6"
+INTRODUCTION,0.19540229885057472,"Figure 2: Overview of the propose R5 framework for rule-inductive relational reasoning.
+Furthermore, we design a backtrack rewriting mechanism that replaces an invented relation with an
+observed one when R5 finds they are actually equivalent. Our goal is to explain the observed data
+with rules that are as simple as possible. Backtrack rewriting merges redundant relations and rules
+to enforce the principle of Occam’s razor, which prevents overfitting and improves the robustness of
+our approach."
+INTRODUCTION,0.19827586206896552,"We perform extensive evaluations based on two public relation prediction datasets, CLUTRR (Sinha
+et al., 2019) and GraphLog (Sinha et al., 2020), and compare R5 with a variety of baseline methods.
+The experimental results demonstrate that our approach significantly outperforms state-of-the-art
+methods in terms of relation prediction accuracy and recall rate in rule discovery. Moreover, R5
+exhibits a strong ability of compositional generalization and robustness to data noise. The imple-
+mentation is available at https://github.com/sluxsr/r5 graph reasoning."
+PROPOSED APPROACH,0.20114942528735633,"2
+PROPOSED APPROACH"
+PROPOSED APPROACH,0.20402298850574713,Table 1: Notations
+PROPOSED APPROACH,0.20689655172413793,"M
+The set of known relations types
+N
+The set of invented relations types
+r
+a relation type
+qj
+a query
+L
+number of paths to sample for each query
+Lj
+actual number of paths for qj
+ai
+The ith action in in the sequence
+aB,i
+The ith relation in a’s body
+aH
+a’s head
+si
+The ith current state in in the sequence
+zi
+The ith reward in in the sequence
+Drl
+Dictionary of rules
+Drls
+Dictionary of rules scores
+c
+an entry in Drls
+Bunkn
+Buffer of unused invented relation types
+vi
+a score value"
+PROPOSED APPROACH,0.20977011494252873,"In this section, we introduce our Rule Discovery
+with Reinforced and Recurrent Relational Reason-
+ing framework, namely R5, to solve the inductive
+relation prediction problem. We first formally define
+the relation prediction problem discussed in this pa-
+per. Let pdata(G, q, a) be a training data distribution,
+where G is the set of training graphs, q = (X, Y ) is
+a query, and a = r is the answer. The graphs consist
+of nodes in a set N, which are connected by rela-
+tions in a set R. X, Y ∈N are nodes, and r ∈R
+is a relation. Given G and the query q, the goal is to
+predict the correct answer a. Relational prediction
+task is actually program induction, which is a hard
+problem that has been studied for many years in the
+area of Inductive Logic Programming and Statistical
+Relational Learning, especially for large-scale tasks
+in noisy domains. Figure 2 shows an overview of R5. Our framework takes a relational graph as
+input, and outputs the relationship between two queried entities based on extracted rules. R5 first
+transforms a relation graph into a set of paths connecting the queried node (entity) pairs. After that,
+it recurrently applies learned rules to merge a relation pair in the paths to form a compound relation,
+until it outputs a final relation between the two queried nodes. The reasoning agent is trained with
+deep reinforcement learning and MCTS, while a dynamic rule memory module is utilized to extract
+rules from observations during training. The notations we used in this paper are summarized in Ta-
+ble 1. Note that an action a := aH ←(aB,0, aB,1) and a rule rl := rlH ←(rlB,0, rlB,1) share the
+same structure, where different a and rl are all relations. aH and aB represent the head and body in
+a rule, respectively. Next we introduce R5 in detail."
+RECURRENT RELATIONAL REASONING,0.21264367816091953,"2.1
+RECURRENT RELATIONAL REASONING"
+RECURRENT RELATIONAL REASONING,0.21551724137931033,"Path sampling. To predict the relation between two entities in graphs, we preprocess the data by
+sampling paths that connect the two entities from the graph. When the total number of paths is small,
+we enumerate all the paths. Otherwise, we randomly sample L paths at maximum. Each path purely"
+RECURRENT RELATIONAL REASONING,0.21839080459770116,Published as a conference paper at ICLR 2022
+RECURRENT RELATIONAL REASONING,0.22126436781609196,"consists of relations. For instance, in Figure 2, given the input graph, we can get 4 paths between
+query nodes X and Y, including r1-r2-r5-r3-r7-r6 and so on."
+RECURRENT RELATIONAL REASONING,0.22413793103448276,"Reasoning as sequential decision-making. Our method solves the problem of relational reasoning
+in terms of sequential decision-making. Specifically, we train a reasoning agent based on a policy
+value network combined with MCTS (Silver et al., 2017a) to recurrently reason over the extracted
+relation paths. The policy value network fθ(s) is a neural network with parameters θ. It takes the
+current state s as input, and outputs the action probability distribution ρ and a state value ν. MCTS
+utilizes the policy network fθ(s) to guide its simulations, and outputs a vector π representing the
+improved search probabilities of the available actions. The policy network (ρ, ν) = fθ(s) is then
+trained to minimize the error between the predicted state value ν and the reward z received after an
+episode, as well as maximize the similarity between two probability distributions ρ and π. The loss
+function l is l = (z −ν)2 −π⊺log ρ + a ∥θ∥2, where a is a hyper-parameter."
+RECURRENT RELATIONAL REASONING,0.22701149425287356,"Action. At each step of an episode, the MCTS outputs an action (aB,0, aB,1), which is a relation
+pair denoted as aB. Furthermore, by looking up the dynamic rule memory, it obtains a : aH ←
+(aB,0, aB,1) that contains a head relation aH to be deducted to, which means that the relation pair
+(aB,0, aB,1) in the path will be substitute with aH. For example, in Figure 2 at step 1, MCTS outputs
+an action a : r3 ←(r1, r2), and the path r1-r2-r5-r3-r7-r6 is transformed into r3-r5-r3-r7-r6.
+By recurrently applying different actions to a path between the query nodes, it will be transformed
+into a single relation at the end of an episode."
+RECURRENT RELATIONAL REASONING,0.22988505747126436,"State. Instead of encoding the walking paths between the query nodes as other RL-based rule
+induction methods (Shen et al., 2018; Das et al., 2017; Xiong et al., 2017), we make use of the
+features of the possible relations pairs at the current state. As shown in Figure 2, we define the state
+s ∈R(m+n)×(m+n)×k as the representation of all the possible relations pairs among the current
+paths, where m is the number of observed relations, n is the number of invented relations we as-
+sumed, and k is the dimension of features of each relation pair. As previously discussed, a relation
+pair may be deducted to an invented relation r∗∈N. Besides, r∗can be paired with another re-
+lation r, and maybe further deducted to another invented relation r′
+∗∈N. Our state space design
+enables us to represent such complicated rules with the invented relations that serve as intermediate
+predicates, which is essential to model complex relational data. n invented relations are allowed in
+our design, where n depends on the complexity of input. An example is presented in Appendix A.4."
+RECURRENT RELATIONAL REASONING,0.23275862068965517,"Even if sometimes the input data can be explained by rules without invented relation, the invented
+relations in our state design can actually help to speed up model training. For example, when we
+observe that a relation pair r1 and r2 shows up frequently in the training data, we can sample an
+invented relation r∗as the head, and form a candidate rule r∗←(r1, r2). In this way, our model
+learns to merge r1 and r2 quickly without the need to figure out what exactly r∗is. The value of
+r∗will be inferred by our model with Backtrack Rewriting mechanism, which we will introduce in
+more detail later. Without these invented relations, a reasoning agent has to infer what exactly r∗is
+at an early state, otherwise it cannot proceed to merge the relation pairs in a path correctly. Thus,
+the invented relations actually serve as a buffering mechanism to allow an agent to learn “what to
+merge” first, rather than inferring the exact rule at an early stage."
+RECURRENT RELATIONAL REASONING,0.23563218390804597,"The features we utilized to represent each relation pair can be summarized into two groups. The first
+group includes the general and statistical features of the pair, such as the number of occurrences, the
+index of the most viewed position among the paths, the number of occurrences at the most viewed
+position, and the types of the two relations consist the pair. The other group includes the rules-
+related features, such as whether the relation pair is in the obtained rules, whether the relation pair
+consists of two known relations, whether the rule head is a known relation if the pair is in the rules
+memory, and the score of the corresponding rule if the pair is in the rules memory."
+RECURRENT RELATIONAL REASONING,0.23850574712643677,"Reward. During an episode, actions are applied to a relation path recurrently, until the path is
+deducted to a single relation r, and a reward zT ∈{−1, 0, +1} will be assigned to all the states in
+this episode. If r is an known relation, but is not the target relation, zT = −1. If r is an invented
+relation, zT = 0. If r is the target relation, zT = 1."
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.2413793103448276,"2.2
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY"
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.2442528735632184,"The above recurrent reasoning agent enables us to predict the relation between two queried nodes
+more efficiently than only using MCTS. To extract rules from observed data, we further design"
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.2471264367816092,Published as a conference paper at ICLR 2022
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.25,"a dynamic rule memory module which stores and updates candidate rules and interact with the
+reasoning agent during training. Our memory design can be interpreted as two hash tables with the
+same keys: one hash table Drl in the form of (rB0, rB1) : rh is used to memorize the candidate
+rules, and another hash table Drls in the form of (rB0, rB1) : score to track the rule scores. Note
+that in Figure 2, we union the two tables as they share the same keys. A newly added rule will have
+an initial score of 0. In Figure 2, a rule (r3) ←(r1, r2) was stored in the hash tables, where the
+rule body (r1, r2) is the key, and the rule head r3 and score 4.303 are the values in Drl and Drls,
+respectively."
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.25287356321839083,"We utilize a buffer Bunkn to store the n intermediate invented relations as described in Sec. 2.1.
+When an invented relation type r ∈N is used to complete a rule, it will be removed from Bunkn. If
+r is freed from the rule memory Drl, then it will be added to Bunkn again."
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.2557471264367816,"Recall that at each time step the MCTS will return an action body aB. In order to complete the
+action, we get the action head aH by"
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.25862068965517243,"aH =
+Drl[aB],
+if aB ∈Drl,
+RandomSample(Bunkn),
+otherwise.
+(1)"
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.2614942528735632,"Then, if aB /∈Drl, we update the memory Drl with Drl[aB] = aH, and compute the score ca by ca ="
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.26436781609195403,"
+
+
+
+
+
+"
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.2672413793103448,"
+
+
+
+
+"
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.27011494252873564,"v0,
+aB ∈Drl, ∀r ∈a, r ∈M,
+v1,
+aB ∈Drl, aH ∈M, ∃r ∈aB, r ∈N,
+v2,
+aB ∈Drl, aH ∈N,
+v3,
+aB /∈Drl, ∀r ∈aB, r ∈M,
+v4,
+aB /∈Drl, ∃r ∈aB, r ∈N, (2)"
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.27298850574712646,"where v0 > v1 > 0 > v2 > v3 > v4. We can see that an action consisting of three known relations
+will receive the largest positive score, and an action with an invented relation in the head and at least
+an invented relation in the body will receive the smallest negative score. This way we penalize the
+usage of invented relations to prevent overfitting."
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.27586206896551724,Algorithm 1 Backtrack Rewriting
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.27873563218390807,"1: series Input: Drl, Bunkn, last action aT , target
+relation y
+2: r = Drl[aT B]
+3: if r ∈N then
+4:
+for aB in Drl do
+5:
+if Drl[aB] = r then
+6:
+Drl[aB] = y
+7:
+for aB in Drl do
+8:
+aH = Drl[aB]
+9:
+if aB,0 = r and aB,1 = r then
+10:
+key = (y, y)
+11:
+else if aB,0 = r then
+12:
+key = (y, aB,1)
+13:
+else if aB,1 = r then
+14:
+key = (aB,0, y)
+15:
+else
+16:
+continue
+17:
+if key /∈Drl or Drl[key] ∈N then
+18:
+delete aB from Drl
+19:
+Drl[key] = aH
+20:
+else
+21:
+delete aB from Drl
+22:
+remove r from Bunkn"
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.28160919540229884,"After extracted candidate rules, at the end of each
+training episode, we further utilize Backtrack
+Rewriting to consolidate all the candidate rules
+and replace invented relations in a rule with ob-
+served relations if we found they are equivalent.
+Algorithm 1 describes our Backtrack Rewriting
+mechanism for updating the rule memory Drl.
+Specifically, assume the action sequence we have
+taken in an episode is {a0, a1, ...at, ...aT }, and
+the head relation of the last action aT is r :=
+aT H = Drl[aT B]. As y is the target relation,
+we can backtrack r in Drl, and replace all its oc-
+currences with y. Before updating Drl[aT B], we
+update the corresponding entries in Drls of the
+actions {a0, a1, ...at, ...aT } in the episode by"
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.28448275862068967,"Drls[atB] = 
+ "
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.28735632183908044,"cat + vT pos,
+r = y,
+vT neg,
+r ∈M, r ̸= y,
+cat,
+otherwise,
+(3)
+where r := Drl[aT B], and vT neg < 0 < vT pos
+are the episode end scores. Next, we decay the
+scores Drls[aB] of all the rules aH ←aB over
+episodes by:"
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.29022988505747127,"Drls[aB] =
+Drls[aB](1 + ϵ),
+Drls[aB] < 0,
+Drls[aB](1 −ϵ),
+Drls[aB] > 0,
+(4)"
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.29310344827586204,"where ϵ is a small positive decay factor. Thus, the score of a rule that is not accessed over training
+episodes will decrease."
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.2959770114942529,Published as a conference paper at ICLR 2022
+RULE INDUCTION WITH A DYNAMIC RULE MEMORY,0.2988505747126437,"Table 2: Results on CLUTRR, trained on stories of
+lengths {2, 3} and evaluated on stories of lengths
+{4, ..., 10}.
+[∗] means the numbers are taken from
+CTP’s paper. [s] means fine-tuned on short stories."
+HOPS,0.3017241379310345,"4Hops
+5Hops
+6Hops
+7Hops
+8Hops
+9Hops 10Hops
+R5
+.98±.02 .99±.02 .98±.03 .96±.05 .97±.01 .98±.03 .97±.03
+CTP∗
+L
+.98±.02 .98±.03 .97±.05 .96±.04 .94±.05 .89±.07 .89±.07
+CTP∗
+A
+.99±.02 .99±.01 .99±.02 .96±.04 .94±.05 .89±.08 .90±.07
+CTP∗
+M
+.97±.03 .97±.03 .96±.06 .95±.06 .93±.05 .90±.06 .89±.06
+GNTP∗.49±.18 .45±.21 .38±.23 .37±.21 .32±.20 .31±.19 .31±.22
+GAT∗
+s
+.91±.02 .76±.06 .54±.03 .56±.04 .54±.03 .55±.05 .45±.06
+GCN∗
+s
+.84±.03 .68±.02 .53±.03 .47±.04 .42±.03 .45±.03 .39±.02
+RNN∗
+s
+.86±.06 .76±.08 .67±.08 .66±.08 .56±.10 .55±.10 .48±.07
+LSTM∗
+s .98±.04 .95±.03 .88±.05 .87±.04 .81±.07 .75±.10 .75±.09
+GRU∗
+s
+.89±.05 .83±.06 .74±.12 .72±.09 .67±.12 .62±.10 .60±.12
+CNNH∗
+s .90±.04 .81±.05 .69±.10 .64±.08 .56±.13 .52±.12 .50±.12
+CNN∗
+s
+.95±.02 .90±.03 .89±.04 .80±.05 .76±.08 .69±.07 .70±.08
+MHA∗
+s
+.81±.04 .76±.04 .74±.05 .70±.04 .69±.03 .64±.05 .67±.02"
+HOPS,0.3045977011494253,"Table 3: Results on CLUTRR, trained on stories of
+lengths {2, 3, 4} and evaluated on stories of lengths
+{5, ..., 10}.
+[∗] means the numbers are taken from
+CTP’s paper. [s] means fine-tuned on short stories."
+HOPS,0.3074712643678161,"5 Hops
+6 Hops
+7 Hops
+8 Hops
+9 Hops
+10 Hops
+R5
+.99±.02
+.99±0.4
+.99±.03
+1.0±.02
+.99±.02
+.98±.03
+CTP∗
+L
+.99±.02
+.98±.04
+.97±.04
+.98±.03
+.97±.04
+.95±.04
+CTP∗
+A
+.99±.04
+.99±.03
+.97±.03
+.95±.06
+.93±.07
+.91±.05
+CTP∗
+M
+.98±.04
+.97±.06
+.95±.06
+.94±.08
+.93±.08
+.90±.09
+GNTP∗
+.68±.28
+.63±.34
+.62±.31
+.59±.32
+.57±.34
+.52±.32
+GAT∗
+s
+.99±.00
+.85±.04
+.80±.03
+.71±.03
+.70±.03
+.68±.02
+GCN∗
+s
+.94±.03
+.79±.02
+.61±.03
+.53±.04
+.53±.04
+.41±.04
+RNN∗
+s
+.93±.06
+.87±.07
+.79±.11
+.73±.12
+.65±.16
+.64±.16
+LSTM∗
+s
+.98±.03
+.95±.04
+.89±.10
+.84±.07
+.77±.11
+.78±.11
+GRU∗
+s
+.95±.04
+.94±.03
+.87±.08
+.81±.13
+.74±.15
+.75±.15
+CNNH∗
+s
+.99±.01
+.97±.02
+.94±.03
+.88±.04
+.86±.05
+.84±.06
+CNN∗
+s
+1.0±.00
+1.0±.01
+.98±.01
+.95±.03
+.93±.03
+.92±.04
+MHA∗
+s
+.88±.03
+.83±.05
+.76±.04
+.72±.04
+.74±.05
+.70±.03"
+HOPS,0.3103448275862069,"Finally, when a rule score is less than a negative threshold σ, the corresponding rule will be omitted
+from the rule memory. We recursively check the rule memory to remove all the candidate rules
+that contain the omitted rule’s head aHbad ∈N. Thus, the bad rules will be gradually removed
+from the rule memory. Bunkn and Drls will be updated accordingly. Besides, when the invented
+relations buffer Bunkn is empty, we will look up the rules scores hash table Drls to find the rule
+aHbad ←aBbad that has the smallest rule score, where aHbad ∈N. Then all the corresponding
+rules in Drl that contain aHbad will be removed, and aHbad will be added back to Bunkn."
+EXPERIMENTS,0.3132183908045977,"3
+EXPERIMENTS"
+EXPERIMENTS,0.3160919540229885,"We evaluate R5 on two datasets: CLUTRR (Sinha et al., 2019) and GraphLog (Sinha et al., 2020),
+which test the logical generalization capabilities. We compare with embedding-based and rule in-
+duction baselines for both CLUTRR and GraphLog."
+SYSTEMATICITY ON CLEAN DATA,0.31896551724137934,"3.1
+SYSTEMATICITY ON CLEAN DATA"
+SYSTEMATICITY ON CLEAN DATA,0.3218390804597701,"We first evaluate R5 on the CLUTRR dataset and demonstrate its Systematicity. In other words, we
+test whether R5 can perform reasoning over graphs with more hops than the training data."
+SYSTEMATICITY ON CLEAN DATA,0.32471264367816094,"Dataset and Experimental Setup. CLUTRR (Sinha et al., 2019) is a dataset for inductive rea-
+soning over family relations. Paragraphs describing family relationships are encoded as a large set
+of graphs, where family members are modeled as nodes, and the relations in between are modeled
+as edges. The goal is to infer the relation between two family members, which is not explicitly
+mentioned in the paragraph. The train set contains graphs with up to 3 or 4 edges, and the test set
+contains graphs with up to 10 edges. The train and test splits do not share the same set of entities."
+SYSTEMATICITY ON CLEAN DATA,0.3275862068965517,"As baselines, we evaluate several embedding-based models (Veliˇckovi´c et al., 2017; Kipf & Welling,
+2017; Schuster & Paliwal, 1997; Hochreiter & Schmidhuber, 1997; Chung et al., 2014; Kim, 2014;
+Kim et al., 2015; Vaswani et al., 2017) and several neuro-symbolic models that consists the rule
+induction baselines (Minervini et al., 2020a;b). The results of the baselines are taken from Minervini
+et al. (2020b). Due to limited space, for the baselines other than CTPs and GNTPs, we only present
+the results fine-tuned on short stories. The comparisons with these baselines fine-tuned on long
+stories are provided in the Appendix C, and none of them can beat R5."
+SYSTEMATICITY ON CLEAN DATA,0.33045977011494254,"Results. Table 10, 11 present the prediction accuracy on two datasets pulished by Sinha et al. (2019).
+We call the two datasets CLUTRRk∈{2,3} and CLUTRRk∈{2,3,4}, as they train on graphs with {2, 3}
+edges while test on graphs with {4, ..., 10} edges, and train on graphs with {2, 3, 4} edges while test
+on graphs with {5, ..., 10} edges, respectively. As shown in both tables, R5 either outperforms all
+the baselines or reach the best results in both metrics. In particular, R5 has better generalization
+capability than CTPs. For both datasets, the prediction accuracy of CTPs goes down when evaluated
+on longer stories. In contrast, R5 still predicts successfully on longer stories without significant
+performance degradation. This demonstrates the strong compositional generalization ability of R5,
+in terms of systematicity, productivity, substitutivity, and localism (Hupkes et al., 2020)."
+SYSTEMATICITY ON NOISY DATA,0.3333333333333333,"3.2
+SYSTEMATICITY ON NOISY DATA"
+SYSTEMATICITY ON NOISY DATA,0.33620689655172414,"In Section 3.1, we test model performance with no bad cases in data. A bad case is a logically wrong
+example. For example, the mother of a sister is a father is a bad case. Apart from the compositional"
+SYSTEMATICITY ON NOISY DATA,0.3390804597701149,Published as a conference paper at ICLR 2022
+SYSTEMATICITY ON NOISY DATA,0.34195402298850575,"Table 4: Results of reasoning on the selected GraphLog datasets (worlds). ND: number of distinct relations
+sequences that traverse between query nodes; ARL: Average resolution length. [∗] means the numbers are
+taken from the original papers. [†] means we rerun the methods using the released source code."
+SYSTEMATICITY ON NOISY DATA,0.3448275862068966,"World ID
+ND
+ARL
+E-GAT∗
+R-GCN∗
+CTP†
+R5
+Accuracy
+Accuracy
+Accuracy
+Rules Recall
+Accuracy
+Rules Recall"
+SYSTEMATICITY ON NOISY DATA,0.34770114942528735,"World 2
+157
+3.21
+0.412
+0.347
+0.685±0.03
+0.80±0.05
+0.755±0.02
+1.0±0.00
+World 3
+189
+3.63
+0.473
+0.451
+0.624±0.02
+0.85±0.00
+0.791±0.03
+1.0±0.00
+World 13
+149
+3.58
+0.453
+0.347
+0.696±0.01
+0.90±0.00
+0.895±0.00
+1.0±0.00
+World 17
+147
+3.16
+0.347
+0.181
+0.789±0.04
+0.85±0.00
+0.947±0.02
+1.0±0.00
+World 30
+177
+3.51
+0.426
+0.357
+0.658±0.01
+0.80±0.00
+0.853±0.01
+0.95±0.00"
+SYSTEMATICITY ON NOISY DATA,0.3505747126436782,"World 6
+249
+5.06
+0.536
+0.498
+0.533±0.03
+0.85±0.00
+0.687±0.05
+0.9±0.00
+World 7
+288
+4.47
+0.613
+0.537
+0.513±0.03
+0.75±0.05
+0.749±0.04
+0.95±0.00
+World 8
+404
+5.43
+0.643
+0.569
+0.545±0.02
+0.70±0.00
+0.671±0.03
+0.95±0.00
+World 11
+194
+4.29
+0.552
+0.456
+0.553±0.01
+0.85±0.00
+0.803±0.01
+1.0±0.00
+World 32
+287
+4.66
+0.700
+0.621
+0.581±0.04
+0.95±0.00
+0.841±0.03
+1.0±0.00"
+SYSTEMATICITY ON NOISY DATA,0.35344827586206895,"generalization ability, it is also important to assess how effectively a model can discover all under-
+lying rules. The existing relational reasoning works only show that they are able to improve relation
+prediction with some learned rules, without an evaluation on whether the extracted rules are exhaus-
+tive. GraphLog, the dataset we use in this subsection, provides the ground rules used to create each
+logical world, so we evaluate this ability by the recall rate of ground truth rules."
+SYSTEMATICITY ON NOISY DATA,0.3563218390804598,"Dataset and Experimental Setup. Graphlog (Sinha et al., 2020) is a benchmark suite designed to
+evaluate systemeticity. It contains logical worlds where each world contains graphs that are created
+using a different set of ground rules. Similar to CLUTRR, the goal is to infer the relation between a
+queried node pair. However, GraphLog is much more challenging than CLUTRR. Firstly, it contains
+more bad examples than CLUTRR does. Secondly, the graphs in both train sets and test sets of
+Graphlog contain more edges; it is normal that there are more than 10 edges in a graph. Thirdly, the
+underlying compositional rules may not be shared between a train set and its corresponding test set.
+The above facts make GraphLog a more challenging dataset for rule induction."
+SYSTEMATICITY ON NOISY DATA,0.35919540229885055,"In the evaluations on GraphLog, we consider E-GAT (Sinha et al., 2020) and R-GCN (Schlichtkrull
+et al., 2018) as the embedding-based baselines, and CTPs (Minervini et al., 2020b) as the rule in-
+duction baseline. For E-GAT and R-GCN, we use the results in (Sinha et al., 2020). For CTPs, we
+use the implementation publicly provided by the author with the best configurations. In addition,
+we use the core generator provided by (Sinha et al., 2020), which is used to produce the GraphLog
+datasets, to generate three new worlds: Re 0, Re 1, Re 2. The new worlds have less training data and
+more distinct relations sequences. We aim to test how the rule induction models perform when only
+a small amount of training samples are given. We divide the 57 worlds in Graphlog into two groups
+in terms of the average resolution length (ARL), where the resolution length is the number of nodes
+traversed in the correct path between the queried nodes. Figure 1a,b are instances of resolution
+lengths of 2, and Figure 1c is an instance of resolution length of 3. We then randomly pick 5 worlds
+with an ARL less than 4, and 5 other worlds with an ARL greater than 4 to conduct experiments on."
+SYSTEMATICITY ON NOISY DATA,0.3620689655172414,"Results. Table 4 shows the results on 10 selected worlds (datasets) published by (Sinha et al.,
+2020). When the ARL is larger, the dataset becomes noisier and contains more bad cases. In terms
+of relation prediction accuracy, R5 significantly outperforms both the embedding-based and rule
+induction baselines over all 10 datasets. In terms of the ground rule recall rate, R5 also consistently
+outperforms CTP, and even reaches full recall rate on some datasets."
+SYSTEMATICITY ON NOISY DATA,0.3649425287356322,"At a closer inspection, the two GNN models perform poorly for ARL < 4. A dataset with a smaller
+ARL indicates the graphs are very simple, and models that represent the graph structure based on
+message-passing have not enough information to learn from. As for datasets with ARL > 4, the
+graph structures become more complex, the GNNs are able to aggregate more information to each
+node from the neighbors. Thus, the performance of GNNs improves on these datasets. However,
+CTP performs worse than GNNs in this case, due to two reasons. On one hand, the increasing
+amount of bad cases influences the rule recall rate, making CTP less confident on some correct
+rules. On the other hand, it is hard for CTP to generalize to complex data."
+SYSTEMATICITY ON NOISY DATA,0.367816091954023,"Table 5 presents the results for the three new datasets created that have fewer training samples. In
+particular, resolution lengths of graphs in Re 0 can be up to 10, while resolution lengths of graphs in
+Re 1 can be up to 15. Re 2 requires the models to train on graphs with resolution lengths of {3, ..., 5},
+and to test on graphs with resolution lengths of {2, ..., 7}. As shown in the table, R5 achieves better
+results than CTP when the amount of training facts is very small. And we can observe from Re 0
+and Re 1 that as the resolution length becomes longer, CTP has a sharp performance drop on the
+prediction accuracy, whereas R5 maintains relatively high accuracy and full ground rule recall rate."
+SYSTEMATICITY ON NOISY DATA,0.3706896551724138,Published as a conference paper at ICLR 2022
+SYSTEMATICITY ON NOISY DATA,0.3735632183908046,"Table 5: Results on new datasets generated using GraphLog generator. ND: number of distinct relations se-
+quences that traverse between query nodes; ARL: Average resolution length. RL: resolution length. ACC:
+Accuracy. We rerun CTPs using the released source code."
+SYSTEMATICITY ON NOISY DATA,0.3764367816091954,"Data set
+ND
+ARL
+Train RL
+Test RL
+CTP
+R5
+ACC
+Recall
+ACC
+Recall"
+SYSTEMATICITY ON NOISY DATA,0.3793103448275862,"Re 0
+631
+3.90
+2∼10
+2∼10
+0.425±0.03
+0.75±0.00
+0.665±0.06
+1.0±0.00
+Re 1
+736
+5.19
+2∼15
+2∼15
+0.190±0.06
+0.75±0.00
+0.575±0.02
+1.0±0.00
+Re 2
+725
+3.81
+3∼5
+2∼7
+0.359±0.02
+0.30±0.05
+0.446±0.04
+0.70±0.00"
+SYSTEMATICITY ON NOISY DATA,0.382183908045977,"In the train set of Re 2, there is no simple data. Simple data refers to a sample whose resolution
+length is 2, and the ground rules can be naturally collected from such data. However, in Re 2, as we
+train on samples of lengths {3, ..., 5} and evaluate on samples of lengths {2, ..., 7}, the models have
+to infer the ground rules. As is shown, R5 can still extract most of the ground rules while CTP fails."
+ABLATION STUDIES,0.3850574712643678,"3.3
+ABLATION STUDIES"
+ABLATION STUDIES,0.3879310344827586,"Table 6: Ablation study of R5. PVN: policy value
+network."
+ABLATION STUDIES,0.39080459770114945,"World 2
+World 6
+Re 2
+ACC
+Recall
+ACC
+Recall
+ACC
+Recall"
+ABLATION STUDIES,0.3936781609195402,"R5
+0.755
+1.0
+0.687
+0.9
+0.446
+0.70
+R5 w/o PVN
+0.502
+1.0
+0.407
+0.9
+0.208
+0.60
+R5, n=1
+0.661
+1.0
+0.595
+0.85
+0.349
+0.70"
+ABLATION STUDIES,0.39655172413793105,"Policy Value Network. As stated earlier, the pol-
+icy value network is trained to sequentially de-
+cide which edge pair we should select to do a
+deduction. Without training this network, only
+MCTS will help us to make the decisions, whose
+action distribution is given by the numbers of vis-
+its at all possible nodes. From Table 6 we acquire
+that although we are still able to recall the ground
+rules with rules extraction, the prediction accu-
+racy drastically decreases since the paths are not
+deducted in the correct order."
+ABLATION STUDIES,0.3994252873563218,"0
+2
+4
+6
+8
+Training Epoch 0.1 0.2 0.3 0.4"
+ABLATION STUDIES,0.40229885057471265,Test Accuracy
+ABLATION STUDIES,0.4051724137931034,Re 2 Test Accuracy vs. epochs
+ABLATION STUDIES,0.40804597701149425,"0
+2
+4
+6
+8
+Training Epoch 0.1 0.2 0.3 0.4 0.5 0.6 0.7"
+ABLATION STUDIES,0.4109195402298851,Rules Recall Rate
+ABLATION STUDIES,0.41379310344827586,Re 2 Rules Recall vs. epochs
+ABLATION STUDIES,0.4166666666666667,"R5
+R5_w/o_PVN
+R5, n=1"
+ABLATION STUDIES,0.41954022988505746,"Figure 3: Ablation study of R5 on Re 2 in terms of
+test accuracy and rules recall rate."
+ABLATION STUDIES,0.4224137931034483,"Pre-allocated Invented Relations.
+We pre-
+allocate n invented relations to allow a relation
+pair to deduct to an intermediate predicate when
+it still is unclear whether the relation pair can give
+us a correct rule. And the intermediate predicate
+will be tracked during the training until it is iden-
+tified as a known relation. Refer to Table 6, when
+we only allow a single invented relation, the pre-
+diction accuracy will drop, which indicates that the extra hidden relations improve the model’s ca-
+pability of learning complicated graphs. And in Re 2, where the training samples’ resolution lengths
+are greater than 2, the results catastrophically decrease. We evaluate the prediction accuracy and
+rules recall each training epoch. As shown in Figure 3, the model loses the induction ability at the
+early stage with only one intermediate predicate allowed. Once the first ground rule is extracted,
+more will be gradually learned, and finally the R5 with a single hidden predicate reaches the same
+rules recall rate as R5 with 50 hidden predicates. This figure proves that a number of pre-allocated
+invented relations can not only help to learn complicated graphs, but also speed up the convergence."
+RELATED WORK,0.42528735632183906,"4
+RELATED WORK"
+RELATED WORK,0.4281609195402299,"Graph Neural Networks and General Relation Prediction Tasks. Graph Convolutional Networks
+(GCNs) (Bruna et al., 2014; Li et al., 2016; Defferrard et al., 2016; Kipf & Welling, 2017) is a
+family of message-passing neural architectures designed for processing graph data. While most
+GCNs operate only with the entities and binary links, some recent works (Schlichtkrull et al., 2018;
+Sinha et al., 2020; Pan et al., 2020) are applicable on relational data where the relation types (i.e.,
+edge types) between entities (i.e., vertices) matters. The GCN-based models can capture lifted rules
+defined on the sets of entities and have presented good results on the node classification tasks (Sinha
+et al., 2020). However, since the lifted rules are implicitly encapsulated in the neural networks, these
+models are lack of interpretability."
+RELATED WORK,0.43103448275862066,"ILP, Neural-Symbolic Learning and Systematicity. Inductive Logic Programming (ILP) (Mug-
+gleton, 1992; Muggleton et al., 1996; Getoor, 2000; Evans & Grefenstette, 2018) is a subfield of
+symbolic rule learning, which learns logic rules derived from a limited and predefined set of rule
+templates. A traditional ILP system learns a set of rules from a collection of examples, which entails
+all the positives and none of the negatives. Such a system naturally provides interpretable explana-
+tions for labels prediction as well as being able to generalize to new tasks but is hard to scale up to"
+RELATED WORK,0.4339080459770115,Published as a conference paper at ICLR 2022
+RELATED WORK,0.4367816091954023,"the exponentially large space of compositional rules (Evans & Grefenstette, 2018; Yang et al., 2017)
+as the number of relations and entities increases. On the other hand, the relational path assumption
+suggests that there usually exist fixed-length paths of relations linking the set of terms (entities) that
+satisfy a target concept (Mooney, 1992). Under this assumption, Cropper & Muggleton (2015) re-
+duces the complexity of individual rules with the latent predicates. Statistical unfolded logic (SUL)
+(Dai & Zhou, 2016) searches for a relational feature set from relational space and grounded rela-
+tional paths, such that statistical learning approaches are applied to extract weighted logic rules.
+Using a statistical discriminative model, SUL also enables predicate invention."
+RELATED WORK,0.4396551724137931,"Neural-Symbolic models (Garcez et al., 2015; Besold et al., 2017) seek to integrate principles from
+neural networks learning and logical reasoning, among which Neural Logic Machines (NLMs)
+(Dong et al., 2018; Zimmer et al., 2021) and Theorem Provers (Rockt¨aschel & Riedel, 2017; Min-
+ervini et al., 2020a;b) attempt to overcome the problems of systematicity. The NLMs successfully
+show the systematicity for up to 50 entities on some selected decision-making tasks. However, in
+terms of relational reasoning on graphs, NLMs only consider the binary classification tasks. Al-
+though the links in the graphs have various types, for each task, NLMs predict the existence of a
+single relation type instead of concluding which type the relation is when there is one. When per-
+forming general relation prediction, NLMs have to create a number of tasks where each task predicts
+for a single relation type, making the total number of tasks grows as the number of relation types
+increases. As a result, NLMs are hard to scale up on relation prediction tasks."
+RELATED WORK,0.4425287356321839,"Theorem Provers, in particular the Conditional Theorem Provers (CTPs) (Minervini et al., 2020a;b),
+are capable of the relation prediction problem without the need to create a number of tasks. CTPs
+use templates equipped with a variety of selection modules to reformulate a given goal into sub-
+goals, and jointly learn representations and rules from data. However, the depth of the templates
+(refer to hops in their code) is limited, which influences the number of parameters of the model. In
+contrast, as explained in Section 2.1, R5 is able to handle the complicated rules where the allowed
+rule depth is much larger. That is because the rule depth is only related to the number of steps in an
+episode of the sequential decision-making process of R5, which does not touch the number of model
+parameters. We have also presented in Section 3.1 and 3.2 that R5 gives better relation prediction
+results on the systematicity tasks and shows better performance in terms of the rules recall."
+RELATED WORK,0.4454022988505747,"Relational Reasoning for Knowledge Base Completion. Many recent works propose a variety of
+relational reasoning models for efficient Knowledge Base Completion (KBC), which differs from
+what we are focusing on. These works include the embedding-based methods (Sun et al., 2019;
+Trouillon et al., 2017; Dettmers et al., 2017; Bordes et al., 2013), GNN-like methods (Teru et al.,
+2020; Mai et al., 2020), Neural-Symbolic Methods (Rockt¨aschel & Riedel, 2017; Minervini et al.,
+2020a;b; Qu et al., 2021), and RL Path-finding Agents (Xiong et al., 2017; Chen et al., 2018; Das
+et al., 2017; Lin et al., 2018; Shen et al., 2018). Most of them are designed for the transductive
+aspects instead of systematicity. Moreover, the KBC tasks can be treated as entity sorting problems,
+where the objective is ranking the tail entities given a query (h, r, ?) with head entity h and the
+relation r are given (Wang et al., 2021). KBC is different from the general relation prediction tasks
+investigated in this paper. It is also non-trivial to extend our research to tackle KBC tasks. Since the
+relation r is given in the query, rather than deciding the relation type between a head entity h and a
+candidate tail t* like what R5 might do, a better choice would be directly determining whether the
+single relation r exists between h and t* like what NLMs might be able to do. Therefore, we do not
+discuss R5’s performance on KBC tasks in this paper. Although non-trivial, surely it is worth trying
+to extend the main structure of R5 to KB. We leave this task to future works."
+CONCLUSION,0.4482758620689655,"5
+CONCLUSION"
+CONCLUSION,0.4511494252873563,"We propose R5, a framework that models relational reasoning as sequential decision-making. Our
+framework performs explicit and explainable relational reasoning with a design of state and action
+spaces based on pairs of relations. Besides, R5 performs rule induction with a dynamic rule memory
+module, which is updated during the training of an agent. We further incorporate hidden (invented)
+relations in our state and action spaces to help accelerate model training as well as improve rule
+mining. R5 exhibits high accuracy for relation prediction and a high recall rate for rule discovery, as
+has been demonstrated by extensive experimental results. We also show that R5 has a strong ability
+of systematicity and is robust to data noise."
+CONCLUSION,0.4540229885057471,Published as a conference paper at ICLR 2022
+REFERENCES,0.45689655172413796,REFERENCES
+REFERENCES,0.45977011494252873,"David Aldous and James Allen Fill. Reversible markov chains and random walks on graphs, 2002.
+Unfinished monograph, recompiled 2014, available at http://www.stat.berkeley.
+edu/$\sim$aldous/RWG/book.html."
+REFERENCES,0.46264367816091956,"Tarek R Besold, Artur d’Avila Garcez, Sebastian Bader, Howard Bowman, Pedro Domingos, Pas-
+cal Hitzler, Kai-Uwe K¨uhnberger, Luis C Lamb, Daniel Lowd, Priscila Machado Vieira Lima,
+et al.
+Neural-symbolic learning and reasoning: A survey and interpretation.
+arXiv preprint
+arXiv:1711.03902, 2017."
+REFERENCES,0.46551724137931033,"Antoine Bordes, Nicolas Usunier, Alberto Garc´ıa-Dur´an, J. Weston, and Oksana Yakhnenko. Trans-
+lating embeddings for modeling multi-relational data. In NIPS, 2013."
+REFERENCES,0.46839080459770116,"Joan Bruna, Wojciech Zaremba, Arthur Szlam, and Yann LeCun. Spectral networks and locally
+connected networks on graphs. In Yoshua Bengio and Yann LeCun (eds.), 2nd International
+Conference on Learning Representations, ICLR 2014, Banff, AB, Canada, April 14-16, 2014,
+Conference Track Proceedings, 2014."
+REFERENCES,0.47126436781609193,"Wenhu Chen, Wenhan Xiong, Xifeng Yan, and William Yang Wang. Variational knowledge graph
+reasoning. Proceedings of the 2018 Conference of the North American Chapter of the Association
+for Computational Linguistics: Human Language Technologies, Volume 1 (Long Papers), 2018.
+doi: 10.18653/v1/n18-1165. URL http://dx.doi.org/10.18653/v1/N18-1165."
+REFERENCES,0.47413793103448276,"Junyoung Chung, Caglar Gulcehre, KyungHyun Cho, and Yoshua Bengio. Empirical evaluation of
+gated recurrent neural networks on sequence modeling. arXiv preprint arXiv:1412.3555, 2014."
+REFERENCES,0.47701149425287354,"Andrew Cropper and Stephen H Muggleton.
+Logical minimisation of meta-rules within meta-
+interpretive learning. In Inductive Logic Programming, pp. 62–75. Springer, 2015."
+REFERENCES,0.47988505747126436,"Andrew Cropper, Sebastijan Dumanˇci´c, and Stephen H. Muggleton. Turning 30: New ideas in
+inductive logic programming. In Christian Bessiere (ed.), Proceedings of the Twenty-Ninth Inter-
+national Joint Conference on Artificial Intelligence, IJCAI-20, pp. 4833–4839. International Joint
+Conferences on Artificial Intelligence Organization, 7 2020. doi: 10.24963/ijcai.2020/673. URL
+https://doi.org/10.24963/ijcai.2020/673. Survey track."
+REFERENCES,0.4827586206896552,"Wang-Zhou Dai and Zhi-Hua Zhou.
+Statistical unfolded logic learning.
+In Geoffrey Holmes
+and Tie-Yan Liu (eds.), Asian Conference on Machine Learning, volume 45 of Proceedings
+of Machine Learning Research, pp. 349–361, Hong Kong, 20–22 Nov 2016. PMLR.
+URL
+https://proceedings.mlr.press/v45/Dai15.html."
+REFERENCES,0.48563218390804597,"Zhou Zhihua Dai Wangzhou.
+A survey on inductive logic programming.
+Journal of computer
+Research and Development, 56(1):138, 2019."
+REFERENCES,0.4885057471264368,"Rajarshi Das, Shehzaad Dhuliawala, Manzil Zaheer, Luke Vilnis, Ishan Durugkar, Akshay Krishna-
+murthy, Alex Smola, and Andrew McCallum. Go for a walk and arrive at the answer: Reasoning
+over paths in knowledge bases using reinforcement learning, 2017."
+REFERENCES,0.49137931034482757,"Micha¨el Defferrard, Xavier Bresson, and Pierre Vandergheynst. Convolutional neural networks on
+graphs with fast localized spectral filtering. In Daniel D. Lee, Masashi Sugiyama, Ulrike von
+Luxburg, Isabelle Guyon, and Roman Garnett (eds.), Advances in Neural Information Processing
+Systems 29: Annual Conference on Neural Information Processing Systems 2016, December 5-
+10, 2016, Barcelona, Spain, pp. 3837–3845, 2016."
+REFERENCES,0.4942528735632184,"Tim Dettmers, Pasquale Minervini, Pontus Stenetorp, and Sebastian Riedel.
+Convolutional 2d
+knowledge graph embeddings, 2017."
+REFERENCES,0.49712643678160917,"Honghua Dong, Jiayuan Mao, Tian Lin, Chong Wang, Lihong Li, and Denny Zhou. Neural logic
+machines. In International Conference on Learning Representations, 2018."
+REFERENCES,0.5,"Richard Evans and Edward Grefenstette. Learning explanatory rules from noisy data. Journal of
+Artificial Intelligence Research, 61:1–64, 2018."
+REFERENCES,0.5028735632183908,Published as a conference paper at ICLR 2022
+REFERENCES,0.5057471264367817,"Jerry Fodor and Brian P. McLaughlin.
+Connectionism and the problem of systematicity: Why
+smolensky’s solution doesn’t work.
+Cognition, 35(2):183–204, May 1990.
+ISSN 0010-
+0277.
+doi:
+10.1016/0010-0277(90)90014-b.
+URL http://dx.doi.org/10.1016/
+0010-0277(90)90014-B."
+REFERENCES,0.5086206896551724,"Jerry A. Fodor and Zenon W. Pylyshyn. Connectionism and cognitive architecture: A critical analy-
+sis. Cognition, 28(1-2):3–71, Mar 1988. ISSN 0010-0277. doi: 10.1016/0010-0277(88)90031-5.
+URL http://dx.doi.org/10.1016/0010-0277(88)90031-5."
+REFERENCES,0.5114942528735632,"Jianfeng Gao, Michel Galley, and Lihong Li. Neural approaches to conversational ai. In Proceedings
+of the 56th Annual Meeting of the Association for Computational Linguistics: Tutorial Abstracts,
+pp. 2–7, 2018."
+REFERENCES,0.514367816091954,"Artur d’Avila Garcez, Tarek R Besold, Luc De Raedt, Peter F¨oldiak, Pascal Hitzler, Thomas Icard,
+Kai-Uwe K¨uhnberger, Luis C Lamb, Risto Miikkulainen, and Daniel L Silver. Neural-symbolic
+learning and reasoning: contributions and challenges. In 2015 AAAI Spring Symposium Series,
+2015."
+REFERENCES,0.5172413793103449,"Lise Getoor.
+Learning probabilistic relational models.
+Abstraction, Reformulation, and Ap-
+proximation, pp. 322–323, 2000.
+ISSN 0302-9743.
+doi: 10.1007/3-540-44914-0 25.
+URL
+http://dx.doi.org/10.1007/3-540-44914-0_25."
+REFERENCES,0.5201149425287356,"ROBERT F. Hadley.
+Systematicity in connectionist language learning.
+Mind&Language, 9(3):
+247–272, September 1994. ISSN 1468-0017. doi: 10.1111/j.1468-0017.1994.tb00225.x. URL
+http://dx.doi.org/10.1111/J.1468-0017.1994.TB00225.X."
+REFERENCES,0.5229885057471264,"William L. Hamilton, Rex Ying, and Jure Leskovec. Inductive representation learning on large
+graphs, 2017."
+REFERENCES,0.5258620689655172,"Sepp Hochreiter and J¨urgen Schmidhuber. Long short-term memory. Neural computation, 9(8):
+1735–1780, 1997."
+REFERENCES,0.5287356321839081,"Alfred Horn. On sentences which are true of direct unions of algebras. Journal of Symbolic Logic,
+16(1):14–21, Mar 1951. ISSN 1943-5886. doi: 10.2307/2268661. URL http://dx.doi.
+org/10.2307/2268661."
+REFERENCES,0.5316091954022989,"Dieuwke Hupkes, Verna Dankers, Mathijs Mul, and Elia Bruni. Compositionality decomposed: how
+do neural networks generalise? Journal of Artificial Intelligence Research, 67:757–795, 2020."
+REFERENCES,0.5344827586206896,"Peter A. Jansen and Scott Watter. Strong systematicity through sensorimotor conceptual ground-
+ing: an unsupervised, developmental approach to connectionist sentence processing. Connection
+Science, 24(1):25–55, Mar 2012. ISSN 1360-0494. doi: 10.1080/09540091.2012.664121. URL
+http://dx.doi.org/10.1080/09540091.2012.664121."
+REFERENCES,0.5373563218390804,"Yoon Kim. Convolutional neural networks for sentence classification. Proceedings of the 2014
+Conference on Empirical Methods in Natural Language Processing (EMNLP), 2014. doi: 10.
+3115/v1/d14-1181. URL http://dx.doi.org/10.3115/v1/D14-1181."
+REFERENCES,0.5402298850574713,"Yoon Kim, Yacine Jernite, David Sontag, and Alexander M. Rush. Character-aware neural language
+models, 2015."
+REFERENCES,0.5431034482758621,"Thomas N. Kipf and Max Welling. Semi-supervised classification with graph convolutional net-
+works. In 5th International Conference on Learning Representations, ICLR 2017, Toulon, France,
+April 24-26, 2017, Conference Track Proceedings, 2017."
+REFERENCES,0.5459770114942529,"Yujia Li, Daniel Tarlow, Marc Brockschmidt, and Richard S. Zemel. Gated graph sequence neural
+networks. In Yoshua Bengio and Yann LeCun (eds.), 4th International Conference on Learning
+Representations, ICLR 2016, San Juan, Puerto Rico, May 2-4, 2016, Conference Track Proceed-
+ings, 2016."
+REFERENCES,0.5488505747126436,"Xi Victoria Lin, Richard Socher, and Caiming Xiong. Multi-hop knowledge graph reasoning with
+reward shaping. Proceedings of the 2018 Conference on Empirical Methods in Natural Language
+Processing, 2018. doi: 10.18653/v1/d18-1362. URL http://dx.doi.org/10.18653/
+v1/D18-1362."
+REFERENCES,0.5517241379310345,Published as a conference paper at ICLR 2022
+REFERENCES,0.5545977011494253,"Sijie Mai, Shuangjia Zheng, Yuedong Yang, and Haifeng Hu. Communicative message passing for
+inductive relation reasoning, 2020."
+REFERENCES,0.5574712643678161,"Pasquale Minervini, Matko Boˇsnjak, Tim Rockt¨aschel, Sebastian Riedel, and Edward Grefenstette.
+Differentiable reasoning on large knowledge bases and natural language. In Proceedings of the
+AAAI Conference on Artificial Intelligence, volume 34, pp. 5182–5190, 2020a."
+REFERENCES,0.5603448275862069,"Pasquale Minervini, Sebastian Riedel, Pontus Stenetorp, Edward Grefenstette, and Tim Rockt¨aschel.
+Learning reasoning strategies in end-to-end differentiable proving. In ICML, volume 119 of Pro-
+ceedings of Machine Learning Research, pp. 6938–6949. PMLR, 2020b."
+REFERENCES,0.5632183908045977,"Raymond J Mooney. Learning relations by pathfinding. In AAAI-92: Proceedings, Tenth National
+Conference on Artificial Intelligence; July 12-16, 1992, volume 10, pp. 50. Aaai Press, 1992."
+REFERENCES,0.5660919540229885,"Stephen Muggleton. Inductive logic programming. Number 38. Morgan Kaufmann, 1992."
+REFERENCES,0.5689655172413793,"Stephen Muggleton, Dianhuan Lin, and Alireza Tamaddoni-Nezhad. Meta-interpretive learning of
+higher-order dyadic datalog: predicate invention revisited. Machine Learning, 100:49–73, 01
+2015."
+REFERENCES,0.5718390804597702,"Stephen Muggleton et al. Stochastic logic programs. Advances in inductive logic programming, 32:
+254–264, 1996."
+REFERENCES,0.5747126436781609,"Liangming Pan, Yuxi Xie, Yansong Feng, Tat-Seng Chua, and Min-Yen Kan. Semantic graphs
+for generating deep questions. In Proceedings of the 58th Annual Meeting of the Association
+for Computational Linguistics, pp. 1463–1475, Online, July 2020. Association for Computa-
+tional Linguistics. doi: 10.18653/v1/2020.acl-main.135. URL https://www.aclweb.org/
+anthology/2020.acl-main.135."
+REFERENCES,0.5775862068965517,"Meng Qu, Junkun Chen, Louis-Pascal Xhonneux, Yoshua Bengio, and Jian Tang. {RNNL}ogic:
+Learning logic rules for reasoning on knowledge graphs. In International Conference on Learning
+Representations, 2021. URL https://openreview.net/forum?id=tGZu6DlbreV."
+REFERENCES,0.5804597701149425,"Tim Rockt¨aschel and Sebastian Riedel. End-to-end differentiable proving, 2017."
+REFERENCES,0.5833333333333334,"Eric Salvat and Marie-Laure Mugnier. Sound and complete forward and backward chainings of
+graph rules. In International Conference on Conceptual Structures, pp. 248–262. Springer, 1996."
+REFERENCES,0.5862068965517241,"Michael Schlichtkrull, Thomas N Kipf, Peter Bloem, Rianne Van Den Berg, Ivan Titov, and Max
+Welling. Modeling relational data with graph convolutional networks. In European semantic web
+conference, pp. 593–607. Springer, 2018."
+REFERENCES,0.5890804597701149,"Mike Schuster and Kuldip K Paliwal. Bidirectional recurrent neural networks. IEEE transactions
+on Signal Processing, 45(11):2673–2681, 1997."
+REFERENCES,0.5919540229885057,"Prithviraj Sen, Breno W. S. R. Carvalho, Ibrahim Abdelaziz, Pavan Kapanipathi, Francois Luus,
+Salim Roukos, and Alexander Gray. Combining rules and embeddings via neuro-symbolic ai for
+knowledge base completion, 2021."
+REFERENCES,0.5948275862068966,"Yelong Shen, Jianshu Chen, Po-Sen Huang, Yuqing Guo, and Jianfeng Gao. M-walk: learning
+to walk over graphs using monte carlo tree search. In Proceedings of the 32nd International
+Conference on Neural Information Processing Systems, pp. 6787–6798, 2018."
+REFERENCES,0.5977011494252874,"David Silver, Thomas Hubert, Julian Schrittwieser, Ioannis Antonoglou, Matthew Lai, Arthur Guez,
+Marc Lanctot, Laurent Sifre, Dharshan Kumaran, Thore Graepel, Timothy Lillicrap, Karen Si-
+monyan, and Demis Hassabis. Mastering chess and shogi by self-play with a general reinforce-
+ment learning algorithm, 2017a."
+REFERENCES,0.6005747126436781,"David Silver, Julian Schrittwieser, Karen Simonyan, Ioannis Antonoglou, Aja Huang, Arthur Guez,
+Thomas Hubert, Lucas Baker, Matthew Lai, Adrian Bolton, et al. Mastering the game of go
+without human knowledge. nature, 550(7676):354–359, 2017b."
+REFERENCES,0.603448275862069,"Koustuv Sinha, Shagun Sodhani, Jin Dong, Joelle Pineau, and William L. Hamilton. Clutrr: A
+diagnostic benchmark for inductive reasoning from text. Empirical Methods of Natural Language
+Processing (EMNLP), 2019."
+REFERENCES,0.6063218390804598,Published as a conference paper at ICLR 2022
+REFERENCES,0.6091954022988506,"Koustuv Sinha, Shagun Sodhani, Joelle Pineau, and William L. Hamilton. Evaluating logical gen-
+eralization in graph neural networks. 2020."
+REFERENCES,0.6120689655172413,"Zhiqing Sun, Zhi-Hong Deng, Jian-Yun Nie, and Jian Tang. Rotate: Knowledge graph embedding
+by relational rotation in complex space. arXiv preprint arXiv:1902.10197, 2019."
+REFERENCES,0.6149425287356322,"Komal Teru, Etienne Denis, and Will Hamilton. Inductive relation prediction by subgraph rea-
+soning. In Hal Daum´e III and Aarti Singh (eds.), Proceedings of the 37th International Con-
+ference on Machine Learning, volume 119 of Proceedings of Machine Learning Research, pp.
+9448–9457. PMLR, 13–18 Jul 2020. URL http://proceedings.mlr.press/v119/
+teru20a.html."
+REFERENCES,0.617816091954023,"Th´eo Trouillon, Christopher R. Dance, Johannes Welbl, Sebastian Riedel, ´Eric Gaussier, and Guil-
+laume Bouchard. Knowledge graph completion via complex tensor factorization, 2017."
+REFERENCES,0.6206896551724138,"Ke Tu, Peng Cui, Xiao Wang, Fei Wang, and Wenwu Zhu. Structural deep embedding for hyper-
+networks. In Thirty-Second AAAI Conference on Artificial Intelligence, 2018."
+REFERENCES,0.6235632183908046,"Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez,
+Lukasz Kaiser, and Illia Polosukhin. Attention is all you need, 2017."
+REFERENCES,0.6264367816091954,"Petar Veliˇckovi´c, Guillem Cucurull, Arantxa Casanova, Adriana Romero, Pietro Lio, and Yoshua
+Bengio. Graph attention networks. arXiv preprint arXiv:1710.10903, 2017."
+REFERENCES,0.6293103448275862,"Meihong Wang, Linling Qiu, and Xiaoli Wang. A survey on knowledge graph embeddings for link
+prediction. Symmetry, 13(3):485, 2021."
+REFERENCES,0.632183908045977,"Peifeng Wang, Jialong Han, Chenliang Li, and Rong Pan. Logic attention based neighborhood
+aggregation for inductive knowledge graph embedding. Proceedings of the AAAI Conference
+on Artificial Intelligence, 33:7152–7159, Jul 2019. ISSN 2159-5399. doi: 10.1609/aaai.v33i01.
+33017152. URL http://dx.doi.org/10.1609/aaai.v33i01.33017152."
+REFERENCES,0.6350574712643678,"Wenhan Xiong, Thien Hoang, and William Yang Wang. Deeppath: A reinforcement learning method
+for knowledge graph reasoning, 2017."
+REFERENCES,0.6379310344827587,"Fan Yang, Z. Yang, and William W. Cohen. Differentiable learning of logical rules for knowledge
+base reasoning. In NIPS, 2017."
+REFERENCES,0.6408045977011494,"Matthieu Zimmer, Xuening Feng, Claire Glanois, Zhaohui Jiang, Jianyi Zhang, Paul Weng, Li Dong,
+Hao Jianye, and Liu Wulong. Differentiable logic machines, 2021."
+REFERENCES,0.6436781609195402,Published as a conference paper at ICLR 2022
+REFERENCES,0.646551724137931,SUPPLEMENTARY MATERIALS
+REFERENCES,0.6494252873563219,"A
+DATASET STATISTICS AND IMPLEMENTATION DETAILS"
+REFERENCES,0.6522988505747126,"We have introduced R5 in Section 3. Due to the limited space, some implementation details are not
+covered. In this section, we explain the parameterization and implementation details of R5."
+REFERENCES,0.6551724137931034,"A.1
+DATASET STATISTICS"
+REFERENCES,0.6580459770114943,"The statistics of CLUTRR are summarized in Table 7, and the statistics of GraphLog are summarized
+in Table 8."
+REFERENCES,0.6609195402298851,Table 7: Statistics of CLUTRR datasets.
+REFERENCES,0.6637931034482759,"Dataset
+#relations
+#Train
+#Test"
+REFERENCES,0.6666666666666666,"CLUTRRk∈{2,3}
+22
+10,094
+900
+CLUTRRk∈{2,3,4}
+22
+15,083
+823"
+REFERENCES,0.6695402298850575,"Table 8: Statistics of GraphLog datasets. NC: number of classes. AN: average number of nodes. ND: number of
+distinct resolution edge sequences (distinct descriptors). ARL: average resolution length. AE: average number
+of edges."
+REFERENCES,0.6724137931034483,"World ID
+NC
+ND
+ARL
+AN
+AE
+#Train
+#Test"
+REFERENCES,0.6752873563218391,"World 2
+17
+157
+3.21
+9.8
+11.2
+5000
+1000
+World 3
+16
+189
+3.63
+11.1
+13.3
+5000
+1000
+World 13
+16
+149
+3.58
+11.2
+13.5
+5000
+1000
+World 17
+17
+147
+3.16
+8.16
+8.89
+5000
+1000
+World 30
+17
+177
+3.51
+10.3
+11.8
+5000
+1000"
+REFERENCES,0.6781609195402298,"World 6
+16
+249
+5.06
+16.3
+20.2
+5000
+1000
+World 7
+17
+288
+4.47
+13.2
+16.3
+5000
+1000
+World 8
+15
+404
+5.43
+16.0
+19.1
+5000
+1000
+World 11
+17
+194
+4.29
+11.5
+13.0
+5000
+1000
+World 32
+16
+287
+4.66
+16.3
+20.9
+5000
+1000"
+REFERENCES,0.6810344827586207,"Re 0
+12
+631
+3.91
+28.8
+72.9
+1000
+200
+Re 1
+12
+736
+5.19
+29.3
+71.5
+1000
+200
+Re 2
+11
+725
+3.82
+29.2
+73.0
+1000
+1000"
+REFERENCES,0.6839080459770115,"A.2
+HYPERPARAMETERS"
+REFERENCES,0.6867816091954023,"We use the following hyperparameters for all the datasets: epochs = 10, learning rate = 0.01, n = 50,
+ϵ = 0.003, v0 = 0.6, v1 = 0.3, v2 = -0.05, v3 = -0.1, v4 = -0.3, vT neg = -1, σ = -1.2, and vT pos = 0.1
+or 0.35 or 0.8 depending on the dataset we investigate. For example, since there is no simple data in
+Re 2, we use vT pos = 0.8 instead to encourage R5 to memorize uncertain rules."
+REFERENCES,0.6896551724137931,"A.3
+IMPLEMENTATION DETAILS"
+REFERENCES,0.6925287356321839,"We have mentioned the scoring scheme in Section 3.2. However, two optional hyperparameters are
+introduced, which can make sure the ground truth rules not be omitted due to large noise in datasets."
+REFERENCES,0.6954022988505747,"Recall that simple data are samples with a resolution length of 2, and the ground truth rules can
+naturally be collected from such data. To deduct such samples, R5 only needs one step. We give
+an extra simple true reward vtrue to the action to consolidate the corresponding rule in the memory.
+The other optional hyperparameter is a simple wrong allowance vwrong. It can be applied when the
+rule collected from a simple sample is not in accordance with the existing rule in the rule memory."
+REFERENCES,0.6982758620689655,"Besides, to speed up training, we sort all the training samples by their maximum resolution paths,
+and train in the ascending order of the maximum resolution path in the first epoch. Thus, some
+ground truth rules can be quickly collected from simple data at an early stage."
+REFERENCES,0.7011494252873564,"Published as a conference paper at ICLR 2022 X Y r2 r0 r1 r2
+r0 r2"
+REFERENCES,0.7040229885057471,Path 1
+REFERENCES,0.7068965517241379,"Path 2
+r2 r0 r2"
+REFERENCES,0.7097701149425287,r2 r0 r1
+REFERENCES,0.7126436781609196,Input Graph
+REFERENCES,0.7155172413793104,Paths between query nodes
+REFERENCES,0.7183908045977011,Relation pairs to state
+FEATURES,0.7212643678160919,2 features
+FEATURES,0.7241379310344828,Number of occurrence
+FEATURES,0.7270114942528736,"r0 r1 r2
+u r0 r1 r2 u 2 1
+1"
+FEATURES,0.7298850574712644,Whether in the obtained rules
+FEATURES,0.7327586206896551,"r0 r1 r2
+u r0 r1 r2 u 1"
+FEATURES,0.735632183908046,"Body 0 Body 1
+Head
+r2
+r0
+u
+u
+r1
+r0 Score"
+FEATURES,0.7385057471264368,"4.303
+-0.197"
+FEATURES,0.7413793103448276,Rules Hash Table
+FEATURES,0.7442528735632183,Path 1
+FEATURES,0.7471264367816092,"Path 2
+u
+r2 u
+r1"
+FEATURES,0.75,Paths between query nodes
+FEATURES,0.7528735632183908,Relation pairs to state
+FEATURES,0.7557471264367817,2 features
+FEATURES,0.7586206896551724,Number of occurrence
+FEATURES,0.7614942528735632,"r0r1 r2
+u r0 r1 r2 u
+1
+1"
+FEATURES,0.764367816091954,Whether in the obtained rules
+FEATURES,0.7672413793103449,"r0 r1 r2
+u r0 r1 r2 u
+1"
+FEATURES,0.7701149425287356,"Action: (r2,r0) -> u"
+FEATURES,0.7729885057471264,Figure 4: Illustration of the state and the state transition after taking an action.
+FEATURES,0.7758620689655172,"A.4
+AN EXAMPLE OF STATE TRANSITION IN THE DECISION-MAKING PROCESS"
+FEATURES,0.7787356321839081,"Figure 4 gives a trivial example to illustrate how the state is constructed and the state transition after
+applying an action. As shown in Figure 2 and Section 2.1, the state represents (m + n)(m + n)
+relation pairs and k features. In this trivial example, we consider m = 3, n = 1 and k = 2 for
+a reasoning task, which means there are m = 3 known relations, and n = 1 allocated invented
+relation, thus in total 4 × 4 = 16 relation pairs. We also consider the two features to be the number
+of occurrences and whether the relation pair is in the obtained rules. Please be noted that we only
+compute the state features for the relation pairs in the paths. This is why u, r1 →r0 is in the rules
+hash table but it is not counted when deciding whether a relation pair is in the obtained rules before
+taking the action."
+FEATURES,0.7816091954022989,"A.5
+EXTENDING TO COMPLEX DOMAINS"
+FEATURES,0.7844827586206896,"Handling ˆp ←pi. In Section 2 we explained that R5 realizes Horn clauses by firstly finding paths
+based on the query, and then omitting the entities and represent the long clauses by the composition
+of short clauses u ←pi ∧pj. We want to make a note here R5 is also able to represent the very
+short clause ˆp ←pi by adding a dummy relation rdm to the state described in Section 2.1, and the
+corresponding predicates will be pdm. Thus, ˆp ←pi can be represented by ˆp ←pi ∧pdm. This has
+been implemented in the code."
+FEATURES,0.7873563218390804,"Triadic Relations and Hyper-Networks. In this paper, we assume all rules are using the dyadic
+chain meta-rule template (Muggleton et al., 2015). However, R5 has the potential to handle triadic
+relations and hyper-networks. A hyper-network is formed by hyperedges, where a hyperedge refers
+to the relationship among data points that could go beyond pairwise, i.e., three or more objects are
+involved in each relation or predicate (Tu et al., 2018). Since R5 does not consider entities after paths
+are sampled, it naturally has the ability to handle hyperedges. For example, given two hyperedges
+r0(x0, x1, x2) and r1(x1, x2, x7), where xi are entities, part of the path can be r0, r1. However,
+hyperedges and hyper-networks is a different topic, which is not what we focus on in this paper. We
+have left this topic as future work."
+FEATURES,0.7902298850574713,"B
+AUGMENTING R5 WITH R-GCN"
+FEATURES,0.7931034482758621,"R5 makes predictions relying on the obtained rules. Different from the embedding-based methods,
+which can always return a relation type with the least loss, it is possible that R5 cannot give a known"
+FEATURES,0.7959770114942529,Published as a conference paper at ICLR 2022
+FEATURES,0.7988505747126436,"relation as the prediction with its logical knowledge. During testing, R5 may fail to find the body of
+a deduction step in the memory, or finally deduce into an invented relation. Neither is able to give
+a valid prediction. We define the invalid prediction ratio as the ratio that R5 fails to return a known
+relation."
+FEATURES,0.8017241379310345,Table 9: Results of augmenting R5 with R-GCN.
+FEATURES,0.8045977011494253,"Re 1
+Re 2
+World 32"
+FEATURES,0.8074712643678161,"R-GCN
+0.250
+0.371
+0.596
+R5
+0.590
+0.440
+0.899
+R5 + R-GCN
+0.640
+0.652
+0.947"
+FEATURES,0.8103448275862069,"When a human is not able to make decisions based
+on logic, he may need the help of intuition. Sim-
+ilarly, we combine R5 with R-GCN, a GNN-based
+model, which is not able to explicitly reason to make
+predictions (similar to a human’s intuition), to see if
+the results can be further improved when R5 is com-
+plemented by a GNN. Besides, R-GCN takes node
+embeddings into account, which may help to im-
+prove the predictions that require node properties."
+FEATURES,0.8132183908045977,"The R-GCN model is trained with the following hyperparameters: a learning rate of 0.001, a
+node/relation embedding dimension of 200, 20 training epochs, 4 layers, and a dropout rate of 0.1."
+FEATURES,0.8160919540229885,"Table 9 shows the results of augmenting R5 using R-GCN. And in the R5+R-GCN model, when R5
+fails to give a valid prediction, we use R-GCN to predict the target relation. The invalid prediction
+ratios of R5 for Re 1, Re 2, and World 32 are 0.26, 0.434, and 0.085 respectively. As presented in
+the table, the prediction accuracy can further be improved by augmenting R5 with R-GCN, i.e., the
+accuracies improve by 0.05, 0.212, and 0.048 on the three datasets, respectively, indicating that the
+reasoning provided by R5 and GNN-based approaches are complementary to each other."
+FEATURES,0.8189655172413793,"C
+RESULTS ON CLUTRR WITH HYPERPARAMETERS FINE-TUNED ON LONG
+STORIES"
+FEATURES,0.8218390804597702,"Table 10:
+Results on CLUTRR, trained on stories
+of lengths {2, 3} and evaluated on stories of lengths
+{4, ..., 10}.
+[∗] means the numbers are taken from
+CTP’s paper. [l] means fine-tuned on long stories."
+HOPS,0.8247126436781609,"4Hops
+5Hops
+6Hops
+7Hops
+8Hops
+9Hops 10Hops
+R5
+.98±.02 .99±.02 .98±.03 .96±.05 .97±.01 .98±.03 .97±.03
+CTPL
+∗
+.98±.02 .98±.03 .97±.05 .96±.04 .94±.05 .89±.07 .89±.07
+CTPA
+∗
+.99±.02 .99±.01 .99±.02 .96±.04 .94±.05 .89±.08 .90±.07
+CTPM
+∗.97±.03 .97±.03 .96±.06 .95±.06 .93±.05 .90±.06 .89±.06
+GNTP∗.49±.18 .45±.21 .38±.23 .37±.21 .32±.20 .31±.19 .31±.22
+GAT∗
+l
+.92±.01 .73±.04 .56±.04 .55±.04 .54±.03 .55±.04 .50±.04
+GCN∗
+l
+.84±.04 .61±.03 .51±.02 .48±.02 .45±.03 .47±.05 .41±.04
+RNN∗
+l
+.93±.03 .91±.03 .79±.08 .82±.06 .75±.11 .68±.07 .64±.07
+LSTM∗
+l
+1.0±.00 1.0±.00 .95±.03 .94±.04 .87±.08 .86±.08 .84±.09
+GRU∗
+l
+.92±.05 .88±.06 .78±.09 .77±.09 .74±.08 .66±.10 .65±.08
+CNNH∗
+l .94±.03 .86±.06 .77±.08 .72±.08 .64±.09 .59±.10 .59±.09
+CNN∗
+l
+.93±.04 .86±.07 .84±.09 .79±.08 .77±.10 .69±.09 .70±.11
+MHA∗
+l
+.81±.04 .76±.04 .74±.05 .70±.04 .69±.03 .64±.05 .67±.02"
+HOPS,0.8275862068965517,"Table 11: Results on CLUTRR, trained on stories of
+lengths {2, 3, 4} and evaluated on stories of lengths
+{5, ..., 10}.
+[∗] means the numbers are taken from
+CTP’s paper. [l] means fine-tuned on long stories."
+HOPS,0.8304597701149425,"5 Hops
+6 Hops
+7 Hops
+8 Hops
+9 Hops
+10 Hops
+R5
+.99±.02
+.99±.04
+.99±.03
+1.0±.02
+.99±.02
+.98±.03
+CTPL
+∗
+.99±.02
+.98±.04
+.97±.04
+.98±.03
+.97±.04
+.95±.04
+CTPA
+∗
+.99±.04
+.99±.03
+.97±.03
+.95±.06
+.93±.07
+.91±.05
+CTPM
+∗
+.98±.04
+.97±.06
+.95±.06
+.94±.08
+.93±.08
+.90±.09
+GNTP∗
+.68±.28
+.63±.34
+.62±.31
+.59±.32
+.57±.34
+.52±.32
+GAT∗
+l
+.98±.01
+.86±.04
+.79±.02
+.75±.03
+.73±.02
+.72±.03
+GCN∗
+l
+.88±.01
+.78±.02
+.60±.02
+.57±.02
+.59±.04
+.51±.02
+RNN∗
+l
+.96±.03
+.87±.09
+.82±.09
+.73±.09
+.65±.15
+.67±.16
+LSTM∗
+l
+1.0±.01
+.99±.02
+.96±.04
+.96±.04
+.94±.06
+.92±.07
+GRU∗
+l
+.96±.02
+.88±.03
+.84±.04
+.79±.06
+.75±.08
+.78±.04
+CNNH∗
+l
+1.0±.00
+.99±.01
+.96±.02
+.91±.04
+.89±.04
+.87±.04
+CNN∗
+l
+1.0±.00
+.98±.01
+.97±.02
+.92±.03
+.89±.03
+.87±.04
+MHA∗
+l
+.88±.03
+.83±.05
+.76±.04
+.72±.04
+.74±.05
+.70±.03"
+HOPS,0.8333333333333334,"D
+CASE STUDIES"
+HOPS,0.8362068965517241,"Table 12 and Table 13 present some examples of the recurrent relational reasoning process by R5
+on CLUTRR and GraphLog datasets. For verification, GraphLog provides the ground truth rules
+sets used to generate each dataset, and in Tables 13 and 14 we mark such ground truth rules in bold.
+As presented, R5 is able to discover the ground truth rules, and learn long compositional rules. In
+the second instance in Table 13, we have an invented relation unknown 44. With this intermediate
+relation introduced, we can get a clause with three atoms in its body, i.e., r 6←(r 9,r 3,r 9)."
+HOPS,0.8390804597701149,"Table 14 shows some examples that R5 falsely predicts the queried relations. In the first example,
+both rules used are in the set of ground truth rules, leading to a prediction of r 3 between the queried
+pair, which is different from the target relation r 13 provided in the test set. Furthermore, we find
+that there is no ground truth rule in this world to allow the prediction of r 13 by human deduction.
+Neither can R5 deduct r 13."
+HOPS,0.8419540229885057,Published as a conference paper at ICLR 2022
+HOPS,0.8448275862068966,Table 12: Detailed breakdowns of deduction steps by R5 on CLUTRR.
+HOPS,0.8477011494252874,"Target Relation
+Deduction steps (head ⇐body)"
+HOPS,0.8505747126436781,"Jason
+sister
+−−−−→Evelyn
+(Jason
+daughter
+−−−−−−→Stephanie) ⇐(Jason
+wife
+−−−→Ruth, Ruth
+daughter
+−−−−−−→Stephanie)"
+HOPS,0.853448275862069,"(Jason
+sister
+−−−−→Evelyn) ⇐(Jason
+daughter
+−−−−−−→Stephanie, Stephanie
+aunt
+−−−→Evelyn)"
+HOPS,0.8563218390804598,"Jeff
+aunt
+−−−→Cristina"
+HOPS,0.8591954022988506,"(Jeff
+mother
+−−−−−→Ruth) ⇐(Jeff
+sister
+−−−−→Gloria, Gloria
+mother
+−−−−−→Ruth)"
+HOPS,0.8620689655172413,"(Jason
+sister
+−−−−→Cristina) ⇐(Jason
+daughter
+−−−−−−→Stephanie, Stephanie
+aunt
+−−−→Cristina)
+(Ruth
+sister
+−−−−→Cristina) ⇐(Ruth
+husband
+−−−−−→Jason, Jason
+sister
+−−−−→Cristina)
+(Jeff
+aunt
+−−−→Cristina) ⇐(Jeff
+mother
+−−−−−→Ruth, Ruth
+sister
+−−−−→Cristina)"
+HOPS,0.8649425287356322,"Carmelita
+son−in−law
+−−−−−−−−→Chuck"
+HOPS,0.867816091954023,"(Peter
+sister
+−−−−→Brandi) ⇐(Peter
+brother
+−−−−−→Michael, Michael
+sister
+−−−−→Brandi)
+(Mark
+sister
+−−−−→Brandi) ⇐(Mark
+brother
+−−−−−→Peter, Peter
+sister
+−−−−→Brandi)"
+HOPS,0.8706896551724138,"(Carmelita
+grandson
+−−−−−−→Mark) ⇐(Carmelita
+daughter
+−−−−−−→Martha, Martha
+son
+−−→Mark)"
+HOPS,0.8735632183908046,"(Carmelita
+granddaughter
+−−−−−−−−−−→Brandi) ⇐(Carmelita
+grandson
+−−−−−−→Mark, Mark
+sister
+−−−−→Brandi)"
+HOPS,0.8764367816091954,"(Carmelita
+daughter
+−−−−−−→Elizabeth) ⇐(Carmelita
+granddaughter
+−−−−−−−−−−→Brandi, Brandi
+aunt
+−−−→Elizabeth)"
+HOPS,0.8793103448275862,"(Carmelita
+son−in−law
+−−−−−−−−→Chuck) ⇐(Carmelita
+daughter
+−−−−−−→Elizabeth, Elizabeth
+husband
+−−−−−→Chuck)"
+HOPS,0.882183908045977,Table 13: Detailed breakdowns of deduction steps by R5 on GraphLog.
+HOPS,0.8850574712643678,"Target Relation
+Deduction steps r 16"
+HOPS,0.8879310344827587,"r 2 ⇐(r 3, r 13)
+r 1 ⇐(r 2, r 20)
+r 9 ⇐(r 3, r 6)
+r 5 ⇐(r 1, r 9)
+r 7 ⇐(r 5, r 6)
+r 16 ⇐(r 2, r 7) r 6"
+HOPS,0.8908045977011494,"r 2 ⇐(r 3, r 13)
+r 1 ⇐(r 2, r 20)
+r 3 ⇐(r 1, r 20)
+unknown 44 ⇐(r 3, r 9)
+r 6 ⇐(r 3, r 3)
+r 9 ⇐(r 3, r 6)
+r 6 ⇐(r 9, unknown 44)"
+HOPS,0.8936781609195402,Table 14: Wrong relation predictions by R5 on GraphLog.
+HOPS,0.896551724137931,"Target Relation
+Prediction
+Deduction steps"
+HOPS,0.8994252873563219,"r 13
+r 3
+r 6 ⇐(r 20, r 13)
+r 3 ⇐(r 16, r 6)"
+HOPS,0.9022988505747126,"r 5
+r 18
+r 19 ⇐(r 15, r 8)
+r 17 ⇐(r 19, r 4)
+r 18 ⇐(r 8, r 17)"
+HOPS,0.9051724137931034,"In the second example, all the three rules learned by R5 are ground truth rules, enabling us to
+predict r 18 from the resolution path [r 8,r 15,r 8,r 4]. Yet, r 18, although correct, does
+not exactly match the target relation r 5 provided by the test set. We note that there is not any
+ground truth rule provided by the dataset whose head is r 5."
+HOPS,0.9080459770114943,"However, R5 has also learnt an additional rule from the training samples headed to r 5:"
+HOPS,0.9109195402298851,"r 5←(r 8,r 18),
+(5)"
+HOPS,0.9137931034482759,"which is not in the set of ground truth rules. With Rule (5), we have another sequence of deductions
+that can lead to r 5 from the resolution path [r 8,r 15,r 8,r 4]:"
+HOPS,0.9166666666666666,"r 10←(r 8,r 4),
+r 18←(r 15,r 10),
+r 5←(r 8,r 18),
+(6)"
+HOPS,0.9195402298850575,"where the first two rules in bold are in the ground truth rules, while the third is not."
+HOPS,0.9224137931034483,Published as a conference paper at ICLR 2022
+HOPS,0.9252873563218391,"Since there are two valid relation types r 5 and r 18 between the queried node pair, R5 may not
+be able to tell which one should be selected without knowledge of the entities. This is an example
+where the entity properties may help with logical inference."
+HOPS,0.9281609195402298,"E
+DISCUSSIONS ON SOME KB REASONING WORKS"
+HOPS,0.9310344827586207,"As discussed in Section 4, KB reasoning is not what we focus on. However, R5 has some strength
+compared with some of the existing KB relational learning works. Yang et al. (2017) learns the rules
+in the form query(Y,X) ←Rn(Y,Zn) ∧· · · ∧R1(Z1, X), where each predicate strictly contains
+2 entities. Whereas, R5 is able to consider predicates with any number of entities as explained in
+Appendix A.5."
+HOPS,0.9339080459770115,"Moreover, many RL Path-finding Agents (Xiong et al., 2017; Chen et al., 2018; Das et al., 2017; Lin
+et al., 2018; Shen et al., 2018) are proposed for KB reasoning. The major challenges for these works
+include the sparse rewards. For example, at each step of decision-making, Shen et al. (2018) selects
+neighbouring edges at the current node, and follows the edges to the next node. Termination occurs
+when the agent gives a “STOP” action instead of selecting the next neighbouring edge. The termi-
+nation criterion is unclear, which is one of the important reasons for the sparse reward. In contrast,
+the MCTS in R5 guarantees that only the feasible relation pairs can be selected. Termination occurs
+when reduced to a single relation. The criterion is clear."
+HOPS,0.9367816091954023,"However, R5 faces some challenges to generalize to KB reasoning. Apart from the ones mentioned
+in Section 4, currently, R5 does not generate probabilities or scores for a prediction, which is not
+capable of KB Completion since KB Completion is actually a set of ranking tasks. Besides, R5
+requires pre-sampling for the paths that entails the query. Since all the triples in a Knowledge Graph
+share the same training graph, which is usually very large, it will take a long time to enumerate all
+the paths. If we choose not to perform enumeration and sample some paths instead, the sampling
+method is also a topic that needs to be investigated. Due to these challenges, we leave the application
+to KB as future work."
+HOPS,0.9396551724137931,"F
+COMPARISON WITH NEURAL-LP AND RNNLOGIC"
+HOPS,0.9425287356321839,"Neural-LP (Yang et al., 2017) is a neural logic programming method and RNNLogic (Qu et al., 2021)
+is a principled probabilistic method, where both of the two approaches are designed for Knowledge
+Base Completion (KBC) problems. These methods requires enumeration of all possible rules given
+a max rule length T. Thus, the complexity of these models grows exponentially as max rule length
+increases, which is an outstanding disadvantage for systematicity problems."
+HOPS,0.9454022988505747,Table 15: Comparison with Neural-LP and RNNLogic.
+HOPS,0.9482758620689655,"Model
+GraphLog World 17
+GraphLog Re 0"
+HOPS,0.9511494252873564,"R5
+0.947
+0.665
+Neural-LP
+0.057
+0.080
+RNNLogic w/o emb
+0.606
+0.348"
+HOPS,0.9540229885057471,"We tweaked the code of RNNLogic, which was originally designed for entity ranking, to predict
+and rank relation r given (h, ?, t) on GraphLog. The results are shown in Table 15. One issue we
+observed was that we were only able to run RNNLogic with max rule length T up to 7 on a powerful
+server, beyond which there was out-of-memory issue. (For instance, setting T = 6 for RNNLogic
+on GraphLog Re 0 requires more than 130 G memory.) We report its best result in Table 15, which
+is achieved when T = 5. It is shown that R5 substantially outperforms RNNLogic, which is in fact
+not designed for this task. Similarly we revised NeurlLP to make it work for the relation prediction
+prediction task. But unfortunately, it didn’t work well with a relation prediction accuracy of less
+than 10%."
+HOPS,0.9568965517241379,Published as a conference paper at ICLR 2022
+HOPS,0.9597701149425287,"G
+EXTRA FEATURES TO RECORD THE MAX/MIN NUMBER OF
+OCCURRENCES AMONG PATHS."
+HOPS,0.9626436781609196,Table 16: Comparison with max/min number of occurrences among path added to features.
+HOPS,0.9655172413793104,"Model
+GraphLog World 17
+GraphLog Re 0"
+HOPS,0.9683908045977011,"R5
+0.947
+0.665
+R5 with extra features
+0.941
+0.673"
+HOPS,0.9712643678160919,"H
+NUMBER OF PRE-ALLOCATED INVENTED RELATIONS"
+HOPS,0.9741379310344828,"0
+10
+20
+30
+40
+50
+number of pre-allocated invented relations 0.88 0.89 0.90 0.91 0.92 0.93 0.94 0.95"
+HOPS,0.9770114942528736,Test accuracy
+HOPS,0.9798850574712644,Performance changes in terms of n on World 17
+HOPS,0.9827586206896551,"Figure 5: The test accuracy as the number of pre-
+allocated invented relations varies for World 17 in
+GraphLog."
+HOPS,0.985632183908046,"0
+10
+20
+30
+40
+50
+number of pre-allocated invented relations 0.56 0.58 0.60 0.62 0.64 0.66 0.68 0.70"
+HOPS,0.9885057471264368,Test accuracy
+HOPS,0.9913793103448276,Performance changes in terms of n on Re 0
+HOPS,0.9942528735632183,"Figure 6:
+The test accuracy as the number of
+pre-allocated invented relations varies for Re 0 in
+GraphLog."
+HOPS,0.9971264367816092,"In this paper, we have introduced n pre-allocated invented relations to capture the intermediate short
+rules during the decision-making procedure. For example, r1, r2, r3 →r can be decomposed into
+(r1, r2 →invented0), (invented0, r3 →r). The details can be found in Section 2.2. To choose n,
+we conduct experiments on two GraphLog datasets, World 17 and Re 0, as n varies. We use the
+parameters listed in Appendix A.2, except that 5 training epochs are used instead of 10 to speed up
+training. As presented in Figure 5 and Figure 6, R5 is able to get a near optimal performance even
+when n is small. But as n becomes larger, there is a general trend that the performance can be more
+stable. Intuitively, a small n makes the dynamic memory replace the invented (unknown) relations
+more frequently as new invented relations appear, slowing down the convergence (as we discussed
+in Section 3.3). Therefore, in our experiments, as computational resources permit, we set n to be 50
+for all the datasets. However, if a small n is required in practice, we can also use a validation set to
+select some n that is sufficient for each specific dataset."

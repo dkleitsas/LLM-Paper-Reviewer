@@ -1,0 +1,3567 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.0012626262626262627,"We consider a context-dependent Reinforcement Learning (RL) setting, which is
+characterized by: a) an unknown ﬁnite number of not directly observable contexts;
+b) abrupt (discontinuous) context changes occurring during an episode; and c)
+Markovian context evolution. We argue that this challenging case is often met in
+applications and we tackle it using a Bayesian model-based approach and varia-
+tional inference. We adapt a sticky Hierarchical Dirichlet Process (HDP) prior for
+model learning, which is arguably best-suited for inﬁnite Markov chain modeling.
+We then derive a context distillation procedure, which identiﬁes and removes spuri-
+ous contexts in an unsupervised fashion. We argue that the combination of these
+two components allows inferring the number of contexts from data thus dealing
+with the context cardinality assumption. We then ﬁnd the representation of the
+optimal policy enabling efﬁcient policy learning using off-the-shelf RL algorithms.
+Finally, we demonstrate empirically (using gym environments cart-pole swing-up,
+drone, intersection) that our approach succeeds where state-of-the-art methods of
+other frameworks fail and elaborate on the reasons for such failures."
+INTRODUCTION,0.0025252525252525255,"1
+INTRODUCTION"
+INTRODUCTION,0.003787878787878788,"Our world becomes more automated every day with the development of self-driving cars, robotics,
+and unmanned factories. Many of these automation processes rely on solutions to sequential decision-
+making problems. Reinforcement Learning (RL) has recently been shown to be an effective tool
+for solving such problems achieving notable successes, e.g., solving Atari games (Mnih et al.,
+2013), defeating the (arguably all-time) best human players in the game of GO (Silver et al., 2016),
+accelerating robot skill acquisition (Kober et al., 2013). Most of the successful RL algorithms rely
+on abstracting the sequential nature of the decision-making as Markov Decision Processes (MDPs),
+which typically assume both stationary transition dynamics and reward functions."
+INTRODUCTION,0.005050505050505051,"As classic RL departs a well-behaved laboratory setting, stationarity assumptions can quickly be-
+come prohibitive, sometimes leading to catastrophic consequences. As an illustration, imagine an
+autonomous agent driving a vehicle with changing weather conditions impacting visibility and tyre
+grip. The agent must identify and quickly adapt to these weather conditions changes in order to
+avoid losing control of the vehicle. Similarly, an unmanned aerial vehicle hovering around a ﬁxed
+set of coordinates needs to deal with sudden atmospheric condition changes (e.g., wind, humidity
+etc). Another similar and realistic example is an actuator failure, which changes how the action
+affects the MDP. Following Menke & Maybeck (1995) we distinguish “soft” (a percentage drop in
+action efﬁciency) and “hard” (action is not affecting the MDP) failures. The failures can also be
+dynamic as a “soft” failure in one actuator can overload other actuators introducing a chain of failures.
+An environment with a ﬁxed weather condition or an actuator failure can be modeled as an MDP,
+however, with the changing weather or arising failures the environment becomes non-stationary."
+INTRODUCTION,0.006313131313131313,∗equal contribution
+INTRODUCTION,0.007575757575757576,Published as a conference paper at ICLR 2022
+INTRODUCTION,0.008838383838383838,"We can model this type of environments by making MDP state transitions dependant on the context
+variable, which encapsulates the non-stationary and/or other dependencies. This kind of contextual
+Markov Decision Processes (C-MDPs) incorporate a number of different RL settings and RL frame-
+works (Khetarpal et al., 2020): non-stationary RL, where the context changes over time and the agent
+needs to adapt to the context (e.g., the weather conditions are slowly changing over time); continual
+and/or meta RL, where the context is sampled from a distribution before the start of the episode (e.g,
+the weather changes abruptly between the instances the vehicle has been deployed)."
+INTRODUCTION,0.010101010101010102,"Although a signiﬁcant progress in solving speciﬁc instances of C-MDPs has been made, the setting
+with a countable number of contexts with Markovian transitions between the contexts has not received
+sufﬁcient attention in the literature — a gap we are aiming to ﬁll. The closest related works consider
+only special cases of our setting assuming: no context transitions (Xu et al., 2020); Markovian
+context transitions with a priori known context transition times (Xie et al., 2020); ﬁnite state-action
+spaces (Choi et al., 2000). To enable sample efﬁcient context adaptation Xu et al. (2020) and Xie
+et al. (2020) developed model-based reinforcement learning algorithms. Speciﬁcally, Xie et al.
+(2020) learned a latent space variational auto-encoder model with Markovian evolution in continuous
+context-space, while Xu et al. (2020) adopted a Gaussian Process model for MDPs and a Dirichlet
+process (DP) prior to detect context changes without modeling the context evolution. Note the DP
+prior, which is a conjugate prior for a categorical distribution, is not sufﬁcient to model context
+transitions. We also propose a model-based RL algorithm, however, we model the context and state
+transitions using the Hierarchical Dirichlet Process (HDP) (Teh et al., 2006; Fox et al., 2008a) prior
+and a neural network with outputs parametrizing a Guassian distribution (i.e., its mean and variance),
+respectively, and refer to the model as HDP-C-MDP. We chose the HDP prior since it only requires
+the knowledge of an upper bound on context cardinality for tractable inference, and it is better suited
+for Markov chain modeling than other priors (Teh et al., 2006). Inspired by Blei et al. (2006) we
+derive a model learning algorithm using variational inference, which is amenable to RL applications
+using off-the-shelf algorithms."
+INTRODUCTION,0.011363636363636364,"Our algorithm relies on two theoretical results: a) we propose a context distillation procedure (i.e.,
+removing spurious contexts); b) we show that the optimal policy depends on the context belief
+(context posterior probability given past observations). We derive another theoretical result, which
+shows performance improvement bounds for the fully observable context case. Equipped with these
+results, we experimentally demonstrate that we can infer the true context cardinality from data.
+Further, the context distillation procedure can be used during training as a regularizer. Interestingly, it
+can also be used to merge similar contexts, where the measure of similarity is only implicitly deﬁned
+through the learning loss. Thus context merging is completely unsupervised. We then show that our
+model learning algorithm appears to provide an optimization proﬁle with fewer local optima than the
+maximum likelihood approach, which we attribute to the Bayesian nature of our algorithm. Finally,
+we illustrate RL applications on an autonomous car left turn and an autonomous drone take-off tasks.
+We also demonstrate that state-of-the-art algorithms of different frameworks (such as continual RL
+and Partially-Observable Markov Decision Processes (POMDPs)) fail to solve C-MDPs in our setting,
+and we elaborate on potential reasons why this is the case."
+PROBLEM FORMULATION AND RELATED WORK,0.012626262626262626,"2
+PROBLEM FORMULATION AND RELATED WORK"
+PROBLEM FORMULATION AND RELATED WORK,0.013888888888888888,"We deﬁne a contextual Markov Decision Process (C-MDP) as a tuple Mc = ⟨C, S, A, PC, PS, R, γd⟩,
+where S is the continuous state space; A is the action space; γd ∈[0, 1] is the discount factor; and C
+denotes the context set with cardinality |C|. In our setting, the state transition and reward function
+depend on the context, i.e., PS : C × S × A × S →[0, 1], R : C × S × A →R. Finally, the
+context distribution probability PC : Tt × C →[0, 1] is conditioned on Tt - the past states, actions and
+contexts {s0, a0, c0, . . . , at−1, ct−1, st}. Our deﬁnition is a generalization of the C-MDP deﬁnition
+by Hallak et al. (2015), where the contexts are stationary, i.e., PC : C →[0, 1]. We adapt our
+deﬁnition in order to encompass all the settings presented by Khetarpal et al. (2020), where such
+C-MDPs were used but not formally deﬁned."
+PROBLEM FORMULATION AND RELATED WORK,0.015151515151515152,"Throughout the paper, we will restrict the class of C-MDPs by making the following assumptions:
+(a) Contexts are unknown and not directly observed (b) Context set cardinality is ﬁnite and
+we know its upper bound K; (c) Contexts switches can occur during an episode and they are
+Markovian. In particular, we consider the contexts ck representing the parameters of the state"
+PROBLEM FORMULATION AND RELATED WORK,0.016414141414141416,Published as a conference paper at ICLR 2022
+PROBLEM FORMULATION AND RELATED WORK,0.017676767676767676,"transition function θk, and the context set C to be a subset of the parameter space Θ. To deal with
+uncertainty, we consider a set eC such that: a) | eC| = K > |C|; b) all its elements θk ∈eC are sampled
+from a distribution H(λ), where λ is a hyper-parameter. Let zt ∈[1, . . . , K) be the index variable
+pointing toward a particular parameter vector θzt, which leads to:"
+PROBLEM FORMULATION AND RELATED WORK,0.01893939393939394,"z1 | ρ0 ∼Cat(ρ0),
+zt | zt−1, {ρj}| e
+C|
+j=1 ∼Cat(ρzt−1),"
+PROBLEM FORMULATION AND RELATED WORK,0.020202020202020204,"st | st−1, at−1, zt, {θk}| e
+C|
+k=1 ∼p(st|st−1, at−1, θzt),
+θk | λ ∼H(λ), t ≥1,
+(1)"
+PROBLEM FORMULATION AND RELATED WORK,0.021464646464646464,"where ρ0 is the initial context distribution, while R = [ρ1, ..., ρ| e
+C|] represents the context transition
+operator."
+PROBLEM FORMULATION AND RELATED WORK,0.022727272727272728,"As the reader may notice our model is tailored to the case, where the model parameters change
+abruptly due to external factors such as weather conditions, cascading actuator failures etc. The
+change is formalized by a Markov variable zt, which changes the MDP parameters θzt. Our approach
+can also be related to switching systems modeling (cf. Fox et al. (2008a); Becker-Ehmck et al. (2019);
+Dong et al. (2020)) and in this case the context is representing the system’s mode. While we can
+draw parallels with these works, we improve the model by using nonlinear dynamics (in comparison
+to Becker-Ehmck et al. (2019); Fox et al. (2008a)), by using the HDP prior (Becker-Ehmck et al.
+(2019); Dong et al. (2020) use maximum likelihood estimators), and ﬁnally, by proposing the
+distillation procedure and using deep learning (in comparison to Fox et al. (2008a)). Also note that
+typically a switching system aims to represent a complex nonlinear (Markov) model using a collection
+of simpler (e.g., linear) models, which is different from our case. Other restrictions on the space of
+C-MDPs lead to different problems and solutions (Khetarpal et al., 2020). We brieﬂy mention a few
+notable cases, while relegating a detailed discussion to Appendix A. Assuming that the context is
+deterministic with zt = t puts us in the non-stationary RL setting (cf. Chandak et al. (2020)), where
+it is common to assume a slowly or smoothly changing non-stationarity as opposed to our case of
+possibly abrupt changes. Restricting the context to a stationary distribution sampled in speciﬁc time
+points (e.g., at the start of the episode) can be tackled from the continual RL (cf. Nagabandi et al.
+(2018)) and meta-RL perspectives (cf. Finn et al. (2017)), but both are not designed to handle the
+Markovian context case. Finally, our C-MDP can be seen as a POMDP. Recall that a POMDP is
+deﬁned by a tuple Mpo = {X, A, O, PX , PO, R, γd, p(x0)}, where X, A, O are the state, action,
+observation spaces, respectively; PX : X × A × X →[0, 1] is the state transition probability;
+PO : X × A × O →[0, 1] is the conditional observation probability; and p(x0) is the initial state
+distribution. In our case, x = (s, z) and o = s."
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.023989898989898988,"3
+REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.025252525252525252,"There are three main components in our algorithm: the HDP-C-MDP derivation, the model learning
+algorithm using probabilistic inference and the control algorithms. We ﬁrstly brieﬂy comment on
+each on these components to give an overview of the results and then explain our main contributions
+to each. The detailed description of all parts of our approach can be found in Appendix."
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.026515151515151516,"In order to learn the model of the context transitions, we choose the Bayesian approach and we
+employ Hierarchical Dirichlet Processes (HDP) as priors for context transitions, inspired by time-
+series modeling and analysis tools reported by Fox et al. (2008a;b) (see also Appendix C.1). We
+improve the model by proposing a context spuriosity measure allowing for reconstruction of ground
+truth contexts. We then derive a model learning algorithm using probabilistic inference. Having a
+model, we can take off-the-shelf algorithms such as a Model Predictive Control (MPC) approach
+using Cross-Entropy Minimization (CEM) (cf. Chua et al. (2018) and Appendix C.5), or a policy-
+gradient approach Soft-actor critic (SAC) (cf. Haarnoja et al. (2018) and Appendix C.6), which are
+both well-suited for model-based reinforcement learning. While MPC can be directly applied to our
+model, for policy-based control we ﬁrst derive the representation of the optimal policy."
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.027777777777777776,"Generative model: HDP-C-MDP. Before presenting our probabilistic model, let us develop some
+necessary tools. A Dirichlet process (DP), denoted as DP(γ, H), is characterized by a concentration
+parameter γ and a base distribution H(λ) deﬁned over the parameter space Θ. A sample G from
+DP(γ, H) is a probability distribution satisfying (G(A1), ..., G(Ar)) ∼Dir(γH(A1), ..., γH(Ar))
+for every ﬁnite measurable partition A1, ..., Ar of Θ, where Dir denotes the Dirichlet distribution."
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.02904040404040404,Published as a conference paper at ICLR 2022
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.030303030303030304,"Sampling G is often performed using the stick-breaking process (Sethuraman, 1994) and constructed
+by randomly mixing atoms independently and identically distributed samples θk from H:"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.03156565656565657,"νk ∼Beta(1, γ),
+βk = νk k−1
+Y"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.03282828282828283,"i=1
+(1 −νi),
+G = ∞
+X"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.03409090909090909,"k=1
+βkδθk,
+(2)"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.03535353535353535,"where δθk is the Dirac distribution at θk. We note that the stick-breaking procedure assigns progres-
+sively smaller values to βk for large k, thus encouraging a smaller number of meaningful atoms. The
+Hierarchical Dirichlet Process (HDP) is a group of DPs sharing a base distribution, which itself is a
+sample from a DP: G ∼DP(γ, H), Gj ∼DP(α, G) for all j = 0, 1, 2, . . . (Teh et al., 2006). The
+distribution G guarantees that all Gj inherit the same set of atoms, i.e., atoms of G, while keeping the
+beneﬁts of DPs in the distributions Gj. It can be shown that Gj = P∞
+k=0 ρjkδθk for some ρjk whose
+sampling can be performed using another stick-breaking process (Teh et al., 2006). We consider its
+modiﬁed version introduced by Fox et al. (2011):"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.036616161616161616,"µjk | α, κ, β ∼Beta "
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.03787878787878788,"αβk + κ˜δjk, α + κ − k
+X"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.039141414141414144,"i=1
+αβi + κ˜δji !!"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.04040404040404041,", ρjk = µjk k−1
+Y"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.041666666666666664,"i=1
+(1 −µji),"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.04292929292929293,"(3)
+where k
+≥
+1, j
+≥
+0, ˜δjk is the Kronecker delta, the parameter κ
+≥
+0, called the
+sticky factor, modiﬁes the transition matrix priors encouraging self-transitions. The sticky fac-
+tor serves as another measure of regularization reducing the average number of transitions."
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.04419191919191919,Figure 1: HDP-C-MDP
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.045454545454545456,"In our case, the atoms {θk} forming the context
+set eC are sampled from H(λ), while ρjk are the
+parameters of the Hidden Markov Model: ρ0
+is the initial context distribution and ρj are the
+rows in the transition matrix R. Our probabilis-
+tic model is constructed in Equations 1,2,3 and
+illustrated in Figure 1 as a graphical model. We
+stress that the HDP in its stick-breaking con-
+struction assumes that | eC| is inﬁnite and count-
+able. In practice, however, we incorporate the
+upper cardinality bound K by using a truncated
+variational distribution, as explained later."
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.04671717171717172,"Context Distillation. HDP-C-MDP promotes a small number of meaningful contexts and some
+contexts will almost surely be spurious, i.e., we will transition to these contexts with a very small
+probability. While this probability is small we may still need to explicitly remove these spurious
+contexts. Here we propose a measure of context spuriosity and derive a distillation procedure
+removing these spurious contexts. As a spuriosity measure we will use the stationary distribution
+of the chain p∞, which is computed by solving p∞= p∞R. The distillation is then performed
+as follows: if in stationarity the probability mass of a context is smaller than a threshold εdistil
+then transitioning to this context is unlikely and it can be removed. We develop the corresponding
+distilled Markov chain in the following result, which we prove in Appendix B.1, while the distillation
+algorithm can be found in Appendix C.4."
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.047979797979797977,"Theorem 1 Consider a Markov chain pt = pt−1R with a stationary distribution p∞and distilled
+I1 = {i|p∞
+i
+≥εdistil} and spurious I2 = {i|p∞
+i
+< εdistil} state indexes, respectively. Then a) the
+matrix b
+R = RI1,I1 + RI1,I2(I −RI2,I2)−1RI2,I1 is a valid probability transition matrix; b) the
+Markov chain bpt = bpt−1 b
+R is such that its stationary distribution bp∞∝p∞
+I1."
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.04924242424242424,"Model Learning using Probabilistic Inference. We aim to ﬁnd a variational distribution q(ν, µ, θ)
+to approximate the true posterior p(ν, µ, θ|D), for a dataset D = {(si, ai)}N
+i=1, where si =
+{si
+t}T
+t=−1 and ai = {ai
+t}T
+t=−1 are the state and action sequences in the i-th trajectory. We minimize
+KL (q(ν, µ, θ) || p(ν, µ, θ|D)), or equivalently, maximize the evidence lower bound (ELBO):"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.050505050505050504,"ELBO = Eq(µ,θ) "" N
+X"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.05176767676767677,"i=1
+log p(si|ai, µ, θ) #"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.05303030303030303,"−KL (q(ν, µ, θ) || p(ν, µ, θ)) .
+(4)"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.054292929292929296,Published as a conference paper at ICLR 2022
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.05555555555555555,"The variational distribution above involves inﬁnite-dimensional random variables ν, µ, θ. To reach a
+tractable solution, we assume | eC| = K and exploit the standard mean-ﬁeld assumption (Blei et al.,
+2017) and the K-truncated variational distribution similarly to Blei et al. (2006); Hughes et al. (2015);
+Bryant & Sudderth (2012) as follows:"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.056818181818181816,"q(ν, µ, θ) = q(ν)q(µ)q(θ), q(θ|ˆθ) = K
+Y"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.05808080808080808,"k=1
+δ(θk|ˆθk), q(ν|ˆν) = K−1
+Y"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.059343434343434344,"k=1
+δ(νk|ˆνk), q(νK = 1) = 1,"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.06060606060606061,"q(µ|ˆµ) = K
+Y j=0 K−1
+Y"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.06186868686868687,"k=1
+Beta  µjk"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.06313131313131314,"ˆµjk, ˆµj − k
+X"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.06439393939393939,"i=1
+ˆµji !"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.06565656565656566,",
+q(µjK = 1) = 1,
+(5)"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.06691919191919192,"where hatted symbols represent free parameters. For θ and ν, we seek a MAP point estimate instead
+of a full posterior (see Appendix C.3 for a discussion on our design choices). Random variables not
+shown in the truncated variational distribution are conditionally independent of data, and thus can be
+discarded from the problem. We maximize ELBO using stochastic gradient ascent, while the gradient
+computations are performed using the following two techniques: (a) we compute the exact context
+posterior using a forward-backward message passing algorithm, (b) we use implicit reparametrized
+gradients to differentiate with respect to parameters of variational distributions (Figurnov et al., 2018).
+We present the detailed derivations in Appendix C.2. We also can perform context distillation during
+training as discussed in Appendix C.4. While adding some computational complexity, this procedure
+acts as a regularization for model learning as we show in our experiments."
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.06818181818181818,"Representation of the optimal policy. First, we notice that the model in Equation 1 is a POMDP,
+which we get by setting xt := (zt, st) and ot := st. In the POMDP case, we cannot claim that ot+1
+depends only on ot and at. Therefore the Bellman dynamic programming principle does not hold for
+these variables and solving the problem is more involved. In practice, one constructs the belief state
+bt = p(xt|IC
+t ) (Astrom, 1965), where IC
+t = {b0, o≤t, a<t} is called the information state and is
+used to compute the optimal policy. Since the belief state is a distribution, it is generally costly to
+estimate in continuous observation or state spaces. In our case, estimating the belief is tractable, since
+the belief of the state st is the state itself (as the state st is observable) and the belief of zt, which we
+denote as bz
+t , is a vector of a ﬁxed length at every time step (as zt is discrete and bz
+t is its ﬁltering
+distribution). We have the following result with the proof in Appendix B.2."
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.06944444444444445,"Theorem 2 a) The belief of z can be computed as p(zt+1|IC
+t ) = bz
+t+1, where (bz
+t+1)i ∝Ni =
+P"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.0707070707070707,"j p(st+1|st, θi, at)ρji(bz
+t )j, where (bz
+t )i are the entries of bz
+t ; b) the optimal policy can be com-
+puted as π(s, bz) = argmaxa Q(s, bz, a), where the value function satisﬁes the dynamic program-
+ming principle Q(st, bz
+t , at) = r(st, bz
+t , at) + γ
+R P"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.07196969696969698,"i Ni maxat+1 Q(st+1, bz
+t+1, at+1) dst+1."
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.07323232323232323,"Computational framework. Algorithm 1 summarizes our approach and is based on the standard
+model-based RL frameworks (e.g., Pineda et al. (2021)). Effectively, we alternate between model
+updates and policy updates. For the policy updates we relabel (recompute) the beliefs for the historical
+transition data. As MPC methods compute the sequence of actions based solely on the model such
+relabeling is not required."
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.07449494949494949,"Performance gain for observable contexts. It is not surprising that observing the ground truth of
+the contexts should improve the maximum expected return. In particular, even knowing the ground
+truth context model we can correctly estimate the context zt+1 only a posteriori, i.e., after observing
+the next state st+1. Therefore at every context switch we can mislabel it with a high probability. This
+leads to a performance loss, which the following result quantiﬁes using the value functions. We have
+the following result with the proof in Appendix B.3."
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.07575757575757576,"Theorem 3 Assume we know the true transition model of the contexts and states and consider two
+settings: we observe the ground truth zt and we estimate it using bz
+t . Assume we computed the optimal
+model-based policy π(·|st, bz
+t ) with the return R and the optimal ground-truth policy πgt(·|st, zt+1)
+with the corresponding optimal value functions Vgt(s, z) and Qgt(s, z, a), then:"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.07702020202020202,"Ez1,s0Vgt(s0, z1)−R ≥Eτ,agt
+tm∼πgt,atm∼π M
+X"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.07828282828282829,"m=1
+γtm(Q(stm, ztm+1, agt
+tm)−Q(stm, ztm+1, atm)),"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.07954545454545454,where M is the number of misidentiﬁed context switches in a trajectory τ.
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.08080808080808081,Published as a conference paper at ICLR 2022
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.08207070707070707,"Algorithm 1: Learning to Control HDP-C-MDP
+Input: εdistill - distillation threshold, Nwarm - number of trajectories for warm start, Ntraj -
+number of newly collected trajectories per epoch, Nepochs - number of training epochs, AGENT -
+policy gradient or MPC agent
+Initialize AGENT with RANDOM AGENT, D = ∅;
+for i = 1, . . . , Nepochs do"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.08333333333333333,"Sample Ntraj (Nwarm if i = 1) trajectories from the environment with AGENT;
+Set Dnew = {(si, ai)}Ntraj
+i=1 , where si = {si
+t}T
+t=−1 and ai = {ai
+t}T
+t=−1 are the state and
+action sequences in the i-th trajectory. Set D = D ∪Dnew;
+Update generative model parameters by gradient ascent on ELBO in Equation 4;
+Perform context distillation with εdistill;
+if AGENT is POLICY then"
+"REINFORCEMENT LEARNING FOR MARKOV PROCESSES WITH MARKOVIAN
+CONTEXT EVOLUTION",0.0845959595959596,"Sample trajectories for policy update from D;
+Recompute the beliefs using the model for these trajectories;
+Update policy parameters
+end
+end
+return AGENT"
+EXPERIMENTS,0.08585858585858586,"4
+EXPERIMENTS"
+EXPERIMENTS,0.08712121212121213,"In this section, we demonstrate that the HDP offers an effective prior for model learning, while
+the distillation procedure reﬁnes the model and can regulate the context set complexity. We also
+explain why state-of-the-art methods from continual RL, meta-RL and POMDP literature can fail in
+our setting. We ﬁnally show that our algorithm can be adapted to high dimensional environments.
+We delegate several experiments to Appendix due to space limitations. We show that we can learn
+additional unseen contexts without relearning the whole model from scratch. We also illustrate how
+the context distillation during training can be used to merge contexts in an unsupervised manner thus
+reducing model complexity. We ﬁnally show that our model can generalize to non-Markovian and
+state dependent context transitions.
+We choose the switching process to be a chain, however, we enforce a cool-off period, i.e, the chain
+cannot transition to a new state until the cool-off period has ended. This makes the context switching
+itself a non-stationary MDP. This is done to avoid switches at every time step, but also to show that
+our method is not limited to the stationary Markov context evolution.
+Control Baselines: (1) SAC algorithm with access to the ground truth context information (one-hot-
+encoded variable zt) denoted as FI-SAC; (2) SAC algorithm with no context information denoted
+as NI-SAC (3) a continual RL algorithm for contextual MDPs (Xu et al., 2020), where a Gaussian
+process is used to learn the dynamics while identifying and labeling the data with contexts, which
+is denoted as GPMM; (4) A POMDP approach, where the context set cardinality is known and the
+belief is estimated using an RNN, while PPO (Schulman et al., 2017; Kostrikov, 2018) is used to
+update the policy. We denote this approach as RNN-PPO.
+Modeling Prior Baselines: (1) a model with sticky Dirichlet priors ρj ∼Dir(αk = α/K + κ˜δjk);
+(2) a model which removes all priors and conducts a maximum-likelihood (MLE) learning. All the
+other relevant experimental details (including hyper-parameters) are provided in Appendix D."
+EXPERIMENTS,0.08838383838383838,"Z0
+Z1
+Z2
+Z3
+Z4 Z0 Z1 Z2 Z3 Z4 p(z0) p(z )"
+EXPERIMENTS,0.08964646464646464,"87.7
+ 0.0
+ 0.6
+ 0.0
+ 11.7"
+EXPERIMENTS,0.09090909090909091,"48.4
+ 0.1
+ 3.4
+ 0.0
+ 48.1"
+EXPERIMENTS,0.09217171717171717,"39.5
+ 0.0
+ 18.5
+ 0.0
+ 41.9"
+EXPERIMENTS,0.09343434343434344,"47.2
+ 0.0
+ 3.5
+ 0.1
+ 49.2"
+EXPERIMENTS,0.0946969696969697,"11.8
+ 0.0
+ 0.6
+ 0.0
+ 87.5"
+EXPERIMENTS,0.09595959595959595,"49.2
+ 0.0
+ 3.2
+ 0.0
+ 47.6"
+EXPERIMENTS,0.09722222222222222,"49.9
+ 0.0
+ 0.7
+ 0.0
+ 49.4 0 20 40 60 80 100"
+EXPERIMENTS,0.09848484848484848,Probability (%)
+EXPERIMENTS,0.09974747474747475,(a) HDP
+EXPERIMENTS,0.10101010101010101,"Z0
+Z1
+Z2
+Z3
+Z4 Z0 Z1 Z2 Z3 Z4 p(z0) p(z )"
+EXPERIMENTS,0.10227272727272728,"86.4
+ 0.8
+ 1.3
+ 0.8
+ 10.8"
+EXPERIMENTS,0.10353535353535354,"15.3
+ 42.1
+ 13.7
+ 14.2
+ 14.7"
+EXPERIMENTS,0.10479797979797979,"16.5
+ 9.1
+ 48.0
+ 9.9
+ 16.5"
+EXPERIMENTS,0.10606060606060606,"14.4
+ 14.0
+ 13.8
+ 42.2
+ 15.5"
+EXPERIMENTS,0.10732323232323232,"11.1
+ 0.8
+ 1.4
+ 0.8
+ 86.0"
+EXPERIMENTS,0.10858585858585859,"26.7
+ 16.1
+ 16.2
+ 15.6
+ 25.4"
+EXPERIMENTS,0.10984848484848485,"46.3
+ 2.4
+ 3.6
+ 2.4
+ 45.2 0 20 40 60 80 100"
+EXPERIMENTS,0.1111111111111111,Probability (%)
+EXPERIMENTS,0.11237373737373738,(b) Dirichlet
+EXPERIMENTS,0.11363636363636363,"Z0
+Z1
+Z2
+Z3
+Z4 Z0 Z1 Z2 Z3 Z4 p(z0) p(z )"
+EXPERIMENTS,0.1148989898989899,"81.0
+ 0.0
+ 9.1
+ 9.9
+ 0.1"
+EXPERIMENTS,0.11616161616161616,"5.9
+ 1.5
+ 58.9
+ 32.4
+ 1.4"
+EXPERIMENTS,0.11742424242424243,"0.5
+ 0.0
+ 49.6
+ 49.9
+ 0.0"
+EXPERIMENTS,0.11868686868686869,"0.3
+ 0.0
+ 50.4
+ 49.2
+ 0.0"
+EXPERIMENTS,0.11994949494949494,"66.9
+ 0.1
+ 12.5
+ 9.4
+ 11.1"
+EXPERIMENTS,0.12121212121212122,"0.0
+ 0.0
+ 0.3
+ 99.6
+ 0.0"
+EXPERIMENTS,0.12247474747474747,"2.1
+ 0.0
+ 49.1
+ 48.7
+ 0.0 0 20 40 60 80 100"
+EXPERIMENTS,0.12373737373737374,Probability (%)
+EXPERIMENTS,0.125,(c) MLE
+EXPERIMENTS,0.12626262626262627,"Z0
+Z1
+Z2
+Z3
+Z4 Z0 Z1 Z2 Z3 Z4 p(z0) p(z )"
+EXPERIMENTS,0.1275252525252525,"87.8
+ 0.1
+ 0.1
+ 0.1
+ 11.8"
+EXPERIMENTS,0.12878787878787878,"50.1
+ 1.0
+ 0.3
+ 0.3
+ 48.2"
+EXPERIMENTS,0.13005050505050506,"48.2
+ 0.3
+ 1.0
+ 0.4
+ 50.1"
+EXPERIMENTS,0.13131313131313133,"48.4
+ 0.3
+ 0.3
+ 1.1
+ 49.9"
+EXPERIMENTS,0.13257575757575757,"12.2
+ 0.1
+ 0.1
+ 0.1
+ 87.4"
+EXPERIMENTS,0.13383838383838384,"49.6
+ 0.4
+ 0.3
+ 0.4
+ 49.4"
+EXPERIMENTS,0.1351010101010101,"50.6
+ 0.1
+ 0.1
+ 0.1
+ 49.0 0 20 40 60 80 100"
+EXPERIMENTS,0.13636363636363635,Probability (%)
+EXPERIMENTS,0.13762626262626262,(d) HDP w distillation
+EXPERIMENTS,0.1388888888888889,"Figure 2: Cart-Pole Swing-Up. Transition matrices, initial p(z0) and stationary p(z∞) distributions
+of the learned context models for Result A. Z0 – Z4 stand for the learned contexts."
+EXPERIMENTS,0.14015151515151514,Published as a conference paper at ICLR 2022
+EXPERIMENTS,0.1414141414141414,"0
+20
+40
+60
+80
+Time (t) C0 C1 Z0 Z1 Z2 Z3 Z4"
+EXPERIMENTS,0.14267676767676768,(a) HDP
+EXPERIMENTS,0.14393939393939395,"0
+20
+40
+60
+80
+Time (t) C0 C1 Z0 Z1 Z2 Z3 Z4"
+EXPERIMENTS,0.1452020202020202,(b) Dirichlet
+EXPERIMENTS,0.14646464646464646,"0
+20
+40
+60
+80
+Time (t) C0 C1 Z0 Z1 Z2 Z3 Z4"
+EXPERIMENTS,0.14772727272727273,(c) MLE
+EXPERIMENTS,0.14898989898989898,"Figure 3: Cart-Pole Swing-Up. Time courses the learned context models for Result A. C0 and C1
+stand for the ground true contexts, while Z0 – Z4 are the learned contexts."
+EXPERIMENTS,0.15025252525252525,"Initial testing on Cart-Pole Swing-up Task (Lovatto, 2019). We attempt to swing up and balance
+a pole attached to a cart. This environment has four states and one action. We introduce the contexts
+by multiplying the action with a constant χ thus modulating the actuation effect. We will allow
+negative χ modeling catastrophic (or hard) failures, and positive χ modeling soft actuation failures.
+Result A: HDP is an effective prior for learning an accurate and interpretable model. In
+Figure 2, we plot the expectation of ρ0 and R extracted from the variational distribution q(µ)
+for HDP, Dirichlet and MLE priors for the Cart-Pole Swing-up Environment with the context set
+C = {1, −1} and | eC| = K = 5. The MLE learning appears to be trapped in a local optimum as
+the results in Figure 2(c) suggest. A similar phenomenon has been reported by Dong et al. (2020),
+where an MLE method was used and a heuristic entropy regularization and temperature annealing
+method is adopted to alleviate the issue. All in all, while MLE learning can appear to be competitive
+with a different random seed, this approach does not give consistent results. The use of Dirichlet
+priors appears to provide a better model. Furthermore, with an appropriate distillation threshold the
+distilled transition matrices with HDP and Dirichlet priors are very similar to each other. However,
+the threshold for Dirichlet prior distillation needs to be much higher as calculations of the stationary
+distributions suggest. This implies that spurious transitions are still quite likely. In contrast, the HDP
+prior helps to successfully identify two main contexts (Z0 and Z2) and accurately predict the context
+evolution (see Figure 3). Furthermore, the model is more interpretable and the meaningful contexts
+can often be identiﬁed with a naked eye.
+Result B: Distillation acts as a regularizer. We noticed that the context Z2 has a low probability
+mass in stationarity, but a high probability of self-transition (Figure 2(a)). This suggest that spurious
+transitions can happen, while highly unlikely. We speculate that the learning algorithm tries to ﬁt
+the uncertainty in the model (e.g., due to unseen data) to one context. This can lead to over-ﬁtting
+and unwanted side-effects. Results in Figure 2(d) suggest that distillation during training can act
+as a regularizer when we used a high enough threshold εdistil = 0.1. We proceed by varying the
+context set cardinality | eC| (taking values 4, 5, 6, 8, 10 and 20) and the distillation threshold εdistil
+(taking values 0, 0.01, and 0.1). Note that we distill during training and we refer to the transition
+matrix for the distilled Markov chain as the distilled transition matrix. As the ground truth context
+cardinality is equal to two, the probability of the third most likely context would signify the learning
+error. In Table 1, we present the stationary probability of the context with the third largest probability
+mass. In particular, for | eC| = 20 the probability mass values for this context are larger than 0.01.
+This indicates a small but not insigniﬁcant possibility of a transition to this context, if the distillation
+does not remove this context. We present some additional details on this experiment in Appendix E.1.
+Overall, we can conclude that it is safe to overestimate the context cardinality.
+Result C: MDP, POMDP and continual RL methods can be ineffective. In Figure 4(a), we plot
+the learning curves for our algorithms and compare them to each other for χ = −1. CEM, which is
+known to perform well in low-dimensional environments, learns faster than SAC. Note that there is
+no signiﬁcant performance loss of C-SAC in comparison with the full information case exhibiting the
+power of our modeling approach. We evaluated FI-SAC, C-SAC, C-CEM on three seeds."
+EXPERIMENTS,0.15151515151515152,"We now compare the control algorithms for various values of χ. We present the results of our
+experiments in Table 2 and we also discuss the comparison protocols in Appendix E.6. Here we"
+EXPERIMENTS,0.1527777777777778,Published as a conference paper at ICLR 2022
+EXPERIMENTS,0.15404040404040403,"Table 1: Comparing the probability mass of the third most probable state in the stationary distribution.
+We vary the cardinality of the estimated context set eC and the distillation threshold εdistil. Red
+indicates underestimation of distillation threshold."
+EXPERIMENTS,0.1553030303030303,"εdistil ↓
+| eC| →
+4
+5
+6
+8
+10
+20"
+EXPERIMENTS,0.15656565656565657,"0
+8.58e-03
+7.06e-03
+3.71e-03
+6.85e-03
+2.20e-03
+2.25e-02
+0.01
+1.06e-03
+1.24e-03
+1.37e-03
+2.19e-03
+2.56e-03
+1.60e-02
+0.1
+1.21e-03
+1.54e-03
+1.70e-03
+2.80e-03
+3.54e-03
+9.86e-03"
+EXPERIMENTS,0.15782828282828282,"(a) Learning curves
+(b) GPMM χ = −1
+(c) GPMM χ = 0.5
+(d) RNN “Beliefs”"
+EXPERIMENTS,0.1590909090909091,"Figure 4: Cart-Pole Swing-Up. Learning curves for χ = −1 (a), time courses the learned context
+models using GPMM (b)-(c) and the learned model belief by RNN-PPO (d)."
+EXPERIMENTS,0.16035353535353536,"focus on the reasons why both RNN-PPO and GPMM can fail in some experiments and seem to
+perform well in others. In GPMM, it is explicitly assumed that the context does not change during
+the episode, however, the algorithm can adapt to a new context. While a posteriori context estimation
+has a limited success for χ = 0.5 (see Figure 4), the context adaptation is rather slow for our setting
+resulting in many context estimation errors, which reduces the performance. Furthermore, it appears
+that estimating hard failures is a challenge for GPMM. RNN-PPO appears to perform very well for
+χ > 0 (see Table 2) and fail for χ = −1, however, when we plot the output of the RNN, which is
+meant to predict the beliefs, we see that the average context prediction is quite similar across different
+experiments (see Figure 4). It is worth noting that the mean of the true belief variable is 0.5 for
+all χ, as both contexts are equally probable at every time step. Therefore, the RNN approach does
+not actually learn a belief model, but an “average” adjustment signal for the policy, and hence it
+will often fail to solve a C-MDP. Interestingly, with χ = 0.5 our modeling algorithm learns only
+one meaningful context with high distillation threshold while still solving the task. This is because
+for both χ = 0.5 and χ = 1 the sign of optimal actions for swing up are the same and both have
+sufﬁcient power to solve the task. We compare to further baselines in Appendix E.6."
+EXPERIMENTS,0.16161616161616163,"Our model is effective for control in twelve dimensional environments (Drone and Intersec-
+tion). In the drone environment (Panerati et al., 2021), the agent aims at balancing roll and pitch
+angles of the drone, while accelerating vertically, i.e., the task is to maximize the upward velocity.
+This environment has twelve states (positions, velocities, Euler angles, angular velocities in three
+dimensions) and four actions (motor speeds in rotation per minute). In the highway intersection
+environment (Leurent, 2018), the agent aims at performing the unprotected left turn maneuver with
+an incoming vehicle turning in the same direction. The goal of the agent is to make the left turn
+and follow the social vehicle without colliding with it. The agent measures positions, velocities and
+headings in x, y axes of the ego and social vehicles (twelve states in total), while controlling the
+steering angle and acceleration / deceleration. In both environments we introduce the contexts by
+multiplying the maximum actuation effect by a constant χ, speciﬁcally, motor speeds in the drone
+environment and steering angle in the highway intersection environment. The results in Table 3
+demonstrate that both MPC and policy learning approaches with the model are able to solve the task,
+while using no information (NI) about the contexts dramatically reduces the performance. Note that
+in the drone environment C-CEM algorithm exhibits slightly better performance than C-SAC, while
+in the intersection environment C-SAC controls the car much better. We can only hypothesize that
+the policy’s feedback architecture (mapping states to actions) is better suited for complex tasks such
+as low-level vehicle control, where MPC approaches require a substantial tuning and computational
+effort to compete with a policy based approach."
+EXPERIMENTS,0.16287878787878787,Published as a conference paper at ICLR 2022
+EXPERIMENTS,0.16414141414141414,"algo ↓
+failure →
+hard
+soft α = 0.1
+soft α = 0.3
+soft α = 0.5"
+EXPERIMENTS,0.16540404040404041,"FI-SAC
+84.50 ± 1.79
+76.63 ± 8.54
+84.75 ± 3.07
+86.92 ± 1.03
+C-SAC
+85.38 ± 1.64
+76.80 ± 8.91
+86.76 ± 2.88
+88.35 ± 1.30
+C-CEM
+87.63 ± 0.14
+60.15 ± 25.91
+83.15 ± 7.72
+89.08 ± 1.90
+GPMM
+3.50 ± 18.59
+3.55 ± 7.83
+10.64 ± 16.10
+49.61 ± 19.13
+RNN-PPO
+−0.17 ± 18.06
+64.10 ± 21.37
+74.58 ± 20.66
+67.01 ± 8.52"
+EXPERIMENTS,0.16666666666666666,"Table 2: Mean ± standard deviation of expected return for: our algorithms (C-SAC, C-CEM), a
+continual RL algorithm (GPMM), a POMDP algo (RNN-PPO), and SAC with a known context
+(FI-SAC). For soft failure experiments, we have increased the maximum applicable force by the
+factor of two. Best performances are highlighted in bold."
+EXPERIMENTS,0.16792929292929293,"FI-SAC
+NI-SAC
+C-SAC
+C-CEM
+Drone
+36.13 ± 0.26
+−0.80 ± 3.08
+28.41 ± 1.16
+32.30 ± 2.78
+Intersection
+572.09 ± 20.25
+499.62 ± 19.98
+555.11 ± 20.21
+529.75 ± 78.12"
+EXPERIMENTS,0.1691919191919192,"Table 3: Mean ± standard deviation of expected return for various algorithms and tasks over three
+seeds. Our contextual approaches, which marked by the letter C, are competitive with FI-SAC (SAC
+with full context information) and outperform NI-SAC (SAC with no context information)."
+CONCLUSION AND DISCUSSION,0.17045454545454544,"5
+CONCLUSION AND DISCUSSION"
+CONCLUSION AND DISCUSSION,0.1717171717171717,"We studied a hybrid discrete-continuous variable process, where unobserved discrete variable repre-
+sents the context and observed continuous variables represents the dynamics state. We proposed a
+variational inference algorithm for model learning using a sticky HDP prior. This prior allows for
+effective learning of an interpretable model and coupled with our context distillation procedure offers
+a powerful tool for learning C-MDPs. In particular, we showed that the combination of the HDP
+prior and the context distillation method allows learning the true context cardinality. We also showed
+that the model quality is not affected if the upper bound on context cardinality set is overestimated.
+Furthermore, we illustrated that the distillation threshold can be used as a regularization trade-off
+parameter and it can also be used to merge similar contexts in an unsupervised manner. Furthermore,
+we present additional experiments in Appendix suggesting that our model can potentially generalize
+to non-Markovian and state-dependent settings. While we presented several experiments in various
+environments, further experimental evaluation is required, e.g., using Benjamins et al. (2021)."
+CONCLUSION AND DISCUSSION,0.17297979797979798,"We showed that continual and meta-RL approaches are likely to fail as their underlying assumptions
+on the environment do not ﬁt our setting. The learned models do not appear to capture the complexity
+of Markovian context transitions. This, however, should not be surprising as these methods are
+tailored to a different problem: adapting existing policy / model to a new setting. If the context is very
+different and / or the contexts changing too fast then the continual and meta-RL algorithms would
+struggle by design. We derived our policy by exploiting the relation of our setting and POMDPs.
+We demonstrated the necessity of our model by observing that standard POMDP approaches (i.e.,
+modeling the context dynamics using an RNN) fail to learn the model. We attribute this behavior
+to the lack of effective priors and model structure. While in some cases it can appear that the RNN
+policy is effective, disregarding the context altogether has a similar effect."
+CONCLUSION AND DISCUSSION,0.17424242424242425,"Our model-based algorithm can be further enhanced by using synthetic one-step transitions similarly
+to Janner et al. (2019), which would improve sample efﬁciency. We can also use an ensemble of
+models, which would allow to constantly improve the model using cross-validation over models
+in the ensemble. However, evaluation of the model quality is more involved since the context is
+unobservable. In future, we also plan to extend our model to account for a partially observable setting,
+i.e., where the state only indirectly measured similarly to POMDPs. This setting would allow for
+a rigorous treatment of controlling from pictures in the context-dependent setting. While we show
+that we can learn unseen contexts without re-learning the entire model, this procedure is not fully
+automated. Hence it can beneﬁt from adaptation of continual learning methods in order to increase
+efﬁciency of the learning procedure."
+CONCLUSION AND DISCUSSION,0.1755050505050505,Published as a conference paper at ICLR 2022
+REFERENCES,0.17676767676767677,REFERENCES
+REFERENCES,0.17803030303030304,"Josh Achiam. Openai spinning up documentation, 2018. URL https://spinningup.openai.
+com/en/latest/algorithms/sac.html."
+REFERENCES,0.17929292929292928,"Maruan Al-Shedivat, Trapit Bansal, Yura Burda, Ilya Sutskever, Igor Mordatch, and Pieter Abbeel.
+Continuous adaptation via meta-learning in nonstationary and competitive environments. In 6th
+International Conference on Learning Representations, ICLR 2018, 2018."
+REFERENCES,0.18055555555555555,"Karl J Astrom. Optimal control of Markov processes with incomplete state information. Journal of
+mathematical analysis and applications, 10(1):174–205, 1965."
+REFERENCES,0.18181818181818182,"Taposh Banerjee, Miao Liu, and Jonathan P. How. Quickest change detection approach to optimal
+control in Markov decision processes with model changes. In 2017 American Control Conference,
+ACC 2017, pp. 399–405. IEEE, 2017."
+REFERENCES,0.1830808080808081,"Philip Becker-Ehmck, Jan Peters, and Patrick Van Der Smagt. Switching linear dynamics for
+variational Bayes ﬁltering. arXiv preprint arXiv:1905.12434, 2019."
+REFERENCES,0.18434343434343434,"Carolin Benjamins, Theresa Eimer, Frederik Schubert, André Biedenkapp, Bodo Rosenhahn, Frank
+Hutter, and Marius Lindauer. Carl: A benchmark for contextual and adaptive reinforcement
+learning. arXiv preprint arXiv:2110.02102, 2021."
+REFERENCES,0.1856060606060606,"Abraham Berman and Robert J Plemmons. Nonnegative matrices in the mathematical sciences.
+SIAM, 1994."
+REFERENCES,0.18686868686868688,"Eli Bingham, Jonathan P. Chen, Martin Jankowiak, Fritz Obermeyer, Neeraj Pradhan, Theofanis
+Karaletsos, Rohit Singh, Paul Szerlip, Paul Horsfall, and Noah D. Goodman. Pyro: Deep Universal
+Probabilistic Programming. Journal of Machine Learning Research, 2018."
+REFERENCES,0.18813131313131312,"David M Blei, Michael I Jordan, et al. Variational inference for Dirichlet process mixtures. Bayesian
+analysis, 1(1):121–143, 2006."
+REFERENCES,0.1893939393939394,"David M Blei, Alp Kucukelbir, and Jon D McAuliffe. Variational inference: A review for statisticians.
+Journal of the American statistical Association, 112(518):859–877, 2017."
+REFERENCES,0.19065656565656566,"Charles Blundell, Julien Cornebise, Koray Kavukcuoglu, and Daan Wierstra. Weight uncertainty in
+neural network. In International Conference on Machine Learning, pp. 1613–1622. PMLR, 2015."
+REFERENCES,0.1919191919191919,"Haitham Bou-Ammar, Eric Eaton, Paul Ruvolo, and Matthew E. Taylor. Online multi-task learning
+for policy gradient methods. In Proceedings of the 31th International Conference on Machine
+Learning, ICML, volume 32, pp. 1206–1214, 2014."
+REFERENCES,0.19318181818181818,"Michael Bryant and Erik Sudderth. Truly nonparametric online variational inference for hierarchical
+Dirichlet processes. Advances in Neural Information Processing Systems, 25:2699–2707, 2012."
+REFERENCES,0.19444444444444445,"Yash Chandak, Georgios Theocharous, James Kostas, Scott M. Jordan, and Philip S. Thomas.
+Learning action representations for reinforcement learning. In Proceedings of the 36th International
+Conference on Machine Learning, ICML 2019, volume 97, pp. 941–950. PMLR, 2019."
+REFERENCES,0.19570707070707072,"Yash Chandak, Georgios Theocharous, Shiv Shankar, Martha White, Sridhar Mahadevan, and Philip
+Thomas. Optimizing for the future in non-stationary MDPs. In International Conference on
+Machine Learning, pp. 1414–1425, 2020."
+REFERENCES,0.19696969696969696,"Samuel PM Choi, Dit-Yan Yeung, and Nevin L Zhang. Hidden-mode Markov decision processes for
+nonstationary sequential decision making. In Sequence Learning, pp. 264–287. Springer, 2000."
+REFERENCES,0.19823232323232323,"Kurtland Chua, Roberto Calandra, Rowan McAllister, and Sergey Levine. Deep reinforcement
+learning in a handful of trials using probabilistic dynamics models. Advances in Neural Information
+Processing Systems, 31, 2018."
+REFERENCES,0.1994949494949495,"Ignasi Clavera, Jonas Rothfuss, John Schulman, Yasuhiro Fujita, Tamim Asfour, and Pieter Abbeel.
+Model-based reinforcement learning via meta-policy optimization. In 2nd Annual Conference
+on Robot Learning, CoRL 2018, volume 87 of Proceedings of Machine Learning Research, pp.
+617–629. PMLR, 2018."
+REFERENCES,0.20075757575757575,Published as a conference paper at ICLR 2022
+REFERENCES,0.20202020202020202,"Bruno Castro da Silva, Eduardo W. Basso, Ana L. C. Bazzan, and Paulo Martins Engel. Dealing with
+non-stationary environments using context detection. In William W. Cohen and Andrew W. Moore
+(eds.), Machine Learning, Proceedings of the Twenty-Third International Conference (ICML 2006),
+volume 148 of ACM International Conference Proceeding Series, pp. 217–224. ACM, 2006."
+REFERENCES,0.2032828282828283,"Matthias Delange, Rahaf Aljundi, Marc Masana, Sarah Parisot, Xu Jia, Ales Leonardis, Greg
+Slabaugh, and Tinne Tuytelaars. A continual learning survey: Defying forgetting in classiﬁcation
+tasks. IEEE Transactions on Pattern Analysis and Machine Intelligence, 2021."
+REFERENCES,0.20454545454545456,"Zhe Dong, Bryan Seybold, Kevin Murphy, and Hung Bui. Collapsed amortized variational inference
+for switching nonlinear dynamical systems. In International Conference on Machine Learning, pp.
+2638–2647. PMLR, 2020."
+REFERENCES,0.2058080808080808,"Finale Doshi-Velez and George Dimitri Konidaris. Hidden parameter Markov decision processes:
+A semiparametric regression approach for discovering latent task parametrizations. In Subbarao
+Kambhampati (ed.), Proceedings of the Twenty-Fifth International Joint Conference on Artiﬁcial
+Intelligence, IJCAI, pp. 1432–1440, 2016."
+REFERENCES,0.20707070707070707,"Yan Duan, John Schulman, Xi Chen, Peter L. Bartlett, Ilya Sutskever, and Pieter Abbeel. RL2: Fast
+reinforcement learning via slow reinforcement learning. CoRR, 2016. URL http://arxiv.
+org/abs/1611.02779."
+REFERENCES,0.20833333333333334,"Mikhail Figurnov, Shakir Mohamed, and Andriy Mnih. Implicit reparameterization gradients. In
+Advances in Neural Information Processing Systems, pp. 441–452, 2018."
+REFERENCES,0.20959595959595959,"Chelsea Finn, Pieter Abbeel, and Sergey Levine. Model-agnostic meta-learning for fast adaptation of
+deep networks. In Doina Precup and Yee Whye Teh (eds.), Proceedings of the 34th International
+Conference on Machine Learning, ICML, volume 70, pp. 1126–1135. PMLR, 2017."
+REFERENCES,0.21085858585858586,"Emily Fox, Erik Sudderth, Michael Jordan, and Alan Willsky. Nonparametric bayesian learning
+of switching linear dynamical systems. Advances in neural information processing systems, 21:
+457–464, 2008a."
+REFERENCES,0.21212121212121213,"Emily Fox, Erik B Sudderth, Michael I Jordan, and Alan S Willsky. Bayesian nonparametric inference
+of switching dynamic linear models. IEEE Transactions on Signal Processing, 59(4):1569–1585,
+2011."
+REFERENCES,0.21338383838383837,"Emily B. Fox, Erik B. Sudderth, Michael I. Jordan, and Alan S. Willsky. An HDP-HMM for
+systems with state persistence. In Machine Learning, Proceedings of the Twenty-Fifth International
+Conference, volume 307, pp. 312–319. ACM, 2008b."
+REFERENCES,0.21464646464646464,"Yarin Gal and Zoubin Ghahramani. Dropout as a bayesian approximation: Representing model
+uncertainty in deep learning. In international conference on machine learning, pp. 1050–1059.
+PMLR, 2016."
+REFERENCES,0.2159090909090909,"Tuomas Haarnoja, Aurick Zhou, Pieter Abbeel, and Sergey Levine. Soft actor-critic: Off-policy
+maximum entropy deep reinforcement learning with a stochastic actor. In International conference
+on machine learning, pp. 1861–1870, 2018."
+REFERENCES,0.21717171717171718,"Emmanuel Hadoux, Aurélie Beynier, and Paul Weng. Sequential decision-making under non-
+stationary environments via sequential change-point detection. In Learning over multiple contexts
+(LMCE), 2014."
+REFERENCES,0.21843434343434343,"Assaf Hallak, Dotan Di Castro, and Shie Mannor. Contextual markov decision processes. arXiv
+preprint arXiv:1502.02259, 2015."
+REFERENCES,0.2196969696969697,"Nicklas Hansen and Xiaolong Wang. Generalization in reinforcement learning by soft data aug-
+mentation. In 2021 IEEE International Conference on Robotics and Automation (ICRA), pp.
+13611–13617. IEEE, 2021."
+REFERENCES,0.22095959595959597,"Matthew Hausknecht and Peter Stone. Deep recurrent Q-learning for partially observable MDPs. In
+AAAI fall symposium series, 2015."
+REFERENCES,0.2222222222222222,Published as a conference paper at ICLR 2022
+REFERENCES,0.22348484848484848,"Milos Hauskrecht. Value-function approximations for partially observable Markov decision processes.
+Journal of artiﬁcial intelligence research, 13:33–94, 2000."
+REFERENCES,0.22474747474747475,"Franz S Hover and Michael S Triantafyllou. System design for uncertainty. Mass. Inst. Tech-
+nol, 2009.
+URL https://ocw.mit.edu/courses/mechanical-engineering/
+2-017j-design-of-electromechanical-robotic-systems-fall-2009/
+course-text/."
+REFERENCES,0.22601010101010102,"Michael Hughes, Dae Il Kim, and Erik Sudderth. Reliable and scalable variational inference for the
+hierarchical Dirichlet process. In Artiﬁcial Intelligence and Statistics, pp. 370–378, 2015."
+REFERENCES,0.22727272727272727,"Maximilian Igl, Luisa Zintgraf, Tuan Anh Le, Frank Wood, and Shimon Whiteson. Deep variational
+reinforcement learning for POMDPs. In International Conference on Machine Learning, pp.
+2117–2126. PMLR, 2018."
+REFERENCES,0.22853535353535354,"Martin Jankowiak and Fritz Obermeyer. Pathwise derivatives beyond the reparameterization trick. In
+Proceedings of the 35th International Conference on Machine Learning, Proceedings of Machine
+Learning Research, pp. 2240–2249, 2018."
+REFERENCES,0.2297979797979798,"Michael Janner, Justin Fu, Marvin Zhang, and Sergey Levine. When to trust your model: Model-
+based policy optimization. In Advances in Neural Information Processing Systems, volume 32, pp.
+12519–12530, 2019."
+REFERENCES,0.23106060606060605,"Khimya Khetarpal, Matthew Riemer, Irina Rish, and Doina Precup. Towards continual reinforcement
+learning: A review and perspectives. CoRR, abs/2012.13490, 2020. URL https://arxiv.
+org/abs/2012.13490."
+REFERENCES,0.23232323232323232,"Hyunjik Kim, Andriy Mnih, Jonathan Schwarz, Marta Garnelo, Ali Eslami, Dan Rosenbaum, Oriol
+Vinyals, and Yee Whye Teh. Attentive neural processes. arXiv preprint arXiv:1901.05761, 2019."
+REFERENCES,0.2335858585858586,"Durk P Kingma, Tim Salimans, and Max Welling. Variational dropout and the local reparameterization
+trick. Advances in neural information processing systems, 28:2575–2583, 2015."
+REFERENCES,0.23484848484848486,"Jens Kober, J Andrew Bagnell, and Jan Peters. Reinforcement learning in robotics: A survey. The
+International Journal of Robotics Research, 32(11):1238–1274, 2013."
+REFERENCES,0.2361111111111111,"Ilya Kostrikov. Pytorch implementations of reinforcement learning algorithms. https://github.
+com/ikostrikov/pytorch-a2c-ppo-acktr-gail, 2018."
+REFERENCES,0.23737373737373738,"Ilya Kostrikov, Denis Yarats, and Rob Fergus. Image augmentation is all you need: Regularizing
+deep reinforcement learning from pixels. arXiv preprint arXiv:2004.13649, 2020."
+REFERENCES,0.23863636363636365,"Gilwoo Lee, Brian Hou, Aditya Mandalika, Jeongseok Lee, Sanjiban Choudhury, and Siddhartha S.
+Srinivasa. Bayesian policy optimization for model uncertainty. In 7th International Conference on
+Learning Representations, ICLR 2019, 2019."
+REFERENCES,0.2398989898989899,"Edouard Leurent. An environment for autonomous driving decision-making. https://github.
+com/eleurent/highway-env, 2018."
+REFERENCES,0.24116161616161616,"Siyuan Li, Fangda Gu, Guangxiang Zhu, and Chongjie Zhang. Context-aware policy reuse. In Edith
+Elkind, Manuela Veloso, Noa Agmon, and Matthew E. Taylor (eds.), Proceedings of the 18th
+International Conference on Autonomous Agents and MultiAgent Systems, AAMAS, pp. 989–997,
+2019."
+REFERENCES,0.24242424242424243,"Angelo Lovatto. gym-cartpole-swingup. a simple, continuous-control environment for openai gym.
+https://github.com/angelolovatto/gym-cartpole-swingup, 2019."
+REFERENCES,0.24368686868686867,"Timothy E Menke and Peter S Maybeck. Sensor/actuator failure detection in the Vista F-16 by
+multiple model adaptive estimation. IEEE Transactions on aerospace and electronic systems, 31
+(4):1218–1229, 1995."
+REFERENCES,0.24494949494949494,"Volodymyr Mnih, Koray Kavukcuoglu, David Silver, Alex Graves, Ioannis Antonoglou, Daan
+Wierstra, and Martin Riedmiller. Playing atari with deep reinforcement learning. arXiv preprint
+arXiv:1312.5602, 2013."
+REFERENCES,0.24621212121212122,Published as a conference paper at ICLR 2022
+REFERENCES,0.2474747474747475,"Anusha Nagabandi, Chelsea Finn, and Sergey Levine. Deep online learning via meta-learning: Con-
+tinual adaptation for model-based RL. In International Conference on Learning Representations,
+2018."
+REFERENCES,0.24873737373737373,"Dimitrios Noutsos. On Perron–Frobenius property of matrices having some negative entries. Linear
+Algebra and its Applications, 412(2-3):132–153, 2006."
+REFERENCES,0.25,"Sylvie CW Ong, Shao Wei Png, David Hsu, and Wee Sun Lee. Planning under uncertainty for robotic
+tasks with mixed observability. The International Journal of Robotics Research, 29(8):1053–1068,
+2010."
+REFERENCES,0.25126262626262624,"Sindhu Padakandla, Prabuchandran K. J., and Shalabh Bhatnagar. Reinforcement learning in non-
+stationary environments. CoRR, abs/1905.03970, 2019. URL http://arxiv.org/abs/
+1905.03970."
+REFERENCES,0.25252525252525254,"Jacopo Panerati, Hehui Zheng, SiQi Zhou, James Xu, Amanda Prorok, and Angela P. Schoellig.
+Learning to ﬂy—a gym environment with pybullet physics for reinforcement learning of multi-
+agent quadcopter control. In 2021 IEEE/RSJ International Conference on Intelligent Robots and
+Systems (IROS), 2021."
+REFERENCES,0.2537878787878788,"Luis Pineda, Brandon Amos, Amy Zhang, Nathan O. Lambert, and Roberto Calandra.
+Mbrl-
+lib: A modular library for model-based reinforcement learning. Arxiv, 2021. URL https:
+//arxiv.org/abs/2104.10159."
+REFERENCES,0.255050505050505,"Josep M Porta, Nikos Vlassis, Matthijs TJ Spaan, and Pascal Poupart. Point-based value iteration for
+continuous pomdps. Journal of Machine Learning Research, 7(Nov):2329–2367, 2006."
+REFERENCES,0.2563131313131313,"Shenghao Qin, Jiacheng Zhu, Jimmy Qin, Wenshuo Wang, and Ding Zhao. Recurrent attentive neural
+process for sequential data. arXiv preprint arXiv:1910.09323, 2019."
+REFERENCES,0.25757575757575757,"Kate Rakelly, Aurick Zhou, Chelsea Finn, Sergey Levine, and Deirdre Quillen. Efﬁcient off-policy
+meta-reinforcement learning via probabilistic context variables.
+In Proceedings of the 36th
+International Conference on Machine Learning, ICML, volume 97, pp. 5331–5340, 2019."
+REFERENCES,0.2588383838383838,"Matthew Riemer, Ignacio Cases, Robert Ajemian, Miao Liu, Irina Rish, Yuhai Tu, and Gerald Tesauro.
+Learning to learn without forgetting by maximizing transfer and minimizing interference. In 7th
+International Conference on Learning Representations, ICLR 2019, 2019."
+REFERENCES,0.2601010101010101,"Hippolyt Ritter, Aleksandar Botev, and David Barber. A scalable laplace approximation for neural
+networks. In 6th International Conference on Learning Representations, ICLR 2018-Conference
+Track Proceedings, volume 6. International Conference on Representation Learning, 2018."
+REFERENCES,0.26136363636363635,"David Rolnick, Arun Ahuja, Jonathan Schwarz, Timothy P. Lillicrap, and Gregory Wayne. Experience
+replay for continual learning. In Advances in Neural Information Processing Systems, pp. 348–358,
+2019."
+REFERENCES,0.26262626262626265,"Jonas Rothfuss, Dennis Lee, Ignasi Clavera, Tamim Asfour, and Pieter Abbeel. ProMP: Proximal
+meta-policy search. In 7th International Conference on Learning Representations, ICLR 2019,
+2019."
+REFERENCES,0.2638888888888889,"John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy
+optimization algorithms. arXiv preprint arXiv:1707.06347, 2017."
+REFERENCES,0.26515151515151514,"Jayaram Sethuraman. A constructive deﬁnition of Dirichlet priors. Statistica sinica, pp. 639–650,
+1994."
+REFERENCES,0.26641414141414144,"David Silver, Aja Huang, Chris J Maddison, Arthur Guez, Laurent Sifre, George Van Den Driessche,
+Julian Schrittwieser, Ioannis Antonoglou, Veda Panneershelvam, Marc Lanctot, et al. Mastering
+the game of go with deep neural networks and tree search. nature, 529(7587):484–489, 2016."
+REFERENCES,0.2676767676767677,"Pranjal Tandon. Pytorch implementation of soft-actor-critic. https://github.com/pranz24/
+pytorch-soft-actor-critic, 2018."
+REFERENCES,0.2689393939393939,Published as a conference paper at ICLR 2022
+REFERENCES,0.2702020202020202,"Yee Whye Teh, Michael I Jordan, Matthew J Beal, and David M Blei. Hierarchical Dirichlet processes.
+Journal of the American Statistical Association, 101(476):1566–1581, 2006."
+REFERENCES,0.27146464646464646,"Max Welling and Yee W Teh. Bayesian learning via stochastic gradient langevin dynamics. In
+Proceedings of the 28th international conference on machine learning (ICML-11), pp. 681–688.
+Citeseer, 2011."
+REFERENCES,0.2727272727272727,"Annie Xie, James Harrison, and Chelsea Finn. Deep reinforcement learning amidst lifelong non-
+stationarity. arXiv preprint arXiv:2006.10701, 2020."
+REFERENCES,0.273989898989899,"Mengdi Xu, Wenhao Ding, Jiacheng Zhu, Zuxin Liu, Baiming Chen, and Ding Zhao. Task-agnostic
+online reinforcement learning with an inﬁnite mixture of Gaussian processes. Advances in Neural
+Information Processing Systems, 33, 2020."
+REFERENCES,0.27525252525252525,"Denis Yarats and Ilya Kostrikov. Soft actor-critic (sac) implementation in pytorch. https://
+github.com/denisyarats/pytorch_sac, 2020."
+REFERENCES,0.2765151515151515,"Amy Zhang, Clare Lyle, Shagun Sodhani, Angelos Filos, Marta Kwiatkowska, Joelle Pineau, Yarin
+Gal, and Doina Precup. Invariant causal prediction for block MDPs. In Proceedings of the 37th
+International Conference on Machine Learning, ICML, volume 119, pp. 11214–11224, 2020."
+REFERENCES,0.2777777777777778,"Pengfei Zhu, Xin Li, Pascal Poupart, and Guanghui Miao. On improving deep reinforcement learning
+for POMDPs. arXiv preprint arXiv:1704.07978, 2017."
+REFERENCES,0.27904040404040403,"Luisa M. Zintgraf, Kyriacos Shiarlis, Maximilian Igl, Sebastian Schulze, Yarin Gal, Katja Hofmann,
+and Shimon Whiteson. Varibad: A very good method for bayes-adaptive deep RL via meta-learning.
+In 8th International Conference on Learning Representations, ICLR 2020, 2020."
+REFERENCES,0.2803030303030303,Published as a conference paper at ICLR 2022
+REFERENCES,0.2815656565656566,Appendices
+REFERENCES,0.2828282828282828,"A Detailed Literature Review
+a1"
+REFERENCES,0.2840909090909091,"B
+Proofs
+a4
+B.1
+Proof of Theorem 1 . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+a4
+B.2
+Derivation of dynamic programming principle and proof of Theorem 2
+. . . . .
+a6
+B.3
+Performance gain for observable contexts . . . . . . . . . . . . . . . . . . . . .
+a8"
+REFERENCES,0.28535353535353536,"C Algorithm Details
+a9
+C.1
+Slightly more details on the Hierarchical Dirichlet Processes . . . . . . . . . . .
+a9
+C.2
+Variational Inference for Probabilistic Modeling
+. . . . . . . . . . . . . . . . .
+a10
+C.3
+Justiﬁcation for the variational distributions . . . . . . . . . . . . . . . . . . . .
+a12
+C.4
+Context Distillation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+a13
+C.5
+MPC using Cross-Entropy Method
+. . . . . . . . . . . . . . . . . . . . . . . .
+a15
+C.6
+Soft-Actor Critic . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+a15"
+REFERENCES,0.2866161616161616,"D Experiment Details
+a16
+D.1
+Learning algorithms . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+a16
+D.2
+Environments and their Models . . . . . . . . . . . . . . . . . . . . . . . . . .
+a16
+D.3
+Hyper-parameters . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+a19"
+REFERENCES,0.2878787878787879,"E
+Additional Experiments
+a19
+E.1
+HDP is an effective prior for learning an accurate and interpretable model . . . .
+a19
+E.2
+Distillation acts as a regularizer . . . . . . . . . . . . . . . . . . . . . . . . . .
+a21
+E.3
+Context cardinality vs model complexity . . . . . . . . . . . . . . . . . . . . .
+a22
+E.4
+Breaking the assumptions in Hidden Markov Models . . . . . . . . . . . . . . .
+a22
+E.5
+Learning new contexts . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+a23
+E.6
+Comparing to POMDP and C-MDP methods . . . . . . . . . . . . . . . . . . .
+a24
+E.7
+Experiments with a larger number of contexts . . . . . . . . . . . . . . . . . . .
+a25"
+REFERENCES,0.28914141414141414,"A
+DETAILED LITERATURE REVIEW"
+REFERENCES,0.2904040404040404,"For convenience, we reproduce the deﬁnitions and assumptions from the main text to make the
+appendix self-contained. We deﬁne a contextual Markov Decision Process (C-MDP) as a tuple
+Mc = ⟨C, S, A, PC, PS, R, γd⟩, where S is the continuous state space; A is the action space;
+γd ∈[0, 1] is the discount factor; and C denotes the context set with cardinality |C|. In our setting,
+the state transition and reward function depend on the context, i.e., PS : C × S × A × S →[0, 1],
+R : C × S × A →R. Finally, the context distribution probability PC : Tt × C →[0, 1] is conditioned
+on Tt - the past states, actions and contexts {s0, a0, c0, . . . , at−1, ct−1, st}. Our deﬁnition is a
+generalization of the C-MDP deﬁnition by Hallak et al. (2015), where the contexts are stationary, i.e.,
+PC : C →[0, 1]. We adapt our deﬁnition in order to encompass all the settings presented by Khetarpal
+et al. (2020), where such C-MDPs were used but not formally deﬁned."
+REFERENCES,0.2916666666666667,"Throughout the paper, we will restrict the class of C-MDPs by making the following assumptions: (a)
+Contexts are unknown and not directly observed (b) Context cardinality is ﬁnite and we know
+its upper bound K; (c) Context distribution is Markovian. In particular, we consider the contexts
+ck representing the parameters of the state transition function θk, and the context set C to be a subset
+of the parameter space Θ. To deal with uncertainty, we consider a set eC such that: a) | eC| = K > |C|;
+b) all its elements θk ∈eC are sampled from a distribution H(λ), where λ is a hyper-parameter. Let
+zt ∈[0, . . . , K) be the index variable pointing toward a particular parameter vector θzt. We thus"
+REFERENCES,0.29292929292929293,Published as a conference paper at ICLR 2022
+REFERENCES,0.29419191919191917,write the environment model as:
+REFERENCES,0.29545454545454547,"z0 | ρ0 ∼Cat(ρ0),
+zt | zt−1, {ρj}| e
+C|
+j=1 ∼Cat(ρzt−1),
+(A1a)"
+REFERENCES,0.2967171717171717,"st | st−1, at−1, zt, {θk}| e
+C|
+k=1 ∼p(st|st−1, at−1, θzt),
+θk | λ ∼H(λ), t ≥1.
+(A1b)"
+REFERENCES,0.29797979797979796,"For convenience we also write R = [ρ1, ..., ρ| e
+C|] representing the context transition operator, even if"
+REFERENCES,0.29924242424242425,| eC| is countable and inﬁnite.
+REFERENCES,0.3005050505050505,"Other restrictions on the space of C-MDPs lead to different problems and solutions. We present some
+settings graphically in Figure A1 adapted from the review by Khetarpal et al. (2020)."
+REFERENCES,0.30176767676767674,"Figure A1: Graphical models for C-MDP modeling. In all panels a stands for action, s - state, o -
+observation, z - context, while the operator ′ indicates the next time step. A: The context variable
+z evolves according to a Markov process; B: The context variable z is drawn once per episode; C:
+The context variable z evolves according to a Markov process and depends on state and/or action
+variables; D: a POMDP."
+REFERENCES,0.30303030303030304,"Setting A. In this setting, a Markov assumption is made on the context evolution. Only a few
+works make such an assumption similarly to our work. For example, Choi et al. (2000) assume
+a discrete state, action and context spaces and ﬁx the exact number of contexts thus signiﬁcantly
+limiting applicability of their approach. We can also mention the work by Xu et al. (2020), where
+the individual points are classiﬁed to different context during the episode. However, the agent
+explicitly assumes that the context will not change during the execution of its plan. The Markovian
+context evolution can also be related to switching systems (cf. Becker-Ehmck et al. (2019); Fox et al.
+(2008a); Dong et al. (2020)), where the context is representing the system’s mode. While we take
+inspiration from these works, we improve the model in comparison to Becker-Ehmck et al. (2019);
+Fox et al. (2008a) by using non-linear dynamics, in comparison to Fox et al. (2008a) by proposing the
+distillation procedure and using deep learning, in comparison to Becker-Ehmck et al. (2019); Dong
+et al. (2020) by using the hierarchical Dirichlet process prior."
+REFERENCES,0.3042929292929293,"Setting B. Here, an episodic non-stationarity constraint on the context probability distribution PC is
+introduced, that is, the context may change only (without loss of generality) at the start of the episode.
+Episodic non-stationarity constraint is widely adopted by meta-RL (Doshi-Velez & Konidaris, 2016;
+Finn et al., 2017; Al-Shedivat et al., 2018; Rothfuss et al., 2019; Clavera et al., 2018; Rakelly et al.,
+2019; Zintgraf et al., 2020; Xie et al., 2020) and continual RL (Chandak et al., 2020; Nagabandi
+et al., 2018; Khetarpal et al., 2020; Bou-Ammar et al., 2014; Riemer et al., 2019; Rolnick et al., 2019)
+communities. We can distinguish optimization-based and context-based Meta-RL families of methods.
+Optimization-based Meta-RL methods (Finn et al., 2017; Al-Shedivat et al., 2018; Rothfuss et al.,
+2019; Clavera et al., 2018) sample training contexts from a stationary distribution PC and optimize
+model or policy parameters, which can be quickly adapted to a test context. In contrast, context-based
+Meta-RL methods (Rakelly et al., 2019; Zintgraf et al., 2020; Xie et al., 2020; Duan et al., 2016)
+attempt to infer a deterministic representation or a probabilistic belief on the context from the episode
+history. We also remark recent work on domain shift while controlling from pixels Hansen & Wang
+(2021); Kostrikov et al. (2020). In these papers the authors assume that some pixels may change from
+an episode to an episode (e.g., red color becomes blue), but the underlying dynamics stay the same.
+Besides the episodic nature of the context change, this setting differs from ours on two fronts. First,
+controlling from pictures constitutes a POMDP problem, where the true states (positions, velocities,
+accelerations) are observed through a proxy (through pixels) and hence need to be inferred. Second,
+the underlying dynamics stay the same (Hansen & Wang, 2021; Kostrikov et al., 2020) and only
+observations change. Our case is the opposite: the underlying dynamics change, but the observation"
+REFERENCES,0.3055555555555556,Published as a conference paper at ICLR 2022
+REFERENCES,0.3068181818181818,"function stays the same. In future work we aim to extend our methods to control from pixels.We
+also note the work by Ball et al. (2021), who proposed to learn a contextual policy by augmenting
+an ofﬂine world model. In the online setting the algorithm had to learn only the current context
+thus improving efﬁciency of the learning procedure while delivering good performance. Continual
+(lifelong) RL mainly adopts a context incremental setting, where the agent is exposed to a sequence
+of contexts (Delange et al., 2021). While the agent’s goal is still to adapt efﬁciently to the unseen
+contexts, the emphasis is on overcoming catastrophic forgetting, i.e., maintaining a good performance
+on old contexts while improving performance on the current one (Rolnick et al., 2019; Riemer et al.,
+2019)."
+REFERENCES,0.30808080808080807,"We further remark that the Markovian context model and episodic non-stationarity assumptions
+are often incompatible. Indeed, learning the transition model for PC in C-MDPs with an episodic
+non-stationarity constraint is somewhat redundant because PC can be assumed to be a stationary
+distribution rather than a Markov process. On the other hand, if the context changes according to
+a Markov process then the episodic non-stationarity assumption may not be enough to capture the
+rich context dynamics. This can lead not only to suboptimal policies, but also to policies not solving
+the task at all. Xie et al. (2020) tried to combine the two settings by taking a hierarchical view on
+non-stationary modeling. In particular, they assume that the context changes in a Markovian fashion,
+but only between the episodes and during the episode the context does not change. This setting
+allows to model a two time-scale process: the context transitions on a slow time-scale prescribed by
+the episodes, while the process transitions on a fast time-scale prescribed by the steps. While this
+approach has its merits, it also has the some limitations, e.g., the hierarchical model is artiﬁcially
+imposed on the learning process."
+REFERENCES,0.30934343434343436,"Settings C and D. Many frameworks can ﬁt into the settings C and D, (c.f., Ong et al. (2010);
+Chandak et al. (2019); Zhang et al. (2020)), however, this makes it hard to compare the differences
+and similarities between them. We will refer the reader to the review by Khetarpal et al. (2020) for a
+further discussion. We make a few comments, however, on change point detection methods and on
+the relation to POMDP formulation (Astrom, 1965; Hauskrecht, 2000) in the case of unobservable
+contexts. Change-point detection methods can be readily used for the context estimation in an online
+fashion (da Silva et al., 2006; Hadoux et al., 2014; Banerjee et al., 2017; Padakandla et al., 2019; Li
+et al., 2019), however, these methods either track change-points in a heuristic way (da Silva et al., 2006;
+Hadoux et al., 2014) or assume strong prior knowledge on the non-stationarity (Banerjee et al., 2017;
+Padakandla et al., 2019). A POMDP is deﬁned by tuple Mpo = {X, A, O, PX , PO, R, γd, p(x0)},
+where X, A, O are the (unobservable) state, action, observation spaces, respectively; PX : X × A ×
+X →[0, 1] is the state transition probability; PO : X ×A×O →[0, 1] is the conditional observation
+probability; and p(x0) is the initial state distribution. In our case, the state is xt = (st, zt) and the
+observation is ot = st. A key step in POMDP literature is estimating or approximating the belief, i.e.,
+the probability distribution of the current state using history of observations and actions (Hausknecht
+& Stone, 2015; Zhu et al., 2017; Igl et al., 2018). Since the belief is generally inﬁnite-dimensional,
+it is prudent to resort to sampling, point-estimates or other approximations (Hausknecht & Stone,
+2015; Zhu et al., 2017; Igl et al., 2018). In our case, this is not necessary, however, as the context is a
+discrete variable. We further stress, that while general C-MDPs can be represented using POMDPs,
+this representation may not offer any beneﬁts at all due to complexity of belief estimation."
+REFERENCES,0.3106060606060606,"Finally, we can classify the literature by cardinality of C. Some Meta-RL algorithms mainly consider a
+continuous contextual set C by implicitly or explicitly parametrizing C with real-valued vectors (Doshi-
+Velez & Konidaris, 2016; Zintgraf et al., 2020; Xie et al., 2020; Rakelly et al., 2019). On the other
+hand, exploiting a discrete C can be motivated by controlling switching dynamic systems (Fox et al.,
+2008a) and may achieve better interpretability. Due to complexity, however, some works ﬁx the
+contextual cardinality |C| (Choi et al., 2000; Banerjee et al., 2017; Padakandla et al., 2019; Lee et al.,
+2019), or infer |C| from data in an online fashion (Xu et al., 2020; da Silva et al., 2006; Hadoux et al.,
+2014). Besides, most works in continual RL adopt a setting, where there is no explicit speciﬁcation
+on C, but the agent can directly access the discrete contexts of all time steps/episodes (Rolnick et al.,
+2019; Riemer et al., 2019). In contrast, our approach learns the context evolution from data."
+REFERENCES,0.31186868686868685,Published as a conference paper at ICLR 2022
+REFERENCES,0.31313131313131315,"B
+PROOFS"
+REFERENCES,0.3143939393939394,"B.1
+PROOF OF THEOREM 1"
+REFERENCES,0.31565656565656564,"For completeness, we restate the theorem below."
+REFERENCES,0.31691919191919193,"Theorem A1 Consider a Markov chain pt = pt−1R with a stationary distribution p∞and distilled
+I1 = {i|p∞
+i
+≥εdistil} and spurious I2 = {i|p∞
+i
+< εdistil} state indexes, respectively. Then a) the
+matrix b
+R = RI1,I1 + RI1,I2(I −RI2,I2)−1RI2,I1 is a valid probability transition matrix; b) the
+Markov chain bpt = bpt−1 b
+R is such that its stationary distribution bp∞∝p∞
+I1."
+REFERENCES,0.3181818181818182,"Let us ﬁrst provide an insight into our technical result. In order to so consider the Markov chain
+evolution:
+pt
+I1 = pt−1
+I1 RI1,I1 + pt−1
+I2 RI2,I1,"
+REFERENCES,0.3194444444444444,"pt
+I2 = pt−1
+I1 RI1,I2 + pt−1
+I2 RI2,I2."
+REFERENCES,0.3207070707070707,"Now assume that pt
+I2 ≈p∞
+I2 for all large enough t, which leads to"
+REFERENCES,0.32196969696969696,"pt
+I1 = pt−1
+I1 RI1,I1 + p∞
+I2RI2,I1,"
+REFERENCES,0.32323232323232326,"p∞
+I2 ≈pt−1
+I1 RI1,I2 + p∞
+I2RI2,I2."
+REFERENCES,0.3244949494949495,"If p∞
+I2 is small enough, then the Markov chain will rarely end up in the states with indexes I2.
+Meaning that we can remove these states, but we would need to take them into account while
+computing the new probability transitions. Furthermore, we need to do so while obtaining a new
+Markov chain in the process. The solution to this question is straightforward, i.e., we can solve for
+p∞
+I2 to obtain:
+pt
+I1 = pt−1
+I1
+ 
+RI1,I1 + RI1,I2(I −RI2,I2)−1RI2,I1
+
+."
+REFERENCES,0.32575757575757575,"Remarkably, the resulting process is also a Markov chain! In order to verify this we need to prove the
+following:"
+REFERENCES,0.32702020202020204,"a) the matrix I −RI2,I2 is invertible ;"
+REFERENCES,0.3282828282828283,"b) the matrix (I −RI2,I2)−1 is nonnegative ;"
+REFERENCES,0.32954545454545453,"c) the right eigenvector of the matrix RI1,I1 + RI1,I2(I −RI2,I2)−1RI2,I1 can be chosen
+to be the vector of ones 1."
+REFERENCES,0.33080808080808083,"We will need to develop some mathematical tools in order to prove these statements. For a matrix
+A ∈Rn×n the spectral radius r(A) is the maximum absolute value of the eigenvalues λi of A
+and r(A) = maxi |λi(A)|. The matrix A ∈Rn×m is called nonnegative if all its entries are
+nonnegative and denoted as A ≥0, if at least one element is positive we write A > 0 and if all
+elements are positive we write A ≫0. The matrix A ∈Rn×n is called reducible if there exists"
+REFERENCES,0.33207070707070707,"a permutation matrix T such that T AT T =
+
+B
+C
+0
+D"
+REFERENCES,0.3333333333333333,"
+for some square matrices B and D. The"
+REFERENCES,0.3345959595959596,"matrix is called irreducible if such a permutation matrix does not exist. The matrix A ∈Rn×n is
+called M-matrix, if all its off-diagonal entries are nonpositive and it can be represented as A = sI−B
+with s ≥r(B) (Berman & Plemmons, 1994). Interestingly the inverse of an M-matrix is always
+nonnegative (the opposite is generally false) (Berman & Plemmons, 1994). We will also use the
+following results:"
+REFERENCES,0.33585858585858586,"Proposition A1 (Perron-Frobenius Theorem) Let A ∈Rn×n be a nonnegative matrix, then the
+spectral radius r(A) is an eigenvalue of A and the corresponding left and right eigenvectors can be
+chosen to be nonnegative."
+REFERENCES,0.3371212121212121,"If A is additionally irreducible then r(A) is a simple eigenvalue of A and the corresponding left and
+right eigenvectors can be chosen to be positive."
+REFERENCES,0.3383838383838384,"Proposition A2 Consider A, B ∈Rn×n and let A > B ≥0, then r(A) ≥r(B). If additionally
+A is irreducible then the inequality is strict r(A) > r(B)."
+REFERENCES,0.33964646464646464,Published as a conference paper at ICLR 2022
+REFERENCES,0.3409090909090909,"Proof:
+This result is well-known, but for completeness we show the proof here (we adapt a similar
+technique to Noutsos (2006)). Let b be the right nonnegative eigenvector of B corresponding to r(B)
+and let a be the left nonnegative eigenvector of A corresponding to r(A). Now we have"
+REFERENCES,0.3421717171717172,r(A)aT b = aT Ab ≥since A > B aT Bb = r(B)aT b.
+REFERENCES,0.3434343434343434,"If aT b is positive, then the ﬁrst part is shown. If aT b = 0, then we can make a continuity argument
+by perturbing A and B to A′ and B′ in such a way that for their corresponding eigenvectors we have
+(a′)T b′ > 0. Hence the ﬁrst part of the proof is shown."
+REFERENCES,0.3446969696969697,"Now consider the case when A is irreducible. According to Proposition A1, since A is irreducible
+the spectral radius r(A) is a simple eigenvalue, the corresponding eigenvector a can be chosen to
+be positive. Let us prove the second part by contradiction and assume that r(A) = r(B), which
+implies that aT Ab = aT Bb and consequently Ab = Bb since Ab ≥Bb and a ≫0. Now since
+we also have A > B this means that the vector b has at least one zero entry. Since we also have
+Ab = r(A)b, the vector b is an eigenvector of A corresponding to r(A) and has zero entries by
+assumption above. This contradicts Perron-Frobenius theorem since the eigenspace corresponding to
+r(A) is a ray (since r(A) is a simple eigenvalue) and b does not lie in this eigenspace. Therefore,
+r(A) > r(B).
+□"
+REFERENCES,0.34595959595959597,"Now we proceed with the proof. We note that the stationary distribution (a positive normalized left
+eigenvector of the transition matrix) is unique if the Markov chain is irreducible (i.e., the transition
+matrix is irreducible) due to Proposition A1. It is also almost surely true if the transition model is
+learned. This is because the subset of reducible matrices is measure zero in the set of nonnegative
+matrices."
+REFERENCES,0.3472222222222222,"Recall that we have a Markov chain pt = pt−1R with a stationary distribution p∞, that is p∞=
+p∞R. Consider the index sets: the distilled context indexes I1 = {i|p∞
+i
+≥εdistil} and the spurious
+context indexes I2 = {i|p∞
+i
+< εdistil}."
+REFERENCES,0.3484848484848485,"First, we will show that the matrix b
+R = RI1,I1 + RI1,I2(I −RI2,I2)−1RI2,I1 is nonnegative.
+Since the matrix RI2,I2 is a nonnegative submatrix of R, due to Proposition A2 we have that
+r(RI2,I2) < r(R) = 1. This means that I −RI2,I2 is an M-matrix, which implies that it is
+invertible and its inverse is a nonnegative matrix. Hence b
+R is nonnegative (Berman & Plemmons,
+1994)."
+REFERENCES,0.34974747474747475,Since R describes a Markov chain we have R1 = 1 (where 1 is the vector of ones) and p∞R = p∞
+REFERENCES,0.351010101010101,"1I1 = RI1,I11T
+I1 + RI1,I21T
+I2,
+(A2a)"
+REFERENCES,0.3522727272727273,"1I2 = RI2,I11T
+I1 + RI2,I21T
+I2,
+(A2b)"
+REFERENCES,0.35353535353535354,"p∞
+I1 = p∞
+I1RI1,I1 + p∞
+I2RI2,I1,
+(A2c)"
+REFERENCES,0.3547979797979798,"p∞
+I2 = p∞
+I1RI1,I2 + p∞
+I2RI2,I2.
+(A2d)"
+REFERENCES,0.3560606060606061,"Now using elementary algebra we can establish that b
+R1I1 = 1I1:"
+REFERENCES,0.3573232323232323,"b
+R1I1 =
+ 
+RI1,I1 + RI1,I2(I −RI2,I2)−1RI2,I1
+
+1I1 ="
+REFERENCES,0.35858585858585856,"RI1,I11I1 + RI1,I2(I −RI2,I2)−1RI2,I11I1 =due to (A2b)"
+REFERENCES,0.35984848484848486,"RI1,I11I1 + RI1,I21I2 =due to (A2a) 1I1."
+REFERENCES,0.3611111111111111,"Similarly for p∞
+I1 b
+R = p∞
+I1 we have:"
+REFERENCES,0.36237373737373735,"p∞
+I1 b
+R = p∞
+I1
+ 
+RI1,I1 + RI1,I2(I −RI2,I2)−1RI2,I1
+
+="
+REFERENCES,0.36363636363636365,"p∞
+I1RI1,I1 + p∞
+I1RI1,I2(I −RI2,I2)−1RI2,I1 =due to (A2d)"
+REFERENCES,0.3648989898989899,"p∞
+I1RI1,I1 + p∞
+I2RI1,I2 =due to (A2c) p∞
+I1."
+REFERENCES,0.3661616161616162,"Since p∞
+I1 b
+R = p∞
+I1, the normalized vector p∞
+I1 is the stationary distribution of the distilled Markov
+chain and hence bp∞∝p∞
+I1. This completes the proof."
+REFERENCES,0.36742424242424243,Published as a conference paper at ICLR 2022
+REFERENCES,0.3686868686868687,"B.2
+DERIVATION OF DYNAMIC PROGRAMMING PRINCIPLE AND PROOF OF THEOREM 2"
+REFERENCES,0.369949494949495,For completeness we reproduce the theorem formulation below
+REFERENCES,0.3712121212121212,"Theorem A2 a) The belief of z can be computed as p(zt+1|IC
+t ) = bz
+t+1, where (bz
+t+1)i ∝Ni =
+P"
+REFERENCES,0.37247474747474746,"j p(st+1|st, θi, at)ρji(bz
+t )j, where (bz
+t )i are the entries of bz
+t ; b) the optimal policy can be com-
+puted as π(s, bz) = argmaxa Q(s, bz, a), where the value function satisﬁes the dynamic program-
+ming principle Q(st, bz
+t , at) = r(st, bz
+t , at) + γ
+R P"
+REFERENCES,0.37373737373737376,"i Ni maxat+1 Q(st+1, bz
+t+1, at+1) dst+1."
+REFERENCES,0.375,"The following deﬁnitions and derivations are in line with previous work by Hauskrecht (2000); Porta
+et al. (2006). We introduce the complete information state at the time t as follows:"
+REFERENCES,0.37626262626262624,"IC
+t = {b0, o≤t, a<t},"
+REFERENCES,0.37752525252525254,"where b0 = p(z0)δo0(s0). In order to tackle the intractability of the complete information state, one
+can use any information state that is sufﬁcient in some sense:"
+REFERENCES,0.3787878787878788,"Deﬁnition A1 Consider a partially observable Markov decision process {X, A, O, PX , PO, R, b0}.
+Let I be an information state space and ξ : I × A × O →I be an update function deﬁning an
+information process It = ξ(It−1, at−1, ot). We say that IS
+t is a sufﬁcient information process with
+regard to the optimal control if it is an information process and for any time step t, it satisﬁes"
+REFERENCES,0.380050505050505,"p(xt|IS
+t ) = p(xt|IC
+t ),"
+REFERENCES,0.3813131313131313,"p(ot|IS
+t−1, at−1) = p(ot|IC
+t−1, at−1)."
+REFERENCES,0.38257575757575757,"As a sufﬁcient information state of the process IS
+t , we will use the belief bt deﬁned as follows:"
+REFERENCES,0.3838383838383838,"bt = p(xt|IC
+t ) = p(xt|o≤t, a<t) = p(st|o≤t, a<t)p(zt|o<t, a<t)."
+REFERENCES,0.3851010101010101,"Effectively, we introduce the belief bs
+t = p(st|o≤t, a<t) of the state st and the belief bz
+t =
+p(zt|o≤t, a<t) of the state zt given an observation ot. However, since ot = st we can consider only
+the belief of zt:
+bs
+t = p(st|IC
+t ) = p(st|o≤t, a<t) = δst(ot),"
+REFERENCES,0.38636363636363635,"bz
+t = p(zt|IC
+t ) = p(zt|s≤t, a<t)."
+REFERENCES,0.38762626262626265,One of the features of our model is that the updates of the beliefs can be analytically computed.
+REFERENCES,0.3888888888888889,"Lemma A1 The belief bz
+t = p(zt|IC
+t ) is a sufﬁcient state information with the updates:"
+REFERENCES,0.39015151515151514,"(bz
+t+1)i ∝Ni =
+X"
+REFERENCES,0.39141414141414144,"j
+p(st+1|st, zt+1 = i, at, IC
+t )ρji(bz
+t )j."
+REFERENCES,0.3926767676767677,"Proof:
+First, let us check that the belief bt satisﬁes both conditions of Deﬁnition A1. By deﬁnition
+of our belief we have p(xt|IC
+t−1) = bt = p(xt|IS
+t−1), which satisﬁes the ﬁrst condition, as for the
+second condition we have:"
+REFERENCES,0.3939393939393939,"p(ot|IC
+t−1, at−1) =
+Z"
+REFERENCES,0.3952020202020202,xt−1∈X
+REFERENCES,0.39646464646464646,"p(ot|xt−1, IC
+t−1, at−1)p(xt−1|IC
+t−1)dxt−1 = Z"
+REFERENCES,0.3977272727272727,xt−1∈X
+REFERENCES,0.398989898989899,"p(ot|xt−1, at−1)bt−1dxt−1 = p(ot|IS
+t−1, at−1)."
+REFERENCES,0.40025252525252525,Now straightforward derivations yield:
+REFERENCES,0.4015151515151515,"bz
+t+1 = p(zt+1|IC
+t , st+1, at) ∝p(zt+1, st+1|IC
+t , at) ="
+REFERENCES,0.4027777777777778,"p(st+1|zt+1, IC
+t , at)
+X"
+REFERENCES,0.40404040404040403,"zt
+p(zt+1|zt)p(zt|IC
+t ) = p(st+1|st, zt+1, at)
+X"
+REFERENCES,0.4053030303030303,"zt
+p(zt+1|zt)bz
+t ,"
+REFERENCES,0.4065656565656566,"completing the proof.
+□"
+REFERENCES,0.4078282828282828,Published as a conference paper at ICLR 2022
+REFERENCES,0.4090909090909091,"As discussed by Porta et al. (2006), POMDP in continuous state, action and observation spaces also
+satisfy Bellman dynamic programming principle, albeit in a different space. Recall that the control
+problem is typically formulated as"
+REFERENCES,0.41035353535353536,"J = E˜τ T
+X"
+REFERENCES,0.4116161616161616,"t=0
+γtrt,"
+REFERENCES,0.4128787878787879,"where ˜τ = {x0, a0, . . . , xT −1, aT −1, xT } and the horizon T can be inﬁnite. As we do not have
+access to the state transitions we need to rewrite the problem in the observation or the belief spaces.
+We have"
+REFERENCES,0.41414141414141414,"J = Ex0 ( T
+X"
+REFERENCES,0.4154040404040404,"t=0
+γtrt(xt, at)
+xt+1 ∼p(xt+1|xt, at) ) = Ex0 ( T
+X"
+REFERENCES,0.4166666666666667,"t=0
+γt˜rt(bt, at)
+bt = ξ(bt−1, ot, at−1) ) = Eτ ( T
+X"
+REFERENCES,0.41792929292929293,"t=0
+γt˜rt(bt, at)
+bt = ξ(bt−1, ot, at−1) ) ,"
+REFERENCES,0.41919191919191917,"where τ = {b0, o0, a0, . . . , oT −1, aT −1, oT } and:"
+REFERENCES,0.42045454545454547,"˜rt(bt, at) =
+Z
+rt(x, at)bt(x) dx."
+REFERENCES,0.4217171717171717,"Given this reparameterization we can introduce the value functions and derive the Bellman equation
+similarly to Porta et al. (2006), which can be written in terms of the Q-function as follows:"
+REFERENCES,0.42297979797979796,"Q(bs
+t , bz
+t , at) =
+Z
+pr(r|st, at)bs
+t dst+"
+REFERENCES,0.42424242424242425,"γ
+Z Z
+p(ot+1|bs
+t , bz
+t , at) max
+at+1 Q(bs
+t+1, bz
+t+1, at+1)dot+1."
+REFERENCES,0.4255050505050505,"Figure A2: Graphical model
+for policy optimization"
+REFERENCES,0.42676767676767674,"We, however, have an additional structure that allows for simpliﬁed
+value functions. First note that ˜rt(bt, at) = rt(st, bz
+t , at), i.e., our
+reward depends directly on the observation and the belief of z."
+REFERENCES,0.42803030303030304,"Now we need to estimate E maxat+1 Q(bs
+t+1, bz
+t+1, at+1), where
+the expectation is taken over new observation, the probability dis-
+tribution of which can be computed as:"
+REFERENCES,0.4292929292929293,"p(ot+1|bs
+t , bz
+t , at) = p(st+1|st, bz
+t , at) =
+X"
+REFERENCES,0.4305555555555556,"j
+p(st+1|st, zt+1 = i, at)ρji(bz
+t )j = Ni."
+REFERENCES,0.4318181818181818,"This allows rewriting the second part of the Bellman equation as
+follows:
+Z
+p(ot+1|bs
+t , bz
+t , at) max
+at+1 Q(bs
+t+1, bz
+t+1, at+1)dot+1 =
+Z X"
+REFERENCES,0.43308080808080807,"i
+Ni max
+at+1 Q(st+1, bz
+t+1, at+1) dst+1,"
+REFERENCES,0.43434343434343436,"where Ni, bz
+t+1 depend on st+1. Finally, we have:"
+REFERENCES,0.4356060606060606,"Q(st, bz
+t , at) = r(st, bz
+t , at) + γ
+Z X"
+REFERENCES,0.43686868686868685,"i
+Ni max
+at+1 Q(st+1, bz
+t+1, at+1) dst+1,"
+REFERENCES,0.43813131313131315,which completes the proof.
+REFERENCES,0.4393939393939394,Published as a conference paper at ICLR 2022
+REFERENCES,0.44065656565656564,"B.3
+PERFORMANCE GAIN FOR OBSERVABLE CONTEXTS"
+REFERENCES,0.44191919191919193,"It is not surprising that observing the ground truth of the contexts should improve the maximum
+expected return. In particular, even knowing the ground truth context model we can correctly estimate
+the context zt+1 only a posteriori, i.e., after observing the next state st+1. This means that with every
+context switch we will mislabel a context with a high probability. This will lead to a sub-optimal
+action and performance loss, which the following result quantiﬁes using the value functions."
+REFERENCES,0.4431818181818182,"Theorem A3 Assume we know the true transition model of the contexts and states and consider
+two settings: we observe the ground truth zt and we estimate it using bz
+t . Assume we computed
+the optimal model-based policy π(·|st, bz
+t ) with the return R and the optimal ground-truth policy
+πgt(·|st, zt+1) with the corresponding optimal value functions Vgt(s, z) and Qgt(s, z, a), then:"
+REFERENCES,0.4444444444444444,"Ez1,s0Vgt(s0, z1)−R ≥Eτ,agt
+tm∼πgt,atm∼π M
+X"
+REFERENCES,0.4457070707070707,"m=1
+γtm(Q(stm, ztm+1, agt
+tm)−Q(stm, ztm+1, atm)),"
+REFERENCES,0.44696969696969696,where M is the number of misidentiﬁed context switches in a trajectory τ.
+REFERENCES,0.44823232323232326,"Proof:
+Let us consider the best case scenario. As we assume that we have access to the ground
+truth model for computing the policy π(·|st, bz
+t ), we can assume that the ground truth value of zt
+has the highest probability mass in the vector bz
+t . That is, we can assume that we can identify the
+correct context a posteriori. In effect, we can use a priori estimate of zt+1 by transitioning to the
+next time step, i.e., using the vector bz
+t R. We can also assume that the action distributions of the
+policy π and the ground truth policy πgt are identical provided our a priori estimate of the context
+and the ground truth context are the same. This, however, is almost surely not true when the context
+switch occurs, as we need at least one sample from the transition model in the new context. Now if
+we can estimate the effect of this mismatch on the performance, this will provide us with a lower
+bound on the performance gain."
+REFERENCES,0.4494949494949495,"Let Vgt(s), Qgt(s, a) be the optimal value functions for the ground truth policy πgt satisfying the
+Bellman equation:"
+REFERENCES,0.45075757575757575,"Qgt(s, a, z) = Es′∼p(·|s,a,z),z′∼Cat(ρz) (r(s, a, s′) + Vgt(s′, z′)) ,"
+REFERENCES,0.45202020202020204,"Vgt(s, z) = Ea∼πgt(·|s,z)Qgt(s, z, a)."
+REFERENCES,0.4532828282828283,"Consider a particular realization of the stochastic context variable zt (which is independent of st, at)
+and assume the context switched only once at t1. Then we have"
+REFERENCES,0.45454545454545453,"R(s0, z1) = Eat∼π(·) T
+X"
+REFERENCES,0.45580808080808083,"t=0
+γtr(st, at, st+1) = Eat,at1∼π"
+REFERENCES,0.45707070707070707,"t1−1
+X"
+REFERENCES,0.4583333333333333,"t=0
+γtr(st, at, st+1)+"
+REFERENCES,0.4595959595959596,"+γt1r(st1, at1, st1+1) + γt1+1
+T
+X"
+REFERENCES,0.46085858585858586,"t=t1+1
+γt−t1−1r(st, at, st+1) ! ="
+REFERENCES,0.4621212121212121,"Vgt(s0, z1) −γt1Ea∼πgt,st1+1,zt1+2 (r(st1, a, st1+1) + γVgt(st1+1, zt1+2)) +"
+REFERENCES,0.4633838383838384,"+ γt1Ea∼π,st1+1,zt1+2 (r(st1, a, st1+1) + γVgt(st1+1, zt1+2)) ="
+REFERENCES,0.46464646464646464,"Vgt(s0, z1) −γt1Eagt∼πgt,a∼π(Qgt(st1, zt1+1, agt) −Qgt(st1, zt1+1, a))."
+REFERENCES,0.4659090909090909,"In effect, we are using the Qgt function to estimate the performance loss of one mistake. The same
+procedure can be repeated for context realizations with M misidentiﬁed switches, where the number
+M depends on the realization of the context variable"
+REFERENCES,0.4671717171717172,"R(s0, z1) ="
+REFERENCES,0.4684343434343434,"V (s0, z1) − M
+X"
+REFERENCES,0.4696969696969697,"m=1
+γtmEagt
+tm∼πgt,atm∼π(Q(stm, ztm+1, agt
+tm) −Q(stm, ztm+1, atm))."
+REFERENCES,0.47095959595959597,"Now averaging over the context realizations proves the result.
+□"
+REFERENCES,0.4722222222222222,Published as a conference paper at ICLR 2022
+REFERENCES,0.4734848484848485,"C
+ALGORITHM DETAILS"
+REFERENCES,0.47474747474747475,"There are three main components in our algorithm: the generative model derivation (HDP-C-MDP),
+the model learning algorithm with probabilistic inference and the control algorithms. We ﬁrstly
+brieﬂy comment on each on these components to give an overview of the results and then explain our
+main contributions to each."
+REFERENCES,0.476010101010101,"In order to learn the model of the context transitions, we choose the Bayesian approach and we
+employ Hierarchical Dirichlet Processes (HDP) as priors for context transitions inspired by time-series
+modeling and analysis tools reported by Fox et al. (2008a;b). We improve the model by proposing a
+context spuriosity measure allowing for reconstruction of ground truth contexts. We then derive a
+model learning algorithm using probabilistic inference. Having a model, we can take off-the-shelf
+frameworks such as (Pineda et al., 2021), which can include a Model Predictive Control (MPC)
+approach using Cross-Entropy Minimization (CEM) (cf. Chua et al. (2018) and Appendix C.5), or
+a policy-gradient approach Soft-actor critic (cf. Haarnoja et al. (2018) and Appendix C.6), which
+are both well-suited for model-based reinforcement learning. While MPC can be directly applied to
+our model, for policy-based control we needed to derive the representation of the optimal policy and
+prove the dynamic programming principle for our C-MDP (see Theorem 2 in the main text and its
+proof in Appendix B.1). We summarize our model-based approach in Algorithm A1."
+REFERENCES,0.4772727272727273,"Algorithm A1: Learning to Control HDP-C-MDP
+Input: εdistill - distillation threshold, Nwarm - number of trajectories for warm start, Ntraj -
+number of newly collected trajectories per epoch, Nepochs - number of training epochs, AGENT -
+policy gradient or MPC agent
+Initialize AGENT with RANDOM AGENT, D = ∅;
+for i = 1, . . . , Nepochs do"
+REFERENCES,0.47853535353535354,"Sample Ntraj (Nwarm if i = 1) trajectories from the environment with AGENT;
+Set Dnew = {(si, ai)}Ntraj
+i=1 , where si = {si
+t}T
+t=−1 and ai = {ai
+t}T
+t=−1 are the state and
+action sequences in the i-th trajectory. Set D = D ∪Dnew;
+Update generative model parameters by gradient ascent on ELBO in Equation 4;
+Perform context distillation with εdistill;
+if AGENT is POLICY then"
+REFERENCES,0.4797979797979798,"Sample trajectories for policy update from D;
+Recompute the beliefs using the model for these trajectories;
+Update policy parameters
+end
+end
+return AGENT"
+REFERENCES,0.4810606060606061,"C.1
+SLIGHTLY MORE DETAILS ON THE HIERARCHICAL DIRICHLET PROCESSES"
+REFERENCES,0.4823232323232323,"A Dirichlet process (DP), denoted as DP(γ, H), is characterized by a concentration parameter γ
+and a base distribution H(λ) deﬁned over the parameter space Θ. A sample G from DP(γ, H) is a
+probability distribution satisfying (G(A1), ..., G(Ar)) ∼Dir(γH(A1), ..., γH(Ar)) for every ﬁnite
+measurable partition A1, ..., Ar of Θ, where Dir denotes the Dirichlet distribution. Sampling G is
+often performed using the stick-breaking process (Sethuraman, 1994) and constructed by randomly
+mixing atoms independent and identically distributed samples θk from H:"
+REFERENCES,0.48358585858585856,"νk ∼Beta(1, γ),
+βk = νk k−1
+Y"
+REFERENCES,0.48484848484848486,"i=1
+(1 −νi),
+G = ∞
+X"
+REFERENCES,0.4861111111111111,"k=1
+βkδθk,
+(A3)"
+REFERENCES,0.48737373737373735,"where δθk is the Dirac distribution at θk, and the resulting distribution of β = (β1, ...β∞) is called
+GEM(γ) for Grifﬁths-Engen-McCloskey (Teh et al., 2006). The discrete nature of G motivates the
+application of DP as a non-parametric prior for mixture models with an inﬁnite number of atoms θk.
+We note that the stick-breaking procedure assigns progressively smaller values to βk for large k, thus
+encouraging a smaller number of meaningful atoms."
+REFERENCES,0.48863636363636365,"The Hierarchical Dirichlet Process (HDP) is a group of DPs sharing a base distribution, which
+itself is a sample from a DP: G ∼DP(γ, H), Gj ∼DP(α, G) for all j = 0, 1, 2, . . . (Teh et al.,"
+REFERENCES,0.4898989898989899,Published as a conference paper at ICLR 2022
+REFERENCES,0.4911616161616162,"2006). The distribution G guarantees that all Gj inherit the same set of atoms, i.e., atoms of G, while
+keeping the beneﬁts of DPs in the distributions Gj. HDPs have received a signiﬁcant attention in the
+literature (Teh et al., 2006; Fox et al., 2008b;a) with various applications including Markov chain
+modeling."
+REFERENCES,0.49242424242424243,"In our case, the atoms {θk} forming the context set eC are sampled from H(λ). It can be shown that a
+random draw Gj from DP(α, G) can be done using eρj ∼GEM(α) and eθk ∼G. However, since
+eθk is sampled from eC, Gj is also a distribution over eC and Gj = ∞
+X"
+REFERENCES,0.4936868686868687,"k=0
+eρjkδeθk = ∞
+X"
+REFERENCES,0.494949494949495,"k=0
+ρjkδθk,"
+REFERENCES,0.4962121212121212,"for some ρjk, which can be sampled using another stick-break construction (Teh et al., 2006). We
+consider its modiﬁed version introduced by Fox et al. (2011):"
+REFERENCES,0.49747474747474746,"µjk | α, κ, β ∼Beta "
+REFERENCES,0.49873737373737376,"αβk + κ˜δjk, α + κ − k
+X"
+REFERENCES,0.5,"i=1
+αβi + κ˜δji !!"
+REFERENCES,0.5012626262626263,", ρjk = µjk k−1
+Y"
+REFERENCES,0.5025252525252525,"i=1
+(1 −µji),"
+REFERENCES,0.5037878787878788,"(A4)
+where k ≥1, j ≥0, ˜δjk is the Kronecker delta, the parameter κ ≥0, called the sticky factor, modiﬁes
+the transition matrix priors encouraging self-transitions. The sticky factor serves as another measure
+of regularization reducing the average number of transitions. Thus DP(α, G) can serve as the prior
+for the initial context distribution ρ0 and each row ρj in the transition matrix R."
+REFERENCES,0.5050505050505051,Figure A3: A probabilistic model for C-MDP with Markovian context
+REFERENCES,0.5063131313131313,"In summary, our probabilistic model is constructed in Equations A1,A3,A4 and illustrated in Fig-
+ure A3 as a graphical model. We stress that the HDP in its stick-breaking construction assumes that
+| eC| is inﬁnite and countable. In practice, however, we make an approximation and set | eC| = K with a
+large enough K."
+REFERENCES,0.5075757575757576,"C.2
+VARIATIONAL INFERENCE FOR PROBABILISTIC MODELING"
+REFERENCES,0.5088383838383839,Recall that our context MDP is represented as follows
+REFERENCES,0.51010101010101,"zt+1 | zt, {ρj}∞
+j=1 ∼Mul(ρzt),
+z0 | ρ0 ∼Mul(ρ0),"
+REFERENCES,0.5113636363636364,"θk | λ ∼H(λ),
+st | st−1, at−1, zt, {θk}∞
+k=1 ∼p(st|st−1, at−1, θzt),"
+REFERENCES,0.5126262626262627,"and we depict our generative model as a graphical one in Figure A3. Also recall that the distributions
+ρj have the following priors:"
+REFERENCES,0.5138888888888888,"ρjk = µjk k−1
+Y"
+REFERENCES,0.5151515151515151,"i=1
+(1 −µji),
+µjk | α, κ, β ∼Beta "
+REFERENCES,0.5164141414141414,"αβk + κ˜δjk, α + κ − k
+X"
+REFERENCES,0.5176767676767676,"i=1
+αβi + κ˜δji !! ,"
+REFERENCES,0.5189393939393939,"νk | γ ∼Beta(1, γ),
+βk = νk k−1
+Y"
+REFERENCES,0.5202020202020202,"i=1
+(1 −νi), (A5)"
+REFERENCES,0.5214646464646465,Published as a conference paper at ICLR 2022
+REFERENCES,0.5227272727272727,"where k ∈N≥1, j ∈N≥0, t ∈N≥0 and ˜δjk is the Kronecker delta function."
+REFERENCES,0.523989898989899,"We aim to ﬁnd a variational distribution q(ν, µ, θ) to approximate the true posterior p(ν, µ, θ|D),
+where D = {(si, ai)}N
+i=1 is a data set, si = {si
+t}T
+t=−1 and ai = {ai
+t}T
+t=−1 are the state and action
+sequences in the i-th trajectory. This is achieved by minimizing KL (q(ν, µ, θ) || p(ν, µ, θ|D)), or
+equivalently, maximizing the evidence lower bound (ELBO):"
+REFERENCES,0.5252525252525253,"ELBO = Eq(µ,θ) "" N
+X"
+REFERENCES,0.5265151515151515,"i=1
+log p(si|ai, µ, θ) #"
+REFERENCES,0.5277777777777778,"−KL (q(ν, µ, θ) || p(ν, µ, θ)) ."
+REFERENCES,0.5290404040404041,"The variational distribution above involves inﬁnite-dimensional random variables ν, µ, θ. To reach a
+tractable solution, we set | ˜C| = K and exploit a mean-ﬁeld truncated variational distribution (Blei
+et al., 2006; Hughes et al., 2015; Bryant & Sudderth, 2012). We construct the following variational
+distributions:"
+REFERENCES,0.5303030303030303,"q(ν, µ, θ) = q(ν)q(µ)q(θ), q(θ|ˆθ) = K
+Y"
+REFERENCES,0.5315656565656566,"k=1
+δ(θk|ˆθk), q(ν|ˆν) = K−1
+Y"
+REFERENCES,0.5328282828282829,"k=1
+δ(νk|ˆνk), q(νK = 1) = 1,"
+REFERENCES,0.5340909090909091,"q(µ|ˆµ) = K
+Y j=0 K−1
+Y"
+REFERENCES,0.5353535353535354,"k=1
+Beta  µjk"
+REFERENCES,0.5366161616161617,"ˆµjk, ˆµj − k
+X"
+REFERENCES,0.5378787878787878,"i=1
+ˆµji !"
+REFERENCES,0.5391414141414141,",
+q(µjK = 1) = 1,"
+REFERENCES,0.5404040404040404,"(A6)
+where the hatted symbols represent free parameters. Random variables not shown in (A6) are
+conditionally independent of the data, and thus can be discarded from the problem."
+REFERENCES,0.5416666666666666,"We maximize ELBO using stochastic gradient ascent. In particular, given a sub-sampled batch
+B = {(si, ai)}B
+i=1, the gradient of ELBO is estimated as:"
+REFERENCES,0.5429292929292929,"∇ˆν, ˆµ, ˆθELBO =N B B
+X"
+REFERENCES,0.5441919191919192,"i=1
+∇ˆµ, ˆθ Eq(µ)
+h
+log p(si|ai, µ, ˆθ)
+i
+−∇ˆν, ˆµ Eq(ν)[KL (q(µ) || p(µ|ν))]"
+REFERENCES,0.5454545454545454,"+ ∇ˆν log p(ˆν) + ∇ˆθ log p(ˆθ),
+where we apply implicit reparameterization method (Figurnov et al., 2018; Jankowiak & Obermeyer,
+2018) for gradients with respect to the expectations over Beta distributions. For computing the gradient
+with respect to the likelihood term log p(si|ai, µ, ˆθ), we exploit a message passing algorithm to
+integrate out the context indexes zi
+1:T . We present the details of the gradient computations in what
+follows."
+REFERENCES,0.5467171717171717,"Gradient of log p(si|ai, µ, ˆθ). We drop the dependency on µ, ˆθ in the following derivations. We
+have:"
+REFERENCES,0.547979797979798,"∇log p(si|ai) = Ep(zi|si,ai)
+
+∇log p(si|ai)
+
+= Ep(zi|si,ai)"
+REFERENCES,0.5492424242424242,"
+∇log p(si, zi|ai)"
+REFERENCES,0.5505050505050505,"p(zi|si, ai) "
+REFERENCES,0.5517676767676768,"= Ep(zi|si,ai)
+
+∇log p(si, zi|ai)
+
+−Ep(zi|si,ai)
+
+∇log p(zi|si, ai)
+
+,"
+REFERENCES,0.553030303030303,"where zi = {zi
+t}T
+t=1 is the context index sequence. Since the second term equals zero, we have:"
+REFERENCES,0.5542929292929293,"∇log p(si|ai) = Ep(zi|si,ai)[∇log p(si, zi|ai)]"
+REFERENCES,0.5555555555555556,"=Ep(zi
+1|si,ai)[∇log p(si
+1|si
+0, ai
+0, zi
+1)p(zi
+1)]+ + T
+X"
+REFERENCES,0.5568181818181818,"t=2
+Ep(zi
+t−1,zi
+t|si,ai)[∇log p(si
+t|si
+t−1, ai
+t−1, zi
+t)p(zi
+t|zi
+t−1)]."
+REFERENCES,0.5580808080808081,"Context index posteriors p(zi
+0|si, ai) and p(zi
+t−1, zi
+t|si, ai) required to compute the above expectation
+can be obtained by the message passing algorithm. The forward pass can be written as:"
+REFERENCES,0.5593434343434344,"mf(zi
+1) = p(zi
+1, si
+1|si
+0, ai
+0) = p(si
+1|si
+0, ai
+0, zi
+1)p(zi
+1)"
+REFERENCES,0.5606060606060606,"mf(zi
+t) = p(zi
+t, si
+1:t|si
+0, ai
+0:t−1) =
+X"
+REFERENCES,0.5618686868686869,"zi
+t−1"
+REFERENCES,0.5631313131313131,"p(zi
+t, zi
+t−1, si
+1:t−1, si
+t|si
+0, ai
+0:t−1)"
+REFERENCES,0.5643939393939394,"= p(si
+t|si
+t−1, ai
+t−1, zi
+t)
+X"
+REFERENCES,0.5656565656565656,"zi
+t−1"
+REFERENCES,0.5669191919191919,"p(zi
+t|zi
+t−1)mf(zi
+t−1)."
+REFERENCES,0.5681818181818182,Published as a conference paper at ICLR 2022
+REFERENCES,0.5694444444444444,The backward pass can be written as:
+REFERENCES,0.5707070707070707,"mb(zi
+T ) = 1"
+REFERENCES,0.571969696969697,"mb(zi
+t−1) = p(st:T |si
+t−1, ai
+t−1:T , zi
+t−1) =
+X"
+REFERENCES,0.5732323232323232,"zi
+t
+p(si
+t|si
+t−1, ai
+t−1, zi
+t)p(zi
+t|zi
+t−1)mb(zi
+t)."
+REFERENCES,0.5744949494949495,"Combining the forward and backward messages, we have:"
+REFERENCES,0.5757575757575758,"p(zi
+1|si, ai) ∝p(zi
+1, si
+1:T |si
+0, ai) = mf(zi
+1)mb(zi
+1)"
+REFERENCES,0.577020202020202,"p(zi
+t−1, zi
+t|si, ai) ∝p(zi
+t−1, zi
+t, si
+1:t−1, si
+t, si
+t+1|si
+0, ai) ="
+REFERENCES,0.5782828282828283,"= mf(zi
+t−1)p(zi
+t|zi
+t−1)p(si
+t|si
+t−1, ai
+t−1, zi
+t)mb(zi
+t).
+The forward pass estimates the posterior context distribution at time t give the past observations and
+actions (i.e., for k ≤t), which is similar to a ﬁltering process. The backward pass estimates the
+context distribution at time t give the future observations and actions (i.e., for k ≥t). Combining
+both passes allows to compute the context distribution at time t given the whole trajectory."
+REFERENCES,0.5795454545454546,"Gradient of ELBO
+∇ˆν ELBO = −∇ˆν Eq(ν)[KL (q(µ) || p(µ|ν))] −∇ˆν KL (q(ν) || p(ν)) ,"
+REFERENCES,0.5808080808080808,"∇ˆµ ELBO =N B B
+X i=1"
+REFERENCES,0.5820707070707071,"∇ˆµ Eq(µ)
+h
+log p(si|ai, µ, ˆθ)
+i"
+REFERENCES,0.5833333333333334,"−Eq(ν)[∇ˆµKL (q(µ) || p(µ|ν))],"
+REFERENCES,0.5845959595959596,"∇ˆθ ELBO = N B B
+X"
+REFERENCES,0.5858585858585859,"i=1
+Eq(µ)
+h
+∇ˆθ log p(si|ai, µ, ˆθ)
+i
++ ∇ˆθ log p(ˆθ), (A7)"
+REFERENCES,0.5871212121212122,"where the terms in blue involve differentiating an expectation over Beta distributions, which we
+compute by adopting the implicit reparameterization (Figurnov et al., 2018; Jankowiak & Obermeyer,
+2018). Considering a general case where x ∼pφ(x) and the cumulative distribution function (CDF)
+of pφ(x) is Fφ(x), it has been shown that:"
+REFERENCES,0.5883838383838383,"∇φ Epφ(x)[fφ(x)] = Epφ(x)[∇φfφ(x) + ∇xfφ(x)∇φx],
+∇φx = −∇φFφ(x)"
+REFERENCES,0.5896464646464646,"pφ(x)
+."
+REFERENCES,0.5909090909090909,"C.3
+JUSTIFICATION FOR THE VARIATIONAL DISTRIBUTIONS"
+REFERENCES,0.5921717171717171,"Here, we provide both intuitive and empirical justiﬁcations for the choice of variational distributions
+in (A6)."
+REFERENCES,0.5934343434343434,"The mean-ﬁeld approximation is mainly based on the tractability consideration where a reparame-
+terizable variational distribution is required for gradient estimation (Blei et al., 2017). Besides, the
+truncation level is set to K, which reduces an inﬁnite dimensional problem to a ﬁnite one."
+REFERENCES,0.5946969696969697,"The intuition of choosing the point estimation for q(ν) is the following: The q(µ) in (A6) induces
+a variational distribution q(ρ), following ρjk = µjk
+Qk−1
+i=1 (1 −µji) in (A5). When observing
+reasonable amount of trajectories, the optimal q∗(ρ) should center around the ground-truth initial
+context distribution and the context transition. The HDP prior in our generative model speciﬁes
+that ρj|α, β ∼DP(α, β) (Teh et al., 2006), which means β serves as the expectation of the initial
+context distribution and each row in the context transition. Intuitively, the optimal q∗(β), which is
+induced from q∗(ν), should center around the stationary distribution of the context chain. Therefore,
+each factor q∗(νk) in the optimal q∗(ν) is supposed to be uni-modal, and thus a point estimation
+could be a reasonable simpliﬁcation. This intuition was supported by our computing β and stationary
+distributions during training resulting in similar distilled Markov chains."
+REFERENCES,0.5959595959595959,"We then conduct a simple numerical study to verify the intuition above, which reveals another problem
+when using a full Beta variational distribution for ν. Consider the following context Markov chain:"
+REFERENCES,0.5972222222222222,"ρ0 =
+
+0.6
+0.4"
+REFERENCES,0.5984848484848485,"
+,
+R =
+
+ρT
+1
+ρT
+2"
+REFERENCES,0.5997474747474747,"
+=
+
+0.7
+0.3
+0.2
+0.8 
+."
+REFERENCES,0.601010101010101,"We set hyper-parameters in (A5) as γ = α = 1, κ = 0, K = 2 and assume that, with sampled
+trajectories D, the learned optimal q∗(µ) is given by:
+q∗(µ01)q∗(µ11)q∗(µ21) = Beta(µ01|13.8, 9.2) Beta(µ11|14.0, 6.0) Beta(µ21|3.0, 12.0)."
+REFERENCES,0.6022727272727273,Published as a conference paper at ICLR 2022
+REFERENCES,0.6035353535353535,"(a) Point estimation loss
+(b) Point estimation gradient"
+REFERENCES,0.6047979797979798,"(c) Beta variational distribution loss
+(d) Beta variational distribution gradient"
+REFERENCES,0.6060606060606061,"Figure A4: Loss function (A8) and the empirical distribution of its gradient under two conﬁgurations
+of q(ν)"
+REFERENCES,0.6073232323232324,"Recall that ρj1 = µj1 in (A5). The assumed q∗(µjk) has the mean at its ground-truth value and the
+variance 0.01. According to (A7), maximizing ELBO w.r.t q(ν) is equivalent to:"
+REFERENCES,0.6085858585858586,"min
+q(ν) Eq(ν)[KL (q∗(µ) || p(µ|ν))] + ∇ˆν KL (q(ν) || p(ν)) .
+(A8)"
+REFERENCES,0.6098484848484849,where q(µ) is ﬁxed to the assumed optima q∗(µ).
+REFERENCES,0.6111111111111112,"We investigate two conﬁgurations of q(ν): (1) a point estimation where q(ν|ˆν) = δ(ν1|ˆν1); (2) a full
+Beta variational distribution where q(ν|ˆν) = Beta(ν1|ˆν11, ˆν12). The results are shown in Figure A4.
+The optimal point estimation is q∗(ν) = δ(ν1|0.493) (labeled by the red star in Figure A4(a)), while
+the optimal Beta distribution in Figure A4(c) is q∗(ν) = Beta(ν1|4.86, 4.78). The Beta optimum is
+uni-modal and its mode 0.505 is very close to the point estimation 0.493, which is consistent with
+our intuition. Comparing Figure A4(b) with A4(d), we observe that the point estimation can provide
+gradients better suited for optimization while using a Beta variational distribution potentially suffers
+from vanishing gradients. We observed this phenomenon in our model learning experiments as well."
+REFERENCES,0.6123737373737373,"Since the transition function p(st|st−1, at−1, θzt) is modeled by neural networks, it is generally hard
+to predict any property of the true posterior of θ and choose an appropriate variational distribution.
+Bayesian neural network literature attempt to tackle this problem (Welling & Teh, 2011; Blundell
+et al., 2015; Kingma et al., 2015; Gal & Ghahramani, 2016; Ritter et al., 2018). However, most
+methods have considerably high computational complexity and it is not trivial to evaluate the quality
+of generated probabilistic prediction. In this work, we explicitly assume the distribution of st
+whose parameters are ﬁtted by neural networks. The transition model is still capable of generating
+probabilistic prediction with a point estimation of θ. This assumption/simpliﬁcation is followed by
+many model-based RL works."
+REFERENCES,0.6136363636363636,"C.4
+CONTEXT DISTILLATION"
+REFERENCES,0.61489898989899,"At every iteration of model learning, we can extract MAP parameter estimates {θk}K
+k=1 and approx-
+imated posteriors of ρ0 and R = [ρ1, ..., ρK], which are induced from q(µ). Let us also deﬁne"
+REFERENCES,0.6161616161616161,Published as a conference paper at ICLR 2022
+REFERENCES,0.6174242424242424,Algorithm A2: Context distillation
+REFERENCES,0.6186868686868687,"Inputs: εdistil - distillation threshold; ¯R - expected context transition matrix; ˆβ - weights of
+HDP’s base distribution
+Determine the distillation vector v using one of the following choices:
+(a) stationary distribution of the chain, v such that v = v ¯R;
+(b) weights of HDP’s base distribution, v = ˆβ.
+Determine distilled context indexes I1 and spurious context indexes I2 as follows:
+I1 = {i|vi ≥εdistil}, I2 = {i|vi < εdistil};
+Compute ˆR as follows:
+if AGENT is MPC then"
+REFERENCES,0.6199494949494949,"ˆR = ¯RI1,I1 + ¯RI1,I2(I −¯RI2,I2)−1 ¯RI2,I1.
+end
+else if AGENT is POLICY then"
+REFERENCES,0.6212121212121212,"ˆR =
+ ¯RI1,I1 + ¯RI1,I2(I −¯RI2,I2)−1 ¯RI2,I1
+0
+(I −¯RI2,I2)−1 ¯RI2,I1
+0 
+."
+REFERENCES,0.6224747474747475,"end
+return ˆR - distilled probability transition matrix."
+REFERENCES,0.6237373737373737,"the expected context initial distribution ¯ρ0 = Eq(µ)[ρ0] and the expected context transition matrix
+¯R = Eq(µ)[R]. These MAP estimates are used during training as well as testing for sampling the
+values z. Hence distilling ¯R has an effect on training as well as testing."
+REFERENCES,0.625,"Our distillation criterion is based on the values of the stationary distribution of the context Markov
+chain. Recall that one can compute the stationary distribution ρ∞by solving ρ∞= ρ∞¯R. Now
+the meaningful context indexes I1 = {i|ρ∞
+i
+≥εdistil} and spurious context indexes I2 = {i|ρ∞
+i
+<
+εdistil} can be chosen using a distillation threshold εdistil. Then, we distill the learned contexts by
+simply discarding ˆθI2. Meanwhile, the context Markov chain also needs to be reduced. For ¯ρ0, we
+gather those dimensions indexed by I1 into a new vector ˆρ0 and re-normalize ˆρ0. In addition, ¯R can
+be reduced to ˆR following the Theorem 1 in the main text."
+REFERENCES,0.6262626262626263,"Perhaps, a less rigorous, but deﬁnitely a simpler approach is choosing the index sets I1 and I2 using
+ˆβ — a MAP estimation of β computed using ˆν. Since optimizing the KL (q(µ) || p(µ|ˆν))] term in
+ELBO is essentially driving the posterior of ρ0:K toward ˆβ. Therefore, ˆβ can be seen as a ‘summary’
+distribution over contexts and we can consider the k-th context as a redundancy if ˆβk is small. It
+is not clear if ˆβ has a direct relation to the stationary distribution of the Markov chain with the
+transition probability ˆR. However, we have observed that the magnitudes of the entries of ˆβ and p∞
+are correlated. Hence, in order to avoid computing an eigenvalue decomposition at every context
+estimation one can employ distillation using ˆβ."
+REFERENCES,0.6275252525252525,"Both approaches are summarized in Algorithm A2. For policy optimization, we actually need to keep
+the number of contexts constant as dealing with changing state-belief space can be challenging during
+training. Therefore, the transition matrix ˆR has the same dimensions as ¯R, where the transition
+probabilities between spurious contexts and from meaningful to spurious context are set to zero. We
+can still remove the spurious contexts after training both from the model and the policy."
+REFERENCES,0.6287878787878788,Published as a conference paper at ICLR 2022
+REFERENCES,0.6300505050505051,"C.5
+MPC USING CROSS-ENTROPY METHOD"
+REFERENCES,0.6313131313131313,"Figure A5: Graphical model for the
+MPC problem"
+REFERENCES,0.6325757575757576,"This procedure is gradient-free, which beneﬁts lower-
+dimensional settings, but could be less efﬁcient in higher
+dimensional environments. It is also known to be more ef-
+ﬁcient than random shooting methods (Chua et al., 2018).
+The idea of this approach is quite simple and sketched
+in Algorithm A3. At the state st with an action plan
+{ak}t+H
+k=t , we sample plan updates {δi
+k}t+H
+k=t . We then
+roll-out trajectories and compute the average returns for
+each plan {ak + δi
+k}t+H
+k=t . We pick Nelite best performing
+action plans {{ak + δij
+k }t+H
+k=t }Nelite
+j=1 , compute the empiri-"
+REFERENCES,0.6338383838383839,"cal mean ˜µk and variance ˜Σk of the elite plan updates δij
+k ,
+and then compute the updates on the action plan distribu-
+tion as follows:
+µk := (1 −lr)µk + lr ˜µk,"
+REFERENCES,0.63510101010101,"Σk := (1 −lr)Σk + lr ˜Σk,
+(A9)"
+REFERENCES,0.6363636363636364,where lr is the learning rate.
+REFERENCES,0.6376262626262627,Algorithm A3: MPC based on CEM
+REFERENCES,0.6388888888888888,"Inputs: {ak}t+H
+k=t , {µk}t+H
+k=t , {Σk}t+H
+k=t , Nepochs, Nelite, Ntraces, Npops, lr, s, H
+for j = 0, . . . , Nepochs do"
+REFERENCES,0.6401515151515151,"Sample action plan updates {{δi
+k}t+H
+k=t }Npops
+i=1
+, where δi
+k ∼N(µk, Σk);
+Roll-out Ntraces for each update plan;
+Compute the returns 1/Ntraces
+PNtraces
+p=1
+Pt+H
+k=t r(sp
+k, ak + δi
+k) with sp
+t = s for all p;
+Pick Nelite best performing action plans;
+Update the sampling distributions {µk}t+H
+k=t , {Σk}t+H
+k=t as in (A9).
+end"
+REFERENCES,0.6414141414141414,"C.6
+SOFT-ACTOR CRITIC"
+REFERENCES,0.6426767676767676,"We reproduce the summary of the soft-actor critic algorithm by Achiam (2018), which we found
+very accessible. The soft-actor critic algorithm aims at solving a modiﬁed RL problem with an
+entropy-regularized objective:"
+REFERENCES,0.6439393939393939,"π = argmax
+π
+Eτ∼π "" T
+X"
+REFERENCES,0.6452020202020202,"t=0
+γtr(st, at) + αH(π(·|st)) # ,"
+REFERENCES,0.6464646464646465,"where H(P) = −Ex∼P [log(P(x)] and α is called the temperature parameter. The entropy regular-
+ization modiﬁes the Bellman equation for this problem as follows:"
+REFERENCES,0.6477272727272727,"Qπ(s, a) = Ea′∼π,s′∼p(·|s,a) [r(s, a) + γ(Qπ(s′, a′) −α log π(a′|s′))] ."
+REFERENCES,0.648989898989899,"The algorithm largely follows the standard actor-critic framework for updating value functions and
+policy, with a few notable changes. First, two Q functions are used in order to avoid overestimation
+of the value functions . In particular, the loss for value learning is as follows:"
+REFERENCES,0.6502525252525253,"Lvalue,i(φi, D) = E(s,a,r,s′,d)∼D
+h
+(Qφi(s, a) −y(r, s′, d))2i
+,
+(A10)"
+REFERENCES,0.6515151515151515,"y(r, s′, d) = r + γ(1 −d)
+
+min
+j=1,2 Qφtarg,j(s′, a′) −α log πψ(a′|s′)
+
+.
+(A11)"
+REFERENCES,0.6527777777777778,"For policy updates the reparameterization trick is used allowing for differentiation of the policy.
+Namely, the policy loss function is as follows:
+Lpolicy(ψ, D) = −Es∼D,ξ∼N(0,I) min
+j=1,2 Qφj(s′, ˜aψ) −α log πψ(˜aψ|s′),
+(A12)"
+REFERENCES,0.6540404040404041,"˜aψ = tanh (µψ + σψ ⊙ξ),
+ξ ∼N(0, I).
+(A13)"
+REFERENCES,0.6553030303030303,Published as a conference paper at ICLR 2022
+REFERENCES,0.6565656565656566,"Algorithm A4: Soft-actor critic (basic version)
+Inputs: Nepochs - number of epochs, Nupd - number of gradient updates per epochs,
+Ntarget−freq - target value function update frequency, Nsamples - number of steps per epoch, lr,
+w - learning rates
+Ntotal−upd = 0.
+Initialize parameters ψ, φi, φtarget,i = φi;
+for j = 0, . . . , Nepochs do"
+REFERENCES,0.6578282828282829,"Sample Nsamples steps from the environment with a ∼πψ(·|s) resulting in the buffer update
+Dnew = {(si, ai, s′
+i, ri, di)}Nsamples
+i=1
+;
+Set D = Dnew ∪D;
+Sample a batch B from the buffer D;
+for k = 0, . . . , Nupd do"
+REFERENCES,0.6590909090909091,"Ntotal−upd ←Ntotal−upd + 1;
+Update parameters of the value functions φi ←φi −lr∇φiLvalue,i(φi, B);
+Update parameters of the policy ψ ←ψ −lr∇ψLpolicy(ψ, B);
+if
+mod (Ntotal−upd, Ntarget−freq) = 0 then
+Update parameters of the target value function φtarget,i ←wφtarget,i + (1 −w)φi;
+end
+end
+end
+return πψ"
+REFERENCES,0.6603535353535354,"D
+EXPERIMENT DETAILS"
+REFERENCES,0.6616161616161617,"D.1
+LEARNING ALGORITHMS"
+REFERENCES,0.6628787878787878,"Model learning
+We implemented the model learning using the package Pyro (Bingham et al., 2018),
+which is designed for efﬁcient probabilistic programming. Pyro allows for automatic differentiation,
+i.e., we do not need to explicitly implement message passing and reparametrized gradients for the
+ELBO gradient computation. We still need, however, a forward message pass to compute the belief
+estimate, e.g., to perform ﬁltering on the variable zt when needed."
+REFERENCES,0.6641414141414141,"PPO with an RNN model
+We modiﬁed an implementation of PPO by Kostrikov (2018) to account
+for our belief model. In our implementation, the RNN with a hidden state h at time t is taking the
+inputs ht−1, st−1, at−1, while producing the output ht. What is left is to project the hidden state onto
+the belief space using a decoder, which we have chosen as bbt = softmax(W ht), where the length
+of the vector bbt is equal to the number of contexts. The architecture is depicted in Figure A6(a). Note
+that one can see the RNN and the decoder architecture as a model for the sufﬁcient information state
+for the POMDP. We have experimented with different architectures, e.g., projecting to a larger belief
+space to account for spurious contexts, removing the decoder altogether etc. These architectures,
+however, did not yield reasonable results."
+REFERENCES,0.6654040404040404,"GPMM.
+We took the implementation by Xu et al. (2020), which is able to swing-up the pole
+attached to the cart and adapt to environments with different parameters."
+REFERENCES,0.6666666666666666,"SAC.
+We based our implementation largely on (Tandon, 2018) with some inspiration from (Yarats
+& Kostrikov, 2020). We use two architectures: full information policy (see Figure A6(c)) and
+model-based policy (see Figure A6(b)). The full information policy is using one hot encoded true
+context and is, therefore, used as a reference for the best case performance only."
+REFERENCES,0.6679292929292929,"CEM-MPC.
+We implemented the algorithm from scratch in PyTorch."
+REFERENCES,0.6691919191919192,"D.2
+ENVIRONMENTS AND THEIR MODELS"
+REFERENCES,0.6704545454545454,"Cart-Pole Swing Up
+We largely followed the setting introduced by Xu et al. (2020), that is we
+set the maximum force magnitude to 20, time interval to 0.04, and time horizon to 100. We took"
+REFERENCES,0.6717171717171717,Published as a conference paper at ICLR 2022
+REFERENCES,0.672979797979798,(a) RNN policy
+REFERENCES,0.6742424242424242,"(b) Model-based policy
+(c) FI policy"
+REFERENCES,0.6755050505050505,Figure A6: Policy architectures
+REFERENCES,0.6767676767676768,(a) Cart-Pole
+REFERENCES,0.678030303030303,(b) Vehicle
+REFERENCES,0.6792929292929293,(c) Drone
+REFERENCES,0.6805555555555556,"Figure A7: Structure of the neural networks predicting the mean of the transition probability. The
+blocks R and dt stand for multiplication with the rotation matrix R and discretization time dt. MLP
+denotes a multi-layer perceptron. E stands for Eurler angles (pitch, roll, yaw), p, v, and w stands for
+position, velocity and angular velocity in the world frame. Operator ·′ stands for the next time step"
+REFERENCES,0.6818181818181818,"the implementation by Lovatto (2019) and modiﬁed it to ﬁt our context MDP setting. The states
+of the environment are the position of the mass (p), velocity of the mass (v), deviation angle of
+the pole from the top position (θ) and angular velocity ( ˙θ). For GPMM we replaced θ with sin(θ)
+and cos(θ) as was done by Xu et al. (2020). We set the reward function to cos(θ), where θ is the
+deviation from the top position. Our transition model predicts the mean change between the next
+and the current states and its variance as it is common in model-based RL. Therefore, the structure
+of our neural network model for mean prediction is s′ = s + MLP(s, a), where s′ is the successor
+state and MLP is a multi-layer perceptron predicting s′ −s. The variance in the transition model is a
+trained parameter. The structure of the neural network predicting the mean of the transition model is
+depicted in Figure A7(a)."
+REFERENCES,0.6830808080808081,"Drone Take-off
+The drone environment (Panerati et al., 2021) has 12 states: position in the world
+frame (px, py and pz), yaw, pitch, roll angles (ψ, θ and φ), velocities in the world frame (vx, vy
+and vz) and angular velocities in the world frame (ωx, ωy and ωz). The prediction of the transition
+model is similar to the cart-pole model with one notable exception: the neural network for the mean
+prediction has additional structure. Note that we can estimate spacial positions, roll, pitch and yaw"
+REFERENCES,0.6843434343434344,Published as a conference paper at ICLR 2022
+REFERENCES,0.6856060606060606,angles given position and angular velocities using crude but effective formulae:
+REFERENCES,0.6868686868686869,"∆px
+∆py
+∆pz ! ≈dt ·"
+REFERENCES,0.6881313131313131,"vx
+vy
+vz ! ,"
+REFERENCES,0.6893939393939394,"∆φ
+∆θ
+∆ψ ! ≈dt ·  
+"
+REFERENCES,0.6906565656565656,"1
+sin(ψ) tan(θ)
+cos(φ) tan(θ)
+0
+cos(ψ)
+−sin(ψ)"
+REFERENCES,0.6919191919191919,"0
+sin(ψ)
+cos(θ)
+cos(ψ)"
+REFERENCES,0.6931818181818182,"cos(θ)  
+"
+REFERENCES,0.6944444444444444,"|
+{z
+}
+R"
+REFERENCES,0.6957070707070707,"ωx
+ωy
+ωz ! ,"
+REFERENCES,0.696969696969697,"where the formula for angular velocities can be found, for example, in Hover & Triantafyllou (2009).
+We will refer to the matrix R as the rotation matrix with a slight abuse of notation. We also choose
+special features for the MLP: angular velocities, velocities, sines and cosines of the Euler angles (E),
+actions and actions squared. Using these expression we impose the structure on the neural network
+depicted in Figure A7(c)."
+REFERENCES,0.6982323232323232,Table A1: Hyper-parameters for model learning.
+REFERENCES,0.6994949494949495,"Cart-Pole Swing-Up
+Intersection
+Drone Take-Off"
+REFERENCES,0.7007575757575758,Model Prior
+REFERENCES,0.702020202020202,"K
+[4, 5, 6, 8, 10, 20]
+10
+10
+γ
+2
+2
+1
+α
+1 · 103
+1 · 103
+5 · 103
+κ
+3 · K/5
+6
+3
+stdθ
+0.1
+0.1
+0.1
+transition cool-off
+5
+5
+5
+Network dimensions
+{6, 128, 4}
+{6, 64, 4}
+{20, 128, 6}
+Activations
+ReLU
+ReLU
+ReLU"
+REFERENCES,0.7032828282828283,"Optimizer
+Clipped Adam
+Clipped Adam
+Clipped Adam
+Learning rates {θ, ρ, ν}
+{5 · 10−3, 10−2, 10−2}
+{5 · 10−3, 10−2, 10−2}
+{5 · 10−3, 10−2, 10−2}"
+REFERENCES,0.7045454545454546,Table A2: Hyper-parameters for SAC experiments.
+REFERENCES,0.7058080808080808,"Cart-Pole Swing-Up
+Intersection
+Drone Take-Off"
+REFERENCES,0.7070707070707071,Runner
+REFERENCES,0.7083333333333334,"# roll-outs at warm-start
+100
+200
+200
+# roll-outs per iteration
+1
+1
+1
+# model iterations at warm-start
+500
+500
+500
+# model iterations per epoch
+500
+200
+200
+# agent updates at warm start
+1000
+1000
+100
+# agent updates per epoch
+200
+100
+150
+# epochs
+500
+500
+500
+Model frequency update
+100
+100
+80
+Model batch size
+20
+50
+50
+Agent batch size
+256
+256
+256 Prior"
+REFERENCES,0.7095959595959596,"Training distillation threshold
+0.1
+0.05
+0.02
+Testing distillation threshold
+0.1
+0.05
+0.02 SAC"
+REFERENCES,0.7108585858585859,"Policy network dimensions
+{4, 256, 2}
+{12, 256, 256, 4}
+{12, 256, 4}
+Policy networks activations
+ReLU
+ReLU
+ReLU
+Value network layer dims
+{4, 256, 1}
+{12, 256, 256, 1}
+{12, 256, 1}
+Value networks activations
+ReLU
+ReLU
+ReLU
+Target entropy
+−0.05
+−0.01
+−0.1
+Initial temperature
+0.8
+0.2
+0.6
+Discount factor
+0.99
+0.999
+0.999
+Target value fn update freq
+4
+4
+4"
+REFERENCES,0.7121212121212122,Optimization
+REFERENCES,0.7133838383838383,"Optimizer
+Adam
+Adam
+Adam
+Policy learning rate
+3 · 10−4 or 7 · 10−4
+5 · 10−4
+3 · 10−4"
+REFERENCES,0.7146464646464646,"Value function learning rate
+3 · 10−4 or 7 · 10−4
+5 · 10−4
+3 · 10−4"
+REFERENCES,0.7159090909090909,"Temperature learning rate
+5 · 10−5 or 7 · 10−5
+1 · 10−4
+1 · 10−4
+Linear Learning Decay
+True
+True
+True
+Weight Decay
+10−8
+10−6
+10−6"
+REFERENCES,0.7171717171717171,"Left turn on the Intersection in Highway Environment
+We take the environment by Leurent
+(2018), but use the modiﬁcations made by Xu et al. (2020) including the overall reward function
+structure. We, however, do not penalize the collisions. and we increase the episode time from 40 to"
+REFERENCES,0.7184343434343434,Published as a conference paper at ICLR 2022
+REFERENCES,0.7196969696969697,Table A3: Hyper-parameters for MPC experiments.
+REFERENCES,0.7209595959595959,"Cart-Pole Swing-Up
+Intersection
+Drone Take-Off"
+REFERENCES,0.7222222222222222,Runner
+REFERENCES,0.7234848484848485,"# roll-outs at warm-start
+100
+200
+200
+# roll-outs per iteration
+20
+20
+20
+# model iterations at warm-start
+500
+500
+500
+# model iterations per epoch
+500
+50
+60
+# epochs
+10
+3
+3
+Model batch size
+100
+100
+50 Prior"
+REFERENCES,0.7247474747474747,"Training distillation threshold
+0.1
+0
+0
+Testing distillation threshold
+0.02
+0
+0.02"
+REFERENCES,0.726010101010101,"Z0
+Z1
+Z2
+Z3
+Z4 Z0 Z1 Z2 Z3 Z4 p(z0) p(z )"
+REFERENCES,0.7272727272727273,"87.7
+ 0.0
+ 0.6
+ 0.0
+ 11.7"
+REFERENCES,0.7285353535353535,"48.4
+ 0.1
+ 3.4
+ 0.0
+ 48.1"
+REFERENCES,0.7297979797979798,"39.5
+ 0.0
+ 18.5
+ 0.0
+ 41.9"
+REFERENCES,0.7310606060606061,"47.2
+ 0.0
+ 3.5
+ 0.1
+ 49.2"
+REFERENCES,0.7323232323232324,"11.8
+ 0.0
+ 0.6
+ 0.0
+ 87.5"
+REFERENCES,0.7335858585858586,"49.2
+ 0.0
+ 3.2
+ 0.0
+ 47.6"
+REFERENCES,0.7348484848484849,"49.9
+ 0.0
+ 0.7
+ 0.0
+ 49.4 0 20 40 60 80 100"
+REFERENCES,0.7361111111111112,Probability (%)
+REFERENCES,0.7373737373737373,(a) HDP
+REFERENCES,0.7386363636363636,"Z0
+Z1
+Z2
+Z3
+Z4 Z0 Z1 Z2 Z3 Z4 p(z0) p(z )"
+REFERENCES,0.73989898989899,"86.4
+ 0.8
+ 1.3
+ 0.8
+ 10.8"
+REFERENCES,0.7411616161616161,"15.3
+ 42.1
+ 13.7
+ 14.2
+ 14.7"
+REFERENCES,0.7424242424242424,"16.5
+ 9.1
+ 48.0
+ 9.9
+ 16.5"
+REFERENCES,0.7436868686868687,"14.4
+ 14.0
+ 13.8
+ 42.2
+ 15.5"
+REFERENCES,0.7449494949494949,"11.1
+ 0.8
+ 1.4
+ 0.8
+ 86.0"
+REFERENCES,0.7462121212121212,"26.7
+ 16.1
+ 16.2
+ 15.6
+ 25.4"
+REFERENCES,0.7474747474747475,"46.3
+ 2.4
+ 3.6
+ 2.4
+ 45.2 0 20 40 60 80 100"
+REFERENCES,0.7487373737373737,Probability (%)
+REFERENCES,0.75,(b) Dirichlet
+REFERENCES,0.7512626262626263,"Z0
+Z1
+Z2
+Z3
+Z4 Z0 Z1 Z2 Z3 Z4 p(z0) p(z )"
+REFERENCES,0.7525252525252525,"81.0
+ 0.0
+ 9.1
+ 9.9
+ 0.1"
+REFERENCES,0.7537878787878788,"5.9
+ 1.5
+ 58.9
+ 32.4
+ 1.4"
+REFERENCES,0.7550505050505051,"0.5
+ 0.0
+ 49.6
+ 49.9
+ 0.0"
+REFERENCES,0.7563131313131313,"0.3
+ 0.0
+ 50.4
+ 49.2
+ 0.0"
+REFERENCES,0.7575757575757576,"66.9
+ 0.1
+ 12.5
+ 9.4
+ 11.1"
+REFERENCES,0.7588383838383839,"0.0
+ 0.0
+ 0.3
+ 99.6
+ 0.0"
+REFERENCES,0.76010101010101,"2.1
+ 0.0
+ 49.1
+ 48.7
+ 0.0 0 20 40 60 80 100"
+REFERENCES,0.7613636363636364,Probability (%)
+REFERENCES,0.7626262626262627,(c) MLE
+REFERENCES,0.7638888888888888,"Z0
+Z1
+Z2
+Z3
+Z4 Z0 Z1 Z2 Z3 Z4 p(z0) p(z )"
+REFERENCES,0.7651515151515151,"87.8
+ 0.1
+ 0.1
+ 0.1
+ 11.8"
+REFERENCES,0.7664141414141414,"50.1
+ 1.0
+ 0.3
+ 0.3
+ 48.2"
+REFERENCES,0.7676767676767676,"48.2
+ 0.3
+ 1.0
+ 0.4
+ 50.1"
+REFERENCES,0.7689393939393939,"48.4
+ 0.3
+ 0.3
+ 1.1
+ 49.9"
+REFERENCES,0.7702020202020202,"12.2
+ 0.1
+ 0.1
+ 0.1
+ 87.4"
+REFERENCES,0.7714646464646465,"49.6
+ 0.4
+ 0.3
+ 0.4
+ 49.4"
+REFERENCES,0.7727272727272727,"50.6
+ 0.1
+ 0.1
+ 0.1
+ 49.0 0 20 40 60 80 100"
+REFERENCES,0.773989898989899,Probability (%)
+REFERENCES,0.7752525252525253,(d) HDP w distillation
+REFERENCES,0.7765151515151515,"Figure A8: Transition matrices, initial p(z0) and stationary p(z∞) distributions of the learned context
+models in the Cart-Pole Swing-Up Experiment for Result A. Z0 – Z4 stand for the learned contexts.
+Reproduction of Figure 2 from the main text."
+REFERENCES,0.7777777777777778,"100 time steps. We again predicted the difference between current and next steps for the mean, and
+used the simpliﬁed model for the position, i.e., ∆px ≈dtvx, ∆py ≈dtvy for both social and ego
+vehicles."
+REFERENCES,0.7790404040404041,"D.3
+HYPER-PARAMETERS"
+REFERENCES,0.7803030303030303,"All the hyper-parameters are presented in Tables A1, A2 and A3. For model learning experiments we
+used 500 trajectory roll-outs and 500 epochs for optimization. In the cart-pole environment we used
+the higher learning rate for hard failure experiments when χ < 0 and used the lower learning rate for
+the soft failure experiments χ > 0. We use the weight decay to avoid gradient explosion in the value
+functions and the policies. Similarly, Clipped Adam optimizer (available in Pyro) was used to avoid
+gradient explosion in model learning."
+REFERENCES,0.7815656565656566,"E
+ADDITIONAL EXPERIMENTS"
+REFERENCES,0.7828282828282829,"E.1
+HDP IS AN EFFECTIVE PRIOR FOR LEARNING AN ACCURATE AND INTERPRETABLE MODEL"
+REFERENCES,0.7840909090909091,"We plot the time courses of the context evolution and the ground truth context evolution in Figure A9.
+As the results in Figure A8 (reproduction of Figure 2 in the main text) suggested the MLE method
+did not provide an accurate context model, while both DP and HDP priors provided models for
+reconstructing the true context cardinality after distillation. The difference was the choice of the
+distillation threshold, which had to be signiﬁcantly higher for the DP prior. This experiment indicates
+that DP prior can be a good tool for modeling context transitions, but HDP provides sharper model ﬁt
+and a more interpretable model."
+REFERENCES,0.7853535353535354,"For completeness, we performed the same experiment, but with a different seed and setting εdistil =
+0.1 during training. We plot the results in Figures A10 and A11. In this case, all models (including
+the MLE method) coupled with distillation provided an accurate estimate of the context evolution.
+This suggests that the optimization proﬁle for the MLE method has many local minima (peaks and
+troughs in ELBO), which we can be trapped in given an unlucky seed."
+REFERENCES,0.7866161616161617,Published as a conference paper at ICLR 2022
+REFERENCES,0.7878787878787878,"0
+20
+40
+60
+80
+Time (t) C0 C1 Z0 Z1 Z2 Z3 Z4"
+REFERENCES,0.7891414141414141,(a) HDP
+REFERENCES,0.7904040404040404,"0
+20
+40
+60
+80
+Time (t) C0 C1 Z0 Z1 Z2 Z3 Z4"
+REFERENCES,0.7916666666666666,(b) Dirichlet
+REFERENCES,0.7929292929292929,"0
+20
+40
+60
+80
+Time (t) C0 C1 Z0 Z1 Z2 Z3 Z4"
+REFERENCES,0.7941919191919192,(c) MLE
+REFERENCES,0.7954545454545454,"Figure A9: Time courses the learned context models in Cart-Pole Swing-Up Experiment. “Unlucky’
+random seed for MLE was used. C0 and C1 stand for the ground true contexts, while Z0 – Z4 are
+the learned contexts. Reproduction of Figure 3 from the main text."
+REFERENCES,0.7967171717171717,"Z0
+Z1
+Z2
+Z3
+Z4 Z0 Z1 Z2 Z3 Z4 p(z0) p(z )"
+REFERENCES,0.797979797979798,"87.8
+ 0.1
+ 0.1
+ 0.1
+ 11.8"
+REFERENCES,0.7992424242424242,"50.1
+ 1.0
+ 0.3
+ 0.3
+ 48.2"
+REFERENCES,0.8005050505050505,"48.2
+ 0.3
+ 1.0
+ 0.4
+ 50.1"
+REFERENCES,0.8017676767676768,"48.4
+ 0.3
+ 0.3
+ 1.1
+ 49.9"
+REFERENCES,0.803030303030303,"12.2
+ 0.1
+ 0.1
+ 0.1
+ 87.4"
+REFERENCES,0.8042929292929293,"49.6
+ 0.4
+ 0.3
+ 0.4
+ 49.4"
+REFERENCES,0.8055555555555556,"50.6
+ 0.1
+ 0.1
+ 0.1
+ 49.0 0 20 40 60 80 100"
+REFERENCES,0.8068181818181818,Probability (%)
+REFERENCES,0.8080808080808081,(a) HDP
+REFERENCES,0.8093434343434344,"Z0
+Z1
+Z2
+Z3
+Z4 Z0 Z1 Z2 Z3 Z4 p(z0) p(z )"
+REFERENCES,0.8106060606060606,"43.1
+ 16.8
+ 11.3
+ 17.5
+ 11.3"
+REFERENCES,0.8118686868686869,"1.2
+ 85.8
+ 0.8
+ 11.4
+ 0.8"
+REFERENCES,0.8131313131313131,"13.8
+ 15.1
+ 42.2
+ 15.4
+ 13.5"
+REFERENCES,0.8143939393939394,"1.1
+ 10.9
+ 0.8
+ 86.4
+ 0.8"
+REFERENCES,0.8156565656565656,"14.1
+ 15.0
+ 14.1
+ 15.3
+ 41.5"
+REFERENCES,0.8169191919191919,"16.4
+ 24.7
+ 15.6
+ 27.6
+ 15.7"
+REFERENCES,0.8181818181818182,"3.1
+ 45.0
+ 2.4
+ 47.1
+ 2.4 0 20 40 60 80 100"
+REFERENCES,0.8194444444444444,Probability (%)
+REFERENCES,0.8207070707070707,(b) Dirichlet
+REFERENCES,0.821969696969697,"Z0
+Z1
+Z2
+Z3
+Z4 Z0 Z1 Z2 Z3 Z4 p(z0) p(z )"
+REFERENCES,0.8232323232323232,"0.4
+ 0.9
+ 84.6
+ 0.7
+ 13.4"
+REFERENCES,0.8244949494949495,"0.1
+ 62.4
+ 23.2
+ 0.1
+ 14.3"
+REFERENCES,0.8257575757575758,"0.0
+ 0.4
+ 88.6
+ 0.0
+ 11.0"
+REFERENCES,0.827020202020202,"2.4
+ 68.2
+ 17.3
+ 1.6
+ 10.4"
+REFERENCES,0.8282828282828283,"0.0
+ 0.3
+ 10.9
+ 0.0
+ 88.8"
+REFERENCES,0.8295454545454546,"0.8
+ 0.0
+ 50.6
+ 0.0
+ 48.6"
+REFERENCES,0.8308080808080808,"0.0
+ 0.9
+ 49.4
+ 0.0
+ 49.6 0 20 40 60 80 100"
+REFERENCES,0.8320707070707071,Probability (%)
+REFERENCES,0.8333333333333334,(c) MLE
+REFERENCES,0.8345959595959596,"Figure A10: Transition matrices, initial p(z0) and stationary p(z∞) distributions of the learned
+context models in Cart-Pole Swing-Up Experiment. Distillation during training and a “lucky” seed
+were used. Z0 – Z4 are the learned contexts."
+REFERENCES,0.8358585858585859,"0
+20
+40
+60
+80
+Time (t) C0 C1 Z0 Z1 Z2 Z3 Z4"
+REFERENCES,0.8371212121212122,(a) HDP
+REFERENCES,0.8383838383838383,"0
+20
+40
+60
+80
+Time (t) C0 C1 Z0 Z1 Z2 Z3 Z4"
+REFERENCES,0.8396464646464646,(b) Dirichlet
+REFERENCES,0.8409090909090909,"0
+20
+40
+60
+80
+Time (t) C0 C1 Z0 Z1 Z2 Z3 Z4"
+REFERENCES,0.8421717171717171,(c) MLE
+REFERENCES,0.8434343434343434,"Figure A11: Time courses the learned context models in Cart-Pole Swing-Up Experiment. Distillation
+during training and a “lucky” seed were used. C0 and C1 stand for the ground true contexts, while
+Z0 – Z4 are the learned contexts."
+REFERENCES,0.8446969696969697,Published as a conference paper at ICLR 2022
+REFERENCES,0.8459595959595959,"Z0
+Z1
+Z2
+Z3
+Z4
+Z5
+Z6
+Z7 Z0 Z1 Z2 Z3 Z4 Z5 Z6 Z7 p(z0) p(z )"
+REFERENCES,0.8472222222222222,87.3  0.0  0.0  0.6  0.0  0.0  12.1  0.0
+REFERENCES,0.8484848484848485,47.9  0.3  0.0  3.5  0.1  0.0  48.1  0.1
+REFERENCES,0.8497474747474747,47.9  0.1  0.2  3.5  0.1  0.0  48.2  0.1
+REFERENCES,0.851010101010101,39.1  0.0  0.0  20.8  0.0  0.0  40.0  0.0
+REFERENCES,0.8522727272727273,48.5  0.1  0.0  3.5  0.3  0.0  47.5  0.1
+REFERENCES,0.8535353535353535,47.7  0.0  0.0  3.5  0.1  0.2  48.4  0.1
+REFERENCES,0.8547979797979798,11.3  0.0  0.0  0.5  0.0  0.0  88.2  0.0
+REFERENCES,0.8560606060606061,47.5  0.1  0.0  3.6  0.1  0.0  48.4  0.3
+REFERENCES,0.8573232323232324,47.1  0.1  0.0  3.2  0.1  0.0  49.5  0.1
+REFERENCES,0.8585858585858586,48.0  0.0  0.0  0.7  0.0  0.0  51.3  0.0 0 20 40 60 80 100
+REFERENCES,0.8598484848484849,Probability (%)
+REFERENCES,0.8611111111111112,(a) No distillation
+REFERENCES,0.8623737373737373,"Z0
+Z1
+Z2
+Z3
+Z4
+Z5
+Z6
+Z7 Z0 Z1 Z2 Z3 Z4 Z5 Z6 Z7 p(z0) p(z )"
+REFERENCES,0.8636363636363636,3.1  0.5  0.4  46.2  0.5  0.5  48.0  0.7
+REFERENCES,0.86489898989899,0.7  2.5  0.5  48.2  0.5  0.5  46.5  0.7
+REFERENCES,0.8661616161616161,0.7  0.6  2.2  47.6  0.5  0.4  47.3  0.7
+REFERENCES,0.8674242424242424,0.2  0.2  0.1  87.7  0.1  0.1  11.4  0.2
+REFERENCES,0.8686868686868687,0.7  0.5  0.5  47.4  2.4  0.4  47.5  0.7
+REFERENCES,0.8699494949494949,0.7  0.5  0.5  47.4  0.5  2.0  47.6  0.7
+REFERENCES,0.8712121212121212,0.2  0.2  0.1  11.7  0.2  0.1  87.2  0.2
+REFERENCES,0.8724747474747475,0.7  0.5  0.4  46.0  0.5  0.5  48.0  3.4
+REFERENCES,0.8737373737373737,0.7  0.5  0.4  49.7  0.5  0.5  47.0  0.7
+REFERENCES,0.875,0.2  0.2  0.1  50.3  0.2  0.1  48.7  0.2 0 20 40 60 80 100
+REFERENCES,0.8762626262626263,Probability (%)
+REFERENCES,0.8775252525252525,(b) Distillation threshold 0.01
+REFERENCES,0.8787878787878788,"Z0
+Z1
+Z2
+Z3
+Z4
+Z5
+Z6
+Z7 Z0 Z1 Z2 Z3 Z4 Z5 Z6 Z7 p(z0) p(z )"
+REFERENCES,0.8800505050505051,4.0  0.7  0.5  45.8  0.7  0.6  46.9  0.8
+REFERENCES,0.8813131313131313,0.9  3.2  0.6  48.0  0.7  0.6  45.3  0.8
+REFERENCES,0.8825757575757576,0.8  0.7  2.7  47.0  0.7  0.6  46.6  0.8
+REFERENCES,0.8838383838383839,0.2  0.2  0.2  87.3  0.2  0.2  11.4  0.3
+REFERENCES,0.88510101010101,0.8  0.7  0.6  47.1  3.1  0.6  46.3  0.8
+REFERENCES,0.8863636363636364,0.8  0.7  0.6  47.2  0.7  2.7  46.5  0.8
+REFERENCES,0.8876262626262627,0.3  0.2  0.2  11.3  0.2  0.2  87.4  0.3
+REFERENCES,0.8888888888888888,0.8  0.7  0.6  45.7  0.7  0.6  46.9  4.1
+REFERENCES,0.8901515151515151,0.9  0.7  0.6  50.3  0.7  0.6  45.4  0.8
+REFERENCES,0.8914141414141414,0.3  0.2  0.2  49.1  0.2  0.2  49.5  0.3 0 20 40 60 80 100
+REFERENCES,0.8926767676767676,Probability (%)
+REFERENCES,0.8939393939393939,(c) Distillation threshold 0.1
+REFERENCES,0.8952020202020202,Figure A12: Inﬂuence of distillation during training in Cart-Pole Swing-Up Experiment with | eC| = 8.
+REFERENCES,0.8964646464646465,"Table A4: Comparing the probability mass of the third most probable state in the stationary distribu-
+tion. We vary the cardinality of the estimated context set eC and the distillation threshold εdistil. Red
+indicates underestimation of the distillation threshold. Reproduction of Table 1 from the main text."
+REFERENCES,0.8977272727272727,"εdistil ↓
+| eC| →
+4
+5
+6
+8
+10
+20
+100"
+REFERENCES,0.898989898989899,"0
+8.58e-03
+7.06e-03
+3.71e-03
+6.85e-03
+2.20e-03
+2.25e-02
+1.37e-01
+0.01
+1.06e-03
+1.24e-03
+1.37e-03
+2.19e-03
+2.56e-03
+1.60e-02
+8.84e-03
+0.1
+1.21e-03
+1.54e-03
+1.70e-03
+2.80e-03
+3.54e-03
+9.86e-03
+5.03e-02"
+REFERENCES,0.9002525252525253,"E.2
+DISTILLATION ACTS AS A REGULARIZER"
+REFERENCES,0.9015151515151515,"After the ﬁrst experiment, we noticed that the context Z2 has a low probability mass in stationarity,
+but a high probability of self-transition (see Figure A8 - reproduction of Figure 2 in the main text).
+This suggest that spurious transitions can happen, while highly unlikely. We speculate that the
+learning algorithm tries to ﬁt the uncertainty in the model (e.g., due to unseen data) to one context.
+This can lead to over-ﬁtting and unwanted side-effects. Results in Figure A8 (reproduction of Figure 2
+in the main text) suggest that distillation during training can act as a regularizer when we used a high
+enough threshold εdistil = 0.1. We further validate our ﬁndings by changing the context number
+upper bound | eC| between 4 and 20. In particular, we proceed by presenting the results for varying
+| eC| (taking values 4, 5, 6, 8, 10, 20 and 100) and the distillation threshold εdistil (taking values 0,
+0.01, and 0.1). Note that we distill during training and we refer to the transition matrix for the
+distilled Markov chain as the distilled transition matrix. First, consider the results in Figure A12,
+where we plot the learned MAP estimates of the transition matrices with | eC| = 8. Note that using
+distillation with both thresholds prevents overﬁtting to one context. One could argue that instead of
+context distillation during training one could simply use distillation after training. This approach,
+however, can lead to emergence of a spurious context with a large probability of a self-transition
+raising the possibility of inaccurate model predictions. Furthermore, the large number of spurious
+contexts can lead to a large probability mass concentrated in one of them in stationarity. Indeed,
+consider Table A4, where we plot the context with third largest probability mass. In particular, for
+| eC| = 20 the probability mass values for this context are larger than 0.01. This indicates a small but
+not insigniﬁcant possibility of a transition to this context, if the distillation does not remove it."
+REFERENCES,0.9027777777777778,"We verify that the distilled transition matrices for various cardinalities | eC| are close to each other. Let
+ˆRK denote the estimated transition matrix for | eC| = K with only two contexts chosen a posteriori.
+We use the following metric for comparison"
+REFERENCES,0.9040404040404041,δK = ∥ˆRK −ˆR5∥1
+REFERENCES,0.9053030303030303,"∥ˆR5∥1
+."
+REFERENCES,0.9065656565656566,"That is, we compare all the transition matrices to the case of | eC| = 5. In Table A5 we present the
+results, which indicate that the estimated transition matrices are quite close to each other. Furthermore,
+the distillation during training helps to recover the true context regardless of the upper bound | eC|."
+REFERENCES,0.9078282828282829,Published as a conference paper at ICLR 2022
+REFERENCES,0.9090909090909091,"Table A5: Comparing the estimated transition matrices using the metric δ| e
+C| =
+∥ˆ
+R| e
+C|−ˆ
+R5∥1"
+REFERENCES,0.9103535353535354,"∥ˆ
+R5∥1
+. We vary"
+REFERENCES,0.9116161616161617,the cardinality eC and the distillation threshold εdistil.
+REFERENCES,0.9128787878787878,"εdistil ↓
+| eC| →
+4
+5
+6
+8
+10
+20
+100"
+REFERENCES,0.9141414141414141,"0
+8.26e-03
+0
+7.69e-03
+2.79e-03
+1.29e-02
+2.89e-02
+1.42e-01
+0.01
+6.08e-03
+0
+6.41e-03
+8.88e-03
+3.61e-03
+2.14e-02
+1.77e-02
+0.1
+2.09e-03
+0
+1.66e-03
+4.87e-03
+1.38e-02
+2.19e-02
+2.60e-02"
+REFERENCES,0.9154040404040404,"To summarize, our experiments suggest that the context set cardinality | eC| can be conﬁdently
+overestimated and the context set can be reconstructed using our distillation procedure."
+REFERENCES,0.9166666666666666,"E.3
+CONTEXT CARDINALITY VS MODEL COMPLEXITY"
+REFERENCES,0.9179292929292929,"0
+20
+40
+60
+80
+Time (t)"
+REFERENCES,0.9191919191919192,"C0
+C1
+C2
+C3
+C4
+C5
+Z0
+Z1
+Z2
+Z3
+Z4
+Z5
+Z6
+Z7
+Z8
+Z9
+Z10
+Z11"
+REFERENCES,0.9204545454545454,(a) ϵdistill = 0
+REFERENCES,0.9217171717171717,"0
+20
+40
+60
+80
+Time (t)"
+REFERENCES,0.922979797979798,"C0
+C1
+C2
+C3
+C4
+C5
+Z0
+Z1
+Z2
+Z3
+Z4
+Z5
+Z6
+Z7
+Z8
+Z9
+Z10
+Z11"
+REFERENCES,0.9242424242424242,(b) ϵdistill = 0.05
+REFERENCES,0.9255050505050505,"0
+20
+40
+60
+80
+Time (t)"
+REFERENCES,0.9267676767676768,"C0
+C1
+C2
+C3
+C4
+C5
+Z0
+Z1
+Z2
+Z3
+Z4
+Z5
+Z6
+Z7
+Z8
+Z9
+Z10
+Z11"
+REFERENCES,0.928030303030303,(c) ϵdistill = 0.1
+REFERENCES,0.9292929292929293,"Figure A13: Time courses of the learned context models for various distillation thresholds
+where C = {{−1}, {−0.5}, {0.05}, {0.1}, {0.5}, {1}}.
+We deduce that the learned context
+sets: bC0 = {{−1}, {−0.5}, {0.05, 0.1}, {0.5}, {1}}, bC0.05 = {{−1, −0.5}, {0.05, 0.1, 0.5}, {1}},
+bC0.1 = {{−1, −0.5}, {0.05, 0.1, 0.5, 1}}."
+REFERENCES,0.9305555555555556,"Next we demonstrate that our algorithm can merge similar context automatically using an ap-
+propriate distillation threshold during training. We increased the force magnitude by two-fold
+in order to create a large number of distinct contexts and chosen the context set as C
+=
+{{−1}, {−0.5}, {0.5}, {0.05}, {0.1}, {0.5}, {1}} and vary the distillation threshold ϵdistill setting
+it to 0, 0.05 and 0.1 during training. In order to get the estimated context sets we distilled one more
+time after training with ϵdistill = 0.02. We set a sufﬁciently high context cardinality estimate K = 12.
+Results in Figure A13 suggest that the learned contexts sets for various distillation threshold are as
+follows:
+bC0 = {{−1}, {−0.5}, {0.05, 0.1}, {0.5}, {1}},
+bC0.05 = {{−1, −0.5}, {0.05, 0.1, 0.5}, {1}},
+bC0.1 = {{−1, −0.5}, {0.05, 0.1, 0.5, 1}}."
+REFERENCES,0.9318181818181818,"This indicates the ability to change the model structure using the distillation threshold. Furthermore,
+the trade-off between continuous and discrete dynamics is decided automatically using the distillation
+threshold."
+REFERENCES,0.9330808080808081,"E.4
+BREAKING THE ASSUMPTIONS IN HIDDEN MARKOV MODELS"
+REFERENCES,0.9343434343434344,"One of the major assumptions in our framework is the Markovian nature of the switches, which can
+limit its applicability. We conduct two simple experiments to assess if these assumptions can be
+broken without detrimental effects. First, we model the context transitions as a process, where the
+next context depends on the previous context rather than the current context. This process is clearly"
+REFERENCES,0.9356060606060606,Published as a conference paper at ICLR 2022
+REFERENCES,0.9368686868686869,"non-Markovian. However, results in Figure A14 indicate that our model successfully predicts the
+correct contexts in the context realization. Second, we make the context state dependent. In particular,
+we have:
+c = 0,
+if pos ∈[0, 0.1),
+[−0.1, −0.2),
+[0.2, 0.3),
+[−0.3, −0.4),
+· · ·
+c = 1,
+if pos ∈[0, −0.1),
+[0.1, 0.2),
+[−0.2, −0.3),
+[0.3, 0.4),
+· · · ,
+where pos is the position of the cart. Again our model handles this case as the results in Figure A15
+suggest."
+REFERENCES,0.9381313131313131,"So how our Markovian model handles predictions for non-Markovian models? In both cases, the key
+is comparing context estimations/predictions rather than context models, which are almost surely
+incorrect. However, the predictive power of our model is still preserved since it relies heavily on the
+observed state history. This allowed us to correctly estimate the contexts in these experiments."
+REFERENCES,0.9393939393939394,"(a) Transition matrix
+(b) A realization of the process"
+REFERENCES,0.9406565656565656,Figure A14: Learning non-Markovian transitions.
+REFERENCES,0.9419191919191919,"(a) Transition matrix
+(b) A realization of the process"
+REFERENCES,0.9431818181818182,Figure A15: Learning state-dependent transitions.
+REFERENCES,0.9444444444444444,"E.5
+LEARNING NEW CONTEXTS"
+REFERENCES,0.9457070707070707,"As we mentioned above we can remove the new contexts following the proposed distillation procedure.
+However, our model is ﬂexible enough to add new (unseen) contexts without learning the state"
+REFERENCES,0.946969696969697,Published as a conference paper at ICLR 2022
+REFERENCES,0.9482323232323232,"transition model from scratch. We design the following experimental procedure to demonstrate this
+ability: (1) train the model on dataset D1 which contains two contexts (C0 and C1); (2) reset free
+parameters in the variational distribution q(ν|ˆν) and q(µ|ˆµ) while preserving q(θ|ˆθ); (3) re-train
+the model on dataset D2 which contains the two original contexts and two new contexts (C2 and
+C3). We present the training results on the sets D1 and D2 in Figure A16 and A17, respectively.
+These results suggest that our model is able to learn new contexts (C2 and C3 in Figure A17), while
+preserving the original contexts (C0 and C1 in both Figures A16 and A17)."
+REFERENCES,0.9494949494949495,"Z0
+Z1
+Z2
+Z3
+Z4 Z0 Z1 Z2 Z3 Z4 p(z0)"
+REFERENCES,0.9507575757575758,"87.9
+ 0.1
+ 0.2
+ 0.1
+ 11.7"
+REFERENCES,0.952020202020202,"47.2
+ 3.2
+ 1.1
+ 1.0
+ 47.5"
+REFERENCES,0.9532828282828283,"47.1
+ 1.2
+ 3.4
+ 1.6
+ 46.7"
+REFERENCES,0.9545454545454546,"48.6
+ 0.9
+ 0.9
+ 3.0
+ 46.6"
+REFERENCES,0.9558080808080808,"12.5
+ 0.1
+ 0.1
+ 0.1
+ 87.1"
+REFERENCES,0.9570707070707071,"46.7
+ 1.0
+ 0.9
+ 1.0
+ 50.4 0 20 40 60 80 100"
+REFERENCES,0.9583333333333334,Probability (%)
+REFERENCES,0.9595959595959596,(a) Learned context model on D1
+REFERENCES,0.9608585858585859,"0
+20
+40
+60
+80
+Time (t) C0 C1 Z0 Z1 Z2 Z3 Z4"
+REFERENCES,0.9621212121212122,(b) Learned context transitions on D1
+REFERENCES,0.9633838383838383,"Figure A16: Learning the context on the set D1. C0 and C1 stand for the ground true contexts, while
+Z0-Z4 are the learned contexts."
+REFERENCES,0.9646464646464646,"(a) Context model
+(b) Context transition"
+REFERENCES,0.9659090909090909,"Figure A17: Expanding the model by learning new contexts on the set D2. C0-C3 stand for the
+ground true contexts, while Z0-Z4 are the learned contexts."
+REFERENCES,0.9671717171717171,"E.6
+COMPARING TO POMDP AND C-MDP METHODS"
+REFERENCES,0.9684343434343434,"We chosen the context set as C = {−1, χ} for χ ∈{−1, 0.1, 0.3, 0.5}. However, for χ > 0, we
+again increased the force magnitude by two-fold. For SAC-based algorithms we present the statistics
+for 50 episodes and 3 seeds. To avoid unfair comparison to POMDP and continual RL methods, we
+pick their best performance and explain why these methods are not well-suited for our problem. For
+GPMM we run ten separate experiments with 15 episode each and picked three best runs and the best
+episode performance. For RNN-PPO we run three experiments, but picked the best learned policy
+over time and over the runs. Furthermore, we use the RNN in a more favorable setting as we assume
+that the number of contexts is known and can be hard coded in the RNN architecture. We present our
+experimental results in Table A6. While it seems that RNN-PPO learns to swing-up correctly for"
+REFERENCES,0.9696969696969697,Published as a conference paper at ICLR 2022
+REFERENCES,0.9709595959595959,"algo ↓
+failure →
+hard
+soft α = 0.1
+soft α = 0.3
+soft α = 0.5"
+REFERENCES,0.9722222222222222,"FI-SAC
+84.50 ± 1.79
+76.63 ± 8.54
+84.75 ± 3.07
+86.92 ± 1.03
+C-SAC
+85.38 ± 1.64
+76.80 ± 8.91
+86.76 ± 2.88
+88.35 ± 1.30
+C-CEM
+87.63 ± 0.14
+60.15 ± 25.91
+83.15 ± 7.72
+89.08 ± 1.90
+DNNMM
+−7.73 ± 17.62
+2.87 ± 15.18
+28.24 ± 22.87
+66.35 ± 19.67
+ANPMM
+−3.35 ± 15.64
+8.07 ± 16.48
+32.08 ± 19.54
+57.22 ± 25.55
+GPMM
+3.50 ± 18.59
+3.55 ± 7.83
+10.64 ± 16.10
+49.61 ± 19.13
+RNN-PPO
+−0.17 ± 18.06
+64.10 ± 21.37
+74.58 ± 20.66
+67.01 ± 8.52"
+REFERENCES,0.9734848484848485,"Table A6: Mean ± standard deviation for: our algorithms (C-SAC, C-CEM), continual learning
+algos (GPMM, DNNMM, ANPMM), a POMDP algo (RNN-PPO), and SAC with a known context
+(FI-SAC). For soft failure experiments, we have increased the maximum applicable force by the
+factor of two. Reproduction of Table 2 from the main text."
+REFERENCES,0.9747474747474747,"soft failures and GPMM almost learns to swing-up for χ = 0.5, the learned belief models indicate
+that this not so. In fact, plotting the evolution of the belief for RNN-PPO and the context evolution
+for GPMM illustrates that the algorithms do not learn the context model (see Figure 4 in the main
+text). In order to illustrate that it is not Gaussian Processes that cause failure in GPMM, we replace
+the Gaussian Process mixture with Deep Neural Network and Attentive Neural Process (Qin et al.,
+2019; Kim et al., 2019) mixtures (DNNMM and ANPMM, respectively) using the code from Xu
+et al. (2020). The results in this case are similar to the GPMM case, i.e., we manage to get reasonable
+rewards for α = 0.5, but fail for other cases."
+REFERENCES,0.976010101010101,"E.7
+EXPERIMENTS WITH A LARGER NUMBER OF CONTEXTS"
+REFERENCES,0.9772727272727273,"We further test our approach by introducing a larger number of contexts. We have the following
+parameter sets"
+REFERENCES,0.9785353535353535,"cfriction = [0, 0.1], cgravity = [9.82, 50], ccart mass = [0.5, 5], cmax force = [20, 40],"
+REFERENCES,0.9797979797979798,with 16 parameters in total. The contexts for our experiment are as follows:
+REFERENCES,0.9810606060606061,"C0 :
+cfriction = 0.1,
+cgravity = 9.82,
+ccart mass = 0.5,
+cmax force = 40,
+C1 :
+cfriction = 0.1,
+cgravity = 9.82,
+ccart mass = 0.5,
+cmax force = 20,
+C2 :
+cfriction = 0.1,
+cgravity = 9.82,
+ccart mass = 5,
+cmax force = 40,
+C3 :
+cfriction = 0.1,
+cgravity = 9.82,
+ccart mass = 5,
+cmax force = 20,
+C4 :
+cfriction = 0.1,
+cgravity = 50,
+ccart mass = 0.5,
+cmax force = 40,
+C5 :
+cfriction = 0.1,
+cgravity = 50,
+ccart mass = 0.5,
+cmax force = 20,
+C6 :
+cfriction = 0.1,
+cgravity = 50,
+ccart mass = 5,
+cmax force = 40,
+C7 :
+cfriction = 0.1,
+cgravity = 50,
+ccart mass = 5,
+cmax force = 20,
+C8 :
+cfriction = 0,
+cgravity = 9.82,
+ccart mass = 0.5,
+cmax force = 40,
+C9 :
+cfriction = 0,
+cgravity = 9.82,
+ccart mass = 0.5,
+cmax force = 20,
+C10 :
+cfriction = 0,
+cgravity = 9.82,
+ccart mass = 5,
+cmax force = 40,
+C11 :
+cfriction = 0,
+cgravity = 9.82,
+ccart mass = 5,
+cmax force = 20,
+C12 :
+cfriction = 0,
+cgravity = 50,
+ccart mass = 0.5,
+cmax force = 40,
+C13 :
+cfriction = 0,
+cgravity = 50,
+ccart mass = 0.5,
+cmax force = 20,
+C14 :
+cfriction = 0,
+cgravity = 50,
+ccart mass = 5,
+cmax force = 40,
+C15 :
+cfriction = 0,
+cgravity = 50,
+ccart mass = 5,
+cmax force = 20."
+REFERENCES,0.9823232323232324,"We learn a model with K = 20. We further add a structure on the contexts transition matrix: form
+every contexts we can switch only to and from two contexts, i.e, from the context i we can switch
+to/from the context i−1 and the context i+1, where operations on i should be understood as modulo"
+REFERENCES,0.9835858585858586,Published as a conference paper at ICLR 2022
+REFERENCES,0.9848484848484849,"K (i.e., −1 ≜K −1, K ≜0), i.e.:"
+REFERENCES,0.9861111111111112,"p(zi|zj) = 
+ "
+REFERENCES,0.9873737373737373,"0.6
+i = j,
+0.2
+j = mod(i + 1, K) or j = mod(i −1, K),
+0
+otherwise"
+REFERENCES,0.9886363636363636,Similarly to our previous settings we have a transition cool-off period of 5 time steps.
+REFERENCES,0.98989898989899,"As the results in Figures A18(a) and A18(b) suggest, we identify the following meaningful contexts:
+Z1 = {C1, C9}, Z4 = {C6, C7, C14, C15}, Z10 = {C4, C5, C12, C13}, Z14 = {C2, C3, C10, C11},
+Z18 = {C0, C4, C8}. Our algorithm does not distinguish the difference in the values of the friction
+parameter. The difference in maximum force is not identiﬁed for larger masses and stronger gravity,
+but it can be identiﬁed for cart mass 0.5 and gravity 9.82. The other contexts are characterized by
+different gravity values and cart masses. The only exception is the ground truth context C4, which is
+present in both Z10 and Z18. This, however, is bound to happen if the ground truth contexts are hard
+to separate."
+REFERENCES,0.9911616161616161,"0
+20
+40
+60
+80
+Time (t)"
+REFERENCES,0.9924242424242424,"C0
+C1
+C2
+C3
+C4
+C5
+C6
+C7
+C8
+C9
+C10
+C11
+C12
+C13
+C14
+C15
+Z0
+Z1
+Z2
+Z3
+Z4
+Z5
+Z6
+Z7
+Z8
+Z9
+Z10
+Z11
+Z12
+Z13
+Z14
+Z15
+Z16
+Z17
+Z18
+Z19"
+REFERENCES,0.9936868686868687,(a) Context realization
+REFERENCES,0.9949494949494949,"0
+20
+40
+60
+80
+Time (t)"
+REFERENCES,0.9962121212121212,"C0
+C1
+C2
+C3
+C4
+C5
+C6
+C7
+C8
+C9
+C10
+C11
+C12
+C13
+C14
+C15
+Z0
+Z1
+Z2
+Z3
+Z4
+Z5
+Z6
+Z7
+Z8
+Z9
+Z10
+Z11
+Z12
+Z13
+Z14
+Z15
+Z16
+Z17
+Z18
+Z19"
+REFERENCES,0.9974747474747475,(b) Context realization
+REFERENCES,0.9987373737373737,Figure A18: Learning a context model with 16 contexts.

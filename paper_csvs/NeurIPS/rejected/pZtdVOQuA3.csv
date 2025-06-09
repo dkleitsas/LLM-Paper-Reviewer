@@ -1,0 +1,957 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,Abstract
+ABSTRACT,0.002551020408163265,"We propose an alternative rendering algorithm for neural radiance ﬁelds based
+1"
+ABSTRACT,0.00510204081632653,"on importance sampling. In view synthesis, a neural radiance ﬁeld approximates
+2"
+ABSTRACT,0.007653061224489796,"underlying density and radiance ﬁelds based on a sparse set of scene views. To
+3"
+ABSTRACT,0.01020408163265306,"generate a pixel of a novel view, it marches a ray through the pixel and computes a
+4"
+ABSTRACT,0.012755102040816327,"weighted sum of radiance emitted from a dense set of ray points. This rendering
+5"
+ABSTRACT,0.015306122448979591,"algorithm is fully differentiable and facilitates gradient-based optimization of the
+6"
+ABSTRACT,0.017857142857142856,"ﬁelds. However, in practice, only a tiny opaque portion of the ray contributes most
+7"
+ABSTRACT,0.02040816326530612,"of the radiance to the sum. Therefore, we can avoid computing radiance in the rest
+8"
+ABSTRACT,0.02295918367346939,"part. In this work, we use importance sampling to pick non-transparent points on
+9"
+ABSTRACT,0.025510204081632654,"the ray. Speciﬁcally, we generate samples according to the probability distribution
+10"
+ABSTRACT,0.02806122448979592,"induced by the density ﬁeld. Our main contribution is the reparameterization of
+11"
+ABSTRACT,0.030612244897959183,"the sampling algorithm. It allows end-to-end learning with gradient descent as in
+12"
+ABSTRACT,0.03316326530612245,"the original rendering algorithm. With our approach, we can optimize a neural
+13"
+ABSTRACT,0.03571428571428571,"radiance ﬁeld with just a few radiance ﬁeld evaluations per ray. As a result, we
+14"
+ABSTRACT,0.03826530612244898,"alleviate the costs associated with the color component of the neural radiance ﬁeld
+15"
+ABSTRACT,0.04081632653061224,"at the additional cost of the density sampling algorithm.
+16"
+INTRODUCTION,0.04336734693877551,"1
+Introduction
+17"
+INTRODUCTION,0.04591836734693878,"We propose a volume rendering algorithm for learning 3D scenes and generating novel views.
+18"
+INTRODUCTION,0.04846938775510204,"Recently, learning-based approaches led to signiﬁcant progress in this area. As an early instance,
+19"
+INTRODUCTION,0.05102040816326531,"[8] proposed to represent a scene via a density ﬁeld and a radiance (color) ﬁeld parameterized
+20"
+INTRODUCTION,0.05357142857142857,"with an MLP. They run a differentiable volume rendering algorithm with the MLP-based ﬁelds and
+21"
+INTRODUCTION,0.05612244897959184,"minimize the discrepancy between the produced images and a set of reference images to learn a
+22"
+INTRODUCTION,0.058673469387755105,"scene representation. The algorithm we propose is a drop-in replacement for the volume rendering
+23"
+INTRODUCTION,0.061224489795918366,"algorithm used in NeRF [8] and follow-ups.
+24"
+INTRODUCTION,0.06377551020408163,"The underlying model in NeRF generates an image point in the following way. It casts a ray from
+25"
+INTRODUCTION,0.0663265306122449,"a camera through the point and deﬁnes the point color as a weighted sum along the ray. The sum
+26"
+INTRODUCTION,0.06887755102040816,"aggregates the radiance of each ray point with weights induced by the density ﬁeld. Each summand
+27"
+INTRODUCTION,0.07142857142857142,"involves a costly neural network query, and model has a trade-off between rendering quality and
+28"
+INTRODUCTION,0.07397959183673469,"computational load. NeRF obtained a better trade-off with a two-stage sampling algorithm used to get
+29"
+INTRODUCTION,0.07653061224489796,"ray points with higher weights. The algorithm is reminiscent of importance sampling, yet it requires
+30"
+INTRODUCTION,0.07908163265306123,"training an auxiliary model.
+31"
+INTRODUCTION,0.08163265306122448,"In this work we propose a rendering algorithm based on importance sampling. Our algorithm also
+32"
+INTRODUCTION,0.08418367346938775,"acts in two stages. In the ﬁrst stage, it marches through the ray to estimate density. In the second
+33"
+INTRODUCTION,0.08673469387755102,"stage, it constructs a Monte-Carlo color approximation using the density to pick points along the ray.
+34"
+INTRODUCTION,0.08928571428571429,"The resulting estimate is fully-differentiable and does not require any auxiliary models. Besides that,
+35"
+INTRODUCTION,0.09183673469387756,"we only need a few samples to construct precise color approximation. An intuitive explanation is that
+36"
+INTRODUCTION,0.09438775510204081,"we only need to compute the radiance of the point where a ray hits a solid surface. In the experiments,
+37"
+INTRODUCTION,0.09693877551020408,"we query radiance for ×16 fewer ray points during training compared to baseline. Nevertheless, we
+38"
+INTRODUCTION,0.09948979591836735,"manage to obtain competitive model and rendering quality.
+39"
+INTRODUCTION,0.10204081632653061,"As a result, our algorithm is more suitable for recent solutions [10, 13, 12] that use distinct models to
+40"
+INTRODUCTION,0.10459183673469388,"parameterize radiance and density. Speciﬁcally, the ﬁrst stage only queries the density ﬁeld, whereas
+41"
+INTRODUCTION,0.10714285714285714,"the second stage only queries the radiance ﬁeld. Compared to the standard rendering algorithm, the
+42"
+INTRODUCTION,0.1096938775510204,"second stage of our algorithm avoids redundant radiance queries and reduces the memory required
+43"
+INTRODUCTION,0.11224489795918367,"for rendering.
+44"
+NEURAL RADIANCE FIELDS,0.11479591836734694,"2
+Neural Radiance Fields
+45"
+NEURAL RADIANCE FIELDS,0.11734693877551021,"Neural radiance ﬁelds represent 3D scenes with a scalar density ﬁeld σ : R3 →R+ and a vector
+46"
+NEURAL RADIANCE FIELDS,0.11989795918367346,"radiance ﬁeld c : R3 × R3 →R3. The scalar ﬁeld σ represents volume density at each spatial
+47"
+NEURAL RADIANCE FIELDS,0.12244897959183673,"location x, and c(x, d) returns the light emitted from spatial location x in directionn d represented as
+48"
+NEURAL RADIANCE FIELDS,0.125,"a normalized three dimensional vector.
+49"
+NEURAL RADIANCE FIELDS,0.12755102040816327,"For novel view synthesis, they adapt a volume rendering technique that computes a pixel color
+50"
+NEURAL RADIANCE FIELDS,0.13010204081632654,"C(o, d) (denoted with a capital letter). In particular, the expected color along a ray r = o + td going
+51"
+NEURAL RADIANCE FIELDS,0.1326530612244898,"from the camera through the pixel is
+52"
+NEURAL RADIANCE FIELDS,0.13520408163265307,"C(o, d) =
+Z +∞"
+NEURAL RADIANCE FIELDS,0.1377551020408163,"tn
+pr(t)c(o + td, d)dt, for pr(t) = σ(o + td) exp
+
+−
+Z t"
+NEURAL RADIANCE FIELDS,0.14030612244897958,"tn
+σ(o + sd)ds
+
+.
+(1)"
+NEURAL RADIANCE FIELDS,0.14285714285714285,"Here, pr(t) is a probability density function of a random variable T on a ray r. Intuitively, T is the
+53"
+NEURAL RADIANCE FIELDS,0.14540816326530612,"location on the ray where a portion of light coming into the point o was emitted.
+54"
+NEURAL RADIANCE FIELDS,0.14795918367346939,"One way to approximate to the integral would be to cut off the integral at depth tf and then use a grid
+55"
+NEURAL RADIANCE FIELDS,0.15051020408163265,"tn = t0 < t1 < · · · < tm = tf to compute the integral with a Riemann sum
+56"
+NEURAL RADIANCE FIELDS,0.15306122448979592,"ˆCRiemann(o, d) = m
+X"
+NEURAL RADIANCE FIELDS,0.1556122448979592,"i=1
+(ti −ti−1)pr,ic(o + tid, d),
+(2)"
+NEURAL RADIANCE FIELDS,0.15816326530612246,"where pr,i = σ(o + tid) exp  − i
+X"
+NEURAL RADIANCE FIELDS,0.16071428571428573,"j=1
+(tj −tj−1)σ(o + tjd) "
+NEURAL RADIANCE FIELDS,0.16326530612244897,".
+(3)"
+NEURAL RADIANCE FIELDS,0.16581632653061223,"Importantly, Eq 2 is fully differentiable and can be used as a part of gradient-based learning pipeline.
+57"
+NEURAL RADIANCE FIELDS,0.1683673469387755,"While such approximation works in practice, a fauithfull approximation requires a dense grid and
+58"
+NEURAL RADIANCE FIELDS,0.17091836734693877,"multiple evaluations of σ and c. Besides that, a common situation is when a ray intesects a solid
+59"
+NEURAL RADIANCE FIELDS,0.17346938775510204,"surface at some point s ∈[tn, tf]. In this case, probability density pr(t) will concentrate its mass
+60"
+NEURAL RADIANCE FIELDS,0.1760204081632653,"near s and will be close to zero in other parts of the ray. As a result, most of the summands in Eq. 2
+61"
+NEURAL RADIANCE FIELDS,0.17857142857142858,"will make negligible contribution to the sum.
+62"
+NEURAL RADIANCE FIELDS,0.18112244897959184,"Monte Carlo methods give another way to apporximate the color. Given n i.i.d. samples t1, . . . , tn ∼
+63"
+NEURAL RADIANCE FIELDS,0.1836734693877551,"pr(t), the color estimate is gatherd by
+64"
+NEURAL RADIANCE FIELDS,0.18622448979591838,"ˆCMC(o, d) = 1 m m
+X"
+NEURAL RADIANCE FIELDS,0.18877551020408162,"i=1
+c(o + tid, d).
+(4)"
+NEURAL RADIANCE FIELDS,0.1913265306122449,"Due to the importance sampling with distribution pr(t), each term in Eq 4 contributes equally to the
+65"
+NEURAL RADIANCE FIELDS,0.19387755102040816,"sum as the samples come from regions with non-negligible density. Unlike the grid estimate in Eq. 2,
+66"
+NEURAL RADIANCE FIELDS,0.19642857142857142,"the Monte-Carlo estimate depends on the scene density σ implicitly and requires a custom gradient
+67"
+NEURAL RADIANCE FIELDS,0.1989795918367347,"estimate for the parameters of σ. For instance, NeRF adresses the issue via a hierarchical sampling
+68"
+NEURAL RADIANCE FIELDS,0.20153061224489796,"scheme. It trains a coarse model with a grid approximation to generate importance-weighted ray
+69"
+NEURAL RADIANCE FIELDS,0.20408163265306123,"locations for a separate ﬁne-grained model.
+70"
+NEURAL RADIANCE FIELDS,0.2066326530612245,"In the next section, we propose a propose a novel principled approach to training neural radiance
+71"
+NEURAL RADIANCE FIELDS,0.20918367346938777,"ﬁelds with importance-weighted color approximation as in Eq. 4.
+72"
+LEARNING WITH STOCHASTIC COLOR ESTIMATES,0.21173469387755103,"3
+Learning with Stochastic Color Estimates
+73"
+LEARNING WITH STOCHASTIC COLOR ESTIMATES,0.21428571428571427,"In this section, we will discuss stochastic approximations to the expected color C(o, d) in detail.
+74"
+LEARNING WITH STOCHASTIC COLOR ESTIMATES,0.21683673469387754,"Recall that C(o, d) = ET c(o + Td, d), where T is a random variable with density speciﬁed in Eq. 1.
+75"
+LEARNING WITH STOCHASTIC COLOR ESTIMATES,0.2193877551020408,"Even though density pr(t) involves an integral we cannot compute in closed form, below we ﬁrst
+76"
+LEARNING WITH STOCHASTIC COLOR ESTIMATES,0.22193877551020408,"assume that we have an algorithm to compute
+R t
+tn σr(s)ds used in pr(t).
+77"
+LEARNING WITH STOCHASTIC COLOR ESTIMATES,0.22448979591836735,"Given a groundtruth expected color Cgt, optimization objective in NeRF captures the difference
+78"
+LEARNING WITH STOCHASTIC COLOR ESTIMATES,0.22704081632653061,"L( ˆC(o, d), Cgt) between Cgt and the estimated color ˆC(o, d). To reconstruct a scene NeRF runs
+79"
+LEARNING WITH STOCHASTIC COLOR ESTIMATES,0.22959183673469388,"a gradient based optimizer to minimize the objective averaged across multiple rays and multiple
+80"
+LEARNING WITH STOCHASTIC COLOR ESTIMATES,0.23214285714285715,"viewpoints. Such approach works for grid estimate ˆC(o, d) = ˆCRiemann(o, d) that depends on
+81"
+LEARNING WITH STOCHASTIC COLOR ESTIMATES,0.23469387755102042,"density σr explicitly, but Monte-Carlo estimate ˆCMC(o, d) of the expectation depends on σ implicitly
+82"
+LEARNING WITH STOCHASTIC COLOR ESTIMATES,0.2372448979591837,"and a naive automatic differentiation algorithm will return zero gradients.
+83"
+LEARNING WITH STOCHASTIC COLOR ESTIMATES,0.23979591836734693,"In the rest of the section, we ﬁrst introduce an algortihm to compute ˆCMC(o, d) and derive a gradient
+84"
+LEARNING WITH STOCHASTIC COLOR ESTIMATES,0.2423469387755102,"estimate for the algorithm. Then, we conclude with a discussion our implementation of the estimate.
+85"
+LEARNING WITH STOCHASTIC COLOR ESTIMATES,0.24489795918367346,"To ease the notation, we will also introduce σr(t) = σ(o + td) and cr(t) = c(o + td, d) to denote
+86"
+LEARNING WITH STOCHASTIC COLOR ESTIMATES,0.24744897959183673,"ﬁelds restricted to a ray r = o + td.
+87"
+ESTIMATE REPARAMETERIZATION,0.25,"3.1
+Estimate Reparameterization
+88"
+ESTIMATE REPARAMETERIZATION,0.25255102040816324,"To make the dependence of ˆC(o, d) on σr explicit, we change the variables in the expectation
+89"
+ESTIMATE REPARAMETERIZATION,0.25510204081632654,"ET cr(T). For F(t) = 1 −exp
+
+−
+R t
+tn σr(s)ds
+
+and y := F(t) we write
+90"
+ESTIMATE REPARAMETERIZATION,0.2576530612244898,"ET cr(T) =
+Z +∞"
+ESTIMATE REPARAMETERIZATION,0.2602040816326531,"tn
+cr(t)pr(t)dt =
+Z yf"
+ESTIMATE REPARAMETERIZATION,0.2627551020408163,"yn
+cr(F −1(y))dy.
+(5)"
+ESTIMATE REPARAMETERIZATION,0.2653061224489796,"Function F(t) acts as cumulative distribution function of the variable T with a single exception
+91"
+ESTIMATE REPARAMETERIZATION,0.26785714285714285,"that, in general, yf = limt→∞F(t) ̸= 1. In volume rendering, F(t) is called the opacity function
+92"
+ESTIMATE REPARAMETERIZATION,0.27040816326530615,"with yf being equal to pixel opaqueness. Bounds of integration are where yn = F(tn) = 0 and
+93"
+ESTIMATE REPARAMETERIZATION,0.2729591836734694,"yf = limt→+∞F(t). For simplicity, below we replace yf with F(tf) where tf is the maximum ray
+94"
+ESTIMATE REPARAMETERIZATION,0.2755102040816326,"depth.
+95"
+ESTIMATE REPARAMETERIZATION,0.2780612244897959,"In the right-hand side of Eq. 5, integration boundaries depend on the opacity F and, thus, on the
+96"
+ESTIMATE REPARAMETERIZATION,0.28061224489795916,"volume density σr. We further simplify the integral by changing the integration boundaries to [0, 1] :
+97 Z yf"
+ESTIMATE REPARAMETERIZATION,0.28316326530612246,"yn
+cr(F −1(y))dy =
+Z 1"
+ESTIMATE REPARAMETERIZATION,0.2857142857142857,"0
+(yf −yn)cr(F −1(yn + (yf −yn)u))du.
+(6)"
+ESTIMATE REPARAMETERIZATION,0.288265306122449,"With this, we arrive to the following reparameterized Monte-Carlo estimate of the expected color
+98"
+ESTIMATE REPARAMETERIZATION,0.29081632653061223,"obtained with i.i.d U[0, 1] samples u1, . . . , um:
+99"
+ESTIMATE REPARAMETERIZATION,0.29336734693877553,"ˆCR
+MC(o, d) := 1 m m
+X"
+ESTIMATE REPARAMETERIZATION,0.29591836734693877,"i=1
+(yf −yn)cr(F −1(yn + (yf −yn)ui)).
+(7)"
+ESTIMATE REPARAMETERIZATION,0.29846938775510207,"In the above estimate sampling does not depend on volume density σr or color cr. Essentially,
+100"
+ESTIMATE REPARAMETERIZATION,0.3010204081632653,"this is a reparameterized Monte-Carlo estimate that generates samples from pr(t) using the inverse
+101"
+ESTIMATE REPARAMETERIZATION,0.30357142857142855,"cumulative distribution function F −1(yn + (yf −yn)u).
+102"
+ESTIMATE REPARAMETERIZATION,0.30612244897959184,"We further improve the estimate using stratiﬁed sampling. To do this, we replace the uniform samples
+103"
+ESTIMATE REPARAMETERIZATION,0.3086734693877551,"u1, . . . , um with uniform independent samples within regular grid bins vi ∼U[ i−1"
+ESTIMATE REPARAMETERIZATION,0.3112244897959184,"m+1,
+i
+m+1], i =
+104"
+ESTIMATE REPARAMETERIZATION,0.3137755102040816,"1, . . . , m and derive a reparameterized (R) stratiﬁed (S) Monte Carlo estimate
+105"
+ESTIMATE REPARAMETERIZATION,0.3163265306122449,"ˆCR
+SMC(o, d) = 1 m m
+X"
+ESTIMATE REPARAMETERIZATION,0.31887755102040816,"i=1
+(yf −yn)cr(F −1(yn + (yf −yn)vi)).
+(8)"
+ESTIMATE REPARAMETERIZATION,0.32142857142857145,"It is easy to show that both 7 and 8 are unbiased estimates of 1.
+106"
+ESTIMATE REPARAMETERIZATION,0.3239795918367347,"Next, we will discuss algorithms used to compute the inverse opacity function F −1(y) and compute
+107"
+ESTIMATE REPARAMETERIZATION,0.32653061224489793,"the gradients of the function with automatic differentiation.
+108"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.32908163265306123,"3.2
+Implementation of Inverse Opacity for Volume Sampling
+109"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.33163265306122447,"To compute the estimates in Eqs. eqs. (7) and (8), we need to compute the inverse opacity F −1(y)
+110"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.33418367346938777,"along with its gradient. In practice, we start with a black-box density ﬁeld σr(x) and compute
+111"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.336734693877551,"the induced density pr(t) and opacity F(t) on a ray r via approximations. Assuming we have an
+112"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.3392857142857143,"algorithm to compute
+R t
+tn σr(s)ds, below we show how to implement the inverse opacity F −1.
+113"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.34183673469387754,"We invert F(t) = 1 −exp
+
+−
+R t
+tn σr(s)ds
+
+with binary search. Note that F(t) is a monotonic
+114"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.34438775510204084,"function and for y ∈(yn, yf) = (F(tn), F(tf)) the inverse lies in (tn, tf). To compute F −1(y), we
+115"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.3469387755102041,"start with boundaries tl = tn and tr = tf and gradually decrease the gap between the boundaries
+116"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.3494897959183674,based on the comparison of F( tl+tr
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.3520408163265306,"2
+) with y. Importantly, such procedure is easy to parallelize across
+117"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.35459183673469385,"multiple inputs and multiple rays.
+118"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.35714285714285715,"However, we cannot backpropagate through the binary search iterations and need a workarond to
+119"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.3596938775510204,compute the gradient ∂t
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.3622448979591837,"∂θ of t(θ) = F −1(y, θ). To do this, we compute differentials of the right and
+120"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.3647959183673469,"the left hand side of equation y(θ) = F(t, θ)
+121"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.3673469387755102,"∂y
+∂θ dθ = ∂F"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.36989795918367346,"∂t
+∂t
+∂θdθ + ∂F"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.37244897959183676,"∂θ dθ.
+(9)"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.375,"By the deﬁnition of F(t, θ) we have
+122 ∂F"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.37755102040816324,"∂t = (1 −F(t, θ))σr(t, θ),
+(10) ∂F"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.38010204081632654,"∂θ = (1 −F(t, θ)) ∂ ∂θ Z t"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.3826530612244898,"tn
+σr(s, θ)ds
+
+.
+(11)"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.3852040816326531,We solve Eq. 9 for ∂t
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.3877551020408163,"∂θ and substitute the partial derivatives using Eqs. eqs. (10) and (11) to obtain the
+123"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.3903061224489796,"ﬁnal expression for the gradient
+124"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.39285714285714285,"∂t
+∂θ ="
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.39540816326530615,"∂y
+∂θ −(1 −F(t, θ)) ∂"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.3979591836734694,"∂θ
+R t
+tn σr(s, θ)ds"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.4005102040816326,"(1 −F(t, θ))σr(t, θ)
+.
+(12)"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.4030612244897959,"In our implementation, we use automatic differentiation to compute ∂y/∂θ and
+∂
+∂θ
+R t
+tn σ(s)ds to
+125"
+IMPLEMENTATION OF INVERSE OPACITY FOR VOLUME SAMPLING,0.40561224489795916,"combine the results as in Eq. 12.
+126"
+COMPUTING OPACITY IN PRACTICE,0.40816326530612246,"3.3
+Computing Opacity in Practice
+127"
+COMPUTING OPACITY IN PRACTICE,0.4107142857142857,"To describe the sampling procedure, we assumed that we have an oracle for computing
+R t
+tn σr(s)ds
+128"
+COMPUTING OPACITY IN PRACTICE,0.413265306122449,"along with its gradient. The integral is required to compute opacity F(t). In this work, we consider an
+129"
+COMPUTING OPACITY IN PRACTICE,0.41581632653061223,"arbitrary volumetric density σ(s) and approximate it with a linear spline on a ray r = o+td to sample
+130"
+COMPUTING OPACITY IN PRACTICE,0.41836734693877553,"the points on the ray. Speciﬁcally, we take a grid t0 < · · · < tm and compute σr(t0), . . . , σr(tn)
+131"
+COMPUTING OPACITY IN PRACTICE,0.42091836734693877,"to construct the spline ˆσr(s) (Fig. 1). For the piecewise linear function ˆσr(x) we can compute the
+132"
+COMPUTING OPACITY IN PRACTICE,0.42346938775510207,"integral
+R t
+tn ˆσr(s)ds in a closed form. Additionally, we can backpropagate the gradients through the
+133"
+COMPUTING OPACITY IN PRACTICE,0.4260204081632653,"approximation to compute the gradients of knots σr(t0), . . . , σr(tm). Thus, we obtain a differentiable
+134"
+COMPUTING OPACITY IN PRACTICE,0.42857142857142855,"rendering algorithm for an arbitrary density ﬁeld σ. Besides that, some recent works parameterize"
+COMPUTING OPACITY IN PRACTICE,0.43112244897959184,"tn
+tf
+t y"
+COMPUTING OPACITY IN PRACTICE,0.4336734693877551,Density Field (t)
+COMPUTING OPACITY IN PRACTICE,0.4362244897959184,Spine (t)
+COMPUTING OPACITY IN PRACTICE,0.4387755102040816,"tn
+tf
+t 0.0 0.5"
+OPACITY,0.4413265306122449,"1.0
+Opacity"
+OPACITY,0.44387755102040816,Opacity F(t)
+OPACITY,0.44642857142857145,Approximation F(t)
+OPACITY,0.4489795918367347,"F
+1(y)"
+OPACITY,0.45153061224489793,"Figure 1: Illustration of opacity inversion. We approximate an arbitrary density ﬁeld σ with a linear
+spline(left). Then we use the spline to approximate opacity ˆF(t) and compute ˆF −1(y) (right). 135"
+OPACITY,0.45408163265306123,"density ﬁelds thruogh voxel grids. For a voxel grid, when σr is a trilinear interpolation of the grid
+136"
+OPACITY,0.45663265306122447,"values, we can compute the integral in a closed form.
+137"
+RELATED WORK,0.45918367346938777,"4
+Related Work
+138"
+RELATED WORK,0.461734693877551,"Neural Radiance Fields & Efﬁcient Sampling Even in the orginial work on neural radiance
+139"
+RELATED WORK,0.4642857142857143,"ﬁelds [8] the authors aimed to ﬁnd an efﬁcient sampling algorithm for volume rendering. Our
+140"
+RELATED WORK,0.46683673469387754,"importance sampling approach is reminscent of their hierarchical sampling solution. On the ﬁrst
+141"
+RELATED WORK,0.46938775510204084,"stage, they use an auxilliary model on a sparse grid. Then they use the predicted densities to generate
+142"
+RELATED WORK,0.4719387755102041,"a dense grid with a improtance sampling-like algorithm. As opposed to NeRF, we compute density
+143"
+RELATED WORK,0.4744897959183674,"on a dense grid at the ﬁrst stage and then use a sparse set of samples to evaluate radiance on the
+144"
+RELATED WORK,0.4770408163265306,"second stage. Our algorithm also allows training without auxilliary models.
+145"
+RELATED WORK,0.47959183673469385,"Several recent follow-up works also aimed to improve NeRF rendering time and overall efﬁciency.
+146"
+RELATED WORK,0.48214285714285715,"Most of these works consider trainable encoding θ and utilize some efﬁcient data structure to make
+147"
+RELATED WORK,0.4846938775510204,"each evaluation of multi-layered perceptron fast or avoid evaluating MLP at all. One of the earliest
+148"
+RELATED WORK,0.4872448979591837,"work in this direction was NSVF [7]. The authors proposed to use octree to store point-based
+149"
+RELATED WORK,0.4897959183673469,"embeddings and then estimate query point embedding with a trilinear interpolation and positional
+150"
+RELATED WORK,0.4923469387755102,"encoding. During training, the octree gradually increased resolutionn in the regions of interest
+151"
+RELATED WORK,0.49489795918367346,"and pruned the empty areas. However, this method still requires the time-consuming training of
+152"
+RELATED WORK,0.49744897959183676,"MLPs. Voxel-based embedding structure was further studied in recent works and it was shown that
+153"
+RELATED WORK,0.5,"positional encoding doesn’t affect model convergence - the network can be trained with fully trainable
+154"
+RELATED WORK,0.5025510204081632,"embedding without any encoding. And also, what is more important, such a structure allows for
+155"
+RELATED WORK,0.5051020408163265,"making neural network (MLP) shallower and consequently faster. Following this idea, DirectVoxGo
+156"
+RELATED WORK,0.5076530612244898,"[12] proposes to avoid MLP at all in density computation, while Instant Neural Graphic Primitives
+157"
+RELATED WORK,0.5102040816326531,"[10] uses it to solve hash collisions. When density ﬁeld is a piecewise linear we can compute opacity
+158"
+RELATED WORK,0.5127551020408163,"in a closed-form.
+159"
+RELATED WORK,0.5153061224489796,"Reparameterization Trick & Implicit Differentiation Our solution is inspired by the literature on
+160"
+RELATED WORK,0.5178571428571429,"deep latent variable models [6, 11] and approximate inference. In this area, models often contain
+161"
+RELATED WORK,0.5204081632653061,"an internal sampling algorithm with parameters we need to optimize. The now-common approach
+162"
+RELATED WORK,0.5229591836734694,"for continuous random variables is the reparameterization trick, which we apply in our setup. The
+163"
+RELATED WORK,0.5255102040816326,"authors of [9] give a comprehensive overview of the area state.
+164"
+RELATED WORK,0.5280612244897959,"A closely related work in the context of deep variable models is [4]. They were ﬁrst to apply implicit
+165"
+RELATED WORK,0.5306122448979592,"differentiation to estimate gradients for the reparameterization trick. While we use the implicit
+166"
+RELATED WORK,0.5331632653061225,"differentiation to compute the gradient of binary search output, the same approach applies to other
+167"
+RELATED WORK,0.5357142857142857,"iterative algorithms. The examples include ODE solves [3], ﬁxed-point iterators [1] and optimization
+168"
+RELATED WORK,0.5382653061224489,"algorithms.
+169"
+EXPERIMENTS,0.5408163265306123,"5
+Experiments
+170"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5433673469387755,"5.1
+Importance Sampling for a Single Ray
+171 t
+0 1 y"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5459183673469388,Foggy Density Field
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.548469387755102,Opacity
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5510204081632653,"25
+50
+75
+100
+125
+Number of Samples 10
+0 10
+1 10
+3 10
+5"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5535714285714286,Estimate Variance
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5561224489795918,"U[tn, tf]
+with stratified sampling
+pr(t) (ours)"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5586734693877551,with stratified sampling
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5612244897959183,"Radiance t
+0 1 y"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5637755102040817,Glass and Wall Density Field
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5663265306122449,Opacity
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5688775510204082,"25
+50
+75
+100
+125
+Number of Samples 10
+0 10
+1 10
+3 10
+5"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5714285714285714,Estimate Variance
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5739795918367347,"Radiance t
+0 1 y"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.576530612244898,Wall Density Field
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5790816326530612,Opacity
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5816326530612245,"25
+50
+75
+100
+125
+Number of Samples 10
+0 10
+1 10
+3 10
+5"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5841836734693877,Estimate Variance
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5867346938775511,Radiance
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5892857142857143,"Figure 2: Color estimate variance compared for a varying number of samples. The upper plot
+illustrates underlying opacity function on a ray; the lower graph depicts variance in logarithmic scale.
+Our importance sampling approach (solid green) has signiﬁcantly lower deviation than a stratiﬁed
+baseline (solid red) typically used in volume rendering."
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5918367346938775,"We begin with an evaluation of color estimates in a one-dimensional setting. Our experiment models
+172"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5943877551020408,"light propagation on a single ray in three typical situations. The upper row of Fig. 2 deﬁnes a scalar
+173"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5969387755102041,"radiance ﬁeld (orange) c(t) and opacity functions (blue) F(t) for
+174"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.5994897959183674,"• ""Foggy"" density ﬁeld. It models a semi-transparent volume. Similar ﬁelds occur after model
+175"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6020408163265306,"initialization during density ﬁeld training;
+176"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6045918367346939,"• ""Glass and wall"" density ﬁeld. Models light passing through nearly transparent volumes such
+177"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6071428571428571,"as glass. The light is emitted at three points: the inner and outer surface of the transparent
+178"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6096938775510204,"volume and an opaque volume near the end of the ray;
+179"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6122448979591837,"• ""Wall"" density ﬁeld. Light is emitted from a single point on a ray. Such ﬁelds are most
+180"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6147959183673469,"common in applications.
+181"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6173469387755102,"For the three ﬁelds we estimated the expected radiance C =
+R tf
+tn c(t)dF(t). We considered two
+182"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6198979591836735,"baseline methods (both in red in Fig. 2): the ﬁrst was a Monte Carlo estimate of C obtained with
+183"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6224489795918368,"U[tn, tf] samples, the second was a stochastic modiﬁcation of Eq. 2 using a grid tn = t0 < · · · <
+184"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.625,"tm = tf:
+185 ˆC = m
+X"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6275510204081632,"i=1
+(ti −ti−1)c(τi)dF dt"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6301020408163265,"t=τi
+, with independent τi ∼U[ti −1, ti].
+(13)"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6326530612244898,"In other terms, the second baseline uses stratiﬁed sampling to reduce the baseline Monte Carlo
+186"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6352040816326531,"estimate variance. Eq 13 is an instance of a vanilla volume rendering algorithm one may encounter in
+187"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6377551020408163,"practice. We compared the baseline against estimate from Eq. eq. (7) and its stratiﬁed counterpart
+188"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6403061224489796,"from Eq. 8. All estimates are unbiased. Therefore, we only compared the estimates variances for a
+189"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6428571428571429,"varying number of samples m.
+190"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6454081632653061,"In all setups, our stratiﬁed estimate uniformly outperformed the baselines. For the most challenging
+191"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6479591836734694,"""foggy"" ﬁeld, approximately m = 32 samples we required to match the baseline performance for
+192"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6505102040816326,"m = 128. We matched the baseline with only a m = 4 samples for other ﬁelds. Importance sampling
+193"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6530612244897959,"requires only a few points for degenerate distributions. In further experiments, we take m = 8, 32 to
+194"
+IMPORTANCE SAMPLING FOR A SINGLE RAY,0.6556122448979592,"obtain a precise color estimate even when a model did not converge to a degenerate distribution.
+195"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.6581632653061225,"5.2
+Scene Reconstruction with Reparameterized Volume Sampling
+196"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.6607142857142857,"Next, we apply our algorithm to 3D scene reconstruction based on a set of image projections. As a
+197"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.6632653061224489,"benchmark, we use the common Lego dataset. The primary goal of the experiment is to demonstrate
+198"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.6658163265306123,"computational advantages of our algorithm compared to a basic volume rendering baseline.
+199"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.6683673469387755,"As a starting point, we took the original NeRF’s MLP [8] with eight layers used to compute density
+200"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.6709183673469388,"and radiance. Then we modiﬁed the architecture to use only three ﬁrst layers to compute the density
+201"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.673469387755102,"ﬁeld. When the density ﬁeld is queried, we only compute the ﬁrst three layers, while for the radiance
+202"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.6760204081632653,"we compute the whole network. Even though such modiﬁcation may have put additional limitations
+203"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.6785714285714286,"on the density model, it illustrates the beneﬁt of using fewer radiance queries. For density, we used
+204"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.6811224489795918,"softplus activation to ensure its positivity, while for the radiance we used sigmoid activation to ensure
+205"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.6836734693877551,"that the output will be a valid RGB image.
+206"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.6862244897959183,"In our experiment, we did not reproduce the expensive hierarchical sampling used in NeRF and
+207"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.6887755102040817,"trained a single model in all experiments. Our baseline calculated color using Eq. ??. We took a
+208"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.6913265306122449,"dense grid of m = 128 points along each ray and trained the model using Huber loss with the ground
+209"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.6938775510204082,"truth colors and the predict colors. We additionally perturbed the grid to r egularize the model. We
+210"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.6964285714285714,"used Adam [5] optimizer for training and decayed the learning rate during 100 epochs of training
+211"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.6989795918367347,"from 3e−4 to 3e−7 following MIP-NeRF’s scheduler [2] with image batch size equal 8 and each
+212"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.701530612244898,"epoch consisting of 8000 batches. To form a training batch, for each image in an image batch we
+213"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7040816326530612,"selected 375 pixels and cal culated loss over them.
+214"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7066326530612245,"We evaluated the importance sampling-based rendering algorithm with the same architecture and
+215"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7091836734693877,"hyperparameters as with the baseline model. We used the same algorithm to sample a dense grid of
+216"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7117346938775511,"m = 128 points to query the density ﬁeld and construct an approximating spline. Then we calculated
+217"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7142857142857143,"color approximation with Eq. 8 with m′ = {8, 32} samples from the inverse cumulative density
+218"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7168367346938775,"function approximated by the spline.
+219"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7193877551020408,"Model
+PSNR (↑)
+SSIM (↑)
+LPIPS (alex) [14](↓)
+Baseline
+27.247
+0.904
+0.1138
+Splines, #pts in estimation 8
+Training
+Validation
+8 pts
+1 pts
+23.377
+0.822
+0.1819
+8 pts
+2 pts
+25.193
+0.858
+0.1449
+8 pts
+4 pts
+26.210
+0.883
+0.1215
+8 pts
+8 pts
+26.502
+0.892
+0.1243
+8 pts
+16 pts
+26.570
+0.894
+0.1333
+8 pts
+32 pts
+26.585
+0.895
+0.1369
+32 pts
+1 pts
+22.519
+0.805
+0.2050
+32 pts
+2 pts
+24.902
+0.846
+0.1523
+32 pts
+4 pts
+26.523
+0.881
+0.1181
+32 pts
+8 pts
+27.100
+0.897
+0.1083
+32 pts
+16 pts
+27.252
+0.902
+0.1167
+32 pts
+32 pts
+27.286
+0.904
+0.1223
+Table 1: Ablation study and comparison with the baseline. Metrics are calculated over test views for
+Lego scene [8]"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7219387755102041,"First, we compared the rendering quality of our algorithm against the baseline. Tab. 1 contains the
+220"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7244897959183674,"quantitative results and ﬁgs. 3 and 4 contain qualitative results. From the rendering quality viewpoint
+221"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7270408163265306,"(1), with m′ = 32 samples, our model works on par with the baseline, while with m′ = 8 samples it
+222"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7295918367346939,"has slightly worse performance. Though we did not aim to reproduce the state-of-the-art results, we
+223"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7321428571428571,"speculate that a better density model could improve the results even further. In Fig. ??, we compared
+224"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7346938775510204,"the rend ering performance of importance sampling for varying m′. Our algorithm produced sensible
+225"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7372448979591837,"renders even for m′ = 1, however noise artifacts only disappeared for m′ = 32. Fig. 4 shows a
+226"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7397959183673469,"stratiﬁed estimate renders (Eq. 8) along with a Monte Carlo renders (Eq. 7) for m′ = 32. With
+227"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7423469387755102,"the same rendering complexity, the variance reduction obtained via stratiﬁed sampling purges the
+228"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7448979591836735,"rendering artifacts that a naive Monte Carlo estimate has.
+229"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7474489795918368,"Model
+Iter/sec (↑)
+Mem Usage (↓)
+Baseline
+3.90
+8.5 Gb
+Splines 1 pts
+4.89
+1.8 Gb
+Splines 2 pts
+5.06
+1.8 Gb
+Splines 4 pts
+4.88
+2.1 Gb
+Splines 8 pts
+4.53
+2.2 Gb
+Splines 16 pts
+3.81
+2.5 Gb
+Splines 32 pts
+2.98
+2.8 Gb
+Table 2: Speed & memory estimates. Iteration time is measured during training on GTX 1080 ti,
+memory usage is measured during inference with batch size equal 1024"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.75,"Besides the rendering quality, we estimated the training speed and memory footprint of our algorithm
+230"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7525510204081632,"in Tab. 2. For m′ = 8 training iterations were on average ×1.2 faster, while for m′ = 32 training
+231"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7551020408163265,"iterations took ×1.3 more time. The difference occurred due to a varying number of radiance queries.
+232"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7576530612244898,"For a memory footprint viewpoint, our algorithm used ×3.0 and ×3.9 less memory for m′ = 32 and
+233"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7602040816326531,"m = 8 correspondingly. With this, important sampling leaves room for further optimization as it
+234"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7627551020408163,"allows to work with bigger batches with a moderate variability in rendering speed and quality.
+235"
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7653061224489796,"Figure 3: Rendering results with a different number of samples in the stratiﬁed estimate. From left to
+right and from top to down: 1, 2, 8, 32 points estimates, Baseline and Target for reference."
+SCENE RECONSTRUCTION WITH REPARAMETERIZED VOLUME SAMPLING,0.7678571428571429,"Figure 4: Comparation of rendering results from different viewing angles with Monte-Carlo estimate
+(top row) and stratiﬁed Monte-Carlo estimate (bottom row), both with 32 points along each ray"
+CONCLUSION,0.7704081632653061,"6
+Conclusion
+236"
+CONCLUSION,0.7729591836734694,"We proposed an alternative to classic volume rendering algorithms used in 3D scene reconstruction.
+237"
+CONCLUSION,0.7755102040816326,"For a synthetic experiment and in full-scale reconstruction task we achieve better estimation results
+238"
+CONCLUSION,0.7780612244897959,"in terms of variance with a signiﬁcantly smaller computation footprint. In particular, our algorithm
+239"
+CONCLUSION,0.7806122448979592,"allows for signiﬁcant memory reductions and even increased inference time. At the same time, we
+240"
+CONCLUSION,0.7831632653061225,"demonstrate competitive rendering quality. We believe that our approach is a promising altenative to
+241"
+CONCLUSION,0.7857142857142857,"standard volume rendering techniques.
+242"
+BROADER IMPACT,0.7882653061224489,"6.1
+Broader Impact
+243"
+BROADER IMPACT,0.7908163265306123,"We hypothesize that models like NeRFs may be used in online stores for a better user experience.
+244"
+BROADER IMPACT,0.7933673469387755,"Then people will choose more suitable products. We are not aware of any possibilities to use this in a
+245"
+BROADER IMPACT,0.7959183673469388,"negative way. Furthermore, we are sure that the efﬁcient sampling we proposed for 3D rendering
+246"
+BROADER IMPACT,0.798469387755102,"may reduce computation costs and therefore environmental damage.
+247"
+REFERENCES,0.8010204081632653,"References
+248"
+REFERENCES,0.8035714285714286,"[1] Shaojie Bai, J Zico Kolter, and Vladlen Koltun. Deep equilibrium models. Advances in Neural
+249"
+REFERENCES,0.8061224489795918,"Information Processing Systems, 32, 2019.
+250"
+REFERENCES,0.8086734693877551,"[2] Jonathan T Barron, Ben Mildenhall, Matthew Tancik, Peter Hedman, Ricardo Martin-Brualla,
+251"
+REFERENCES,0.8112244897959183,"and Pratul P Srinivasan. Mip-nerf: A multiscale representation for anti-aliasing neural radiance
+252"
+REFERENCES,0.8137755102040817,"ﬁelds. In Proceedings of the IEEE/CVF International Conference on Computer Vision, pages
+253"
+REFERENCES,0.8163265306122449,"5855–5864, 2021.
+254"
+REFERENCES,0.8188775510204082,"[3] Ricky TQ Chen, Yulia Rubanova, Jesse Bettencourt, and David K Duvenaud. Neural ordinary
+255"
+REFERENCES,0.8214285714285714,"differential equations. Advances in neural information processing systems, 31, 2018.
+256"
+REFERENCES,0.8239795918367347,"[4] Mikhail Figurnov, Shakir Mohamed, and Andriy Mnih. Implicit reparameterization gradients.
+257"
+REFERENCES,0.826530612244898,"Advances in Neural Information Processing Systems, 31, 2018.
+258"
+REFERENCES,0.8290816326530612,"[5] Diederik P Kingma and Jimmy Ba. Adam: A method for stochastic optimization. arXiv preprint
+259"
+REFERENCES,0.8316326530612245,"arXiv:1412.6980, 2014.
+260"
+REFERENCES,0.8341836734693877,"[6] Diederik P Kingma and Max Welling.
+Auto-encoding variational bayes.
+arXiv preprint
+261"
+REFERENCES,0.8367346938775511,"arXiv:1312.6114, 2013.
+262"
+REFERENCES,0.8392857142857143,"[7] Lingjie Liu, Jiatao Gu, Kyaw Zaw Lin, Tat-Seng Chua, and Christian Theobalt. Neural sparse
+263"
+REFERENCES,0.8418367346938775,"voxel ﬁelds. Advances in Neural Information Processing Systems, 33:15651–15663, 2020.
+264"
+REFERENCES,0.8443877551020408,"[8] Ben Mildenhall, Pratul P Srinivasan, Matthew Tancik, Jonathan T Barron, Ravi Ramamoorthi,
+265"
+REFERENCES,0.8469387755102041,"and Ren Ng. Nerf: Representing scenes as neural radiance ﬁelds for view synthesis. In European
+266"
+REFERENCES,0.8494897959183674,"conference on computer vision, pages 405–421. Springer, 2020.
+267"
+REFERENCES,0.8520408163265306,"[9] Shakir Mohamed, Mihaela Rosca, Michael Figurnov, and Andriy Mnih. Monte carlo gradient
+268"
+REFERENCES,0.8545918367346939,"estimation in machine learning. J. Mach. Learn. Res., 21(132):1–62, 2020.
+269"
+REFERENCES,0.8571428571428571,"[10] Thomas Müller, Alex Evans, Christoph Schied, and Alexander Keller. Instant neural graphics
+270"
+REFERENCES,0.8596938775510204,"primitives with a multiresolution hash encoding. arXiv preprint arXiv:2201.05989, 2022.
+271"
+REFERENCES,0.8622448979591837,"[11] Danilo Jimenez Rezende, Shakir Mohamed, and Daan Wierstra. Stochastic backpropagation
+272"
+REFERENCES,0.8647959183673469,"and approximate inference in deep generative models. In International conference on machine
+273"
+REFERENCES,0.8673469387755102,"learning, pages 1278–1286. PMLR, 2014.
+274"
+REFERENCES,0.8698979591836735,"[12] Cheng Sun, Min Sun, and Hwann-Tzong Chen. Direct voxel grid optimization: Super-fast
+275"
+REFERENCES,0.8724489795918368,"convergence for radiance ﬁelds reconstruction. arXiv preprint arXiv:2111.11215, 2021.
+276"
+REFERENCES,0.875,"[13] Alex Yu, Sara Fridovich-Keil, Matthew Tancik, Qinhong Chen, Benjamin Recht, and
+277"
+REFERENCES,0.8775510204081632,"Angjoo Kanazawa.
+Plenoxels: Radiance ﬁelds without neural networks.
+arXiv preprint
+278"
+REFERENCES,0.8801020408163265,"arXiv:2112.05131, 2021.
+279"
+REFERENCES,0.8826530612244898,"[14] Richard Zhang, Phillip Isola, Alexei A Efros, Eli Shechtman, and Oliver Wang. The unreason-
+280"
+REFERENCES,0.8852040816326531,"able effectiveness of deep features as a perceptual metric. In CVPR, 2018.
+281"
+REFERENCES,0.8877551020408163,"Checklist
+282"
+REFERENCES,0.8903061224489796,"1. For all authors...
+283"
+REFERENCES,0.8928571428571429,"(a) Do the main claims made in the abstract and introduction accurately reﬂect the paper’s
+284"
+REFERENCES,0.8954081632653061,"contributions and scope? [Yes] See Section 1.
+285"
+REFERENCES,0.8979591836734694,"(b) Did you describe the limitations of your work? [Yes] See Section 1.
+286"
+REFERENCES,0.9005102040816326,"(c) Did you discuss any potential negative societal impacts of your work? [Yes] See
+287"
+REFERENCES,0.9030612244897959,"Section 6.1
+288"
+REFERENCES,0.9056122448979592,"(d) Have you read the ethics review guidelines and ensured that your paper conforms to
+289"
+REFERENCES,0.9081632653061225,"them? [Yes]
+290"
+REFERENCES,0.9107142857142857,"2. If you are including theoretical results...
+291"
+REFERENCES,0.9132653061224489,"(a) Did you state the full set of assumptions of all theoretical results? [Yes] We listed our
+292"
+REFERENCES,0.9158163265306123,"assumptions in section
+293"
+REFERENCES,0.9183673469387755,"(b) Did you include complete proofs of all theoretical results? [Yes] Proofs in section are
+294"
+REFERENCES,0.9209183673469388,"complete and rely on basic math.
+295"
+REFERENCES,0.923469387755102,"3. If you ran experiments...
+296"
+REFERENCES,0.9260204081632653,"(a) Did you include the code, data, and instructions needed to reproduce the main experi-
+297"
+REFERENCES,0.9285714285714286,"mental results (either in the supplemental material or as a URL)? [No] But we plan to
+298"
+REFERENCES,0.9311224489795918,"release code soon, within supplementary materials
+299"
+REFERENCES,0.9336734693877551,"(b) Did you specify all the training details (e.g., data splits, hyperparameters, how they
+300"
+REFERENCES,0.9362244897959183,"were chosen)? [Yes] See Section 5.2
+301"
+REFERENCES,0.9387755102040817,"(c) Did you report error bars (e.g., with respect to the random seed after running experi-
+302"
+REFERENCES,0.9413265306122449,"ments multiple times)? [No] We have reruned our experiments several times and so
+303"
+REFERENCES,0.9438775510204082,"that results are pretty similar. We plan to continue experiments and made more run
+304"
+REFERENCES,0.9464285714285714,"with other MLP architectures as well as voxel-based models.
+305"
+REFERENCES,0.9489795918367347,"(d) Did you include the total amount of compute and the type of resources used (e.g., type
+306"
+REFERENCES,0.951530612244898,"of GPUs, internal cluster, or cloud provider)? [Yes] See Section 5.2
+307"
+REFERENCES,0.9540816326530612,"4. If you are using existing assets (e.g., code, data, models) or curating/releasing new assets...
+308"
+REFERENCES,0.9566326530612245,"(a) If your work uses existing assets, did you cite the creators? [Yes] Yes, we cite Pytorch,
+309"
+REFERENCES,0.9591836734693877,"pytorch3d and NeRF’s creators as well as many other relevant. See Section 5.2
+310"
+REFERENCES,0.9617346938775511,"(b) Did you mention the license of the assets? [No] We use opensource assets and cite/share
+311"
+REFERENCES,0.9642857142857143,"links to them.
+312"
+REFERENCES,0.9668367346938775,"(c) Did you include any new assets either in the supplemental material or as a URL? [No]
+313"
+REFERENCES,0.9693877551020408,"But we plan to release code soon, within supplementary materials
+314"
+REFERENCES,0.9719387755102041,"(d) Did you discuss whether and how consent was obtained from people whose data you’re
+315"
+REFERENCES,0.9744897959183674,"using/curating? [N/A] Not applicable, data is artiﬁcially generated
+316"
+REFERENCES,0.9770408163265306,"(e) Did you discuss whether the data you are using/curating contains personally identiﬁable
+317"
+REFERENCES,0.9795918367346939,"information or offensive content? [N/A] Not applicable, data is artiﬁcially generated
+318"
+REFERENCES,0.9821428571428571,"5. If you used crowdsourcing or conducted research with human subjects...
+319"
+REFERENCES,0.9846938775510204,"(a) Did you include the full text of instructions given to participants and screenshots, if
+320"
+REFERENCES,0.9872448979591837,"applicable? [N/A] Not applicable
+321"
+REFERENCES,0.9897959183673469,"(b) Did you describe any potential participant risks, with links to Institutional Review
+322"
+REFERENCES,0.9923469387755102,"Board (IRB) approvals, if applicable? [N/A] Not applicable
+323"
+REFERENCES,0.9948979591836735,"(c) Did you include the estimated hourly wage paid to participants and the total amount
+324"
+REFERENCES,0.9974489795918368,"spent on participant compensation? [N/A] Not applicable
+325"

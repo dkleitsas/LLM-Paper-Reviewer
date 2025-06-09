@@ -1,0 +1,2862 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.0018726591760299626,"Training Graph Neural Networks (GNNs) on large graphs is a fundamental chal-
+lenge due to the high memory usage, which is mainly occupied by activations
+(e.g., node embeddings). Previous works usually focus on reducing the num-
+ber of nodes retained in memory. In parallel, unlike what has been developed
+for other types of neural networks, training with compressed activation maps is
+less explored for GNNs.
+This extension is notoriously difﬁcult to implement
+due to the lack of necessary tools in common graph learning packages. To un-
+leash the potential of this direction, we provide an optimized GPU implementa-
+tion which supports training GNNs with compressed activations. Based on the
+implementation, we propose a memory-efﬁcient framework called “EXACT”,
+which for the ﬁrst time demonstrates the potential and evaluates the feasibil-
+ity of training GNNs with compressed activations. We systematically analyze
+the trade-off among the memory saving, time overhead, and accuracy drop. In
+practice, EXACT can reduce the memory footprint of activations by up to 32×
+with 0.2-0.5% accuracy drop and 10-25% time overhead across different mod-
+els and datasets. We implement EXACT as an extension for Pytorch Geomet-
+ric and Pytorch.
+In practice, for Pytorch Geometric, EXACT can trim down
+the hardware requirement of training a three-layer full-batch GraphSAGE on
+ogbn-products from a 48GB GPU to a 12GB GPU.
+The code is available at
+https://github.com/warai-0toko/Exact."
+INTRODUCTION,0.003745318352059925,"1
+INTRODUCTION"
+INTRODUCTION,0.0056179775280898875,"Despite Graph Neural Networks (GNNs) have achieved great success across different graph-related
+tasks, training GNNs on large graphs is a long-standing challenge due to its extensive memory
+requirement (Kipf & Welling, 2017; Zhang & Chen, 2018; Cai et al., 2021b). The extensive memory
+consumption of a GNN stems from its recursive neighborhood aggregation scheme, where each node
+aggregates the embeddings of its neighbors to update its new embedding at each layer. Thus, training
+an L-layer GNN requires storing all L layers’ intermediate node embeddings in GPU memory for
+computing the gradients, and this typically adds several times more memory than holding the node
+feature matrix (see Algorithm 1 for a detailed analysis). Hence, storing these node embeddings is
+the major memory bottleneck for training GNNs on large graphs."
+INTRODUCTION,0.00749063670411985,"Most of the existing works towards this problem can be roughly divided into two categories. First,
+some works propose to train GNNs with sampled subgraphs instead of the whole graph at each
+step. In this way, only node embeddings that are present in the current subgraph will be retained
+in memory (Chiang et al., 2019; Hamilton et al., 2017; Zeng et al., 2020; Zou et al., 2019; Chen
+et al., 2018; Huang et al., 2018). Second, another line of works tries to decouple the neighborhood
+aggregation from prediction, either as a preprocessing step (Wu et al., 2019; Klicpera et al., 2018;
+Yu et al., 2020) or post-processing step (Huang et al., 2020), where the model is simpliﬁed as the
+Multi-Layer Perceptron (MLP) that can be trained with mini-batch data."
+INTRODUCTION,0.009363295880149813,∗Corresponding Author
+INTRODUCTION,0.011235955056179775,Published as a conference paper at ICLR 2022
+INTRODUCTION,0.013108614232209739,"In parallel, another orthogonal direction is to store only the compressed node embeddings (i.e., acti-
+vations) in memory for computing the gradients. Recent works propose to quantize the activations in
+lower numerical precision (e.g., using 8-bit integer) during the forward pass (Chakrabarti & Mose-
+ley, 2019; Fu et al., 2020; Chen et al., 2021a; Evans & Aamodt, 2021). This framework successfully
+trims down the memory requirement for training Convolutional Neural Networks (CNNs) by a large
+margin, at the cost of additional time overhead and loss of accuracy. Ideally, the real-world usage
+requires that the training method should achieve a balanced trade-off among the following three as-
+pects: 1. Space. It should enable to train GNNs on large graphs using off-the-shelf hardwares, such
+as GPUs and CPUs; 2. Speed. The time overhead should be acceptable, ideally as small as possible;
+3. Model Performance. The loss of accuracy should be acceptable, ideally as small as possible."
+INTRODUCTION,0.0149812734082397,"Although storing the compressed activations successfully saves the memory for CNNs, up to our
+knowledge, there is no existing work that extends this direction to GNNs and evaluates the men-
+tioned trade-off to analyze its feasibility. Despite the extension is conceptually straightforward, this
+direction is less-explored since it can be notoriously difﬁcult to implement to fully leverage hardware
+potentials. This dilemma stems from the fact that the necessary tools for supporting this direction
+are usually missing in common graph learning packages. For example, operations in popular graph
+learning packages only support casting tensors down to 8-bit integer on GPUs, signiﬁcantly limiting
+the memory saving potential (Paszke et al., 2019; Fey & Lenssen, 2019; Wang et al., 2019). As a
+result, previous GNN quantization works either emulate inference-time quantization via “simulated
+quantization” (Tailor et al., 2021; Zhao et al., 2020), or are impractical to use GPUs for accelerating
+(Feng et al., 2020). To unleash the potential of this direction, we provide a space-efﬁcient GPU im-
+plementation for supporting common operations in GNNs with compressed activations. Equipped
+with our implementation, this paper asks: To what extent can we compress the activations with both
+acceptable loss in accuracy and time overhead for scalable GNN training?"
+INTRODUCTION,0.016853932584269662,"To answer the open question, we ﬁrst explore two different types of compression methods. One
+is “quantization” that compresses the activations into lower numerical precision. The other one is
+called “random projection” (Achlioptas, 2001) that projects the activations into a low-dimensional
+space. Both these two simple strategies can achieve near-lossless accuracy at a non-trivial com-
+pression ratio. For example, the loss in accuracy is negligible (0.2%) even under the vanilla 2-bit
+quantization. However, we cannot further push forward the memory saving by these two methods,
+e.g., we cannot use a numerical precision below 1-bit. Considering that the real-world graphs often
+contain hundreds of millions of nodes, our main goal is to trim down the memory consumption to
+the maximum extent among the three aspects, as long as the other two are acceptable. We then nat-
+urally explore the direction of combining random projection and quantization, dubbed “EXACT”,
+to aggressively maximize the memory saving. EXACT essentially applies random projection and
+quantization sequentially for compressing activations. Despite the superior memory saving, another
+following question is whether the combination brings signiﬁcantly worse model performance and
+larger time overhead? Following the questions, we make three major contributions as follows:"
+INTRODUCTION,0.018726591760299626,"• We provide a space-efﬁcient GPU implementation for training GNNs with compressed activations
+as an extension for Pytorch. Based on our implementation, we are the ﬁrst one training GNNs
+with compressed activations and demonstrating its potential for real-world usage. EXACT can
+complement the existing studies, as it can be integrated with most of existing solutions."
+INTRODUCTION,0.020599250936329586,"• We propose EXACT, a simple-yet-effective framework which applies random projection and
+quantization sequentially on activations for scalable GNN training. We theoretically and experi-
+mentally show that applying random projection and quantization sequentially has an “interaction”
+effect. Namely, from the model performance aspect, after random projection, applying quantiza-
+tion only has a limited impact on the model performance. From the time aspect, EXACT runs
+comparably or even faster than quantization only."
+INTRODUCTION,0.02247191011235955,"• Despite the simplicity, EXACT achieves non-trivial memory saving with both acceptable time
+overhead and loss in accuracy: EXACT can reduce the memory footprint of activations by up
+to 32× with roughly 0.5% loss in accuracy and 10 −25% time overhead across models and
+datasets. We implement EXACT as an extension for Pytorch Geometric and Pytorch. For Pytorch
+Geometric, EXACT trims down the hardware requirement of training a full-batch GraphSAGE
+(Hamilton et al., 2017) on ogbn-products (Hu et al., 2020) from a 48GB GPU to a 12GB GPU."
+INTRODUCTION,0.024344569288389514,Published as a conference paper at ICLR 2022
+THE MEMORY CONSUMPTION OF GNNS,0.026217228464419477,"2
+THE MEMORY CONSUMPTION OF GNNS"
+THE MEMORY CONSUMPTION OF GNNS,0.028089887640449437,"Background.
+Let G = (V, E) be an undirected graph with V = (v1, · · · , v|V|) and E =
+(e1, · · · , e|E|) being the set of nodes and edges, respectively. Let X ∈R|V|×d be the node fea-
+ture matrix of the whole graph. The graph structure can be represented by an adjacency matrix
+A ∈R|V|×|V|, where Ai,j = 1 if (vi, vj) ∈E else Ai,j = 0. In this work, we are mostly in-
+terested in the task of node classiﬁcation, where the goal is to learn the representation hv for all
+v ∈V such that the label yv can be easily predicted. To obtain such a representation, GNNs follow
+the neighborhood aggregation scheme. Speciﬁcally, GNNs recursively update the representation of
+a node by aggregating the representations of its neighbors. Formally, the lth layer of a GNN can"
+THE MEMORY CONSUMPTION OF GNNS,0.0299625468164794,"be written as h(l+1)
+v
+= UPDATE
+
+h(l)
+v , L"
+THE MEMORY CONSUMPTION OF GNNS,0.031835205992509365,"u∈N(v) MSG
+ 
+h(l)
+u , h(l)
+v
+
+, where h(l)
+v
+is the representa-"
+THE MEMORY CONSUMPTION OF GNNS,0.033707865168539325,"tion of node v at the lth layer. N(v) denotes the neighboring nodes of node v, not including v
+itself. The full table of notations can be found in Appendix A Table 5. For node v, messages from
+its neighbors are calculated by the message functionMSG(·). Then these messages are aggregated
+using a permutation-invariant aggregation function L. The aggregated features at v are updated by
+UPDATE(·). For example, the Graph Convolutional Network (GCN) (Kipf & Welling, 2017) layer
+can be deﬁned as
+H(l+1) = ReLU( ˆ
+AH(l)Θ(l)),
+(1)"
+THE MEMORY CONSUMPTION OF GNNS,0.035580524344569285,"where H(l) is the node embedding matrix consisting of all nodes’ embeddings at the lth layer
+and H(0) = X.
+Θ(l) is the weight matrix of the lth GCN layer.
+ˆ
+A =
+˜D−1"
+THE MEMORY CONSUMPTION OF GNNS,0.03745318352059925,2 A ˜D−1
+IS,0.03932584269662921,"2 is
+the normalized adjacency matrix, where ˜D is the degree matrix of A + I. We note that ˆ
+A is
+usually stored using the sparse matrix format. For GCN layers, the message and the aggrega-
+tion function are fused into a Sparse-Dense Matrix Multiplication (SPMM 1) operation. Namely,
+ˆ
+AH(l)Θ(l) = SPMM( ˆ
+A, H(l)Θ(l)). Thus, the computation graph of Equation 1 can be written as"
+IS,0.04119850187265917,H(l+1) = ReLU 
+IS,0.04307116104868914,"SPMM
+
+ˆ
+A, MM(H(l), Θ(l))
+! ,
+(2)"
+IS,0.0449438202247191,"where MM(·, ·) is the normal Dense-Dense Matrix Multiplication. Equation 2 resembles how GCNs
+are implemented in popular packages (Fey & Lenssen, 2019; Wang et al., 2019)."
+IS,0.04681647940074907,"Here we analyze the memory consumption for the forward pass of GCN since most of the memory
+is occupied during the forward pass. For the memory usage of the backward pass, a detailed analysis
+is given in Appendix C. Speciﬁcally, for an L layer GCN, suppose the hidden dimensions of layer
+0, · · · , L −1 are the same, which are denoted as D. The forward pass of GCN layers is shown in
+Appendix C Algorithm 1. For layer l, it saves the following four variables in memory. (1) the weight
+matrix Θ(l) ∈RD×D whose shape is independent to the graph size and is generally negligible. (2)
+the normalized adjacency matrix ˆ
+A (in CSR format) whose space complexity is O(|V| + |E|). Note
+that it only needs to store one ˆ
+A in memory which can be accessed by different layers. Thus, the
+memory consumption of ˆ
+A is independent of the number of layers and is not the main memory bot-
+tleneck. (3) the intermediate result J(l) = MM(H(l), Θ(l)) ∈R|V|×D. For an L layer GCN, storing
+{J(0), · · · J(L−1)} has a O(L|V|D) space complexity, which is the main memory bottleneck. (4)
+the node embedding matrix H(l) ∈R|V|×D. For an L layer GCN, storing {H(0), · · · H(L−1)}
+has a O(L|V|D) space complexity, which is also a main memory bottleneck. In this paper, we
+use the term “activation maps” to encompass H, J, and activation maps of other commonly used
+layers/operations such as BatchNorm, ReLU and Dropout."
+METHODOLOGY,0.04868913857677903,"3
+METHODOLOGY"
+METHODOLOGY,0.05056179775280899,"From the above analysis, the memory consumption of GCNs can be signiﬁcantly reduced by stor-
+ing only the compressed activations. As shown in Figure 1, due to the simplicity and small time
+overhead of quantization (Section 3.1) and random projection (Section 3.2), we ﬁrst explore these
+two methods for compressing the activations of GNNs. We show that these two simple methods can"
+METHODOLOGY,0.052434456928838954,"1We note that the output of SPMM(·, ·) is a dense matrix."
+METHODOLOGY,0.054307116104868915,Published as a conference paper at ICLR 2022
+METHODOLOGY,0.056179775280898875,"(a) GCN layers with quantized activations.
+(b) GCN layers with randomly projected activations."
+METHODOLOGY,0.05805243445692884,"Figure 1: The training procedure of GCN layers, where only compressed activations are stored in
+memory. For illustration convenience, ReLU is ignored. During the forward pass, each layer’s
+accurate activations (H(l)) is used to compute those for the subsequent layer. Then the accurate
+activations will be compressed into the compressed activations ( H(l)
+INT and H(l)
+proj), which overwrites
+the the accurate activations and is retained in the memory. During the backward pass, we recover
+the compressed activations back to decompressed activation ( ˆ
+H(l)) for computing the gradient."
+METHODOLOGY,0.0599250936329588,"bring moderate compression ratios with negligible loss in accuracy. However, the highest compres-
+sion rates of these two methods are limited by either hardwares or the accuracy drop. Motivated by
+GNNs’ endless demand on memory, we then explore the direction of combining quantization with
+random projection into one framework termed “EXACT” to aggressively maximize the memory
+saving (Section 3.3). We show that random projection and quantization have an “interaction” effect.
+That is, from the model performance aspect, after random projection, applying quantization only
+has a limited impact on the model performance. From the time aspect, EXACT runs comparably or
+even faster than quantization only."
+STORING QUANTIZED ACTIVATIONS,0.06179775280898876,"3.1
+STORING QUANTIZED ACTIVATIONS"
+STORING QUANTIZED ACTIVATIONS,0.06367041198501873,"Inspired by ActNN (Chen et al., 2021a), as shown in Figure 1a, we ﬁrst explore the direction of
+compressing activation maps in lower numerical precision. Speciﬁcally, during the forward pass,
+each layer’s accurate activations (e.g., J(l) and H(l)) is used to compute those for the subsequent
+layer. Then the accurate activations will be quantized into the compressed activations (e.g., H(l)
+INT
+and J(l)
+INT) with lower numerical precision, which overwrite the accurate activations and are retained
+in the memory. During the backward pass, we dequantize the compressed activations back to full-
+precision (e.g., ˆ
+H(l) and ˆ
+J(l)). Then the gradients are computed based on the dequantized acti-
+vations. We note that all operations (e.g., MM and SPMM ) are done in full-precision since most of
+the GPUs do not support operands with bit-width other than full-precision and half-precision. For
+convenience, we use the term “precision” to present “numerical precision” in the following of
+this paper. Below we introduce the technical details of (de)quantization."
+STORING QUANTIZED ACTIVATIONS,0.06554307116104868,"Speciﬁcally, each node embedding vector h(l)
+v will be quantized and stored using b-bit integers. Let
+B = 2b −1 be the number of quantization bins. The integer quantization can be expressed as"
+STORING QUANTIZED ACTIVATIONS,0.06741573033707865,"h(l)
+vINT = Quant(h(l)
+v ) = ⌊h(l)
+v −Z(l)
+v
+r(l)
+v
+B⌉,
+(3)"
+STORING QUANTIZED ACTIVATIONS,0.06928838951310862,"where Z(l)
+v
+= min{h(l)
+v } is the zero-point, r(l)
+v
+= max{h(l)
+v } −min{h(l)
+v } is the range for h(l)
+v , and
+⌊·⌉is the stochastic rounding operation (Courbariaux et al., 2015). H(l)
+INT in Figure 1a is the matrix
+containing all quantized h(l)
+vINT. During the backward pass, each h(l)
+vINT will be dequantized as"
+STORING QUANTIZED ACTIVATIONS,0.07116104868913857,"ˆh(l)
+v
+= Dequant(h(l)
+vINT) = r(l)
+v h(l)
+vINT/B + Z(l)
+v .
+(4)"
+STORING QUANTIZED ACTIVATIONS,0.07303370786516854,"ˆ
+H(l) in Figure 1a is the matrix containing all dequantized embeddings ˆh(l)
+v . The following proposi-
+tion characterizes the effect of quantization, which is adopted from Chen et al. (2021a)."
+STORING QUANTIZED ACTIVATIONS,0.0749063670411985,Published as a conference paper at ICLR 2022
+STORING QUANTIZED ACTIVATIONS,0.07677902621722846,"Proposition 1 (Details in Appendix E) The above quantization and dequantization are unbiased
+operations, i.e., E[ˆh(l)
+v ] = E[Dequant(Quant(h(l)
+v ))] = h(l)
+v and Var(ˆh(l)
+v ) = D[r(l)
+v ]2 6B2
+."
+STORING QUANTIZED ACTIVATIONS,0.07865168539325842,"From the unbiased nature of quantization illustrated in Proposition 1, the calculated gradient is also
+unbiased. The approach imposes extra noise (i.e., the variance term in Proposition 1) to the gradient
+during the backward pass. From Proposition 1, the noise effect is inversely-correlated with the
+number of quantization bins B. To evaluate how the noise affects the model performance, we train
+three popular GNN models, namely, GCN, GraphSAGE, and GAT, on the ogbn-arxiv dataset (Hu
+et al., 2020) with different precisions (Table 1). The detailed experiment setting is elaborated in
+Appendix G.2. Here we emphasize that all these three models are trained with full-batch data."
+STORING QUANTIZED ACTIVATIONS,0.08052434456928839,"Table 1: The test accuracy of GCN, GraphSAGE, and GAT trained on the ogbn-arxiv dataset with
+compressed activations storing in different precision. All results are averaged over ten random trials."
+STORING QUANTIZED ACTIVATIONS,0.08239700374531835,"Model
+FP32 (Baseline)
+INT8
+INT4
+INT2
+INT1
+GCN
+72.07±0.16
+72.06±0.29
+71.96±0.26
+71.93±0.20
+71.68±0.17
+GraphSAGE
+71.85±0.24
+71.83±0.15
+71.85±0.27
+71.58±0.22
+71.34±0.24
+GAT
+72.35±0.12
+72.39±0.14
+72.34±0.12
+72.35±0.12
+72.17±0.12"
+STORING QUANTIZED ACTIVATIONS,0.08426966292134831,"Observations. For all three models, the loss in accuracy is negligible (≈0.2%) even using the
+vanilla 2-bit quantization. In contrast, for CNNs, adopting the vanilla INT1 or INT2 quantization
+will cause a signiﬁcant accuracy drop (usually > 5%) (Chen et al., 2021a; 2020a). This observation
+can be explained by the following mechanism. We show in Appendix E.4 that the approximation
+error will compound layer-by-layer during the backward pass. The layer-depth of GNNs is much
+smaller than CNNs due to the over-smoothing problem, and hence GNNs are much more noise-
+tolerant than CNNs. Our observation suggests that in practical scenarios, there is no need for an
+expensive sophisticated quantization approach (e.g., mixed precision quantization) as considered in
+previous works (Chen et al., 2021a; Fu et al., 2020)."
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.08614232209737828,"3.2
+STORING RANDOMLY PROJECTED ACTIVATIONS"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.08801498127340825,"Here we explore the direction of random projection. The key idea is to project the activation maps
+into a low-dimensional space that keeps the original information as much as possible. In this way,
+similar to the framework in Section 3.1, we only need to store the dimension reduced activation
+maps in memory. Figure 1b illustrates the workﬂow of GCN layers. During the forward pass, each
+layer’s accurate activations (e.g., h(l)
+v ) are used to compute those for the subsequent layer. Then the
+accurate activations will be projected into a low-dimensional space, which can be expressed as:"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.0898876404494382,"h(l)
+vproj = RP(h(l)
+v ) = h(l)
+v R,
+(5)"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.09176029962546817,"where R ∈RD×R is a random matrix (R < D) which satisﬁes E[RR⊤] = I. H(l)
+proj ∈R|V|×R is"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.09363295880149813,"the matrix containing all projected node embeddings h(l)
+vproj. In this paper, R is set as the normalized
+Rademacher random matrix (Achlioptas, 2001) due to its low sampling cost (detailed introduction
+in Appendix D). After projection, we store only H(l)
+proj in memory, and hence the compression ratio
+is D"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.09550561797752809,"R . During the backward pass, the projected node embeddings are inversely transformed by"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.09737827715355805,"ˆh(l)
+v
+= IRP(h(l)
+vproj) = h(l)
+vprojR⊤,
+(6)"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.09925093632958802,"where IRP(·) is the inverse projection operation.
+ˆ
+H(l) = H(l)
+projRR⊤∈R|V|×D is the recovered"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.10112359550561797,"activation map containing all ˆh(l)
+v . The following proposition shows the effect of random projection."
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.10299625468164794,"Proposition 2 (Proof in Appendix E) The above RP and IRP are unbiased operations, i.e.,
+E[ ˆ
+H(l)] = E[IRP(RP(H(l)))] = H(l). For each ˆh(l)
+v in ˆ
+H(l), we have Var(ˆh(l)
+v ) = D−1"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.10486891385767791,"R ||h(l)
+v ||2
+2."
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.10674157303370786,"From the unbiased nature of random projection given in Proposition 2, the calculated gradient is also
+unbiased. The approach here also only imposes extra variance to the calculated gradient, where the
+variance linearly scales with the D"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.10861423220973783,"R ratio. To quantitatively study the effect of the extra variance in
+scenarios of practical interest, we follow the same setting in Section 3.1 and show the performance"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.1104868913857678,Published as a conference paper at ICLR 2022
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.11235955056179775,"Table 2: The test accuracy of GCN, GraphSAGE, and GAT trained on the ogbn-arxiv dataset with
+randomly projected activations. All results are averaged over ten random trials."
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.11423220973782772,"Model
+Full-Dimension (Baseline)
+D
+R = 2
+D
+R = 4
+D
+R = 8
+D
+R = 16
+GCN
+72.07±0.16
+71.87±0.15
+71.72±0.18
+71.71±0.22
+71.55±0.13
+GraphSAGE
+71.85±0.24
+71.58±0.28
+71.46±0.28
+71.29±0.25
+71.13±0.28
+GAT
+72.35±0.12
+72.18±0.14
+72.15±0.10
+72.02±0.12
+71.89±0.12"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.11610486891385768,"of GCN, GraphSAGE, and GAT trained on the ogbn-arxiv dataset with different D"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.11797752808988764,"R ratios in Table
+2."
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.1198501872659176,"Observations. We make two main observations: (1) For all three models, the loss in accuracy
+tends to range from negligible (≈0.2%) to moderate (≈0.5%) when D"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.12172284644194757,"R ≤8. (2) Under the same
+compression ratio, the quantization is better than random projection in terms of the loss in accuracy
+(e.g., compare the D"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.12359550561797752,R = 16 result in Table 2 with the INT2 result in Table 1).
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.1254681647940075,"3.3
+EXACT: COMBINING RANDOM PROJECTION AND QUANTIZATION"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.12734082397003746,"We experimentally show that GNNs are noise-tolerant to inaccurate activations compressed by quan-
+tization and random projection. However, the highest compression ratio of these two methods is
+limited. The precision cannot be less than 1-bit for quantization and D"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.12921348314606743,"R cannot surpass eight for
+random projection due to a large accuracy drop. However, GNNs’ demand on memory is endless
+since real-world graphs can contain hundreds of millions of nodes and the graph size is ever grow-
+ing. Motivated by this fact, we try to further push forward the memory saving as long as the loss of
+accuracy and the time overhead are both acceptable. We explore the direction of combining these
+two methods into one framework termed “EXACT” to maximize the memory saving. Speciﬁcally,
+we compress the activations and store only ˜h(l)
+v
+= Quant(RP(h(l)
+v )) in memory during the forward
+pass. During the backward pass, the node embedding is recovered as ˆh(l)
+v
+= IRP(Dequant(˜h(l)
+v )).
+EXACT can achieve a superior compression ratio, e.g., the compression ratio of EXACT is roughly
+128× if D"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.13108614232209737,R = 8 and the precision is INT2.
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.13295880149812733,"However, one practical question is whether the variance will explode, leading to signiﬁcantly worse
+performance when applying random projection and quantization sequentially. Here we try to answer
+the above question both theoretically and experimentally. Below we ﬁrst theoretically show that after
+applying random projection, the quantization range of projected node embeddings is bounded."
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.1348314606741573,"Proposition 3 (Proof in Appendix E) For each projected node embedding h(l)
+vproj = RP(h(l)
+v ) ="
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.13670411985018727,"h(l)
+v R, for ∀ϵ > 0, by choosing s = ||h(l)
+v ||2
+q"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.13857677902621723,2ln(2R/ϵ)
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.1404494382022472,"R
+, we have P(||h(l)
+vproj||∞≤s) ≥1 −ϵ."
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.14232209737827714,"From Proposition 3, after projection, the maximal absolute value among weights in h(l)
+vproj is bounded.
+Following the fact that the quantization range r(l)
+vproj = max{h(l)
+vproj} −min{h(l)
+vproj} ≤2||h(l)
+vproj||∞,"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.1441947565543071,"r(l)
+vproj is also bounded. Recall that the variance of quantization scales with
+[r(l)
+vproj]2"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.14606741573033707,"B2
+(Proposition 1).
+Applying random projection and quantization sequentially will not lead to the variance explosion."
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.14794007490636704,"Figure 2: The performance of EXACT is mainly
+determined by the D"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.149812734082397,R ratio of random projection.
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.15168539325842698,"We
+also
+experimentally
+visualize
+the
+in-
+ﬁnity
+norm
+of
+projected
+embeddings
+in
+Appendix E Figure 4. The inﬁnity norm of pro-
+jected embeddings may be even less than those
+of original embeddings when R is larger than a
+threshold (R = 0.5D in Figure 4). Thus, the
+extra variance is expected to be dominated by
+random projection, and hence the loss in ac-
+curacy is largely determined by the
+D
+R ratio.
+We also experimentally investigate the effect of
+EXACT by plotting the test accuracy against
+each quantization precision and the
+D
+R ratio.
+Due to the page limit, we only present one representative result in Figure 2, namely, training GCNs
+on ogbn-arxiv with EXACT. More similar results can be found in Appendix I.1 Here we do not"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.15355805243445692,Published as a conference paper at ICLR 2022
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.15543071161048688,"consider INT1 precision since its model performance drop is already near 0.5%. We summarize
+two main observations. First, the performance of EXACT is largely determined by the D"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.15730337078651685,"R ratio of
+random projection. Second, when D"
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.15917602996254682,"R ≤8, the loss in accuracy generally ranges from ≈0.2% to
+≈0.5%, regardless of the quantization precision."
+STORING RANDOMLY PROJECTED ACTIVATIONS,0.16104868913857678,"System Implementation. In EXACT, each operation (e.g., SPMM , ReLU, and BatchNorm) is re-
+implemented with different conﬁgurations using CUDA kernels. For example, BatchNorm only sup-
+ports quantization, while random projection is not applicable to it. Since Pytorch only supports
+precision down to INT8, we convert quantized tensors into bit-streams by CUDA kernels to maxi-
+mize the memory saving. The conﬁguration and implementation details are given in Appendix F."
+RELATED WORK AND DISCUSSION,0.16292134831460675,"4
+RELATED WORK AND DISCUSSION"
+RELATED WORK AND DISCUSSION,0.1647940074906367,"Due to the page limit, we brieﬂy review and discuss the relationship between existing works and
+EXACT. A more comprehensive discussion can be found in Appendix B. Existing works can be
+roughly divided into scalable/efﬁcient GNN inference and scalable GNN training according to the
+problem they try to solve. Almost all previous GNN quantization works try to solve the ﬁrst problem,
+which is much simpler than the second problem that EXACT tries to address. Speciﬁcally, most
+of them try to enable the usage of low precision integer arithmetic during inference (Tailor et al.,
+2021; Zhao et al., 2020) by simulating the quantization effect, which may even increase the memory
+consumption during training. Feng et al. (2020) tries to address the second problem by proposing
+a heterogeneous quantization framework which assigns different bits to node embeddings in each
+layer. However, this framework is impractical on off-the-shell hardwares. For scalable GNN training
+methods, EXACT is orthogonal to most of them, including distributed training (Zheng et al., 2020b;
+Jia et al., 2020; Zhu et al., 2019; Wan et al., 2021), subgraph sampling (Hamilton et al., 2017; Zeng
+et al., 2020; Chiang et al., 2019), and historical embedding-based methods (Fey et al., 2021). We
+discuss the potential beneﬁt of integrating EXACT with them in Appendix B."
+EXPERIMENTS,0.16666666666666666,"5
+EXPERIMENTS"
+EXPERIMENTS,0.16853932584269662,"The experiments are designed to answer the following research questions. RQ1: How effective is
+EXACT in terms of model performance at different compression rates (Section 5.1)? RQ2: Is the
+training process of deeper GNNs also robust to the noise introduced by EXACT (Section 5.1)? RQ3:
+How sensitive is EXACT to its key hyperparameters (Appendix I.4)? RQ4: What is the running time
+overhead of EXACT (Section 5.2)? RQ5: Is the convergence speed of GNNs impacted by EXACT
+(Appendix I.3)? RQ6: To what extent can EXACT reduce the hardware requirement for training
+GNNs on large graphs (Section 5.3)?"
+EXPERIMENTS,0.1704119850187266,"Datasets and Models. To evaluate the scalability of EXACT, we adopt ﬁve common large-scale
+graph benchmark datasets from different domains. Namely, Reddit, Flickr, Yelp, ogbn-arxiv, and
+ogbn-products. We evaluate EXACT under both the mini-batch training and full-batch training set-
+tings. In the mini-batch training setting, we integrate EXACT with two state-of-the-art subgraph
+sampling methods, namely Cluster-GCN (Chiang et al., 2019) and GraphSAINT (Zeng et al., 2020).
+In the full-batch training setting, we integrate EXACT with three popular models, including two
+commonly used shallow models, namely GCN (Kipf & Welling, 2017) and GraphSAGE (Hamilton
+et al., 2017), and one deep model GCNII (Chen et al., 2020b). To avoid confusions, GCN, Graph-
+SAGE, and GCNII are both trained with the whole graph at each step. For a fair comparison,
+we use the mean aggregator for GraphSAGE, Cluster-GCN, and GraphSAINT throughout the paper.
+Details about the hyperparameters of models and datasets can be found in Appendix G."
+EXPERIMENTS,0.17228464419475656,"Hyperparameter Settings. From Section 3.3, we show that the performance of EXACT is largely
+determined by the D"
+EXPERIMENTS,0.17415730337078653,"R ratio of random projection, and the model performance drop with INT2 quan-
+tization is negligible. Thus, to balance the accuracy drop and memory saving ratio, we adopt INT2
+precision with different D"
+EXPERIMENTS,0.1760299625468165,"R ratios for EXACT. Speciﬁcally, EXACT (INT2) indicates that it only
+applies 2-bit quantization to the activation maps of all applicable operations (see Table 8). EX-
+ACT(RP+INT2) indicates that it applies random projection followed by a 2-bit quantization to the
+activations of all applicable operations. We perform a grid search for D"
+EXPERIMENTS,0.17790262172284643,"R ratio from {2, 4, 8}. De-
+tailed D"
+EXPERIMENTS,0.1797752808988764,R conﬁguration for EXACT(RP+INT2) can be found in Table 12.
+EXPERIMENTS,0.18164794007490637,Published as a conference paper at ICLR 2022
+EXPERIMENTS,0.18352059925093633,"Table 3: Comparison on the test accuracy/F1-micro and memory saving on ﬁve datasets. The hard-
+ware here is a single RTX 3090 (24GB). “Act Mem.” is the memory (MB) occupied by activation
+maps. “OOM” indicates the out-of-memory error. Bold faces indicate that the loss in accuracy is
+negligible (≈0.2%) or the result is better compared to the baseline. Underline numbers indicate that
+the loss in accuracy is moderate (≈0.5%). All reported results are averaged over ten random trials."
+EXPERIMENTS,0.1853932584269663,"# nodes
+# edges
+230K
+11.6M
+89K
+450K
+717K
+7.9M
+169K
+1.2M
+2.4M
+61.9M"
+EXPERIMENTS,0.18726591760299627,"Model
+Methods
+Reddit
+Flickr
+Yelp
+ogbn-
+arxiv
+ogbn-
+products"
+EXPERIMENTS,0.1891385767790262,"Acc.
+Act
+Mem.
+Acc.
+Act
+Mem.
+F1-micro
+Act
+Mem.
+Acc.
+Act
+Mem.
+Acc.
+Act
+Mem."
+EXPERIMENTS,0.19101123595505617,"Cluster-
+GCN"
+EXPERIMENTS,0.19288389513108614,"Baseline
+95.62±0.10
+14.5 (1×)
+49.61±0.47
+16.5 (1×)
+63.98±0.14
+29.3 (1×)
+—
+—
+78.62±0.26
+35.2 (1×)
+EXACT(INT2)
+95.58±0.09
+2 (7.3×)
+49.69±0.20
+1.5 (11×)
+63.90±0.15
+4 (7.3×)
+—
+—
+78.47±0.40
+2.5 (14×)
+EXACT(RP+INT2)
+95.32±0.07
+1.4 (10.4×)
+49.31±0.21
+0.9 (18.3×)
+63.61±0.21
+3 (9.8×)
+—
+—
+77.86±0.28
+2.2 (16×)"
+EXPERIMENTS,0.1947565543071161,"Graph-
+SAINT"
+EXPERIMENTS,0.19662921348314608,"Baseline
+96.02±0.08
+44.3 (1×)
+51.11±0.28
+88.7 (1×)
+63.78±0.12
+33.5 (1×)
+71.49±0.20
+270 (1×)
+79.03±0.23
+516 (1×)
+EXACT(INT2)
+95.96±0.05
+6.6 (6.7×)
+50.86±0.32
+7.8 (11.4×)
+63.77±0.14
+4.3 (7.8×)
+71.76±0.15
+20 (13.5×)
+78.94±0.28
+40.5 (12.7×)
+EXACT(RP+INT2)
+95.69±0.06
+3.6 (12.3×)
+50.65±0.17
+3.4 (26×)
+63.41±0.19
+3.3 (10.2×)
+71.44±0.16
+10.8 (25×)
+78.50±0.41
+29.5 (17.5×)"
+EXPERIMENTS,0.19850187265917604,"GCN
+Baseline
+95.39±0.04
+1029 (1×)
+53.08±0.14
+378.8 (1×)
+40.22±0.47
+6429 (1×)
+72.07±0.16
+729.4(1×)
+—
+—
+EXACT(INT2)
+95.36±0.03
+122.8 (8.4×)
+52.92±0.20
+37 (10.2×)
+40.20±0.38
+640 (10×)
+72.04±0.21
+54.5 (13.4×)
+—
+—
+EXACT(RP+INT2)
+95.30±0.03
+67 (15.4×)
+52.90±0.22
+17.8 (21.3×)
+39.89±0.56
+427 (15×)
+71.67±0.16
+30.2 (24.1×)
+—
+—"
+EXPERIMENTS,0.20037453183520598,"Graph-
+SAGE"
+EXPERIMENTS,0.20224719101123595,"Baseline
+96.44±0.04
+1527.4 (1×)
+51.74±0.13
+546.9 (1×)
+62.05±0.14
+6976 (1×)
+71.85±0.24
+786.2(1×)
+78.782±0.19
+OOM
+EXACT(INT2)
+96.40±0.05
+155.5 (9.8×)
+51.97±0.22
+49.3 (11.1×)
+61.95±0.12
+680 (10.3×)
+71.71±0.38
+60.8 (12.9×)
+78.79±0.12
+1144
+EXACT(RP+INT2)
+96.34±0.03
+71.7 (21.3×)
+51.83±0.21
+20.4 (26.8×)
+61.59±0.12
+466.5 (15×)
+71.32±0.26
+30.5 (25.8×)
+78.76±0.13
+572"
+EXPERIMENTS,0.20411985018726592,"GCNII
+Baseline
+96.71±0.07
+5850 (1×)
+54.23±0.77
+4067 (1×)
+OOM
+OOM
+72.85±0.27
+14409 (1×)
+—
+—
+EXACT(INT2)
+96.65±0.06
+388 (15×)
+54.55±0.47
+256.4 (15.9×)
+64.79±0.09
+2236
+72.85±0.43
+899 (16×)
+—
+—
+EXACT(RP+INT2)
+96.51±0.09
+197.8 (29.6×)
+53.96±0.58
+127.6 (31.9×)
+64.01±0.17
+1649
+72.67±0.45
+451.2 (32×)
+—
+—"
+EXPERIMENTS,0.20599250936329588,"Figure 3:
+Training throughput comparison on a single RTX 3090 (24GB) GPU (higher is bet-
+ter). The time overhead of EXACT is roughly 12%-25%. We discuss about swapping and gradient
+checkpointing in Appendix I.2."
+TRADE-OFF BETWEEN SPACE AND MODEL PERFORMANCE,0.20786516853932585,"5.1
+TRADE-OFF BETWEEN SPACE AND MODEL PERFORMANCE"
+TRADE-OFF BETWEEN SPACE AND MODEL PERFORMANCE,0.20973782771535582,"To answer RQ1 and RQ2, we ﬁrst analyze the trade-off between the model performance and mem-
+ory saving. Table 3 summarizes the model performance and the memory footprint of the activation
+maps. Besides the memory usage of activation maps, a detailed analysis about the overall memory
+saving ratio is provided in Appendix H. We make two main observations."
+TRADE-OFF BETWEEN SPACE AND MODEL PERFORMANCE,0.21161048689138576,"First, EXACT aggressively reduces the memory footprint with ≤0.5% loss in accuracy. From
+Table 3, EXACT (INT2) reduces the memory footprint of activation maps from 7× to 16×, with
+negligible loss in accuracy (≈0.2%) in almost all experiments. EXACT (RP+INT2) generally
+reduces the memory footprint of activation maps from 10× to 32×, and the loss in accuracy tends to
+range from lossless (0.0%) to moderate (≈0.5%). Although EXACT can aggressively compress the
+memory usage of activations associated with MM and SPMM by up to 128×, the compression ratio for
+other operations usually cannot surpass 32× (e.g., the activation maps of ReLU and Dropout take
+exact one bit to store, see Appendix F). As a result, the overall compress ratio is pulled down. We
+show in Appendix H that the measured compression ratio is consistent with the theoretical one."
+TRADE-OFF BETWEEN SPACE AND MODEL PERFORMANCE,0.21348314606741572,"Second, the training process of deeper models is also robust to extremely compressed acti-
+vations. As we analyzed in Appendix E.4, the vanilla quantization and random projection obtain
+unreasonable good performance might because the commonly used GNNs are shallow. Thus, one
+open question is that, to what extent can deeper GNNs robust to extremely compressed activation
+maps (RQ2)? The ablation study of GCNII in Table 3 tries to experimentally answer this question.
+The training process of deeper GNNs (up to 16-layer, see Table 17) is also robust to the noise intro-
+duced by the extremely compressed activations, with up to 32× less memory footprint of activation
+maps. We note that building deeper GNNs is still an open direction due to the over-smoothing and
+the extensive memory consumption problem (Oono & Suzuki, 2019; Li et al., 2021; Chen et al.,
+2020b). From the practical usage perspective, our GCNII ablation study indicates that EXACT may
+enable to train deeper GNNs on large graphs with minimal loss in performance."
+TRADE-OFF BETWEEN SPACE AND MODEL PERFORMANCE,0.2153558052434457,"2The regular training raises OOM error. The result is obtained using the automated mixed-precision training
+(torch.cuda.amp)."
+TRADE-OFF BETWEEN SPACE AND MODEL PERFORMANCE,0.21722846441947566,Published as a conference paper at ICLR 2022
+TRADE-OFF BETWEEN SPACE AND MODEL PERFORMANCE,0.21910112359550563,"To answer RQ3, we present the sensitivity study of EXACT (RP+INT2) to D"
+TRADE-OFF BETWEEN SPACE AND MODEL PERFORMANCE,0.2209737827715356,"R ratio in Appendix I.4.
+In general, the model performance drop of EXACT (RP+INT2) increases with the D"
+TRADE-OFF BETWEEN SPACE AND MODEL PERFORMANCE,0.22284644194756553,"R ratio. In
+summary, when D"
+TRADE-OFF BETWEEN SPACE AND MODEL PERFORMANCE,0.2247191011235955,"R = 8, the loss in accuracy of EXACT (RP+INT2) is ≤0.5% in roughly two-third
+of experiments and ≤1% in almost all experiments."
+TRADE-OFFS BETWEEN SPACE AND SPEED,0.22659176029962547,"5.2
+TRADE-OFFS BETWEEN SPACE AND SPEED"
+TRADE-OFFS BETWEEN SPACE AND SPEED,0.22846441947565543,"To answer RQ4, we compare the training throughput of EXACT with the baseline using a single
+RTX 3090 (24GB) GPU. Figure 3 shows the results among EXACT with different conﬁgurations
+and the baseline (see Table 9 for detailed package information). We make two main observations."
+TRADE-OFFS BETWEEN SPACE AND SPEED,0.2303370786516854,"First, the overhead of EXACT (INT2) is roughly 12% ∼25%. The overhead of EXACT (INT2)
+comes entirely from quantization. We note that EXACT (INT2) adopts vanilla integer quantization
+with negligible loss in accuracy, which has the lowest overhead among all quantization methods. So-
+phisticated quantization strategies (e.g., mixed precision quantization and non-uniform quantization)
+further increase the time overhead, because they require an extra search process to ﬁnd precision or
+quantization step for each layer/sample (Chakrabarti & Moseley, 2019; Fu et al., 2020; Chen et al.,
+2021a). From Figure 3, the overhead of EXACT is roughly 12% ∼25%."
+TRADE-OFFS BETWEEN SPACE AND SPEED,0.23220973782771537,"Second, the running speed of EXACT (RP+INT2) is comparable or even faster than quantiza-
+tion only. The above counter-intuitive observation can be explained by the following mechanism.
+Although random projection introduces two extra matrix multiplication operations, the total num-
+ber of elements to be quantized is D"
+TRADE-OFFS BETWEEN SPACE AND SPEED,0.2340823970037453,"R times less than directly quantizing the activations. Considering
+that quantization is the main bottleneck, compared to EXACT (INT2), EXACT (RP+INT2) achieves
+roughly twice overall compression ratios with a comparable or even smaller time overhead."
+TRADE-OFFS BETWEEN SPACE AND SPEED,0.23595505617977527,"RQ4 focuses on the actual running speed measured by the hardware throughput. Here we inves-
+tigate the convergence speed from the optimization perspective (RQ5). To answer RQ5, due to
+the page limit, we present the training curve of models trained on Reddit dataset with EXACT in
+Appendix I.3. The converge speed here is measured by the number of epochs it takes to reach a
+certain validation accuracy. In summary, the convergence speed of EXACT is slightly slower than
+the baseline, with limited impact on ﬁnal accuracy."
+ABLATION STUDIES,0.23782771535580524,"5.3
+ABLATION STUDIES"
+ABLATION STUDIES,0.2397003745318352,Train full-batch GraphSAGE on ogbn-products using a GPU with 11GB memory.
+ABLATION STUDIES,0.24157303370786518,"Table 4: The test accuracy of full-batch
+GraphSAGE trained on ogbn-products
+using a single GTX 1080 Ti (11GB)."
+ABLATION STUDIES,0.24344569288389514,"Methods
+Accuracy
+AMP
+OOM
+EXACT(RP+INT2) + AMP
+78.28±0.18"
+ABLATION STUDIES,0.24531835205992508,"Table 3 shows that EXACT reduces the memory foot-
+print of activation maps by up to 32×. However, as an-
+alyzed in Appendix H, besides the activation maps, in-
+put data (including feature matricesX, adjacency matrix
+A, and labels), activation gradients also occupy mem-
+ory in the full-batch training. For ogbn-products, the
+input data occupies 4.7GB (see Appendix H). From the
+OGB leader-board, training a full-batch GraphSAGE re-
+quires GPUs with at least 48GB memory. We note that EXACT can be integrated with AMP (see
+Appendix F) to further squeeze out the memory. To answer RQ6, by integrating AMP and EXACT
+(RP+INT2) with D"
+ABLATION STUDIES,0.24719101123595505,"R = 4, we successfully train a full-batch GraphSAGE on ogbn-products on a
+single GTX 1080 Ti with 11GB memory, with moderate loss (≈0.5%) in accuracy (Table 4)."
+CONCLUSION AND FUTURE WORK,0.24906367041198502,"6
+CONCLUSION AND FUTURE WORK"
+CONCLUSION AND FUTURE WORK,0.250936329588015,"In this paper, we propose EXACT, a simple-yet-effective framework for training GNNs with com-
+pressed activations. We demonstrate the potential of EXACT for the real-world usage by system-
+atically evaluating the trade-off among the memory-saving, time overhead, and accuracy drop. We
+show that EXACT is orthogonal to most of the existing solutions and discuss how EXACT can be
+integrated with them in Appendix B. Future work includes (1) evaluating EXACT under multi-GPU
+settings for distributed training; (2) combining EXACT with historical embedding-based methods;
+(3) combining EXACT with memory-efﬁcient training systems, such as swapping."
+CONCLUSION AND FUTURE WORK,0.25280898876404495,Published as a conference paper at ICLR 2022
+ACKNOWLEDGEMENT,0.2546816479400749,"7
+ACKNOWLEDGEMENT"
+ACKNOWLEDGEMENT,0.2565543071161049,"We would like to thank all the anonymous reviewers for their valuable suggestions. Thank all the
+members of Samsung Research America advertisement intelligence team for your feedback, and
+everyone who has provided their generous feedback on this work. This work is, in part, supported
+by NSF IIS-1750074. The views and conclusions contained in this paper are those of the authors
+and should not be interpreted as representing any funding agencies."
+REFERENCES,0.25842696629213485,REFERENCES
+REFERENCES,0.2602996254681648,"Mart´ın Abadi, Paul Barham, Jianmin Chen, Zhifeng Chen, Andy Davis, Jeffrey Dean, Matthieu
+Devin, Sanjay Ghemawat, Geoffrey Irving, Michael Isard, et al. Tensorﬂow: A system for large-
+scale machine learning. In 12th {USENIX} symposium on operating systems design and imple-
+mentation ({OSDI} 16), pp. 265–283, 2016."
+REFERENCES,0.26217228464419473,"Dimitris Achlioptas. Database-friendly random projections. In Proceedings of the twentieth ACM
+SIGMOD-SIGACT-SIGART symposium on Principles of database systems, pp. 274–281, 2001."
+REFERENCES,0.2640449438202247,"Friedrich L Bauer. Computational graphs and rounding error. SIAM Journal on Numerical Analysis,
+11(1):87–96, 1974."
+REFERENCES,0.26591760299625467,"L´eon Bottou, Frank E Curtis, and Jorge Nocedal. Optimization methods for large-scale machine
+learning. Siam Review, 60(2):223–311, 2018."
+REFERENCES,0.26779026217228463,"Chen Cai, Dingkang Wang, and Yusu Wang. Graph coarsening with neural networks. arXiv preprint
+arXiv:2102.01350, 2021a."
+REFERENCES,0.2696629213483146,"Tianle Cai, Shengjie Luo, Keyulu Xu, Di He, Tie-yan Liu, and Liwei Wang. Graphnorm: A prin-
+cipled approach to accelerating graph neural network training. In International Conference on
+Machine Learning, pp. 1204–1215. PMLR, 2021b."
+REFERENCES,0.27153558052434457,"Ayan Chakrabarti and Benjamin Moseley. Backprop with approximate activations for memory-
+efﬁcient network training. Advances in Neural Information Processing Systems, 32:2429–2438,
+2019."
+REFERENCES,0.27340823970037453,"Jianfei Chen, Jun Zhu, and Le Song. Stochastic training of graph convolutional networks with
+variance reduction. In International conference on machine learning. PMLR, 2017."
+REFERENCES,0.2752808988764045,"Jianfei Chen, Yu Gai, Zhewei Yao, Michael W Mahoney, and Joseph E Gonzalez. A statistical
+framework for low-bitwidth training of deep neural networks. arXiv preprint arXiv:2010.14298,
+2020a."
+REFERENCES,0.27715355805243447,"Jianfei Chen, Lianmin Zheng, Zhewei Yao, Dequan Wang, Ion Stoica, Michael W Mahoney, and
+Joseph E Gonzalez. Actnn: Reducing training memory footprint via 2-bit activation compressed
+training. In International Conference on Machine Learning. PMLR, 2021a."
+REFERENCES,0.27902621722846443,"Jie Chen, Tengfei Ma, and Cao Xiao. Fastgcn: fast learning with graph convolutional networks via
+importance sampling. arXiv preprint arXiv:1801.10247, 2018."
+REFERENCES,0.2808988764044944,"Ming Chen, Zhewei Wei, Zengfeng Huang, Bolin Ding, and Yaliang Li. Simple and deep graph con-
+volutional networks. In International Conference on Machine Learning, pp. 1725–1735. PMLR,
+2020b."
+REFERENCES,0.28277153558052437,"Tianlong Chen, Yongduo Sui, Xuxi Chen, Aston Zhang, and Zhangyang Wang. A uniﬁed lottery
+ticket hypothesis for graph neural networks. In International Conference on Machine Learning,
+pp. 1695–1706. PMLR, 2021b."
+REFERENCES,0.2846441947565543,"Tianqi Chen, Bing Xu, Chiyuan Zhang, and Carlos Guestrin. Training deep nets with sublinear
+memory cost.(2016). arXiv preprint arXiv:1604.06174, 2016."
+REFERENCES,0.28651685393258425,"Wei-Lin Chiang, Xuanqing Liu, Si Si, Yang Li, Samy Bengio, and Cho-Jui Hsieh. Cluster-gcn: An
+efﬁcient algorithm for training deep and large graph convolutional networks. In Proceedings of
+the 25th ACM SIGKDD International Conference on Knowledge Discovery & Data Mining, pp.
+257–266, 2019."
+REFERENCES,0.2883895131086142,Published as a conference paper at ICLR 2022
+REFERENCES,0.2902621722846442,"Matthieu Courbariaux, Yoshua Bengio, and Jean-Pierre David. Binaryconnect: Training deep neural
+networks with binary weights during propagations. In Advances in neural information processing
+systems, pp. 3123–3131, 2015."
+REFERENCES,0.29213483146067415,"R David Evans and Tor Aamodt.
+AC-GC: Lossy activation compression with guaranteed con-
+vergence. In Thirty-Fifth Conference on Neural Information Processing Systems, 2021. URL
+https://openreview.net/forum?id=MwFdqFRxIF0."
+REFERENCES,0.2940074906367041,"R David Evans, Lufei Liu, and Tor M Aamodt. Jpeg-act: accelerating deep learning via transform-
+based lossy compression. In 2020 ACM/IEEE 47th Annual International Symposium on Computer
+Architecture (ISCA), pp. 860–873. IEEE, 2020."
+REFERENCES,0.2958801498127341,"Boyuan Feng, Yuke Wang, Xu Li, Shu Yang, Xueqiao Peng, and Yufei Ding. Sgquant: Squeezing the
+last bit on graph neural networks with specialized quantization. In 2020 IEEE 32nd International
+Conference on Tools with Artiﬁcial Intelligence (ICTAI), pp. 1044–1052. IEEE, 2020."
+REFERENCES,0.29775280898876405,"Matthias Fey and Jan E. Lenssen. Fast graph representation learning with PyTorch Geometric. In
+ICLR Workshop on Representation Learning on Graphs and Manifolds, 2019."
+REFERENCES,0.299625468164794,"Matthias Fey, Jan E Lenssen, Frank Weichert, and Jure Leskovec. Gnnautoscale: Scalable and ex-
+pressive graph neural networks via historical embeddings. In International conference on machine
+learning, 2021."
+REFERENCES,0.301498127340824,"Fangcheng Fu, Yuzheng Hu, Yihan He, Jiawei Jiang, Yingxia Shao, Ce Zhang, and Bin Cui. Don’t
+waste your bits! squeeze activations and gradients for deep neural networks via tinyscript. In
+International Conference on Machine Learning, pp. 3304–3314. PMLR, 2020."
+REFERENCES,0.30337078651685395,"William L Hamilton, Rex Ying, and Jure Leskovec.
+Inductive representation learning on large
+graphs. In Proceedings of the 31st International Conference on Neural Information Processing
+Systems, pp. 1025–1035, 2017."
+REFERENCES,0.3052434456928839,"Weihua Hu, Matthias Fey, Marinka Zitnik, Yuxiao Dong, Hongyu Ren, Bowen Liu, Michele Catasta,
+and Jure Leskovec. Open graph benchmark: Datasets for machine learning on graphs. arXiv
+preprint arXiv:2005.00687, 2020."
+REFERENCES,0.30711610486891383,"Qian Huang, Horace He, Abhay Singh, Ser-Nam Lim, and Austin R Benson. Combining label
+propagation and simple models out-performs graph neural networks. In International Conference
+on Learning Representations, 2020."
+REFERENCES,0.3089887640449438,"Wenbing Huang, Tong Zhang, Yu Rong, and Junzhou Huang. Adaptive sampling towards fast graph
+representation learning. In Advances in Neural Information Processing Systems, 2018."
+REFERENCES,0.31086142322097376,"Paras Jain, Ajay Jain, Aniruddha Nrusimha, Amir Gholami, Pieter Abbeel, Kurt Keutzer, Ion Stoica,
+and Joseph E Gonzalez. Checkmate: Breaking the memory wall with optimal tensor rematerial-
+ization. arXiv preprint arXiv:1910.02653, 2019."
+REFERENCES,0.31273408239700373,"Zhihao Jia, Sina Lin, Mingyu Gao, Matei Zaharia, and Alex Aiken. Improving the accuracy, scala-
+bility, and performance of graph neural networks with roc. Proceedings of Machine Learning and
+Systems, 2:187–198, 2020."
+REFERENCES,0.3146067415730337,"George Karypis and Vipin Kumar. A fast and high quality multilevel scheme for partitioning irreg-
+ular graphs. SIAM Journal on scientiﬁc Computing, 20(1):359–392, 1998."
+REFERENCES,0.31647940074906367,"Diederik P Kingma and Jimmy Ba. Adam: A method for stochastic optimization. arXiv preprint
+arXiv:1412.6980, 2014."
+REFERENCES,0.31835205992509363,"Thomas N Kipf and Max Welling. Semi-supervised classiﬁcation with graph convolutional net-
+works.
+In International Conference on Learning Representations, 2017.
+URL https://
+openreview.net/forum?id=SJU4ayYgl."
+REFERENCES,0.3202247191011236,"Marisa Kirisame, Steven Lyubomirsky, Altan Haan, Jennifer Brennan, Mike He, Jared Roesch,
+Tianqi Chen, and Zachary Tatlock.
+Dynamic tensor rematerialization.
+arXiv preprint
+arXiv:2006.09616, 2020."
+REFERENCES,0.32209737827715357,Published as a conference paper at ICLR 2022
+REFERENCES,0.32397003745318353,"Johannes Klicpera, Aleksandar Bojchevski, and Stephan G¨unnemann.
+Predict then propagate:
+Graph neural networks meet personalized pagerank. In International Conference on Learning
+Representations, 2018."
+REFERENCES,0.3258426966292135,"Guohao Li, Matthias M¨uller, Bernard Ghanem, and Vladlen Koltun. Training graph neural networks
+with 1000 layers. arXiv preprint arXiv:2106.07476, 2021."
+REFERENCES,0.32771535580524347,"Jiayu Li, Tianyun Zhang, Hao Tian, Shengmin Jin, Makan Fardad, and Reza Zafarani. Sgcn: A
+graph sparsiﬁer based on graph convolutional networks. In Paciﬁc-Asia Conference on Knowledge
+Discovery and Data Mining, pp. 275–287. Springer, 2020."
+REFERENCES,0.3295880149812734,"Elan Sopher Markowitz, Keshav Balasubramanian, Mehrnoosh Mirtaheri, Sami Abu-El-Haija,
+Bryan Perozzi, Greg Ver Steeg, and Aram Galstyan. Graph traversal with tensor functionals: A
+meta-algorithm for scalable learning. In International Conference on Learning Representations,
+2021. URL https://openreview.net/forum?id=6DOZ8XNNfGN."
+REFERENCES,0.33146067415730335,"Chen Meng, Minmin Sun, Jun Yang, Minghui Qiu, and Yang Gu. Training deeper models by gpu
+memory optimization on tensorﬂow. In Proc. of ML Systems Workshop in NIPS, 2017."
+REFERENCES,0.3333333333333333,"Paulius Micikevicius, Sharan Narang, Jonah Alben, Gregory Diamos, Erich Elsen, David Garcia,
+Boris Ginsburg, Michael Houston, Oleksii Kuchaiev, Ganesh Venkatesh, et al. Mixed precision
+training. arXiv preprint arXiv:1710.03740, 2017."
+REFERENCES,0.3352059925093633,"Kenta Oono and Taiji Suzuki. Graph neural networks exponentially lose expressive power for node
+classiﬁcation. arXiv preprint arXiv:1905.10947, 2019."
+REFERENCES,0.33707865168539325,"Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor
+Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, et al.
+Pytorch: An imperative style,
+high-performance deep learning library. Advances in neural information processing systems, 32:
+8026–8037, 2019."
+REFERENCES,0.3389513108614232,"Aashaka Shah, Chao-Yuan Wu, Jayashree Mohan, Vijay Chidambaram, and Philipp Kr¨ahenb¨uhl.
+Memory optimization for deep networks. arXiv preprint arXiv:2010.14501, 2020."
+REFERENCES,0.3408239700374532,"Daniel A Spielman and Nikhil Srivastava.
+Graph sparsiﬁcation by effective resistances.
+SIAM
+Journal on Computing, 40(6):1913–1926, 2011."
+REFERENCES,0.34269662921348315,"Shyam Anil Tailor, Javier Fernandez-Marques, and Nicholas Donald Lane.
+Degree-quant:
+Quantization-aware training for graph neural networks. In International Conference on Learning
+Representations, 2021. URL https://openreview.net/forum?id=NSBrFgJAHg."
+REFERENCES,0.3445692883895131,"Dingwen Tao, Sheng Di, Zizhong Chen, and Franck Cappello. Signiﬁcantly improving lossy com-
+pression for scientiﬁc data sets based on multidimensional prediction and error-controlled quanti-
+zation. In 2017 IEEE International Parallel and Distributed Processing Symposium (IPDPS), pp.
+1129–1139. IEEE, 2017."
+REFERENCES,0.3464419475655431,"Jiannan Tian, Sheng Di, Kai Zhao, Cody Rivera, Megan Hickman Fulp, Robert Underwood, Sian
+Jin, Xin Liang, Jon Calhoun, Dingwen Tao, et al. Cusz: An efﬁcient gpu-based error-bounded
+lossy compression framework for scientiﬁc data. arXiv preprint arXiv:2007.09625, 2020."
+REFERENCES,0.34831460674157305,"Petar Veliˇckovi´c, Guillem Cucurull, Arantxa Casanova, Adriana Romero, Pietro Lio, and Yoshua
+Bengio. Graph attention networks. In International Conference on Learning Representations,
+2017."
+REFERENCES,0.350187265917603,"Cheng Wan, Youjie Li, Ang Li, Nam Sung Kim, and Yingyan Lin. BNS-GCN: Efﬁcient full-graph
+training of graph convolutional networks with partition-parallelism and random boundary node
+sampling. In Fifth Conference on Machine Learning and Systems, 2021."
+REFERENCES,0.352059925093633,"Cheng Wan, Youjie Li, Cameron R. Wolfe, Anastasios Kyrillidis, Nam Sung Kim, and Yingyan Lin.
+PipeGCN: Efﬁcient full-graph training of graph convolutional networks with pipelined feature
+communication. In International Conference on Learning Representations, 2022. URL https:
+//openreview.net/forum?id=kSwqMH0zn1F."
+REFERENCES,0.3539325842696629,Published as a conference paper at ICLR 2022
+REFERENCES,0.35580524344569286,"Minjie Wang, Da Zheng, Zihao Ye, Quan Gan, Mufei Li, Xiang Song, Jinjing Zhou, Chao Ma,
+Lingfan Yu, Yu Gai, Tianjun Xiao, Tong He, George Karypis, Jinyang Li, and Zheng Zhang.
+Deep graph library: A graph-centric, highly-performant package for graph neural networks. arXiv
+preprint arXiv:1909.01315, 2019."
+REFERENCES,0.35767790262172283,"Felix Wu, Amauri Souza, Tianyi Zhang, Christopher Fifty, Tao Yu, and Kilian Weinberger. Sim-
+plifying graph convolutional networks. In International conference on machine learning, pp.
+6861–6871. PMLR, 2019."
+REFERENCES,0.3595505617977528,"Lingfan Yu, Jiajun Shen, Jinyang Li, and Adam Lerer. Scalable graph neural networks for hetero-
+geneous graphs. arXiv preprint arXiv:2011.09679, 2020."
+REFERENCES,0.36142322097378277,"Hanqing Zeng, Hongkuan Zhou, Ajitesh Srivastava, Rajgopal Kannan, and Viktor Prasanna. Graph-
+saint: Graph sampling based inductive learning method. In International Conference on Learning
+Representations, 2020. URL https://openreview.net/forum?id=BJe8pkHFwS."
+REFERENCES,0.36329588014981273,"Muhan Zhang and Yixin Chen. Link prediction based on graph neural networks. Advances in Neural
+Information Processing Systems, 31:5165–5175, 2018."
+REFERENCES,0.3651685393258427,"Yiren Zhao, Duo Wang, Daniel Bates, Robert Mullins, Mateja Jamnik, and Pietro Lio. Learned low
+precision graph neural networks. arXiv preprint arXiv:2009.09232, 2020."
+REFERENCES,0.36704119850187267,"Cheng Zheng, Bo Zong, Wei Cheng, Dongjin Song, Jingchao Ni, Wenchao Yu, Haifeng Chen,
+and Wei Wang. Robust graph representation learning via neural sparsiﬁcation. In International
+Conference on Machine Learning, pp. 11458–11468. PMLR, 2020a."
+REFERENCES,0.36891385767790263,"Da Zheng, Chao Ma, Minjie Wang, Jinjing Zhou, Qidong Su, Xiang Song, Quan Gan, Zheng Zhang,
+and George Karypis. Distdgl: distributed graph neural network training for billion-scale graphs. In
+2020 IEEE/ACM 10th Workshop on Irregular Applications: Architectures and Algorithms (IA3),
+pp. 36–44. IEEE, 2020b."
+REFERENCES,0.3707865168539326,"Rong Zhu, Kun Zhao, Hongxia Yang, Wei Lin, Chang Zhou, Baole Ai, Yong Li, and Jingren Zhou.
+Aligraph: a comprehensive graph neural network platform. arXiv preprint arXiv:1902.08730,
+2019."
+REFERENCES,0.37265917602996257,"Difan Zou, Ziniu Hu, Yewen Wang, Song Jiang, Yizhou Sun, and Quanquan Gu. Layer-dependent
+importance sampling for training deep and large graph convolutional networks. arXiv preprint
+arXiv:1911.07323, 2019."
+REFERENCES,0.37453183520599254,Published as a conference paper at ICLR 2022
+REFERENCES,0.37640449438202245,"A
+NOTATIONS"
+REFERENCES,0.3782771535580524,Table 5: Table of Notations.
+REFERENCES,0.3801498127340824,"Notations
+Description
+|V|
+The number of nodes
+|E|
+The number of edges
+A ∈R|V|×|V|
+The adjacency matrix, which is stored in sparse matrix format
+ˆ
+A ∈R|V|×|V|
+The normalized adjacency matrix, which is stored in sparse matrix format
+X
+The input feature matrix
+h(l)
+v
+The uncompressed node embedding at the lth layer corresponding to node v
+H(l)
+The uncompressed node embedding matrix at the lth layer (each row is a node embedding h(l)
+v )
+D
+The node embedding dimension
+h(l)
+vINT
+The quantized node embedding at the lth layer corresponding to node v
+H(l)
+INT
+The quantized node embedding matrix at the lth layer (each row is a h(l)
+vINT)
+r(l)
+v
+The quantization range, where r(l)
+v
+= max{h(l)
+v } −min{h(l)
+v }
+b
+The bit-width. In this paper, b must be chosen from {1, 2, 4, 8, 32}
+h(l)
+vproj
+The randomly projected node embedding at the lth layer corresponding to node v
+H(l)
+proj
+The randomly projected node embedding matrix at the lth layer (each row is a h(l)
+vproj)
+R
+The dimension of projected node embeddings
+ˆh(l)
+v
+The recovered node embedding at the lth layer corresponding to node v
+(either compressed by quantization or random projection)
+ˆ
+H(l)
+The recovered node embedding matrix at the lth layer (each row is a ˆh(l)
+v )
+Var(h)
+The variance of the vector h, where Var(h) = E[h⊤h] −(E[h])⊤(E[h])
+|h||2
+The 2-norm of vector h, where |h||2 =
+√"
+REFERENCES,0.38202247191011235,"h⊤h
+|h||∞
+The inﬁnity norm of vector h, where |h||∞= max |h|"
+REFERENCES,0.3838951310861423,"B
+RELATED WORK AND DISCUSSION"
+REFERENCES,0.3857677902621723,"Due to the page limit, we discuss the relationship between EXACT and existing works in detail here.
+GNN is notoriously inefﬁcient and non-scalable during both the training and inference phase. Pre-
+vious works can be divided into two categories according to the problem they try to solve. Namely,
+scalable/efﬁcient GNN inference and scalable GNN training. Below we introduce and discuss the
+relationship between them and EXACT."
+REFERENCES,0.38764044943820225,"B.1
+SCALABLE/EFFICIENT GNN INFERENCE"
+REFERENCES,0.3895131086142322,"Scalable GNN inference is an orthogonal direction to the problem that EXACT tries to address. Be-
+low we introduces two popular directions for scalable GNN inference. Namely, GNN quantization
+and graph sparsiﬁcation."
+REFERENCES,0.3913857677902622,"GNN Quantization. Most of the previous GNN quantization works focus on enabling the usage of
+low precision integer arithmetic during inference. Speciﬁcally, Tailor et al. (2021) proposes a Quan-
+tization Aware Training method tailored for GNNs, which emulates inference-time quantization
+during the training phase. Zhao et al. (2020) proposes to jointly search the quantization bit-width
+and GNN architectures. Note that both of them do not actually convert the node embeddings into
+lower numerical precision during training. Instead, they use full precision data type to simulate the
+effect of real quantization. Feng et al. (2020) proposes a heterogeneous quantization framework
+which assigns different bits to node embeddings in each layer while maintaining the weights at full
+precision. However, due to the mismatch in operands’ bit-width, it is impractical to use in general
+purpose hardwares, such as CPUs and GPUs."
+REFERENCES,0.39325842696629215,"Graph Sparsiﬁcation. The adjacency matrices are usually stored as sparse matrices. When hard-
+wares perform SPMM , the sparse matrix format leads to random memory accesses and limited data
+reuse due to its irregular structure. Thus, GNNs have higher inference latency than other neural
+networks. Graph sparsiﬁcation can alleviate the issue by removing redundant edges from original
+graphs. Zheng et al. (2020a) proposes a learning-based graph sparsiﬁcation method which removes"
+REFERENCES,0.3951310861423221,Published as a conference paper at ICLR 2022
+REFERENCES,0.3970037453183521,"potentially task-irrelevant edges from input graphs Li et al. (2020) formulates the graph sparsiﬁca-
+tion problem as an optimization objective which can be solved by alternating direction method of
+multipliers (ADMM). Chen et al. (2021b) proposes to co-simplify the input graph and GNN model
+by extending the iterative magnitude pruning to graph areas."
+REFERENCES,0.398876404494382,"B.2
+SCALABLE GNN TRAINING"
+REFERENCES,0.40074906367041196,"In this subsection, we introduce previous works that try to train GNNs on large graphs. We conclude
+that EXACT are parallel to most of the previous works."
+REFERENCES,0.40262172284644193,"Subgraph Sampling/Mini-Batch Training. As we introduced in the main body, most of the pre-
+vious scalable GNN training methods fall into this category. The key idea is to train GNNs with
+sampled subgraphs instead of the whole graph at each step. In this way, only node embeddings
+that are present in the current subgraph will be retained in memory. Based on this idea, various
+sampling techniques have been proposed, including the node-wise sampling (Hamilton et al., 2017;
+Chen et al., 2017; Markowitz et al., 2021), layer-wise sampling (Zou et al., 2019; Chen et al., 2018;
+Huang et al., 2018), and subgraph sampling (Chiang et al., 2019; Zeng et al., 2020). Generally,
+methods in this category are orthogonal to EXACT, and they can certainly be combined. Similar
+to EXACT, subgraph sampling also introduce the gradient noise during the training process. How-
+ever, the gradient noise does not necessarily result in the model performance drop. In contrast,
+many previous works experimentally show that subgraph sampling based methods may even yield
+better performance than the whole graph training (Zeng et al., 2020; Hu et al., 2020). Our experi-
+ment results also exhibit a similar phenomenon that EXACT may achieve better performance than
+the original one. This observation can be explained by the regularization effect introduced by the
+gradient noise (Hu et al., 2020)."
+REFERENCES,0.4044943820224719,"In this paper, we show in experiments that EXACT can be combined with subgraph-sampling based
+methods with only limited accuracy drop. From the practical usage perspective, EXACT can enlarge
+the maximal subgraph size for subgraph training-based method. As a result, the error introduced by
+EXACT can be compensated by using larger subgraphs, which previously cannot ﬁt into GPUs. We
+leave it as one future direction."
+REFERENCES,0.40636704119850187,"GNNAutoScale (Fey et al., 2021). GNNAutoScale follows the idea of utilizing historical embed-
+dings from prior training iterations (Fey et al., 2021). Speciﬁcally, it stores a historical embedding
+for each node as an ofﬂine storage in CPU memory. At each training step, it ﬁrst samples a mini-
+batch of nodes. Then for out-of-mini-batch nodes, GNNAutoScale swaps their historical embed-
+dings from CPU memory to GPU memory and utilizes their non-trainable historical embeddings for
+propagation. In this way, only the node embeddings inside the current mini-batch and those of their
+direct 1-hop neighbors are retained in memory. The time overhead of GNNAutoScale is mainly from
+the swapping step. EXACT is orthogonal to GNNAutoScale. It would be interesting to store node
+embeddings compressed by EXACT as historical embeddings for GNNAutoScale. Considering that
+quantization is more time-efﬁcient compared to swapping, the time overhead of GNNAutoScale can
+be greatly reduced since the time cost of swapping scales with the total number of bits to be swapped."
+REFERENCES,0.40823970037453183,"Distributed Training. Unlike the data in other domains, the graph data cannot be trivially divided
+into mini-batches due to its connectivity between samples. The graph distributed training methods
+require to split the graph into mini-batches that minimizes the communication overhead. Speciﬁ-
+cally, AliGraph (Zhu et al., 2019) is a distributed GNN framework on CPU platforms, which does
+not support GPUs acceleration. ROC (Jia et al., 2020) learns to optimize the graph partitioning
+by predicting the execution time of performing a GNN operation on an input subgraph. PipeGCN
+(Wan et al., 2022) proposes to train GNNs with stale features and stale feature gradients under the
+distributed training setting. Both BNS-GCN (Wan et al., 2021) and DistDGL (Zheng et al., 2020b)
+leverage METIS (Karypis & Kumar, 1998) to performance the graph partitioning to minimize the
+communication cost. However, one main drawback of applying METIS is that the ahead-of-training
+overhead of METIS is relatively large on huge graphs. EXACT is also orthogonal to the distributed
+training methods and can be used to decrease the hardware requirements. It would be interesting to
+investigate the trade-off among the accuracy drop and the memory saving of EXACT under multi-
+GPU settings."
+REFERENCES,0.4101123595505618,"Memory efﬁcient training system. Gradient checkpointing (Chen et al., 2016; Jain et al., 2019;
+Kirisame et al., 2020; Shah et al., 2020) trades computation for memory by dropping some of the"
+REFERENCES,0.41198501872659177,Published as a conference paper at ICLR 2022
+REFERENCES,0.41385767790262173,Algorithm 1: Forward Pass of the lth GCN layer
+REFERENCES,0.4157303370786517,"Input: H(l), Θ(l), the total number of layers L.
+Output: H(l+1)"
+REFERENCES,0.41760299625468167,"1 ctx(l) ←{} /* the context which saves tensors for backward
+*/"
+REFERENCES,0.41947565543071164,"2 J (l) ←MM(H(l), Θ(l))"
+REFERENCES,0.42134831460674155,"3 Add H(l) and Θ(l) to ctx(l)
+/* used for MM.backward
+*/"
+REFERENCES,0.4232209737827715,"4 H(l+1) ←SPMM( ˆ
+A, J (l))"
+REFERENCES,0.4250936329588015,"5 Add ˆ
+A (in CSR format) and J (l) to ctx(l)
+/* used for SPMM.backward
+*/"
+REFERENCES,0.42696629213483145,6 if l ̸= L −1 then
+REFERENCES,0.4288389513108614,"7
+Add 1{H(l+1)>0} to ctx(l) /* used for ReLU.backward
+*/"
+REFERENCES,0.4307116104868914,"8
+H(l+1) = ReLU(H(l+1))"
+END,0.43258426966292135,9 end
+END,0.4344569288389513,10 return H(l+1)
+END,0.4363295880149813,"activations in the forward pass and recomputing them in the backward pass. Swapping (Meng et al.,
+2017) utilizes the huge amount of available CPU memory by swapping tensors between CPU and
+GPU. EXACT is also parallel to both the gradient checkpointing and swapping. As a result, EXACT
+can be combined with them to further squeeze out the memory, at the cost of larger time overhead."
+END,0.43820224719101125,"Other Activation Compression Techniques. JPEG-ACT (Evans et al., 2020) extends the widely-
+used JPEG method to compress the activations.
+Cusz is a prediction-based lossy compression
+method with GPU support (Tian et al., 2020; Tao et al., 2017). Both of them can be applied to
+compress the activations of GNNs. However, one practical problem is that they have hyperparam-
+eters which are hard to tune. For example, in JPEG-ACT, there is a hyperparameter α controls
+the space/accuracy trade-off. This problem can be alleviated by incorporating one recent proposed
+method AC-GC (Evans & Aamodt, 2021). Given a preset allowable increase in loss, AC-GC can
+automatically ﬁnd the hyperparameter such that the compression rate can adapt to the preset training
+conditions. We note that EXACT and AC-GC approaches the problem from different perspective.
+For EXACT, we value the compression rate more than the accuracy drop. Namely, given a preset
+memory budget, we try to ﬁt the model with acceptable accuracy drop. For AC-GC, they value the
+accuracy change more than the compression rate in the sense that the compression rate is adapted to
+the given allowable accuracy drop."
+END,0.4400749063670412,"C
+ANALYZING THE MEMORY CONSUMPTION OF GCNS"
+END,0.4419475655430712,"Generally, each training step contains a forward pass phase and a backward pass phase. During the
+forward pass, activation maps of each operation are kept in memory for computing the gradients.
+During the backward pass, the weight gradients and activation gradients are calculated and stored
+in memory. For weight gradients, their memory usage is negligible since they share the same shape
+with model weights. For activation gradients, their memory usage is dynamic and will eventually
+be cleared to zero. In standard deep learning libraries, activation gradients will be deleted as soon
+as their reference counting becomes zero (Paszke et al., 2019; Abadi et al., 2016). Thus, storing
+activation maps take up most of the memory. The memory usage of activation maps in GCN layers
+are given in Algorithm 1."
+END,0.4438202247191011,"D
+RANDOM PROJECTION"
+END,0.44569288389513106,"In this paper, we use the normalized Rademacher random matrix (Achlioptas, 2001) for projecting
+the activation maps. Speciﬁcally, for a D × R normalized Rademacher random matrix R, each
+element in R is i.i.d. sampled from the following distribution:"
+END,0.44756554307116103,"Ri,j = r 1
+R × 
+
+ 
+"
+END,0.449438202247191,"+1,
+with probability
+1
+2,"
+END,0.45131086142322097,"−1,
+with probability
+1
+2.
+(7)"
+END,0.45318352059925093,Published as a conference paper at ICLR 2022
+END,0.4550561797752809,"where
+q"
+END,0.45692883895131087,"1
+R is the normalize factor such that E[RR⊤] = I. From above, we can see that the
+sampling cost of the normalized Rademacher random matrix is relatively low since sampling from
+Bernoulli distribution is much cheaper than sampling from Gaussian distribution."
+END,0.45880149812734083,"E
+THEORY"
+END,0.4606741573033708,"E.1
+PROOF OF PROPOSITION 1"
+END,0.46254681647940077,"Proposition 1 (Details in Appendix E) The above quantization and dequantization are unbiased
+operations, i.e., E[ˆh(l)
+v ] = E[Dequant(Quant(h(l)
+v ))] = h(l)
+v and Var(ˆh(l)
+v ) = D[r(l)
+v ]2 6B2
+."
+END,0.46441947565543074,"Proposition 1 is adopted from the theoretical analysis in ActNN (Chen et al., 2021a). For complete-
+ness, we prove it here with more details. The conclusion of E[ˆh(l)
+v ] = h(l)
+v follows from the fact that
+the stochastic rounding is an unbiased operation (Courbariaux et al., 2015). Speciﬁcally, ∀scalar h,
+the stochastic rounding can be expressed as"
+END,0.46629213483146065,"⌊h⌉=
+⌈h⌉,
+with probability h −⌊h⌋,
+⌊h⌋,
+with probability 1 −(h −⌊h⌋),
+(8)"
+END,0.4681647940074906,"where ⌈·⌉is the ceil operation and ⌊·⌋is the ﬂoor operation. First, we have E[⌊h⌉] = h because"
+END,0.4700374531835206,"E[⌊h⌉] = ⌈h⌉(h −⌊h⌋) + ⌊h⌋(1 −h + ⌊h⌋)
+= h (following the fact that ⌈h⌉−⌊h⌋= 1)"
+END,0.47191011235955055,"Hence,"
+END,0.4737827715355805,"E[ˆh(l)
+v ] = r(l)
+v
+B E[⌊h(l)
+v −Z(l)
+v
+r(l)
+v
+B⌉] + Z(l)
+v
+= h(l)
+v ."
+END,0.4756554307116105,"Regarding the variance, let ¯h =
+h(l)
+v −Z(l)
+v
+r(l)
+v
+B = (h1, · · · , hD). Suppose ∀i, hi −⌊hi⌋= σ ∼"
+END,0.47752808988764045,"Uniform(0, 1), we have."
+END,0.4794007490636704,"Var(ˆh(l)
+v ) = [r(l)
+v ]2"
+END,0.4812734082397004,B2 Var(⌊¯h⌉) = E[¯h⊤¯h] −(E[¯h])⊤(E[¯h])
+END,0.48314606741573035,"= [r(l)
+v ]2 B2 D
+X"
+END,0.4850187265917603,"i=1
+⌈hi⌉2(hi −⌊hi⌋) + ⌊hi⌋2(1 −hi + ⌊hi⌋) −h2
+i"
+END,0.4868913857677903,"= [r(l)
+v ]2D"
+END,0.4887640449438202,"B2
+ 
+2⌊h1⌋h1 + h1 −⌊h1⌋2 −⌊h1⌋−h2
+1
+
+(substitute ⌈h1⌉with ⌊h1⌋+ 1)"
+END,0.49063670411985016,"= [r(l)
+v ]2D"
+END,0.49250936329588013,"B2
+ 
+σ −σ2
+(substitute ⌊h1⌋with h1 −σ)"
+END,0.4943820224719101,"By taking expectation w.r.t. σ on the both side, we have Var(ˆh(l)
+v ) = [r(l)
+v ]2D 6B2 □"
+END,0.49625468164794007,"E.2
+PROOF OF PROPOSITION 2"
+END,0.49812734082397003,"Proposition 2 (Proof in Appendix E) The above RP and IRP are unbiased operations, i.e.,
+E[ ˆ
+H(l)] = E[IRP(RP(H(l)))] = H(l). For each ˆh(l)
+v in ˆ
+H(l), we have Var(ˆh(l)
+v ) = D−1"
+END,0.5,"R ||h(l)
+v ||2
+2."
+END,0.50187265917603,"We can get E[ ˆ
+H(l)]
+=
+E[IRP(RP(H(l)))]
+=
+H(l) directly following the fact that
+E[IRP(RP(H(l)))] = E[H(l)RR⊤] = H(l)E[RR⊤] = H(l)."
+END,0.5037453183520599,"Regarding the variance, let P = RR⊤∈RD×D. For the sake of notation convenience, we ignore
+the subscript and superscript in this subsection. Namely, we use the notation ˆh to represent ˆh(l)
+v , and"
+END,0.5056179775280899,Published as a conference paper at ICLR 2022
+END,0.5074906367041199,"use the notation h to represent h(l)
+v . Also, we assume the shapes of ˆh and h are both 1 × D in this
+subsection. We have"
+END,0.5093632958801498,Var(ˆh) = Var(hP )
+END,0.5112359550561798,= hE[P P ⊤]h⊤−hh⊤
+END,0.5131086142322098,"Next, we will characterize the distribution of P P ⊤. Recall that P = RR⊤, thus,"
+END,0.5149812734082397,"Pi,j = R
+X"
+END,0.5168539325842697,"k=1
+ai,kaj,k,"
+END,0.5187265917602997,"where each ai,j = ±
+q"
+END,0.5205992509363296,"1
+R with equal probability. Thus,"
+END,0.5224719101123596,"[P P ⊤]i,j = D
+X"
+END,0.5243445692883895,"m=1
+Pi,mPj,m = D
+X m=1 
+( R
+X"
+END,0.5262172284644194,"k=1
+ai,kam,k)( R
+X"
+END,0.5280898876404494,"k=1
+aj,kam,k)
+
+.
+(9)"
+END,0.5299625468164794,"From Equation 9, it is easy to show that E[P P ⊤] is a diagonal matrix. Namely, ∀i ̸= j, we have
+E[P P ⊤]i,j = 0 following the fact that each ai,j are independent and E[ai,j] = 0. For elements on
+the diagonal, we have"
+END,0.5318352059925093,"E[P P ⊤]i,i = E[ D
+X"
+END,0.5337078651685393,"m=1
+Pi,mPi,m] = E[ D
+X m=1
+( R
+X"
+END,0.5355805243445693,"k=1
+ai,kam,k)2] = E[( R
+X"
+END,0.5374531835205992,"k=1
+ai,kai,k)2] + E[
+X"
+END,0.5393258426966292,"m̸=i
+( R
+X"
+END,0.5411985018726592,"k=1
+ai,kam,k)2]"
+END,0.5430711610486891,"= 1 +
+X m̸=i 
+R
+X"
+END,0.5449438202247191,"k=1
+E[(ai,kam,k)2] + 2
+X"
+END,0.5468164794007491,"p,q:p<q
+E[ai,pam,pai,qam,q]
+"
+END,0.548689138576779,"= 1 +
+X m̸=i 
+R
+X"
+END,0.550561797752809,"k=1
+E[(ai,kam,k)2]
+"
+END,0.552434456928839,= 1 + D −1
+END,0.5543071161048689,"R
+.
+(10)"
+END,0.5561797752808989,"Let h = (h1, · · · hD), we have"
+END,0.5580524344569289,Var(ˆh) = hE[P P ⊤]h⊤−hh⊤ = h  
+END,0.5599250936329588,1 + D−1
+END,0.5617977528089888,"R
+...
+1 + D−1 R "
+END,0.5636704119850188,"h⊤−hh⊤ = D
+X"
+END,0.5655430711610487,"i=1
+(1 + D −1"
+END,0.5674157303370787,"R
+)h2
+i − D
+X"
+END,0.5692883895131086,"i=1
+h2
+i"
+END,0.5711610486891385,= D −1
+END,0.5730337078651685,"R
+||h||2
+2.
+(11) □"
+END,0.5749063670411985,Published as a conference paper at ICLR 2022
+END,0.5767790262172284,"E.3
+PROOF OF PROPOSITION 3"
+END,0.5786516853932584,"Proposition 3 (Proof in Appendix E) For each projected node embedding h(l)
+vproj = RP(h(l)
+v ) ="
+END,0.5805243445692884,"h(l)
+v R, for ∀ϵ > 0, by choosing s = ||h(l)
+v ||2
+q"
+END,0.5823970037453183,2ln(2R/ϵ)
+END,0.5842696629213483,"R
+, we have P(||h(l)
+vproj||∞≤s) ≥1 −ϵ."
+END,0.5861423220973783,"For the normalized Rademacher random matrix R ∈RD×R, we have Ri,j = ± 1
+√"
+END,0.5880149812734082,R with equal
+END,0.5898876404494382,"probability. Let h(l)
+v
+= (h1, · · · , hD) and h(l)
+vproj = (u1, · · · , uR). Since h(l)
+vproj = h(l)
+v R, we have
+u1 = PD
+i=1 aihi, where ai = ± 1
+√"
+END,0.5917602996254682,R with equal probability.
+END,0.5936329588014981,"First, we have the following inequality:"
+END,0.5955056179775281,"E[etRu1] = D
+Y"
+END,0.5973782771535581,"i=1
+E[etRaihi] = D
+Y i=1 et
+√"
+END,0.599250936329588,"Rhi + e−t
+√ Rhi 2
+= D
+Y"
+END,0.601123595505618,"i=1
+cosh t
+√ Rhi ≤ D
+Y i=1
+e"
+END,0.602996254681648,"t2Rh2
+i
+2
+(following the fact that cosh x ≤e
+x2 2 ) = e"
+END,0.6048689138576779,"t2R||h(l)
+v
+||2
+2
+2
+.
+(12)"
+END,0.6067415730337079,"For notation convenience, we use the notation “C” to represent the node embedding norm ||h(l)
+v ||2.
+For ∀s, q > 0, according to Chernoff bound, we have:"
+END,0.6086142322097379,"P(|ui| ≥s) = 2P(ui ≥s)
+= 2P(equi ≥eqs)"
+END,0.6104868913857678,≤2E[equi]
+END,0.6123595505617978,"eqs
+(by Chernoff bound) ≤2E[e sRui C2 ] e
+s2R"
+END,0.6142322097378277,"C2
+(by setting q = sR C2 )"
+END,0.6161048689138576,≤2e−s2R
+END,0.6179775280898876,"2C2
+(by Equation 12)
+(13)"
+END,0.6198501872659176,"Note that Equation 13 holds for ∀s > 0. Given a speciﬁc ϵ, by setting s = C
+q"
+END,0.6217228464419475,2 ln(2R/ϵ)
+END,0.6235955056179775,"R
+, we have
+P(|ui| ≥s) ≤ϵ"
+END,0.6254681647940075,"R. Also,"
+END,0.6273408239700374,"P(||h(l)
+vproj||∞≤s) = R
+Y"
+END,0.6292134831460674,"i=1
+P(|ui| ≤s)"
+END,0.6310861423220974,= (1 −P(|ui| ≥s))R
+END,0.6329588014981273,≥(1 −ϵ R)R ≥1 −ϵ □
+END,0.6348314606741573,"Here we also experimentally verify Proposition 3 by visualizing the inﬁnity norm of projected node
+embeddings in Figure 4. To avoid creating confusions, D"
+END,0.6367041198501873,"R = 1 in Figure 4 means we apply the
+random projection with R = D on the activation maps. We can observe that in general, the inﬁnity
+norm increases with the compression ratio D"
+END,0.6385767790262172,"R . However, we note that the inﬁnity norm of projected
+embeddings may less than those of original embeddings when R is larger than a threshold. This sug-
+gests that when R is below a certain threshold, quantizing projected embeddings only have limited
+inﬂuence on model performance. This claim is also veriﬁed in the main body of this paper."
+END,0.6404494382022472,Published as a conference paper at ICLR 2022
+END,0.6423220973782772,"Figure 4: The histogram of the projected node embeddings’ inﬁnity norm at MM (the left ﬁgure) and
+SPMM (the right ﬁgure) operation of the ﬁrst GCN layer."
+END,0.6441947565543071,"E.4
+THE COMPOUND EFFECT OF APPROXIMATION ERRORS"
+END,0.6460674157303371,"In this subsection, we analyze why GNNs can tolerate the extremely compressed activations. From
+the numerical analysis (Bauer, 1974), the jacobian matrix (gradient) between two tensors can be
+viewed as a sum over all ”paths” connecting these two tensors. Moreover, the architecture of GNNs
+is considerably shallower than CNNs and transformers. Informally, for GNNs, the key intuition is
+that these paths are signiﬁcantly ”shorter” compared to those of CNNs. As a result, the approxima-
+tion error (i.e., the variance from quantization) along the path is hard to get accumulated."
+END,0.6479400749063671,"We adopt Theorem 3 in ActNN (Chen et al., 2021a) to make the above statement more rigorous. Let
+ˆC(m) be the compressed context (either by quantization, random projection, or quantized random
+projection). Let ∇Θ(l) and ∇H(l) be the gradient of Θ(l) and H(l), respectively.
+ˆ∇Θ(l) and
+ˆ∇H(l) are the calculated gradient using the compressed context, respectively. Further, we use the
+notation G(l∼m)
+Θ
+( ˆ∇H(m), ˆC(m)) to represent the variance introduced by utilizing the compressed
+context ˆC(m). Speciﬁcally, for a L layer GNN, we have"
+END,0.649812734082397,"Var( ˆ∇Θ(l)) = Var(∇Θ(l)) + L
+X"
+END,0.651685393258427,"m=l
+E
+
+Var
+ 
+G(l∼m)
+Θ
+( ˆ∇H(m), ˆC(m))| ˆ∇H(m)
+,
+(14)"
+END,0.653558052434457,"where Var(·| ˆ∇H(m)) is the conditional variance, and Var(∇Θ(l)) is the variance is from the mini-
+batch sampling variance. The key insights from Equation 14 are two folds. First, since the variances
+introduced by compressed contexts at different layers will accumulate, it suggests that the noise
+introduced by the compressed context is relatively small for shallow models. Considering that most
+of GNNs are usually less than four layers, this may explain why the loss in accuracy is negligible
+when using the vanilla INT2 quantization and a relatively large D"
+END,0.6554307116104869,"R ratio. Second, under the subgraph
+training setting, the extra variance introduced by quantization can be compensated when using larger
+batch size (i.e., the size of subgraph in the graph learning)."
+END,0.6573033707865169,"In Table 1, we evaluate GNNs under the full-batch setting. Therefore, in addition to the reason of
+mentioned shallower architecture, it is also possible that the activation compressed training beneﬁts
+from the large batch size, which leads to a much smoother gradient. To quantitatively study the
+effect of the batch size, below we present the ablation studies of two representative sampling based
+methods with much smaller batch size. Namely, GraphSAINT (Table 6) and Cluster-GCN (Table 7).
+For the baseline, we use the same hyperparameters reported in the corresponding paper. We make
+two main observations. First, INT2 quantization works under a much smaller batch size. Namely,
+for both Cluster-GCN and GraphSAINT, the accuracy drop is negligible even when the sampled
+subgraph contains only ≈500 nodes. This observation implies that the activations of GNNs can
+be aggressively compressed regardless of the batch size. Second, using a much smaller batch size
+in general will lead to an accuracy drop. However, for Yelp, a much smaller batch size may even
+improve the performance."
+END,0.6591760299625468,Published as a conference paper at ICLR 2022
+END,0.6610486891385767,"Table 6: The ablation study of the effect of batch size to GraphSAINT. Here “Small BS” means
+smaller batch size. For GraphSAINT, INT2 quantization also works under the smaller batch size."
+END,0.6629213483146067,"Dataset
+Method
+Walk Length
+Root
+Batch
+Size
+Accuracy (%) / F1-micro"
+END,0.6647940074906367,"Flickr
+Baseline
+2
+6000
+12,000
+51.11 ± 0.28
+Small BS
+1
+500
+500
+47.67 ± 0.42
+Small BS w./
+INT2 quantization
+1
+500
+500
+48.33 ± 0.29"
+END,0.6666666666666666,"Reddit
+Baseline
+4
+2000
+8,000
+96.02 ± 0.08
+Small BS
+1
+500
+500
+93.73 ± 0.14
+Small BS w./
+INT2 quantization
+1
+500
+500
+93.72 ± 0.10"
+END,0.6685393258426966,"Yelp
+Baseline
+2
+1250
+2,500
+63.78 ± 0.12
+Small BS
+1
+500
+500
+64.05 ± 0.14
+Small BS
+w./INT2 quantization
+1
+500
+500
+64.01 ± 0.12"
+END,0.6704119850187266,"Table 7: The ablation study of the effect of batch size to Cluster-GCN. Here “Small BS” means
+smaller batch size. For Cluster-GCN, INT2 quantization also works under the smaller batch size."
+END,0.6722846441947565,"Dataset
+Method
+#partitions
+#clusters
+per batch
+Batch
+Size
+Accuracy (%) / F1-micro"
+END,0.6741573033707865,"Flickr
+Baseline
+1000
+30
+2,680
+49.61 ± 0.47
+Small BS
+1000
+5
+446
+50.01 ± 0.30
+Small BS w./
+INT2 quantization
+1000
+5
+446
+49.99 ± 0.28"
+END,0.6760299625468165,"Reddit
+Baseline
+1500
+20
+3,100
+95.62±0.10
+Small BS
+1500
+3
+465
+95.30 ± 0.13
+Small BS w./
+INT2 quantization
+1500
+3
+465
+95.29 ± 0.07"
+END,0.6779026217228464,"Yelp
+Baseline
+5000
+20
+2,870
+63.98 ± 0.14
+Small BS
+5000
+3
+430
+63.91 ± 0.14
+Small BS
+w./INT2 quantization
+5000
+3
+430
+63.69 ± 0.23"
+END,0.6797752808988764,Table 8: The Operation conﬁgurations of EXACT.
+END,0.6816479400749064,"Operations
+Quantization?
+Random Projection?
+Extra Errors?
+Linear (MM )
+
+
+
+SPMM
+
+
+
+SPMM MEAN
+
+
+
+SPMM MAX
+
+
+
+SPMM MIN
+
+
+
+BatchNorm
+
+
+
+ReLU
+(ﬁxed 1 bit)
+
+
+Dropout
+(ﬁxed 1 bit)
+
+"
+END,0.6835205992509363,"F
+SYSTEM IMPLEMENTATION OF EXACT"
+END,0.6853932584269663,"F.1
+INDIVIDUAL LAYERS CONFIGURATIONS OF EXACT"
+END,0.6872659176029963,"The operation conﬁgurations are shown in Table 8. For all graph convolution operations, EXACT
+can apply both the quantization and random projection to their saved activation maps. In EXACT,
+the SPMM and its variants (i.e., SPMM MAX , SPMM MEAN , and SPMM MIN ) are implemented based"
+END,0.6891385767790262,Published as a conference paper at ICLR 2022
+END,0.6910112359550562,"on those provided in Pytorch Sparse3, with extra supporting for compressing activation maps by
+quantization and random projection."
+END,0.6928838951310862,"For BatchNorm layers, we found that quantizating its saved activation maps only impact model per-
+formance a little, which is experimentally veriﬁed in the experiments. However, we experimentally
+found that randomly projecting its saved activation maps will lead to divergence. We note that this
+observation is consistent with previous ﬁnding that BatchNorm is very sensitive to noise (Micikevi-
+cius et al., 2017). Hence, EXACT only apply the quantization to BatchNorm layers."
+END,0.6947565543071161,"Regarding ReLU operations, we have y = ReLU(x) = x1x>0 and ∇y = ∇y1x>0. Hence,
+ReLU operations only need to store 1x>0 in the context for the backward pass, which takes a single
+bit per element to store, without introducing any errors. Since standard deep learning framework
+only support down to INT8 precision, here we convert the mask matrix into bit-stream and fuse this
+process into the CUDA kernel of ReLU.forward to minimize the time overhead."
+END,0.6966292134831461,"Regarding Dropout operations, let p be the dropout probability. During the training process, we have"
+END,0.6985018726591761,"y = Dropout(x, p) =
+1
+1 −pxg,
+∇x =
+1
+1 −p∇yg,
+(15)"
+END,0.700374531835206,"where g ∼Bernoulli(1 −p) is a binary vector sharing the same shape as x.
+1
+1−p is the normal-
+ization factor such that E[y] = x. Similarly, Dropout Operations also only need to store g in the
+context for the backward pass, which takes a single bit per element to store, without introducing
+any errors. Similarly, we convert g into bit-stream and fuse this process into the CUDA kernel of
+Dropout.forward to minimize the time overhead.."
+END,0.702247191011236,"To be clear, “ﬁxed 1 bit” in Table 8 means the activation maps of ReLU and Dropout operations take
+only 1 bit per element to store. And the bit-width of all other operations can be adjusted."
+END,0.704119850187266,"F.2
+IMPLEMENTATION DETAILS"
+END,0.7059925093632958,"We provide simple API for converting modules in Pytorch Geometric and Pytorch to its corre-
+sponding version in EXACT. For example, replacing torch geometric.nn.GCNConv with
+exact.GCNConv and replacing torch.dropout with exact.dropout. Currently, EXACT
+only support Pytorch Geometric and Pytorch. In future we will try to integrate EXACT with other
+popular graph learning packages, such as DGL."
+END,0.7078651685393258,"Following ActNN (Chen et al., 2021a), to obtain the highest compression ratio, the quantization
+range r(l)
+v
+and the zero point Z(l)
+v
+are stored in the bﬂoat16 data type 4. The quantization and de-
+quantization modules are both implemented using CUDA kernels. We note that Pytorch only support
+data types down to INT8. To obtain highest compression ratio, the quantized data is compressed
+into bit streams such that it can be decoded later during the dequantization process."
+END,0.7097378277153558,"All CUDA kernels in EXACT support both full-precision and half-precision (i.e., bﬂoat16 and
+ﬂoat16). Thus, EXACT can also be integrated with the automated mixed precision training, i.e.,
+AMP5, to further decrease the memory consumption."
+END,0.7116104868913857,"G
+EXPERIMENT SETTINGS"
+END,0.7134831460674157,"G.1
+DATASETS, FRAMEWORKS, AND HARDWARES"
+END,0.7153558052434457,"We give the detailed statistics and the download URLs for all datasets used in our experiments in
+Table 10. We follow the standard data splits and all datasets are directly downloaded from Pytorch
+Geometric or the protocol of OGB (Hu et al., 2020). We implement all models based on Pytorch
+and Pytorch Geometric. Almost all experiments are done on a single NVIDIA GeForce RTX 3090
+with 24GB GPU memory. During our experiments, we found that the version of Pytorch, Pytorch
+Sparse, and Pytorch Scatter can signiﬁcantly impact the running speed of the baseline. Here
+we list the details of our used packages in all experiments in Table 9."
+END,0.7172284644194756,"3https://github.com/rusty1s/pytorch sparse/blob/master/torch sparse/matmul.py
+4https://pytorch.org/docs/stable/generated/torch.Tensor.bﬂoat16.html
+5https://pytorch.org/docs/stable/amp.html"
+END,0.7191011235955056,Published as a conference paper at ICLR 2022
+END,0.7209737827715356,Table 9: Package conﬁgurations of our experiments.
+END,0.7228464419475655,"Package
+Version
+CUDA
+11.1
+pytorch sparse
+0.6.12
+pytorch scatter
+2.0.8
+pytorch geometric
+1.7.2
+pytorch
+1.9.0
+OGB
+1.3.1"
+END,0.7247191011235955,Table 10: Dataset Statistics.
+END,0.7265917602996255,"Dataset
+Task
+Nodes
+Edges
+Features
+Classes
+Label Rates
+Reddit6
+multi-class
+232,965
+11,606,919
+602
+41
+65.86%
+Flickr 7
+multi-class
+89,250
+449,878
+500
+7
+50.00%
+Yelp 8
+multi-label
+716,847
+6,977,409
+300
+100
+75.00%
+ogbn-arxiv 9
+multi-class
+169,343
+1,157,799
+128
+40
+53.70%
+ogbn-products 10
+multi-class
+2,449,029
+61,859,076
+100
+47
+8.03%"
+END,0.7284644194756554,"G.2
+MODEL HYPERPARAMETER CONFIGURATIONS OF TABLE 1 AND TABLE 2"
+END,0.7303370786516854,"Table 11: Training conﬁguration of Full-Batch GCN, GraphSAGE, and GAT in Table 1 and Table 2."
+END,0.7322097378277154,"Model
+Training
+Architecture
+Learning
+Rates
+Epochs
+Dropout
+Gradient
+Clipping
+BatchNorm
+Layers
+Hidden
+Dimension
+Heads"
+END,0.7340823970037453,"GCN
+0.01
+500
+0.5
+0.0
+Yes
+3
+128
+-
+GraphSAGE
+0.01
+500
+0.5
+0.0
+Yes
+3
+128
+-
+GAT
+0.002
+2000.
+0.75
+0.0
+Yes
+3
+128
+3"
+END,0.7359550561797753,"We adopt three popular GNNs. Namely, GCN (Kipf & Welling, 2017), GraphSAGE (Hamilton et al.,
+2017), and GAT (Veliˇckovi´c et al., 2017) in Table 1 and Table 2. We follow the hyperparameter
+conﬁgurations and codebases provided on the OGB (Hu et al., 2020) leader-board. Speciﬁcally,
+the hyperparameter conﬁguration is given in Table 11. The optimizer is Adam (Kingma & Ba,
+2014) for GCN and GraphSAGE, while the optimizer is RMSprop for GAT. All methods terminate
+after a ﬁxed number of epochs. We report the test accuracy associated with the highest validation
+score. The “Gradient Clipping” in Table 11 indicate the maximum norm for gradients. “Gradient
+Clipping= 0.0” means we do not clip the gradients in that experiment."
+END,0.7378277153558053,"G.3
+HYPERPARAMETER CONFIGURATIONS OF EXACT (RP+INT2)"
+END,0.7397003745318352,"The EXACT (RP+INT2) has only one hyperparameter, namely, D"
+END,0.7415730337078652,R . The D
+END,0.7434456928838952,"R conﬁguration of EXACT
+(RP+INT2) can be found in Table 12."
+END,0.7453183520599251,"G.4
+MODEL HYPERPARAMETER CONFIGURATIONS IN SECTION 5"
+END,0.7471910112359551,"The optimizer used in all experiments in Section 5 is Adam (Kingma & Ba, 2014). We use the default
+hyperparameters for Adam optimizer, except for the learning rate. All methods terminate after a
+ﬁxed number of epochs. We report the test accuracy/F1-micro associated with the highest validation
+score. Regarding Reddit, Flickr, and Yelp dataset, we follow the hyperparameter conﬁgurations
+reported in the respective papers as closely as possible. We clips the gradient during training. The
+“Gradient Clipping” in below tables indicate the maximum norm for gradients. “Gradient Clipping=
+0.0” means we do not clip the gradients in that experiment."
+END,0.7490636704119851,"6https://pytorch-geometric.readthedocs.io/en/latest/modules/datasets.html#torch geometric.datasets.Reddit
+7https://pytorch-geometric.readthedocs.io/en/latest/modules/datasets.html#torch geometric.datasets.Flickr
+8https://pytorch-geometric.readthedocs.io/en/latest/modules/datasets.html#torch geometric.datasets.Yelp
+9https://ogb.stanford.edu/docs/nodeprop/#ogbn-arxiv
+10https://ogb.stanford.edu/docs/nodeprop/#ogbn-products"
+END,0.7509363295880149,Published as a conference paper at ICLR 2022
+END,0.7528089887640449,Table 12: The D
+END,0.7546816479400749,R conﬁguration of EXACT (RP+INT2) in Table 3
+END,0.7565543071161048,"Reddit
+Flickr
+Yelp
+ogbn-
+arxiv
+ogbn-
+products
+Cluster-GCN
+8
+8
+4
+-
+2
+GraphSAINT
+8
+8
+8
+8
+2
+GCN
+8
+8
+8
+8
+-
+GraphSAGE
+8
+8
+4
+8
+4
+GCNII
+8
+8
+2
+8
+-"
+END,0.7584269662921348,"Regarding ogbn-arxiv and ogbn-products dataset, we follow the hyperparameter conﬁgurations and
+codebases provided on the OGB (Hu et al., 2020) leader-board. Please refer to the OGB website for
+more details. Table 13 and Table 14 summarize the hyperparameter conﬁguration of Cluster-GCN
+and GraphSAINT, respectively. Table 15, Table 16, and Table 17 summarize the hyperparameter
+conﬁguration of full-Batch GCN, full-Batch GraphSAGE, and full-batch GCNII, respectively."
+END,0.7602996254681648,Table 13: Training conﬁguration of Cluster-GCN in Table 3.
+END,0.7621722846441947,Dataset
+END,0.7640449438202247,"Cluster
+Sampler
+Training
+Archtecture"
+END,0.7659176029962547,"#partitions
+#Cluster
+per batch"
+END,0.7677902621722846,"Learning
+Rates
+Epochs
+Dropout
+Gradient
+Clipping
+BatchNorm
+Layers
+Hidden
+Dimension
+Reddit
+1500
+20
+0.01
+40
+0.1
+0.5
+Yes
+2
+128
+Flickr
+1000
+30
+0.01
+15
+0.2
+0.5
+Yes
+2
+256
+Yelp
+5000
+20
+0.01
+75
+0.1
+0.5
+Yes
+2
+512
+ogbn-
+products
+15000
+32
+0.001
+50
+0.5
+0.0
+No
+3
+256"
+END,0.7696629213483146,Table 14: Training conﬁguration of GraphSAINT in Table 3.
+END,0.7715355805243446,Dataset
+END,0.7734082397003745,"RandomWalk
+Sampler
+Training
+Archtecture"
+END,0.7752808988764045,"Walk length
+Roots
+Learning
+Rates
+Epochs
+Dropout
+Gradient
+Clipping
+BatchNorm
+Layers
+Hidden
+Dimension
+Reddit
+4
+2000
+0.01
+40
+0.1
+0.5
+Yes
+2
+128
+Flickr
+2
+6000
+0.01
+15
+0.2
+0.5
+Yes
+2
+256
+Yelp
+2
+1250
+0.01
+75
+0.1
+0.5
+Yes
+2
+512
+ogbn-
+arxiv
+3
+10000
+0.01
+500
+0.5
+0.5
+Yes
+3
+256"
+END,0.7771535580524345,"ogbn-
+products
+3
+20000
+0.01
+20
+0.5
+0.0
+No
+3
+256"
+END,0.7790262172284644,Table 15: Training conﬁguration of Full-Batch GCN in Table 3.
+END,0.7808988764044944,"Dataset
+Training
+Archtecture
+Learning
+Rates
+Epochs
+Dropout
+Gradient
+Clipping
+BatchNorm
+Layers
+Hidden
+Dimension
+Reddit
+0.01
+400
+0.5
+0.5
+Yes
+2
+256
+Flickr
+0.01
+400
+0.3
+0.5
+Yes
+2
+256
+Yelp
+0.01
+500
+0.1
+0.5
+Yes
+2
+512
+ogbn-
+arxiv
+0.01
+500
+0.5
+0.5
+Yes
+3
+128"
+END,0.7827715355805244,Table 16: Training conﬁguration of Full-Batch GraphSAGE in Table 3.
+END,0.7846441947565543,"Dataset
+Training
+Archtecture
+Learning
+Rates
+Epochs
+Dropout
+Gradient
+Clipping
+BatchNorm
+Layers
+Hidden
+Dimension
+Reddit
+0.01
+400
+0.5
+0.5
+Yes
+2
+256
+Flickr
+0.01
+400
+0.3
+0.5
+Yes
+2
+256
+Yelp
+0.01
+500
+0.1
+0.5
+Yes
+2
+512
+ogbn-
+arxiv
+0.01
+500
+0.5
+0.5
+Yes
+3
+128"
+END,0.7865168539325843,"ogbn-
+products
+0.002
+500
+0.5
+0.5
+No
+3
+256"
+END,0.7883895131086143,Published as a conference paper at ICLR 2022
+END,0.7902621722846442,Table 17: Training conﬁguration of Full-Batch GCNII in Table 3.
+END,0.7921348314606742,"Dataset
+Training
+Archtecture
+Learning
+Rates
+Epochs
+Dropout
+Gradient
+Clipping
+BatchNorm
+Layers
+Hidden
+Dimension
+Reddit
+0.01
+400
+0.5
+0.5
+Yes
+4
+256
+Flickr
+0.01
+400
+0.5
+0.5
+Yes
+8
+256
+Yelp
+0.01
+500
+0.1
+0.5
+Yes
+4
+512
+ogbn-
+arxiv
+0.001
+1000
+0.1
+0.1
+Yes
+16
+256"
+END,0.7940074906367042,"H
+ANALYZING THE MEMORY USAGE"
+END,0.795880149812734,"H.1
+ANALYZING THE MEMORY USAGE"
+END,0.797752808988764,"We use torch.cuda.memory allocated for the memory measurement. As we mentioned
+in Table 3, “Act Mem.” is the memory occupied by activation maps. Besides activation maps, the
+model, optimizer, input data, weight gradients, and activation gradients also occupy GPU memory.
+We will analyze each of them below. First, the memory occupied by the model, optimizer, and
+weight gradients is negligible because the number of parameters in most of GNNs is very small.
+Second, the memory occupied by the input data depends on the graph size and often cannot be
+compressed. This part can take up a lot of memory when the graph is large. Third, the memory
+occupied by activation gradients is dynamic and hard to estimate, since these tensors are temporarily
+stored in GPUs. For standard deep learning library, they will be deleted as soon as their reference
+counting becomes zero (Abadi et al., 2016; Paszke et al., 2019). EXACT cannot compress activation
+gradients. However, the memory occupied by activation gradients can be compressed using AMP,
+because activation gradients are stored in ﬂoat16 data type under AMP. As illustrated in Appendix
+F.2, we note that our EXACT framework can be integrated with AMP."
+END,0.799625468164794,"The memory usage of the model weights plus optimizer is about 2MB. Since activation gradients
+are dynamic and hard to analyze, here we report the peak memory usage during the backward pass,
+which encompass the activation gradients and other intermediate variables. For the memory usage of
+the input data, activation maps, and the peak memory usage during the backward pass, we provided
+a detailed analysis in Table 18. We can observe that the memory usage is mainly occupied by
+activation maps. For GCNII, the memory usage is dominated by the activation maps. This is because
+we need to store all layers’ activation maps during the forward pass. In contrast, during the backward
+pass, there is usually only one layer’ activation gradients are kept in memory."
+END,0.8014981273408239,"Table 18: The detailed analysis about the memory usage of input data, activation maps, and peak
+memory usage during the backward pass. “Data Mem” is the memory usage of input data (including
+the input feature matrix X, adjacency matrices A, and labels ).“Act Mem” is the memory usage of
+activation maps. “Peak BWD Mem” is the peak memory usage during the backward pass. “Ratio
+(%)” here equals
+Act Mem
+Data Mem+Act Mem+Peak BWD Mem."
+END,0.8033707865168539,"Reddit
+Flickr
+Yelp
+ogbn-
+arxiv
+ogbn-
+products"
+END,0.8052434456928839,"Data
+Mem
+Act
+Mem."
+END,0.8071161048689138,"Peak
+BWD
+Mem.
+Ratio (%)
+Data
+Mem
+Act
+Mem"
+END,0.8089887640449438,"Peak
+BWD
+Mem.
+Ratio (%)
+Data
+Mem
+Act
+Mem"
+END,0.8108614232209738,"Peak
+BWD
+Mem.
+Ratio (%)
+Data
+Mem
+Act
+Mem"
+END,0.8127340823970037,"Peak
+BWD
+Mem.
+Ratio (%)
+Data
+Mem
+Act
+Mem"
+END,0.8146067415730337,"Peak
+BWD
+Mem.
+Ratio (%)"
+END,0.8164794007490637,"Cluster-GCN
+8.8
+15
+3
+60.0
+5.5
+16.5
+5.3
+60.4
+5.3
+29.3
+12
+62.9
+-
+-
+-
+-
+4.9
+35.2
+11.5
+68.2
+GraphSAINT
+27.6
+44
+9.3
+54.4
+31.2
+88.7
+29
+59.6
+5.8
+33.5
+13
+64.0
+26.7
+270
+62.4
+75.1
+57
+516
+157
+70.7
+GCN
+1168
+1029
+316
+40.9
+208
+379
+86
+56.3
+1544
+6429
+1195
+70.1
+175.7
+729.4
+82.2
+73.9
+-
+-
+-
+-
+GraphSAGE
+1168
+1527
+696
+45.0
+208
+547
+184
+58.3
+1544
+6976
+2881
+61.2
+175.7
+786.2
+192
+68.1
+4811
+16555
+6176
+60.1
+GCNII
+1168
+5850
+239
+80.6
+208
+4067
+88
+93.2
+1544
+33540
+1197
+92.4
+175.7
+14409
+194
+97.5
+-
+-
+-
+-"
+END,0.8183520599250936,"H.2
+OVERALL COMPRESSION RATIO"
+END,0.8202247191011236,"The overall memory compression ratio is shown in Table 19. We observe that (1) for shallow GNN
+models, the overall memory compression ratio ranges from 1.5× to 4×. (2) for GCNII, the overall
+memory compression ratio ranges from 4× to 18×. We note that we store the graph structure data
+(e.g., node ID and edge ID) in torch.Long data type, which can safely cast to torch.Int data type to
+save the memory. Our implementation supports for using torch.Int as the data type for the graph
+structure data. However, for a fair comparison, we do not utilize this feature."
+END,0.8220973782771536,Published as a conference paper at ICLR 2022
+END,0.8239700374531835,"Table 19:
+The detailed analysis for the overall memory compression ratio. Below the equation
+means “Data Mem” + “Act Mem” + “Peak BWD Mem” = “Overall Mem”. EXACT can only
+compress the memory usage of activation maps."
+END,0.8258426966292135,"Model
+Method
+Reddit
+Flickr
+Yelp
+ogbn-
+arxiv
+ogbn-
+products"
+END,0.8277153558052435,"Cluster-
+GCN"
+END,0.8295880149812734,"Baseline
+8.8+14.5+3=26.8
+5.5+16.5+5.3=27.3
+5.3+29.3+12=46.6
+-
+4.9+35.2+11.5=51.6
+EXACT (INT2)
+8.8+2+3=13.8 (1.94×)
+5.5+1.5+5.3=12.3 (2.22×)
+5.3+4+12=21.3 (2.19×)
+-
+4.9+2.5+11.5=18.9 (2.73×)
+EXACT (RP+INT2)
+8.8+1.4+3=13.2 (2.03×)
+5.5+0.9+5.3=11.7 (2.33×)
+5.3+3+12=20.3 (2.30×)
+4.9+2.2+11.5=18.6 (2.77×)"
+END,0.8314606741573034,"Graph-
+Saint"
+END,0.8333333333333334,"Baseline
+27.6+44.3+9.3=81.2
+31.2+88.7+29=148.9
+5.8+33.5+13=52.3
+26.7+270+62.4=359.1
+57+516+157=730
+EXACT (INT2)
+27.6+6.6+9.3=43.5 (1.87×)
+31.2+7.8+29=68 (2.19×)
+5.8+4.3+13=23.1 (2.26×)
+26.7+20+62.4=109.1 (3.29×)
+57+40.5+157=254.5 (2.87×)
+EXACT (RP+INT2)
+27.6+3.6+9.3=40.5 (2.00×)
+31.2+3.4+29=63.6 (2.34×)
+5.8+3.3+13=22.1 (2.37×)
+26.7+10.8+62.4=99.9 (3.59×)
+57+29.5+157=243.5 (3.00×)"
+END,0.8352059925093633,"GCN
+Baseline
+1168+1029+316=2513
+208+378.8+86=672.8
+1544+6429+1195=9168
+175.7+729.4+82.2=987.3
+-
+EXACT (INT2)
+1168+122.8+316=1607 (1.56×)
+208+37+86=331 (2.03×)
+1544+640+1195=3379 (2.71×)
+175.7+54.5+82.2=312.4 (3.16×)
+-
+EXACT (RP+INT2)
+1168+67+316=1551 (1.62×)
+208+17.8+86=311.8 (2.16×)
+1544+427+1195=3166 (2.90×)
+175.7+30.2+82.2=288.1 (3.43×)
+-"
+END,0.8370786516853933,"Graph-
+SAGE"
+END,0.8389513108614233,"Baseline
+1168+1527+696=3391
+208+547+184=939
+1544+6976+2881=11401
+175.7+786.2+192=1153.9
+4811+16555+6176=27542
+EXACT (INT2)
+1168+156+696=2020 (1.68×)
+208+49.3+184=441.3 (2.13×)
+1544+680+2881=5105 (2.23×)
+175.7+60.8+192=428.5 (2.69×)
+4811+1144+6176=12131 (2.27×)
+EXACT (RP+INT2)
+1168+72+696=1936 (1.75×)
+208+20.4+184=412.4 (2.28×)
+1544+466.5+2881=4891.5 (4.33×)
+175.7+30.5+192=398.2 (2.90×)
+4811+572+6176=11559 (2.38×)"
+END,0.8408239700374532,"GCNII
+Baseline
+1168+5850+239=7257
+208+4067+88=4363
+1544+33540+1197=36281
+175.7+14409+194=14778.7
+-
+EXACT (INT2)
+1168+388+239=1795 (4.04×)
+208+256.4+88=552.4 (7.89×)
+1544+2236+1197=4977 (7.29×)
+175.7+899+194=1268.7 (11.65×)
+-
+EXACT (RP+INT2)
+1168+198+239=1605 (4.52×)
+208+127.6+88=423.6 (10.30×)
+1544+1649+1197=4390 (8.26×)
+175.7+451.2+194=820.9 (18.00×)
+-"
+END,0.8426966292134831,"H.3
+ANALYZING THE MEMORY COMPRESSION RATIO"
+END,0.8445692883895131,"Below we analyze the compress ratio in Table 3. We take a three-layer, 128-dimensional GCNs
+trained on ogbn-arxiv for example. The computational graph of the baseline in Table 3 is:"
+END,0.846441947565543,"Total bits =0(MM) + 32(SPMM) + 32(BN) + 0(ReLU) + 8(Dropout) +
+(the ﬁrst layer)
+32(MM) + 32(SPMM) + 32(BN) + 0(ReLU) + 8(Dropout) +
+(the second layer)
+32(MM) + 32(SPMM) (the third layer)"
+END,0.848314606741573,"Hence the baseline costs totally 240 bit per element. The ﬁrst MM in the ﬁrst layer does not cost extra
+bits because its activation map is exactly the input feature matrix X, which has been stored in GPU
+memory (recall that we need to ﬁrst move the input data to GPU memory before training). Pytorch
+will save this part of memory via the “pass by reference” mechanism. The ofﬁcial ReLU operation
+in Pytorch does not need the extra space for saving activation maps (they can reuse the activation
+maps saved by the previous layer via passing by reference). Regarding Dropout operation, Pytorch
+stores the mask matrix using UINT8 data type, which costs 8 bit per element."
+END,0.850187265917603,The computational graph of “EXACT (INT2)” in Table 3 is:
+END,0.8520599250936329,"Total bits =2.25(MM) + 2.25(SPMM) + 2.25(BN) + 1(ReLU) + 1(Dropout) +
+(the ﬁrst layer)
+2.25(MM) + 2.25(SPMM) + 2.25(BN) + 1(ReLU) + 1(Dropout) +
+(the second layer)
+2.25(MM) + 2.25(SPMM) (the third layer)"
+END,0.8539325842696629,"The 2.25 bit of MM , SPMM , and BN is from 2 (quantized activation maps) + 0.125 (the zero point
+tensor) + 0.125 (the range tensor), where 0.125 =
+16 (the bit-width of bﬂoat16)"
+END,0.8558052434456929,"128 (the dimension is 128) (See Appendix F.2 for
+details). Also for EXACT, we cannot leverage the “pass by reference” mechanism to save memory
+for ReLU since the exact activation maps of previous operation is replaced by the compressed one.
+Hence in EXACT, the 1-bit masks of ReLU and Dropout is converted into bit-streams using CUDA
+kernels, which cost 1 bit per element to store."
+END,0.8576779026217228,"Hence the “EXACT (INT2)” costs totally 22 bit per element. And the theoretical compression ratio
+is 240"
+END,0.8595505617977528,"22 = 10.9. The empirical compression ratio in Table 3 may have a small gap with the theoretical
+one. This is because the attributes of the sparse tensor (adjacency matrix) in pytorch sparse is lazily
+initialized, i.e., it may be generated during the forward pass and be account for the memory of
+activation maps."
+END,0.8614232209737828,The computational graph of “EXACT (RP+INT2)” with D
+END,0.8632958801498127,R = 8 (see Table 12) in Table 3 is:
+END,0.8651685393258427,"Total bits =0.28(MM) + 0.28(SPMM) + 2.25(BN) + 1(ReLU) + 1(Dropout) +
+(the ﬁrst layer)
+0.28(MM) + 0.28(SPMM) + 2.25(BN) + 1(ReLU) + 1(Dropout) +
+(the second layer)
+0.28(MM) + 0.28(SPMM) (the third layer)"
+END,0.8670411985018727,The 0.28 bit of MM and SPMM is from 2
+END,0.8689138576779026,"8 +
+16
+8×128 +
+16
+8×128 = 0.28125. We note that EXACT
+does not apply random projection for BatchNorm layers (see Appendix F.2). Hence the “EXACT"
+END,0.8707865168539326,Published as a conference paper at ICLR 2022
+END,0.8726591760299626,"(RP+INT2)” costs totally 10.18 bit per element. And the theoretical compression ratio is
+240
+10.18 =
+23.57. Again, there exists gap between the empirical compression ratio and the theoretical one
+because the lazy initialization mechanism, the existence of temporary tensors, and the neglect of the
+memory usage of these random projection matrices."
+END,0.8745318352059925,"We emphasize that the compression ratio also depends on the number of input features of the
+dataset. (because the mentioned “input feature matrix X is passed by reference” mechanism). For
+the above example, the number of input features and the hidden dimension are both 128 and hence
+it is easy to be analyzed. Hence, the theoretical compression ratio may vary for different datasets."
+END,0.8764044943820225,"I
+ADDITIONAL EXPERIMENT RESULTS"
+END,0.8782771535580525,"I.1
+MORE RESULTS ON ACCURACY AGAINST THE PRECISION AND D R"
+END,0.8801498127340824,To support the claim that “the performance of EXACT is mainly determined by the D
+END,0.8820224719101124,"R ratio of
+random projection”, we present more results on the test accuracy against the precision and D"
+END,0.8838951310861424,"R ratio
+here. In Figure 5, we show the results of two models trained with EXACT using full-batch data on
+the ogbn-arxiv dataset. In Figure 6, we show the results of two models trained with EXACT using
+mini-batch data on Yelp dataset."
+END,0.8857677902621723,Figure 5: The performance of EXACT is mainly determined by the D
+END,0.8876404494382022,"R ratio of random projection.
+The dataset here is ogbn-arxiv. All reported results are averaged over ten random trials."
+END,0.8895131086142322,Figure 6: The performance of EXACT is mainly determined by the D
+END,0.8913857677902621,"R ratio of random projection.
+The dataset here is Yelp. All reported results are averaged over ten random trials."
+END,0.8932584269662921,"I.2
+COMPARISON AGAINST SWAPPING AND GRADIENT CHECKPOINTING"
+END,0.8951310861423221,"We also compare EXACT against the naive swapping and the naive gradient checkpointing. Both
+swapping and gradient checkpointing are lossless compression, so they do not have any accuracy
+drop. Below we present and discuss about their trade-off among the space and speed."
+END,0.897003745318352,"For swapping, we simply ofﬂoad all activation maps to CPU memory. Thus, it can achieve the
+highest compression ratio for activation maps. However, its running time overhead is roughly 50%-
+80%, which is often unacceptable."
+END,0.898876404494382,"For gradient checkpointing, we utilize torch.utils.checkpoint to insert checkpoints at each
+GNN layer. For the time overhead, as shown in Figure 3, it is comparable to EXACT. We present the
+memory usage of activations in Table 20. In summary, its time overhead is comparable to EXACT,
+however, the memory compression ratio of activations is 1.7 ∼2.3×, which is not large enough.
+Thus, we still cannot train the GCNII on Yelp dataset using a RTX 3090 (24GB) GPU."
+END,0.900749063670412,Published as a conference paper at ICLR 2022
+END,0.9026217228464419,"Table 20: The memory usage (MB) of activation maps with the gradient checkpointing. “OOM”
+means out-of-memory. In general, the compression ratio of activation maps are 1.7 ∼2.3×."
+END,0.9044943820224719,"Model
+ogbn-
+arxiv
+Yelp
+Reddit"
+END,0.9063670411985019,"GCN
+425
+4493
+722
+GraphSAGE
+424
+3913
+1030
+GCNII
+6236
+OOM
+3366"
+END,0.9082397003745318,Figure 7: Validation Accuracy on Reddit dataset using EXACT with different conﬁgurations.
+END,0.9101123595505618,"I.3
+THE TRAINING CURVES OF EXACT"
+END,0.9119850187265918,"From the optimization theory, common convergence speed bounds (measured by the number of it-
+erations) in stochastic optimization improve with smaller gradient variance (Bottou et al., 2018).
+EXACT essentially trades the gradient variance in return for reduced memory. Here we experimen-
+tally examine how EXACT affects the convergence speed. Figure 7 shows the training curves of
+GNNs trained with EXACT using different conﬁgurations on Reddit dataset. We make two main
+observations. First, EXACT with smaller D"
+END,0.9138576779026217,"R typically converges faster per iteration. This is consis-
+tent with the mentioned optimization theory. Second, when increasing the D"
+END,0.9157303370786517,"R ratio, the difference in
+the convergence speed is very small, where the convergence speed is measured by the gap in valida-
+tion accuracy between consecutive epochs. In practical scenarios, EXACT hence only have limited
+impact on the model performance."
+END,0.9176029962546817,"I.4
+HYPERPARAMETER SENSITIVITY EXPERIMENT"
+END,0.9194756554307116,"As we analyzed in the main body, INT2 is a suitable precision and we only vary the D"
+END,0.9213483146067416,"R ratio for
+EXACT. In this section, we investigate the sensitivity of EXACT (RP+INT2) to the D"
+END,0.9232209737827716,"R ratio. Table
+12 shows the conﬁguration of EXACT (RP+INT2) in the experiment in the main body. Here we
+present a comprehensive hyperparameter sensitivity study for EXACT. Speciﬁcally, the sensitivity
+studies of EXACT with GraphSAINT, ClusterGCN, GCN, GraphSAGE, and GCNII are shown in
+Figure 8, Figure 9, Figure 10, Figure 11, and Figure 12, respectively. Here we summarize some key
+observations. First, the model performance drop generally increases with the D"
+END,0.9250936329588015,"R ratio. Second, when
+D
+R = 8, the loss in accuracy of EXACT (RP+INT2) is below 0.5% on two third of experiments.
+To be concrete, in Table 3, we totally adopt 22 combinations of different datasets and models. As
+shown in Table 3 and Table 8, for 15 of the 22 experiments, the loss of accuracy is below or near
+0.5% when D"
+END,0.9269662921348315,"R = 8. Third, when D"
+END,0.9288389513108615,"R = 8, the loss in accuracy is below 1% in almost all experiments,
+excepting for two experiments. Namely, ClusterGCN with ogbn-products and GraphSAINT with
+ogbn-products."
+END,0.9307116104868914,"I.5
+COMPARISON BETWEEN EXACT AND SAMPLING METHODS"
+END,0.9325842696629213,"I.5.1
+COMPARE EXACT TO SAMPLING METHODS UNDER A FIXED MEMORY BUDGET"
+END,0.9344569288389513,"As examined in Table 3, EXACT and subgraph sampling methods are orthogonal and can be applied
+over each others. Here we present an ablation study of comparing EXACT to subgraph sampling
+methods in a standalone way. We note that EXACT only focus on saving the memory for activations.
+In contrast, subgraph sampling methods can simultaneously reduce the memory of the input data,
+activations, and activation gradients since they directly reduce the number of node embeddings"
+END,0.9363295880149812,Published as a conference paper at ICLR 2022
+END,0.9382022471910112,Figure 8: The sensitivity study of EXACT (RP+INT2) to the D
+END,0.9400749063670412,"R ratio, where the model is Graph-
+SAINT. All reported results are averaged over ten random trials."
+END,0.9419475655430711,Figure 9: The sensitivity study of EXACT (RP+INT2) to the D
+END,0.9438202247191011,"R ratio, where the model is Clus-
+terGCN. All reported results are averaged over ten random trials."
+END,0.9456928838951311,"retained in the memory. Hence compared to subgraph sampling methods, one limitation of EXACT
+is that the overall memory saving ratio of EXACT often cannot surpass that of sampling methods."
+END,0.947565543071161,"Under the full-batch setting, one way to further improve the overall memory saving ratio is to in-
+corporate the graph compression methods with EXACT, such as the graph sparsiﬁcation (Spielman
+& Srivastava, 2011) and graph coarsening (Cai et al., 2021a). However, it is beyond the scope of
+this paper. For a fair comparison, we control the batch size of subgraph subgraph sampling methods
+such that their activation memory usage equals to that of EXACT (INT2). For both EXACT(INT2)
+and EXACT(RP+INT2), we quote the “GraphSAGE” results from Table 3. For GraphSAINT and
+Cluster-GCN, we tune their batch size such that they have the same activation memory usage as
+EXACT (INT2). The results are shown in Table 21. We make two main observations. First, for
+Reddit and Flickr, full batch training with EXACT outperforms the two sampling methods. For
+Yelp, subgraph sampling methods are better than full batch training with EXACT. However, we note"
+END,0.949438202247191,Published as a conference paper at ICLR 2022
+END,0.951310861423221,Figure 10: The sensitivity study of EXACT (RP+INT2) to the D
+END,0.9531835205992509,"R ratio, where the model is GCN.
+All reported results are averaged over ten random trials."
+END,0.9550561797752809,Figure 11: The sensitivity study of EXACT (RP+INT2) to the D
+END,0.9569288389513109,"R ratio, where the model is Graph-
+SAGE. All reported results are averaged over ten random trials."
+END,0.9588014981273408,"that this gap is not from EXACT. As shown in Table 3, without EXACT, the F1-micro of full batch
+GraphSAGE is 62.05%, which is much lower than that of subgraph sampling methods. Also, from
+Table 6, one interesting observation is that for Yelp, a much smaller batch size (≈500) may even
+further improve the F1-micro of GraphSAINT from 63.20% to 64.05%."
+END,0.9606741573033708,"In summary, subgraph sampling methods may outperform the full batch training on some datasets
+(e.g., Yelp). In this case, we think full batch training with EXACT cannot outperform subgraph
+sampling methods. If this is not the case, as shown in Table 21, full batch training with EXACT can
+outperform subgraph sampling methods under a ﬁxed activation memory usage."
+END,0.9625468164794008,Published as a conference paper at ICLR 2022
+END,0.9644194756554307,Figure 12: The sensitivity study of EXACT (RP+INT2) to the D
+END,0.9662921348314607,"R ratio, where the model is GCNII.
+All reported results are averaged over ten random trials."
+END,0.9681647940074907,"Table 21: The ablation study of comparing GraphSAINT and Cluster-GCN to EXACT under a ﬁxed
+memory budget for activations. For convenience, in this table, the activation memory usage of of
+full batch w./ EXACT (INT2), GraphSAINT, and Cluster-GCN are the same. And the activation
+memory usage of EXACT (RP+INT2) is lower than EXACT (INT2)."
+END,0.9700374531835206,"Dataset
+Method
+Accuracy (%) / F1-micro"
+END,0.9719101123595506,Flickr
+END,0.9737827715355806,"GraphSAINT
+50.30 ± 0.16
+Cluster-GCN
+49.98 ± 0.15
+Full Batch
+w./ EXACT (INT2)
+51.97 ± 0.20"
+END,0.9756554307116105,"Full Batch
+w./ EXACT (RP+INT2)
+51.83 ± 0.21"
+END,0.9775280898876404,Reddit
+END,0.9794007490636704,"GraphSAINT
+96.18 ± 0.03
+Cluster-GCN
+96.03 ± 0.05
+Full Batch
+w./ EXACT (INT2)
+96.40 ± 0.05"
+END,0.9812734082397003,"Full Batch
+w./ EXACT (RP+INT2)
+96.34 ± 0.03 Yelp"
+END,0.9831460674157303,"GraphSAINT
+63.20 ± 0.19
+Cluster-GCN
+63.26 ± 0.14
+Full Batch
+w./ EXACT (INT2)
+61.95 ± 0.12"
+END,0.9850187265917603,"Full Batch
+w./ EXACT (RP+INT2)
+61.59 ± 0.12"
+END,0.9868913857677902,"I.5.2
+ENLARGING THE BATCH SIZE OF SAMPLING METHODS WITH EXACT"
+END,0.9887640449438202,"Here we present a case study of scaling up the batch size of GraphSAINT with EXACT on the
+ogbn-products dataset. As shown in Table 14, the batch size of GraphSAINT (number of nodes in
+the sampled subgraphs) is controlled by the “Walk length” and “Roots”, and roughly equals “Walk
+length”×“Roots” (Zeng et al., 2020). For ogbn-products, we tripled the batch size by changing
+“Roots” from 20, 000 to 30, 000. All other hyperparameters are left unchanged. The results are
+shown in Table 22. We observe that EXACT may improve the accuracy when using larger batch
+size. We note that EXACT can scale up the batch size to more than 3× larger. However, we found
+that if we further scale up the batch size to 4×, there is an accuracy drop compared to the baseline"
+END,0.9906367041198502,Published as a conference paper at ICLR 2022
+END,0.9925093632958801,"Table 22: The test accuracy of GraphSAINT on the ogbn-products. All reported results are averaged
+over ten random trials."
+END,0.9943820224719101,"Method
+Test Accuracy (%)
+GraphSAINT
+79.03 ±0.23
+GraphSAINT + EXACT (INT2) w./ 3× batch size
+79.16 ±0.24
+GraphSAINT + EXACT (RP+INT2) w./ 3× batch size
+78.54 ±0.41"
+END,0.9962546816479401,"with the original batch size, regardless applying EXACT or not. This is consistent with previous
+ﬁnding that a larger batch size does not always lead to better performance for ogbn-products (Zeng
+et al., 2020; Hu et al., 2020). We quote the sentences from the OGB paper (Hu et al., 2020) to explain
+this counter-intuitive observation. “The recent mini-batch-based GNNs give promising results, even
+slightly outperforming the full-batch version of GraphSAGE that does not ﬁt into ordinary GPU
+memory. The improved performance can be attributed to the regularization effects of mini-batch
+noise and edge dropout.” (Hu et al., 2020)."
+END,0.99812734082397,"In summary, in the ogbn-products ablation study, we utilize EXACT to triple the batch size of
+GraphSAINT, which may even improve the accuracy over the original one. Moreover, from our
+experiments, the 3× larger batch size performs the best on ogbn-products. Thus, for some datasets,
+there exist an optimal batch size for subgraph sampling methods. Since this optimal batch size may
+be beyond the capacity of the hardware, the meaning of EXACT is to enlarge the “search space” for
+ﬁnding this optimal batch size."

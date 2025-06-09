@@ -1,0 +1,1853 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,Abstract
+ABSTRACT,0.002109704641350211,"Offline reinforcement learning faces a significant challenge of value over-estimation
+due to the distributional drift between the dataset and the current learned policy,
+leading to learning failure in practice. The common approach is to incorporate a
+penalty term to reward or value estimation in the Bellman iterations. Meanwhile,
+to avoid extrapolation on out-of-distribution (OOD) states and actions, existing
+methods focus on conservative Q-function estimation. In this paper, we propose
+Conservative State Value Estimation (CSVE), a new approach that learns con-
+servative V-function via directly imposing penalty on OOD states. Compared to
+prior work, CSVE allows more effective state value estimation with conservative
+guarantees and further better policy optimization. Further, we apply CSVE and
+develop a practical actor-critic algorithm in which the critic does the conservative
+value estimation by additionally sampling and penalizing the states around the
+dataset, and the actor applies advantage weighted updates extended with state
+exploration to improve the policy. We evaluate in classic continual control tasks of
+D4RL, showing that our method performs better than the conservative Q-function
+learning methods and is strongly competitive among recent SOTA methods."
+INTRODUCTION,0.004219409282700422,"1
+Introduction"
+INTRODUCTION,0.006329113924050633,"Reinforcement Learning (RL) learns to act by interacting with the environment and has shown great
+success in various tasks. However, in many real-world situations, it is impossible to learn from scratch
+online as exploration is often risky and unsafe. Instead, offline RL([1, 2]) avoids this problem by
+learning the policy solely from historical data. Yet, simply applying standard online RL techniques
+to static datasets can lead to overestimated values and incorrect policy decisions when faced with
+unfamiliar or out-of-distribution (OOD) scenarios."
+INTRODUCTION,0.008438818565400843,∗Work done during the internship at Microsoft. † Work done during full-time employment at Microsoft.
+INTRODUCTION,0.010548523206751054,"Recently, the principle of conservative value estimation has been introduced to tackle challenges
+in offline RL[3, 4, 5]. Prior methods, e.g., CQL(Conservative Q-Learning [4]), avoid the value
+over-estimation problem by systematically underestimating the Q values of OOD actions on the
+states in the dataset. In practice, it is often too pessimistic and thus leads to overly conservative
+algorithms. COMBO [6] leverages a learned dynamic model to augment data in an interpolation way.
+This process helps derive a Q function that’s less conservative than CQL, potentially leading to more
+optimal policies."
+INTRODUCTION,0.012658227848101266,"In this paper, we propose CSVE (Conservative State Value Estimation), a novel offline RL approach.
+Unlike the above methods that estimate conservative values by penalizing the Q-function for OOD
+actions, CSVE directly penalizes the V-function for OOD states. We theoretically demonstrate that
+CSVE provides tighter bounds on in-distribution state values in expectation than CQL, and same
+bounds as COMBO but under more general discounted state distributions, which potentially enhances
+policy optimization in the data support. Our main contributions include:"
+INTRODUCTION,0.014767932489451477,"• The conservative state value estimation with related theoretical analysis. We prove that it
+lower bounds the real state values in expectation over any state distribution that is used
+to sample OOD states and is up-bounded by the real state values in expectation over the
+marginal state distribution of the dataset plus a constant term depending on sampling errors.
+Compared to prior work, it enhances policy optimization with conservative value guarantees."
+INTRODUCTION,0.016877637130801686,"• A practical actor-critic algorithm implemented CSVE. The critic undertakes conservative
+state value estimation, while the actor uses advantage-weighted regression(AWR) and
+explores states with conservative value guarantee to improve policy. In particular, we use
+a dynamics model to sample OOD states that are directly reachable from the dataset, for
+efficient value penalizing and policy exploring."
+INTRODUCTION,0.0189873417721519,"• Experimental evaluation on continuous control tasks of Gym [7] and Adroit [8] in D4RL [9]
+benchmarks, showing that CSVE performs better than prior methods based on conservative
+Q-value estimation, and is strongly competitive among main SOTA algorithms."
+PRELIMINARIES,0.02109704641350211,"2
+Preliminaries"
+PRELIMINARIES,0.023206751054852322,"Offline Reinforcement Learning. Consider the Markov Decision Process M := (S, A, P, r, ρ, γ),
+which comprises the state space S, the action space A, the transition model P : S × A →∆(S), the
+reward function r : S × A →R, the initial state distribution ρ and the discount factor γ ∈(0, 1]. A
+stochastic policy π : S →A selects an action probabilistically based on the current state. A transition
+is the tuple (st, at, rt, st+1) where at ∼π(·|st), st+1 ∼P(·|st, at), and rt = r(st, at). It’s assumed
+that the reward values adhere to |r(s, a)| ≤Rmax, ∀s, a. A trajectory under π is the random sequence
+τ = (s0, a0, r0, s1, a1, r1, . . . , sT ) which consists of continuous transitions starting from s0 ∼ρ."
+PRELIMINARIES,0.02531645569620253,"Standard RL is to learn a policy π ∈Π that maximize the expected cumulative future rewards, repre-
+sented as Jπ(M) = EM,π[P∞
+t=0 γtrt], through active interaction with the environment M. At any
+time t, for the policy π, the value function of state is defined as V π(s) := EM,π[P∞
+k=0 γt+krt+k|st =
+s], and the Q value function is Qπ(s, a) := EM,π[P∞
+k=0 γt+krt+k|st = s, at = a]. The Bellman
+operator is a function projection: BπQ(s, a) := r(s, a) + γ Es′∼P (·|s,a),a′∼π(·|s′)[Q(s′, a′)], or
+BπV (s) := Ea∼π(·|s)[r(s, a) + γ Es′∼P (·|s,a)[V (s′)]], resulting initerative value updates. Bellman
+consistency implies that V π(s) = BπV π(s), ∀s and Qπ(s) = BπQπ(s, a), ∀s, a. When employing
+function approximation in practice, the empirical Bellman operator ˆBπ is used, wherein the afore-
+mentioned expectations are estimated with data. Offline RL aims to learn the policy π from a static
+dataset D = {(s, a, r, s′)} made up of transitions collected by any behavior policy, with the objective
+of performing well in the online setting. Note that, unlike standard online RL, offline RL does not
+interact with the environment during the learning process."
+PRELIMINARIES,0.027426160337552744,"Conservative Value Estimation. One main challenge in offline RL arises from the over-estimation
+of values due to extrapolation in unseen states and actions. Such overestimation can lead to the
+deterioration of the learned policy. To address this issue, conservatism or pessimism is employed in
+value estimation. For instance, CQL learns a conservative Q-value function by penalizing the value"
+PRELIMINARIES,0.029535864978902954,of unseen actions:
+PRELIMINARIES,0.03164556962025317,"ˆQk+1 ←arg min
+Q"
+PRELIMINARIES,0.03375527426160337,"1
+2 Es,a,s′∼D[(Q(s, a)−ˆβπ ˆQk(s, a))2]+α (E
+s∼D
+a∼µ(·|s)[Q(s, a)]−E
+s∼D
+a∼ˆπβ(·|s)[Q(s, a)])"
+PRELIMINARIES,0.035864978902953586,"(1)
+where ˆπβ and π are the behaviour policy and learnt policy separately, µ is an arbitrary policy different
+from ˆπβ, and α represents the factor for balancing conservatism."
+PRELIMINARIES,0.0379746835443038,"Constrained Policy Optimization. To address the issues of distribution shift between the learning
+policy and the behavior policy, one approach is to constrain the learning policy close to the behavior
+policy [10, 11, 12, 13, 1]. As an example, AdvantageWeighted Regression(AWR)[14, 12] employs
+an implicit KL divergence to regulate the distance between policies:"
+PRELIMINARIES,0.04008438818565401,"πk+1 ←arg max
+π
+E
+s,a∼D"
+PRELIMINARIES,0.04219409282700422,log π(a|s)
+PRELIMINARIES,0.04430379746835443,"Z(s)
+exp
+ 1"
+PRELIMINARIES,0.046413502109704644,"λAπk(s, a)
+"
+PRELIMINARIES,0.04852320675105485,"Here, Aπk is the advantage of policy πk, and Z serves as the normalization constant for s."
+PRELIMINARIES,0.05063291139240506,"Model-based Offline RL. In RL, the model is an approximation of the MDP M. Such a model
+is denoted as ˆ
+M := (S, A, ˆP, ˆr, ρ, γ), with ˆP and ˆr being approximation of P and r respectively.
+Within offline RL, the model is commomly used to augment data [15, 6] or act as a surrogate of
+the real environment during interaction [16].However, such practices can inadvertently introduce
+bootstrapped errors over extended horizons[17]. In this paper, we restrict the use of the model to
+one-step sampling on the next states that are approximately reachable from the dataset."
+CONSERVATIVE STATE VALUE ESTIMATION,0.052742616033755275,"3
+Conservative State Value Estimation"
+CONSERVATIVE STATE VALUE ESTIMATION,0.05485232067510549,"In the offline setting, the value overestimation is a major problem resulting in failure of learning a
+reasonable policy [13, 1]. In contrast to prior works[4, 6] that get conservative value estimation via
+penalizing Q function for OOD state-action pairs, we directly penalize V function for OOD states.
+Our approach provides several novel theoretic results that allow better trade-off of conservative value
+estimation and policy improvement. All proofs of our theorems can be found in Appendix A."
+CONSERVATIVE OFF-POLICY EVALUATION,0.056962025316455694,"3.1
+Conservative Off-policy Evaluation"
+CONSERVATIVE OFF-POLICY EVALUATION,0.05907172995780591,"We aim to conservatively estimate the value of a target policy using a dataset to avoid overestimation
+of OOD states. To achieve this, we penalize V-values evaluated on states that are more likely to be
+OOD and increase the V-values on states that are in the distribution of the dataset. This adjustment is
+made iteratively::"
+CONSERVATIVE OFF-POLICY EVALUATION,0.06118143459915612,"ˆV k+1 ←arg min
+V"
+CONSERVATIVE OFF-POLICY EVALUATION,0.06329113924050633,"1
+2 Es∼du(s)[( ˆ
+Bπ ˆV k(s) −V (s))2] + α(Es′∼d(s) V (s′) −Es∼du(s) V (s))
+(2)"
+CONSERVATIVE OFF-POLICY EVALUATION,0.06540084388185655,"where du(s) is the discounted state distribution of D, d(s) is any state distribution, and ˆBπ is
+the empirical Bellman operator (see appendix for more details). Considering the setting without
+function approximation, by setting the derivative of Eq. 2 as zero, we can derive the V function using
+approximate dynamic programming at iteration k::"
+CONSERVATIVE OFF-POLICY EVALUATION,0.06751054852320675,"ˆV k+1(s) = ˆ
+Bπ ˆV k(s) −α[ d(s)"
+CONSERVATIVE OFF-POLICY EVALUATION,0.06962025316455696,"du(s) −1], ∀s, k.
+(3)"
+CONSERVATIVE OFF-POLICY EVALUATION,0.07172995780590717,"Denote the function projection on ˆV k in Eq. 3 as T π. We have Lemma 3.1, which ensures that ˆV k
+converges to a unique fixed point."
+CONSERVATIVE OFF-POLICY EVALUATION,0.07383966244725738,"Lemma 3.1. For any d with supp d ⊆supp du, T π is a γ-contraction in L∞norm."
+CONSERVATIVE OFF-POLICY EVALUATION,0.0759493670886076,"Theorem 3.2. For any d with supp d ⊆supp du (d ̸= du), with a sufficiently large α (i.e., α ≥
+Es∼d(s) Ea∼π(a|s)
+Cr,t,δRmax
+(1−γ)√"
+CONSERVATIVE OFF-POLICY EVALUATION,0.07805907172995781,"|D(s,a)|/ Es∼d(s)[ d(s)"
+CONSERVATIVE OFF-POLICY EVALUATION,0.08016877637130802,"du(s) −1]) ), the expected value of the estimation ˆV π(s)"
+CONSERVATIVE OFF-POLICY EVALUATION,0.08227848101265822,"under d(s) is the lower bound of the true value, that is: Es∼d(s)[ ˆV π(s)] ≤Es∼d(s)[V π(s)]."
+CONSERVATIVE OFF-POLICY EVALUATION,0.08438818565400844,"ˆV π(s) = limk→∞ˆV k(s) is the converged value estimation with the dataset D, and
+Cr,t,δRmax
+(1−γ)√"
+CONSERVATIVE OFF-POLICY EVALUATION,0.08649789029535865,"|D(s,a)|
+is related to sampling error that arises when using the empirical operator instead of the Bellman
+operator. If the counts of each state-action pair is greater than zero, |D(s, a)| denotes a vector of size
+|S||A| containing counts for each state-action pair. If the counts of this state action pair is zero, the
+corresponding
+1
+√"
+CONSERVATIVE OFF-POLICY EVALUATION,0.08860759493670886,"|D(s,a)| is a large yet finite value. We assume that with probability ≥1 −δ, the"
+CONSERVATIVE OFF-POLICY EVALUATION,0.09071729957805907,"sampling error is less than
+Cr,t,δRmax
+(1−γ)√"
+CONSERVATIVE OFF-POLICY EVALUATION,0.09282700421940929,"|D(s,a)|, while Cr,t,δ is a constant (See appendix for more details.)"
+CONSERVATIVE OFF-POLICY EVALUATION,0.0949367088607595,"Note that if the sampling error can be disregarded, α > 0 can ensure the lower bound results."
+CONSERVATIVE OFF-POLICY EVALUATION,0.0970464135021097,"Theorem 3.3. The expected value of the estimation, ˆV π(s), under the state distribution of the original
+dataset is the lower bound of the true value plus the term of irreducible sampling error. Formally:
+Es∼du(s)[ ˆV π(s)] ≤Es∼du(s)[V π(s)] + Es∼du(s)(I −γP π)−1 Ea∼π(a|s)
+Cr,t,δRmax
+(1−γ)√"
+CONSERVATIVE OFF-POLICY EVALUATION,0.09915611814345991,"|D(s,a)|."
+CONSERVATIVE OFF-POLICY EVALUATION,0.10126582278481013,where P π refers to the transition matrix coupled with policy π (see Appendix for details).
+CONSERVATIVE OFF-POLICY EVALUATION,0.10337552742616034,"Now we show that, during iterations, the gap between the estimated V-function values of in-
+distribution states and OOD states is higher compared to the true V-functions.
+Theorem 3.4. For any iteration k, given a sufficiently large α, our method amplifies the difference in
+expected V-values between the selected state distribution and the dataset state distribution. This can
+be represented as: Es∼du(s)[ ˆ
+V k(s)] −Es∼d(s)[ ˆ
+V k(s)] > Es∼du(s)[V k(s)] −Es∼d(s)[V k(s)]."
+CONSERVATIVE OFF-POLICY EVALUATION,0.10548523206751055,"Our approach, which penalizes the V-function for OOD states, promotes a more conservative estimate
+of a target policy’s value in offline reinforcement learning. Consequently, our policy extraction
+ensures actions align with the dataset’s distribution."
+CONSERVATIVE OFF-POLICY EVALUATION,0.10759493670886076,"To apply our approach effectively in offline RL algorithms, the preceding theorems serve as guiding
+principles. Here are four key insights for practical use of Eq. 2:"
+CONSERVATIVE OFF-POLICY EVALUATION,0.10970464135021098,"Remark 1. According to Eq. 2, if d = du, the penalty for OOD states diminishes. This means that
+the policy will likely avoid states with limited data support, preventing it from exploring unseen
+actions in such states. While AWAC [12]employs this configuration, our findings indicate that by
+selecting a d, our method surpasses AWAC’s performance."
+CONSERVATIVE OFF-POLICY EVALUATION,0.11181434599156118,"Remark 2. Theorem 3.3 suggests that under du, the marginal state distribution of data, the expectation
+estimated value of V π is either lower than its true value or exceed it, but within a certain limit. This
+understanding drives our adoption of the advantage-weighted policy update, as illustrated in Eq. 9."
+CONSERVATIVE OFF-POLICY EVALUATION,0.11392405063291139,"Remark 3. As per Theorem 3.2, the expected estimated value of a policy under d, which represents
+the discounted state distribution of any policy, must be a lower bound of its true value. Grounded
+in this theorem, our policy enhancement strategy merges an advantage-weighted update with an
+additional exploration bonus, showcased in Eq. 10."
+CONSERVATIVE OFF-POLICY EVALUATION,0.1160337552742616,"Remark 4.
+Theorem 3.4 states Es∼d(s)[V k(s)] −Es∼d(s)[ ˆ
+V k(s)]
+>
+Es∼du(s)[V k(s)] −
+Es∼du(s)[ ˆ
+V k(s)]. In simpler terms, the underestimation of value is more pronounced under d.
+With the proper choice of d, we can confidently formulate a newer and potentially superior policy
+using ˆV k. Our algorithm chooses the distribution of model predictive next-states as d, i.e., s′ ∼d is
+implemented by s ∼D, a ∼π(·|s), s′ ∼ˆP(·|s, a), which effectively builds a soft ’river’ with low
+values encircling the dataset."
+CONSERVATIVE OFF-POLICY EVALUATION,0.11814345991561181,"Comparison with prior work:
+CQL (Eq.1), which penalizes Q-function of OOD actions,
+guarantees the lower bounds on state-wise value estimation:
+ˆV π(s) = Eπ(a|s)( ˆQπ(s, a)) ≤
+Eπ(a|s)(Qπ(s, a)) = V π(s) for all s ∈D. COMBO, which penalizes the Q-function for OOD
+states and actions of interpolation of history data and model-based roll-outs, guarantees the lower
+bound of state value expectation: Es∼µ0[ ˆV π(s)] ≤Es∼µ0[V π(s)] where µ0 is the initial state dis-
+tribution (Remark 1, section A.2 of COMBO [6]); which is a special case of our result in Theorem
+3.2 when d = µ0. Both CSVE and COMBO intend to enhance performance by transitioning from
+individual state values to expected state values. However, CSVE offers the same lower bounds but
+under a more general state distribution. Note that µ0 depends on the environment or the dynamic
+model during offline training. CSVE’s flexibility, represented by d, ensures conservative guarantees
+across any discounted state distribution of the learned policy, emphasizing a preference for penalizing
+V over the Q-function."
+SAFE POLICY IMPROVEMENT GUARANTEES,0.12025316455696203,"3.2
+Safe Policy Improvement Guarantees"
+SAFE POLICY IMPROVEMENT GUARANTEES,0.12236286919831224,"Now we show that our method has the safe policy improvement guarantees against the data-implied
+behaviour policy. We first show that our method optimizes a penalized RL empirical objective:"
+SAFE POLICY IMPROVEMENT GUARANTEES,0.12447257383966245,"Theorem 3.5. Let ˆV π be the fixed point of Eq. 3, then π∗(a|s) = arg maxπ ˆV π(s) is equivalently
+obtained by solving:"
+SAFE POLICY IMPROVEMENT GUARANTEES,0.12658227848101267,"π∗←arg max
+π
+J(π, ˆ
+M) −
+α
+1 −γ
+E
+s∼dπ
+ˆ
+M
+[ d(s)"
+SAFE POLICY IMPROVEMENT GUARANTEES,0.12869198312236288,"du(s) −1].
+(4)"
+SAFE POLICY IMPROVEMENT GUARANTEES,0.1308016877637131,"Building upon Theorem 3.5, we show that our method provides a ζ-safe policy improvement over πβ.
+Theorem 3.6. Let π∗(a|s) be the policy obtained in Eq. 4. Then, it is a ζ-safe policy improvement
+over ˆπβ in the actual MDP M, i.e., J(π∗, M) ≥J(ˆπβ, M) −ζ with high probability 1- δ, where ζ is
+given by:"
+SAFE POLICY IMPROVEMENT GUARANTEES,0.13291139240506328,"ζ =2( Cr,δ"
+SAFE POLICY IMPROVEMENT GUARANTEES,0.1350210970464135,"1 −γ + γRmaxCT,δ"
+SAFE POLICY IMPROVEMENT GUARANTEES,0.1371308016877637,"(1 −γ)2
+)
+E
+s∼dπ
+ˆ
+M(s) "" c s"
+SAFE POLICY IMPROVEMENT GUARANTEES,0.13924050632911392,"E
+a∼π(a|s)[ π(a|s)"
+SAFE POLICY IMPROVEMENT GUARANTEES,0.14135021097046413,πβ(a|s)] #
+SAFE POLICY IMPROVEMENT GUARANTEES,0.14345991561181434,"−(J(π∗, ˆ
+M) −J(ˆπβ, ˆ
+M))
+|
+{z
+}"
+SAFE POLICY IMPROVEMENT GUARANTEES,0.14556962025316456,"≥α
+1
+1−γ Es∼dπ
+ˆ
+M (s)[ d(s)"
+SAFE POLICY IMPROVEMENT GUARANTEES,0.14767932489451477,du(s) −1]
+SAFE POLICY IMPROVEMENT GUARANTEES,0.14978902953586498,"where c =
+p"
+SAFE POLICY IMPROVEMENT GUARANTEES,0.1518987341772152,"|A|/
+p"
+SAFE POLICY IMPROVEMENT GUARANTEES,0.1540084388185654,|D(s)|.
+METHODOLOGY,0.15611814345991562,"4
+Methodology"
+METHODOLOGY,0.15822784810126583,"In this section, we propose a practical actor-critic algorithm that employs CSVE for value estimation
+and extends Advantage Weighted Regression[18] with out-of-sample state exploration for policy
+improvement. In particular, we adopt a dynamics model to sample OOD states during conservative
+value estimation and exploration during policy improvement. The implementation details are in
+Appendix B. Besides, we discuss the general technical choices of applying CSVE into algorithms."
+CONSERVATIVE VALUE ESTIMATION,0.16033755274261605,"4.1
+Conservative Value Estimation"
+CONSERVATIVE VALUE ESTIMATION,0.16244725738396623,"Given a dataset D acquired by the behavior policy πβ, our objective is to estimate the value function
+V π for a target policy π. As stated in section 3, to prevent the value overestimation, we learn a
+conservative value function ˆV π that lower bounds the real values of π by adding a penalty for OOD
+states within the Bellman projection sequence. Our method involves iterative updates of Equations 5 -
+7, where ˆQk is the target network of ˆQk."
+CONSERVATIVE VALUE ESTIMATION,0.16455696202531644,"ˆV k+1 ←arg min
+V
+Lπ
+V (V ; ˆQk)
+(5)"
+CONSERVATIVE VALUE ESTIMATION,0.16666666666666666,"= Es∼D
+h
+(Ea∼π(·|s)[ ˆQk(s, a)] −V (s))2i
++ α "
+CONSERVATIVE VALUE ESTIMATION,0.16877637130801687,"Es∼D,a∼π(·|s)
+s′∼ˆ
+P (s,a)
+[V (s′)] −Es∼D[V (s)] !"
+CONSERVATIVE VALUE ESTIMATION,0.17088607594936708,"ˆQk+1 ←arg min
+Q
+Lπ
+Q(Q; ˆV k+1) =
+E
+s,a,s′∼D"
+CONSERVATIVE VALUE ESTIMATION,0.1729957805907173,"
+r(s, a) + γ ˆV k+1(s′) −Q(s, a)
+2
+(6)"
+CONSERVATIVE VALUE ESTIMATION,0.1751054852320675,"ˆQk+1 ←(1 −ω) ˆQk + ω ˆQk+1
+(7)"
+CONSERVATIVE VALUE ESTIMATION,0.17721518987341772,"The RHS of Eq. 5 is an approximation of Eq. 2, with the first term representing the standard TD
+error. In this term, the target state value is estimated by taking the expectation of ˆQk over a ∼π,
+and the second term penalizes the value of OOD states. In Eq. 6, the RHS is TD errors estimated on
+transitions in the dataset D. Note that the target term is the sum of the reward r(s, a) and the next
+step state’s value ˆV k+1(s′). In Eq. 7, the target Q values are updated with a soft interpolation factor
+ω ∈(0, 1). ˆQk changes slower than ˆQk, which makes the TD error estimation in Eq. 5 more stable."
+CONSERVATIVE VALUE ESTIMATION,0.17932489451476794,"Constrained Policy. Note that in RHS of Eq. 5, we use a ∼π(·|s) in expectation. To safely
+estimate the target value of V (s) by Ea∼π(·|s)[ ˆQ(s, a)], we almost always requires supp(π(·|s)) ⊂"
+CONSERVATIVE VALUE ESTIMATION,0.18143459915611815,"supp(πβ(·|s)). We achieve this by the advantage weighted policy update, which forces π(·|s) to
+have significant probability mass on actions taken by πβ in data, as detailed in section 3.2."
+CONSERVATIVE VALUE ESTIMATION,0.18354430379746836,"Model-based OOD State Sampling. In Eq. 5, we implement the state sampling process s′ ∼d in
+Eq. 2 as a flow of {s ∼D; a ∼π(a|s), s′ ∼ˆP(s′|s, a)}, that is the distribution of the predictive
+next-states from D by following π. This approach proves beneficial in practice. On the one hand,
+this method is more efficient as it samples only the states that are approximately reachable from
+D by one step, rather than sampling the entire state space. On the other hand, we only need the
+model to do one-step prediction such that it introduces no bootstrapped errors from long horizons.
+Following previous work [17, 15, 6], We use an ensemble of deep neural networks, represented
+as pθ1, . . . , pθB, to implement the probabilistic dynamics model. Each neural network produces a
+Gaussian distribution over the next state and reward: P i
+θ(st+1, r|st, at) = N(ui
+θ(st, at), σi
+θ(st, at))."
+CONSERVATIVE VALUE ESTIMATION,0.18565400843881857,"Adaptive Penalty Factor α. The pessimism level is controlled by the parameter α ≥0. In practice,
+we set α adaptive during training as follows, which is similar to that in CQL([4])"
+CONSERVATIVE VALUE ESTIMATION,0.1877637130801688,"max
+α≥0 [α(Es′∼d[Vψ(s′)] −Es∼D[Vψ(s)] −τ)],
+(8)"
+CONSERVATIVE VALUE ESTIMATION,0.189873417721519,"where τ is a budget parameter. If the expected difference in V-values is less than τ, α will decrease.
+Otherwise, α will increase, penalizing the OOD state values more aggressively."
+ADVANTAGE WEIGHTED POLICY UPDATE,0.19198312236286919,"4.2
+Advantage Weighted Policy Update"
+ADVANTAGE WEIGHTED POLICY UPDATE,0.1940928270042194,"After learning the conservative ˆV k+1 and ˆQk+1 (or ˆV π and ˆQπ when the values have converged),
+we improve the policy by the following advantage weighted update [12]."
+ADVANTAGE WEIGHTED POLICY UPDATE,0.1962025316455696,"π ←arg min
+π′
+Lπ(π′) = −
+E
+s,a∼D"
+ADVANTAGE WEIGHTED POLICY UPDATE,0.19831223628691982,"h
+log π′(a|s) exp
+
+β ˆAk+1(s, a)
+i
+(9)"
+ADVANTAGE WEIGHTED POLICY UPDATE,0.20042194092827004,"where ˆAk+1(s, a) = ˆQk+1(s, a) −ˆV k+1(s). Eq.9 updates the policy π by applying a weighted
+maximum likelihood method. This is computed by re-weighting state-action samples in D using
+the estimated advantage ˆAk+1. It avoids explicit estimation of the behavior policy, and its resulting
+sampling errors, which is an important issue in offline RL [12, 4]."
+ADVANTAGE WEIGHTED POLICY UPDATE,0.20253164556962025,"Implicit policy constraints. We adopt the advantage-weighted policy update which imposes an
+implicit KL divergence constraint between π and πβ. This policy constraint is necessary to guarantee
+that the next state s′ in Eq. 5 can be safely generated through policy π. As derived in [12] (Appendix
+A), Eq. 9 is a parametric solution of the following problem (where ϵ depends on β):"
+ADVANTAGE WEIGHTED POLICY UPDATE,0.20464135021097046,"max
+π′ Ea∼π′(·|s)[ ˆAk+1(s, a)]"
+ADVANTAGE WEIGHTED POLICY UPDATE,0.20675105485232068,"s.t. DKL(π′(·|s) || πβ(·|s)) ≤ϵ,
+Z"
+ADVANTAGE WEIGHTED POLICY UPDATE,0.2088607594936709,"a
+π′(a|s)da = 1."
+ADVANTAGE WEIGHTED POLICY UPDATE,0.2109704641350211,"Note that DKL(π′ || πβ) is a reserved KL divergence with respect to π′, which is mode-seeking [19].
+When treated as Lagrangian it forces π′ to allocate its probability mass to the maximum likelihood
+supports of πβ, re-weighted by the estimated advantage. In other words, for the space of A where
+πβ(·|s) has no samples, π′(·|s) has almost zero probability mass too."
+ADVANTAGE WEIGHTED POLICY UPDATE,0.21308016877637131,"Model-based Exploration on Near States. As suggested by remarks in Section 3.1, in practice,
+allowing the policy to explore the predicted next states transition (s ∼D) following a ∼π′(·|s))
+leads to better test performance. With this kind of exploration, the policy is updated as follows:"
+ADVANTAGE WEIGHTED POLICY UPDATE,0.21518987341772153,"π ←arg min
+π′
+Lπ(π′) −λ Es∼D,a∼π′(s)
+s′∼ˆ
+P (s,a)"
+ADVANTAGE WEIGHTED POLICY UPDATE,0.21729957805907174,"h
+r(s, a) + γ ˆV k+1(s′)
+i
+.
+(10)"
+ADVANTAGE WEIGHTED POLICY UPDATE,0.21940928270042195,"The second term is an approximation to Es∼dπ(s)[V π(s)]. The optimization of this term involves
+calculating the gradient through the learned dynamics model. This is achieved by employing analytic
+gradients through the learned dynamics to maximize the value estimates. It is important to note that the
+value estimates rely on the reward and value predictions, which are dependent on the imagined states
+and actions. As all these steps are implemented using neural networks, the gradient is analytically
+computed using stochastic back-propagation, a concept inspired by Dreamer[20]. We adjust the value
+of λ, a hyper-parameter, to balance between optimistic policy optimization (in maximizing V) and
+the constrained policy update (as indicated by the first term)."
+ADVANTAGE WEIGHTED POLICY UPDATE,0.22151898734177214,"Table 1: Performance comparison on Gym control tasks v2. The results of CSVE are over ten seeds
+and we reimplement AWAC using d3rlpy. Results of IQL, TD3-BC, and PBRL are from their original
+papers ( Table 1 in [21], Table C.3 in [22], and Table 1 in [10] respectively). Results of COMBO and
+CQL are from the reproduction results in [23] (Table 1) and [10] respectively, since their original
+results were reported on v0 datasets."
+ADVANTAGE WEIGHTED POLICY UPDATE,0.22362869198312235,"AWAC
+CQL
+CQL-AWR
+COMBO
+IQL
+TD3-BC
+PBRL
+CSVE"
+ADVANTAGE WEIGHTED POLICY UPDATE,0.22573839662447256,Random
+ADVANTAGE WEIGHTED POLICY UPDATE,0.22784810126582278,"HalfCheetah
+13.7
+17.5 ± 1.5
+16.9 ± 1.5
+38.8
+18.2
+11.0 ± 1.1
+13.1 ± 1.2
+26.8 ± 1.5
+Hopper
+8.7
+7.9 ± 0.4
+8.7 ± 0.5
+17.9
+16.3
+8.5 ± 0.6
+31.6 ± 0.3
+26.1 ± 7.6
+Walker2D
+2.2
+5.1 ± 1.3
+0.0 ± 1.6
+7.0
+5.5
+1.6 ± 1.7
+8.8 ± 6.3
+6.2 ± 0.8"
+ADVANTAGE WEIGHTED POLICY UPDATE,0.229957805907173,Medium
+ADVANTAGE WEIGHTED POLICY UPDATE,0.2320675105485232,"HalfCheetah
+50.0
+47.0 ± 0.5
+50.9 ± 0.6
+54.2
+47.4
+48.3 ± 0.3
+58.2 ± 1.5
+48.4 ± 0.3
+Hopper
+97.5
+53.0 ± 28.5
+25.7 ± 37.4
+94.9
+66.3
+59.3 ± 4.2
+81.6 ± 14.5
+96.7 ± 5.7
+Walker2D
+89.1
+73.3 ± 17.7
+62.4 ± 24.4
+75.5
+78.3
+83.7 ± 2.1
+90.3 ± 1.2
+83.2 ± 1.0"
+ADVANTAGE WEIGHTED POLICY UPDATE,0.23417721518987342,Medium
+ADVANTAGE WEIGHTED POLICY UPDATE,0.23628691983122363,Replay
+ADVANTAGE WEIGHTED POLICY UPDATE,0.23839662447257384,"HalfCheetah
+44.9
+45.5 ± 0.7
+40.0 ± 0.4
+55.1
+44.2
+44.6 ± 0.5
+49.5 ± 0.8
+54.5 ± 0.6
+Hopper
+99.4
+88.7 ± 12.9
+91.0 ± 13.0
+73.1
+94.7
+60.9 ± 18.8
+100.7 ± 0.4
+91.7 ± 0.2
+Walker2D
+80.0
+83.3 ± 2.7
+66.7 ± 12.1
+56.0
+73.9
+81.8 ± 5.5
+86.2 ± 3.4
+78.0 ± 1.5"
+ADVANTAGE WEIGHTED POLICY UPDATE,0.24050632911392406,Medium
+ADVANTAGE WEIGHTED POLICY UPDATE,0.24261603375527427,Expert
+ADVANTAGE WEIGHTED POLICY UPDATE,0.24472573839662448,"HalfCheetah
+62.8
+75.6 ± 25.7
+73.4 ± 2.0
+90.0
+86.7
+90.7 ± 4.3
+93.1 ± 0.2
+93.1 ± 0.3
+Hopper
+87.2
+105.6 ± 12.9
+102.2 ± 7.7
+111.1
+91.5
+98.0 ± 9.4
+111.2 ± 0.7
+94.1 ± 3.0
+Walker2D
+109.8
+107.9 ± 1.6
+98.0 ± 21.7
+96.1
+109.6
+110.1 ± 0.5
+109.8 ± 0.2
+109.0 ± 0.1"
+ADVANTAGE WEIGHTED POLICY UPDATE,0.2468354430379747,Expert
+ADVANTAGE WEIGHTED POLICY UPDATE,0.2489451476793249,"HalfCheetah
+20.0
+96.3 ± 1.3
+87.3 ± 8.1
+-
+94.6
+96.7 ± 1.1
+96.2 ± 2.3
+93.8 ± 0.1
+Hopper
+111.6
+96.5 ± 28.0
+110.0 ± 2.5
+-
+109.0
+107.8 ± 7
+110.4 ± 0.3
+111.3 ± 0.6
+Walker2D
+110.6
+108.5 ± 0.5
+75.1 ± 60.7
+-
+109.4
+110.2 ± 0.3
+108.8 ± 0.2
+108.5 ± 0.1
+Average
+65.8
+67.4
+60.6
+64.1
+69.7
+67.5
+76.7
+74.8"
+DISCUSSION ON IMPLEMENTATION CHOICES,0.2510548523206751,"4.3
+Discussion on implementation choices"
+DISCUSSION ON IMPLEMENTATION CHOICES,0.25316455696202533,Now we examine the technical considerations for implementing CSVE in a practical algorithm.
+DISCUSSION ON IMPLEMENTATION CHOICES,0.2552742616033755,"Constraints on Policy Extraction. It is important to note that the state value function alone does not
+suffice to directly derive a policy. There are two methods for extracting a policy from CSVE. The first
+method is model-based planning, i.e., π ←arg maxπ Es∼d,a∼π(·|s)[ˆr(s, a) + γ Es′∼ˆ
+P (s,a)[V (s′)],
+which involves finding the policy that maximizes the expected future return. However, this method
+heavily depends on the accuracy of a model and is difficult to implement in practice. As an alternative,
+we suggest the second method, which learns a Q value or advantage function from the V value
+function and experience data, and then extracts the policy. Note that CSVE provides no guarantees
+for conservative estimation on OOD actions, which can cause normal policy extraction methods
+such as SAC to fail. To address this issue, we adopt policy constraint techniques. On the one hand,
+during the value estimation in Eq.5, all current states are sampled from the dataset, while the policy
+is constrained to be close to the behavior policy (ensured via Eq.9). On the other hand, during the
+policy learning in Eq.10, we use AWR [18] as the primary policy extraction method (first term of
+Eq.10), which implicitly imposes policy constraints and the additional action exploration (second
+term of Eq.10) is strictly applied to states in the dataset. This exploration provides a bonus to actions
+that: (1) themselves and their model-predictive next-states are both close to the dataset (ensured by
+the dynamics model), and (2) their values are favorable even with conservatism."
+DISCUSSION ON IMPLEMENTATION CHOICES,0.25738396624472576,"Taking Advantage of CSVE. As outlined in Section 3.1, CSVE allows for a more relaxed lower
+bound on conservative value estimation compared to conservative Q values, providing greater potential
+for improving the policy. To take advantage of this, the algorithm should enable exploration of out-
+of-sample but in-distribution states, as described in Section 3. In this paper, we use a deep ensemble
+dynamics model to support this speculative state exploration, as shown in Eq. 10. The reasoning
+behind this is as follows: for an in-data state s and any action a ∼π(·|s), if the next state s′ is in-data
+or close to the data support, its value is reasonably estimated, and if not, its value has been penalized
+according to Eq.5. Additionally, the deep ensemble dynamics model captures epistemic uncertainty
+well, which can effectively cancel out the impact of rare samples of s′. By utilizing CSVE, our
+algorithm can employ the speculative interpolation to further improve the policy. In contrast, CQL
+and AWAC do not have this capability for such enhanced policy optimization."
+DISCUSSION ON IMPLEMENTATION CHOICES,0.25949367088607594,"Table 2: Performance comparison on Adroit tasks. The results of CSVE are over ten seeds. Results
+of IQL are from Table 3 in [21] and results of other algorithms are from Table 4 in [10]."
+DISCUSSION ON IMPLEMENTATION CHOICES,0.2616033755274262,"AWAC
+BC
+BEAR
+UWAC
+CQL
+CQL-AWR
+IQL
+PBRL
+CSVE Human"
+DISCUSSION ON IMPLEMENTATION CHOICES,0.26371308016877637,"Pen
+18.7
+34.4
+-1.0
+10.1 ± 3.2
+37.5
+8.4 ± 7.1
+71.5
+35.4 ± 3.3
+106.2 ±5.0
+Hammer
+-1.8
+1.5
+0.3
+1.2 ± 0.7
+4.4
+0.3 ± 0.0
+1.4
+0.4 ± 0.3
+3.5 ± 2.6
+Door
+-1.8
+0.5
+−0.3
+0.4 ± 0.2
+9.9
+3.5 ± 1.8
+4.3
+0.1 ± 0.0
+2.8 ± 2.4
+Relocate
+-0.1
+0.0
+-0.3
+0.0 ± 0.0
+0.2
+0.1 ± 0.0
+0.1
+0.0 ± 0.0
+0.1 ± 0.0"
+DISCUSSION ON IMPLEMENTATION CHOICES,0.26582278481012656,Cloned
+DISCUSSION ON IMPLEMENTATION CHOICES,0.2679324894514768,"Pen
+27.2
+56.9
+26.5
+23.0 ± 6.9
+39.2
+29.3 ± 7.1
+37.3
+74.9 ± 9.8
+54.5 ± 5.4
+Hammer
+-1.8
+0.8
+0.3
+0.4 ± 0.0
+2.1
+0.31 ± 0.06
+2.1
+0.8 ± 0.5
+0.5 ± 0.2
+Door
+-2.1
+-0.1
+−0.1
+0.0 ± 0.0
+0.4
+−0.2 ± 0.1
+1.6
+4.6 ± 4.8
+1.2 ± 1.0
+Relocate
+-0.4
+-0.1
+-0.3
+−0.3 ± 0.2
+-0.1
+−0.3 ± 0.0
+0.0
+−0.1 ± 0.0
+−0.3 ± 0.0"
+DISCUSSION ON IMPLEMENTATION CHOICES,0.270042194092827,Expert
+DISCUSSION ON IMPLEMENTATION CHOICES,0.2721518987341772,"Pen
+60.9
+85.1
+105.9
+98.2 ± 9.1
+107.0
+47.1 ± 6.8
+117.2
+135.7 ± 3.4
+144.0 ± 9.4
+Hammer
+31.0
+125.6
+127.3
+107.7 ± 21.7
+86.7
+0.2 ± 0.0
+124.1
+127.5 ± 0.2
+126.5 ± 0.3
+Door
+98.1
+34.9
+103.4
+104.7 ± 0.4
+101.5
+85.0 ± 15.9
+105.2
+95.7 ± 12.2
+104.2 ± 0.8
+Relocate
+49.0
+101.3
+98.6
+105.5 ± 3.2
+95.0
+7.2 ± 12.5
+105.9
+84.5 ± 12.2
+102.9 ± 0.9
+Average
+23.1
+36.7
+38.4
+37.6
+40.3
+15.1
+47.6
+46.6
+53.8"
+EXPERIMENTS,0.2742616033755274,"5
+Experiments"
+EXPERIMENTS,0.27637130801687765,"This section evaluates the effectiveness of our proposed CSVE algorithm for conservative value
+estimation in offline RL. In addition, we aim to compare the performance of CSVE with state-of-the-
+art (SOTA) algorithms. To achieve this, we conduct experimental evaluations on a variety of classic
+continuous control tasks of Gym[7] and Adroit[8] in the D4RL[9] benchmark."
+EXPERIMENTS,0.27848101265822783,"Our compared baselines include: (1) CQL[4] and its variants, CQL-AWR (Appendix D.2) which uses
+AWR with extra in-sample exploration as policy extractor, COMBO[6] which extends CQL with
+model-based rollouts; (2) AWR variants, including AWAC[12] which is a special case of our algorithm
+with no value penalization (i.e., d = du in Eq. 2) and exploration on OOD states, IQL[21] which
+adopts expectile-based conservative value estimation; (3) PBRL[10], a strong algorithm in offline
+RL, but is quite costly on computation since it uses the ensemble of hundreds of sub-models; (4)
+other SOTA algorithms with public performance results or high-quality open source implementations,
+including TD3-BC[22], UWAC[24] and BEAR[25]). Comparing with CQL variants allows us to
+investigate the advantages of conservative estimation on state values over Q values. By comparing
+with AWR variants, we distinguish the performance contribution of CSVE from the AWR policy
+extraction used in our implementation."
+OVERALL PERFORMANCE,0.2805907172995781,"5.1
+Overall Performance"
+OVERALL PERFORMANCE,0.28270042194092826,"Evaluation on the Gym Control Tasks. Our method, CSVE, was trained for 1 million steps and
+evaluated. The results are shown in Table 1.Compared to CQL, CSVE outperforms it in 11 out of
+15 tasks, with similar performance on the remaining tasks. Additionally, CSVE shows a consistent
+advantage on datasets that were generated by following random or sub-optimal policies (random and
+medium). The CQL-AWR method showed slight improvement in some cases, but still underperforms
+compared to CSVE. When compared to COMBO, CSVE performs better in 7 out of 12 tasks and
+similarly or slightly worse on the remaining tasks, which highlights the effectiveness of our method’s
+better bounds on V. Our method has a clear adcantage in extracting the best policy on medium and
+medium-expert tasks. Overall, our results provide empirical evidence that using conservative value
+estimation on states, rather than Q, leads to improved performance in offline RL. CSVE outperforms
+AWAC in 9 out of 15 tasks, demonstrating the effectiveness of our approach in exploring beyond
+the behavior policy. Additionally, our method excels in extracting the optimal policy on data with
+mixed policies (medium-expert) where AWAC falls short. In comparison to IQL, our method achieves
+higher scores in 7 out of 9 tasks and maintains comparable performance in the remaining tasks.
+Furthermore, despite having a significantly lower model capacity and computation cost, CSVE
+outperforms TD3-BC and is on par with PBRL. These results highlight the effectiveness of our
+conservative value estimation approach."
+OVERALL PERFORMANCE,0.2848101265822785,"Evaluation on the Adroit Tasks. In Table 2, we report the final evaluation results after training
+0.1 million steps. As shown, our method outperforms IQL in 8 out of 12 tasks, and is competitive
+with other algorithms on expert datasets. Additionally, we note that CSVE is the only method that"
+OVERALL PERFORMANCE,0.2869198312236287,"can learn an effective policy on the human dataset for the Pen task, while maintaining medium
+performance on the cloned dataset. Overall, our results empirically support the effectiveness of our
+proposed tighter conservative value estimation in improving offline RL performance."
+ABLATION STUDY,0.2890295358649789,"5.2
+Ablation Study"
+ABLATION STUDY,0.2911392405063291,"Effect of Exploration on Near States. We analyze the impact of varying the factor λ in Eq. 10,
+which controls the intensity on such exploration. We investigated λ values of {0.0, 0.1, 0.5, 1.0} in
+the medium tasks, fixing β = 0.1. The results are plotted in Fig. 1. As shown in the upper figures, λ
+has an obvious effect on policy performance and variances during training. With increasing λ from
+0, the converged performance gets better in general. However, when the value of λ becomes too
+large (e.g., λ = 3 for hopper and walker2d), the performance may degrade or even collapse. We
+further investigated the Lπ loss as depicted in the bottom figures of Eq. 9, finding that larger λ values
+negatively impact Lπ; however, once Lπ converges to a reasonable low value, larger λ values lead to
+performance improvement."
+ABLATION STUDY,0.29324894514767935,"0
+200
+400
+600
+800
+1000
+grandient steps(thousands) 0 10 20 30 40 50 score"
+ABLATION STUDY,0.29535864978902954,halfcheetah-medium
+ABLATION STUDY,0.2974683544303797,"0.0
+0.1
+0.5
+1.0
+3.0"
+ABLATION STUDY,0.29957805907172996,"0
+200
+400
+600
+800
+1000
+grandient steps(thousands) 0 20 40 60 80 100"
+ABLATION STUDY,0.30168776371308015,hopper-medium
+ABLATION STUDY,0.3037974683544304,"0.0
+0.1
+0.5
+1.0
+3.0"
+ABLATION STUDY,0.3059071729957806,"0
+200
+400
+600
+800
+1000
+grandient steps(thousands) 0 20 40 60 80"
+ABLATION STUDY,0.3080168776371308,walker2d-medium
+ABLATION STUDY,0.310126582278481,"0.0
+0.1
+0.5
+1.0
+3.0"
+ABLATION STUDY,0.31223628691983124,"0
+200
+400
+600
+800
+1000
+grandient steps(thousands) 0 50 100 150 200 250 300 350 loss"
+ABLATION STUDY,0.3143459915611814,halfcheetah-medium
+ABLATION STUDY,0.31645569620253167,"0.0
+0.1
+0.5
+1.0
+3.0"
+ABLATION STUDY,0.31856540084388185,(*1e3)
+ABLATION STUDY,0.3206751054852321,"0
+200
+400
+600
+800
+1000
+grandient steps(thousands) 0 200 400 600 800"
+ABLATION STUDY,0.3227848101265823,hopper-medium
+ABLATION STUDY,0.32489451476793246,"0.0
+0.1
+0.5
+1.0
+3.0"
+ABLATION STUDY,0.3270042194092827,(*1e3)
+ABLATION STUDY,0.3291139240506329,"0
+200
+400
+600
+800
+1000
+grandient steps(thousands) 60 40 20 0 20 40"
+ABLATION STUDY,0.33122362869198313,walker2d-medium
+ABLATION STUDY,0.3333333333333333,"0.0
+0.1
+0.5
+1.0
+3.0"
+ABLATION STUDY,0.33544303797468356,"Figure 1: Effect of λ to performance scores (upper figures) and Lπ losses (bottom figures) in Eq. 9
+on medium tasks."
+ABLATION STUDY,0.33755274261603374,"Effect of In-sample Policy Optimization. We examined the impact of varying the factor β in Eq. 9
+on the balance between behavior cloning and in-sample policy optimization. We tested different β
+values on mujoco medium datasets, as shown in Fig.2. The results indicate that β has a significant
+effect on the policy performance during training. Based on our findings, a value of β = 3.0 was
+found to be suitable for medium datasets. Additionally, in our implementation, we use β = 3.0 for
+random and medium tasks, and β = 0.1 for medium-replay, medium-expert, and expert datasets.
+More details can be found in the ablation study in the appendix."
+RELATED WORK,0.339662447257384,"6
+Related work"
+RELATED WORK,0.34177215189873417,"The main idea behind offline RL algorithms is to incorporate conservatism or regularization into the
+online RL algorithms. Here, we briefly review prior work and compare it to our approach."
+RELATED WORK,0.3438818565400844,"Conservative Value Estimation: Prior offline RL algorithms regularize the learning policy to
+be close to the data or to an explicitly estimated behavior policy. and penalize the exploration"
+RELATED WORK,0.3459915611814346,"0
+200
+400
+600
+800
+1000
+grandient steps(thousands) 0 10 20 30 40 50 score"
+RELATED WORK,0.34810126582278483,"0.1
+3.0
+10.0"
+RELATED WORK,0.350210970464135,Halfcheetah-medium-v2
+RELATED WORK,0.35232067510548526,"0
+200
+400
+600
+800
+1000
+grandient steps(thousands) 0 20 40 60 80"
+RELATED WORK,0.35443037974683544,"0.1
+3.0
+10.0"
+RELATED WORK,0.35654008438818563,Hopper-medium-v2
+RELATED WORK,0.35864978902953587,"0
+200
+400
+600
+800
+1000
+grandient steps(thousands) 10 20 30 40 50 60 70 80"
+RELATED WORK,0.36075949367088606,"0.1
+3.0
+10.0"
+RELATED WORK,0.3628691983122363,Walker2d-medium-v2
+RELATED WORK,0.3649789029535865,Figure 2: Effect of β to performance scores on medium tasks.
+RELATED WORK,0.3670886075949367,"ofthe OOD region, via distribution correction estimation [26, 27], policy constraints with support
+matching [11] and distributional matching [1, 25], applying policy divergence based penalty on
+Q-functions [28, 29] or uncertainty-based penalty [30] on Q-functions and conservative Q-function
+estimation [4]. Besides, model-based algorithms [15] directly estimate dynamics uncertainty and
+translate it into reward penalty. Different from this prior work that imposes conservatism on state-
+action pairs or actions, ours directly does such conservative estimation on states and requires no
+explicit uncertainty quantification."
+RELATED WORK,0.3691983122362869,"In-Sample Algorithms: AWR [18] updates policy constrained on strictly in-sample states and
+actions, to avoid extrapolation on out-of-support points. IQL[21] uses expectile-based regression
+to do value estimation and AWR for its policy updates. AWAC[12], whose actor is AWR, is an
+actor-critic algorithm to accelerate online RL with offline data. The major drawback of AWR method
+when used for offline RL is that the in-sample policy learning limits the final performance."
+RELATED WORK,0.37130801687763715,"Model-Based Algorithms: Model-based offline RL learns the dynamics model from the static dataset
+and uses it to quantify uncertainty [15], data augmentation [6] with roll-outs, or planning [16, 31].
+Such methods typically rely on wide data coverage when planning and data augmentation with
+roll-outs, and low model estimation error when estimating uncertainty, which is difficult to satisfy in
+reality and leads to policy instability. Instead, we use the model to sample the next-step states only
+reachable from data, which has no such strict requirements on data coverage or model bias."
+RELATED WORK,0.37341772151898733,"Theoretical Results: Our theoretical results are derived from conservative Q-value estimation (CQL)
+and safe policy improvement [32]. Compared to offline policy evaluation[33], which aims to provide
+a better estimation of the value function, we focus on providing a better lower bound. Additionally,
+hen the dataset is augmented with model-based roll-outs, COMBO [6] provides a more conservative
+yet tighter value estimation than CQL. CSVE achives the same lower bounds as COMBO but under
+more general state distributions."
+CONCLUSIONS,0.3755274261603376,"7
+Conclusions"
+CONCLUSIONS,0.37763713080168776,"In this paper, we propose CSVE, a new approach for offline RL based on conservative value estimation
+on states. We demonstrated how its theoretical results can lead to more effective algorithms. In
+particular, we develop a practical actor-critic algorithm, in which the critic achieves conservative
+state value estimation by incorporating the penalty of the model predictive next-states into Bellman
+iterations, and the actor does the advantage-weighted policy updates enhanced via model-based state
+exploration. Experimental evaluation shows that our method performs better than alternative methods
+based on conservative Q-function estimation and is competitive among the SOTA methods, thereby
+validating our theoretical analysis. Moving forward, we aim to delve deeper into designing more
+powerful algorithms grounded in conservative state value estimation."
+REFERENCES,0.379746835443038,References
+REFERENCES,0.3818565400843882,"[1] Scott Fujimoto, David Meger, and Doina Precup. Off-policy deep reinforcement learning
+without exploration. In Kamalika Chaudhuri and Ruslan Salakhutdinov, editors, Proceedings of
+the 36th International Conference on Machine Learning, volume 97 of Proceedings of Machine
+Learning Research, pages 2052–2062. PMLR, 09–15 Jun 2019."
+REFERENCES,0.38396624472573837,"[2] Sascha Lange, Thomas Gabel, and Martin Riedmiller. Batch reinforcement learning. In
+Reinforcement learning, pages 45–73. Springer, 2012."
+REFERENCES,0.3860759493670886,"[3] Laixi Shi, Gen Li, Yuting Wei, Yuxin Chen, and Yuejie Chi. Pessimistic q-learning for offline
+reinforcement learning: Towards optimal sample complexity. In Kamalika Chaudhuri, Stefanie
+Jegelka, Le Song, Csaba Szepesvari, Gang Niu, and Sivan Sabato, editors, Proceedings of the
+39th International Conference on Machine Learning, volume 162 of Proceedings of Machine
+Learning Research, pages 19967–20025. PMLR, 17–23 Jul 2022."
+REFERENCES,0.3881856540084388,"[4] Aviral Kumar, Aurick Zhou, George Tucker, and Sergey Levine. Conservative q-learning for
+offline reinforcement learning. Advances in Neural Information Processing Systems, 33:1179–
+1191, 2020."
+REFERENCES,0.39029535864978904,"[5] Jacob Buckman, Carles Gelada, and Marc G Bellemare. The importance of pessimism in
+fixed-dataset policy optimization. In International Conference on Learning Representations,
+2020."
+REFERENCES,0.3924050632911392,"[6] Tianhe Yu, Aviral Kumar, Rafael Rafailov, Aravind Rajeswaran, Sergey Levine, and Chelsea
+Finn. Combo: Conservative offline model-based policy optimization. Advances in neural
+information processing systems, 34:28954–28967, 2021."
+REFERENCES,0.39451476793248946,"[7] Greg Brockman, Vicki Cheung, Ludwig Pettersson, Jonas Schneider, John Schulman, Jie Tang,
+and Wojciech Zaremba. Openai gym. arXiv preprint arXiv:1606.01540, 2016."
+REFERENCES,0.39662447257383965,"[8] Aravind Rajeswaran, Vikash Kumar, Abhishek Gupta, Giulia Vezzani, John Schulman, Emanuel
+Todorov, and Sergey Levine. Learning complex dexterous manipulation with deep reinforcement
+learning and demonstrations. arXiv preprint arXiv:1709.10087, 2017."
+REFERENCES,0.3987341772151899,"[9] Justin Fu, Aviral Kumar, Ofir Nachum, George Tucker, and Sergey Levine. D4rl: Datasets for
+deep data-driven reinforcement learning. arXiv preprint arXiv:2004.07219, 2020."
+REFERENCES,0.4008438818565401,"[10] Chenjia Bai, Lingxiao Wang, Zhuoran Yang, Zhi-Hong Deng, Animesh Garg, Peng Liu, and
+Zhaoran Wang. Pessimistic bootstrapping for uncertainty-driven offline reinforcement learning.
+In International Conference on Learning Representations, 2021."
+REFERENCES,0.4029535864978903,"[11] Yifan Wu, George Tucker, and Ofir Nachum. Behavior regularized offline reinforcement
+learning. arXiv preprint arXiv:1911.11361, 2019."
+REFERENCES,0.4050632911392405,"[12] Ashvin Nair, Abhishek Gupta, Murtaza Dalal, and Sergey Levine. Awac: Accelerating online
+reinforcement learning with offline datasets, 2020."
+REFERENCES,0.40717299578059074,"[13] Sergey Levine, Aviral Kumar, George Tucker, and Justin Fu. Offline reinforcement learning:
+Tutorial, review, and perspectives on open problems, 2020."
+REFERENCES,0.4092827004219409,"[14] Xue Bin Peng, Aviral Kumar, Grace Zhang, and Sergey Levine. Advantage-weighted regression:
+Simple and scalable off-policy reinforcement learning. arXiv preprint arXiv:1910.00177, 2019."
+REFERENCES,0.41139240506329117,"[15] Tianhe Yu, Garrett Thomas, Lantao Yu, Stefano Ermon, James Y Zou, Sergey Levine, Chelsea
+Finn, and Tengyu Ma. Mopo: Model-based offline policy optimization. Advances in Neural
+Information Processing Systems, 33:14129–14142, 2020."
+REFERENCES,0.41350210970464135,"[16] Rahul Kidambi, Aravind Rajeswaran, Praneeth Netrapalli, and Thorsten Joachims. Morel:
+Model-based offline reinforcement learning. Advances in neural information processing systems,
+33:21810–21823, 2020."
+REFERENCES,0.41561181434599154,"[17] Michael Janner, Justin Fu, Marvin Zhang, and Sergey Levine. When to trust your model:
+Model-based policy optimization. Advances in Neural Information Processing Systems, 32,
+2019."
+REFERENCES,0.4177215189873418,"[18] Xue Bin Peng, Aviral Kumar, Grace Zhang, and Sergey Levine. Advantage-weighted regression:
+Simple and scalable off-policy reinforcement learning. CoRR, abs/1910.00177, 2019."
+REFERENCES,0.41983122362869196,"[19] Jonathon Shlens. Notes on kullback-leibler divergence and likelihood. CoRR, abs/1404.2000,
+2014."
+REFERENCES,0.4219409282700422,"[20] Danijar Hafner, Timothy Lillicrap, Jimmy Ba, and Mohammad Norouzi. Dream to control:
+Learning behaviors by latent imagination. arXiv preprint arXiv:1912.01603, 2019."
+REFERENCES,0.4240506329113924,"[21] Ilya Kostrikov, Ashvin Nair, and Sergey Levine. Offline reinforcement learning with implicit
+q-learning. In International Conference on Learning Representations, 2021."
+REFERENCES,0.42616033755274263,"[22] Scott Fujimoto and Shixiang Shane Gu. A minimalist approach to offline reinforcement learning.
+Advances in neural information processing systems, 34:20132–20145, 2021."
+REFERENCES,0.4282700421940928,"[23] Marc Rigter, Bruno Lacerda, and Nick Hawes. Rambo-rl: Robust adversarial model-based
+offline reinforcement learning. Advances in Neural Information Processing Systems, 2022."
+REFERENCES,0.43037974683544306,"[24] Yue Wu, Shuangfei Zhai, Nitish Srivastava, Joshua Susskind, Jian Zhang, Ruslan Salakhutdinov,
+and Hanlin Goh. Uncertainty weighted actor-critic for offline reinforcement learning. arXiv
+preprint arXiv:2105.08140, 2021."
+REFERENCES,0.43248945147679324,"[25] Aviral Kumar, Justin Fu, Matthew Soh, George Tucker, and Sergey Levine. Stabilizing off-
+policy q-learning via bootstrapping error reduction. Advances in Neural Information Processing
+Systems, 32, 2019."
+REFERENCES,0.4345991561181435,"[26] Bo Dai, Ofir Nachum, Yinlam Chow, Lihong Li, Csaba Szepesv´ari, and Dale Schuurmans.
+Coindice: Off-policy confidence interval estimation. Advances in neural information processing
+systems, 33:9398–9411, 2020."
+REFERENCES,0.43670886075949367,"[27] Mengjiao Yang, Ofir Nachum, Bo Dai, Lihong Li, and Dale Schuurmans. Off-policy evaluation
+via the regularized lagrangian. Advances in Neural Information Processing Systems, 33:6551–
+6561, 2020."
+REFERENCES,0.4388185654008439,"[28] Ilya Kostrikov, Rob Fergus, Jonathan Tompson, and Ofir Nachum. Offline reinforcement
+learning with fisher divergence critic regularization. In International Conference on Machine
+Learning, pages 5774–5783. PMLR, 2021."
+REFERENCES,0.4409282700421941,"[29] Ziyu Wang, Alexander Novikov, Konrad Zolna, Josh S Merel, Jost Tobias Springenberg, Scott E
+Reed, Bobak Shahriari, Noah Siegel, Caglar Gulcehre, Nicolas Heess, et al. Critic regularized
+regression. Advances in Neural Information Processing Systems, 33:7768–7778, 2020."
+REFERENCES,0.4430379746835443,"[30] Rishabh Agarwal, Dale Schuurmans, and Mohammad Norouzi. An optimistic perspective
+on offline reinforcement learning. In International Conference on Machine Learning, pages
+104–114. PMLR, 2020."
+REFERENCES,0.4451476793248945,"[31] Xiong-Hui Chen, Yang Yu, Qingyang Li, Fan-Ming Luo, Zhiwei Qin, Wenjie Shang, and
+Jieping Ye. Offline model-based adaptable policy learning. Advances in Neural Information
+Processing Systems, 34:8432–8443, 2021."
+REFERENCES,0.4472573839662447,"[32] Romain Laroche, Paul Trichelair, and Remi Tachet Des Combes. Safe policy improvement with
+baseline bootstrapping. In International Conference on Machine Learning, pages 3652–3661.
+PMLR, 2019."
+REFERENCES,0.44936708860759494,"[33] Carles Gelada and Marc G Bellemare. Off-policy deep reinforcement learning by bootstrapping
+the covariate shift. In Proceedings of the AAAI Conference on Artificial Intelligence, volume 33,
+pages 3647–3655, 2019."
+REFERENCES,0.45147679324894513,"[34] Takuma Seno and Michita Imai. d3rlpy: An offline deep reinforcement learning library. arXiv
+preprint arXiv:2111.03788, 2021."
+REFERENCES,0.45358649789029537,"[35] Yuwei Fu, Di Wu, and Benoit Boulet. A closer look at offline rl agents. In Advances in Neural
+Information Processing Systems, 2022."
+REFERENCES,0.45569620253164556,"A
+Proofs"
+REFERENCES,0.4578059071729958,We first redefine notation for clarity and then provide the proofs of the results from the main paper.
+REFERENCES,0.459915611814346,"Notation. Let k ∈N denotes an iteration of policy evaluation(in Section 3.2). V k denotes the
+true, tabular (or functional) V-function iterate in the MDP. ˆV k denotes the approximate tabular (or
+functional) V-function iterate."
+REFERENCES,0.4620253164556962,The empirical Bellman operator is defined as:
+REFERENCES,0.4641350210970464,"( ˆBπ ˆV k)(s) = Ea∼π(a|s)ˆr(s, a) + γ
+X"
+REFERENCES,0.46624472573839665,"s′
+Ea∼π(a|s) ˆP(s′|s, a)[ ˆV k(s′)]
+(11)"
+REFERENCES,0.46835443037974683,"where ˆr(s, a) is the empirical average reward derived from the dataset when performing action a at
+state s . The true Bellman operator is given by:"
+REFERENCES,0.4704641350210971,"(BπV k)(s) = Ea∼π(a|s)r(s, a) + γ
+X"
+REFERENCES,0.47257383966244726,"s′
+Ea∼π(a|s)P(s′|s, a)[V k(s′)]
+(12)"
+REFERENCES,0.47468354430379744,"Now we first prove that the iteration in Eq.2 has a fixed point. Assume the state value function is
+lower bounded, i.e., V (s) ≥C ∀s ∈S, then Eq.2 can always be solved with Eq.3. Thus, we only
+need to investigate the iteration in Eq.3."
+REFERENCES,0.4767932489451477,"Defining this iteration as a function operator T π on V and supposing that supp d ⊆supp du, it’s
+evident that the operator T π displays a γ-contraction within L∞norm where γ is the discounting
+factor."
+REFERENCES,0.47890295358649787,"Proof of Lemma 3.1: Let V and V ′ be any two state value functions with the same support, i.e.,
+suppV = suppV ′."
+REFERENCES,0.4810126582278481,"|(T πV −T πV ′)(s)| =
+( ˆ
+BπV (s) −α[ d(s)"
+REFERENCES,0.4831223628691983,"du(s) −1]) −( ˆ
+BπV ′(s) −α[ d(s)"
+REFERENCES,0.48523206751054854,du(s) −1])
+REFERENCES,0.4873417721518987,"=
+ ˆ
+BπV (s) −ˆ
+BπV ′(s)"
+REFERENCES,0.48945147679324896,"=|(Ea∼π(a|s)ˆr(s, a) + γEa∼π(a|s)
+X"
+REFERENCES,0.49156118143459915,"s′
+ˆP(s′|s, a)V (s′))"
+REFERENCES,0.4936708860759494,"−(Ea∼π(a|s)ˆr(s, a) + γEa∼π(a|s)
+X"
+REFERENCES,0.4957805907172996,"s′
+ˆP(s′|s, a)V ′(s′))| =γ"
+REFERENCES,0.4978902953586498,"Ea∼π(a|s)
+X"
+REFERENCES,0.5,"s′
+ˆP(s′|s, a)[V (s′) −V ′(s′)] "
+REFERENCES,0.5021097046413502,"||T πV −T πV ′||∞= max
+s
+|(T πV −T πV ′)(s)|"
+REFERENCES,0.5042194092827004,"= max
+s
+γ"
+REFERENCES,0.5063291139240507,"Ea∼π(a|s)
+X"
+REFERENCES,0.5084388185654009,"s′
+ˆP(s′|s, a)[V (s′) −V ′(s′)] "
+REFERENCES,0.510548523206751,"≤γEa∼π(a|s)
+X"
+REFERENCES,0.5126582278481012,"s′
+ˆP(s′|s, a) max
+s′′ |V (s′′) −V ′(s′′)|"
+REFERENCES,0.5147679324894515,"=γ max
+s′′ |V (s′′) −V ′(s′′)|"
+REFERENCES,0.5168776371308017,=γ||(V −V ′)||∞
+REFERENCES,0.5189873417721519,"We provide a bound on the difference between the empirical Bellman operator and the true Bellman
+operator. Following previous work [4], we make the following assumptions. Let P π be the transition
+matrix associated with the policy, specifically, P πV (s) = Ea′∼π(a′|s′),s′∼P (s′|s,a′)[V (s′)]"
+REFERENCES,0.5210970464135021,"Assumption A.1. ∀s, a ∈M, the relationship below hold with at least a (1 −δ) (δ ∈(0, 1))
+probability,"
+REFERENCES,0.5232067510548524,"|r −r(s, a)| ≤
+Cr,δ
+p"
+REFERENCES,0.5253164556962026,"|D(s, a)|
+, || ˆP(s′|s, a) −P(s′|s, a)||1 ≤
+CP,δ
+p"
+REFERENCES,0.5274261603375527,"|D(s, a)|
+(13)"
+REFERENCES,0.5295358649789029,"Given this assumption, the absolute difference between the empirical Bellman operator and the true
+one can be deduced as follows:"
+REFERENCES,0.5316455696202531,"|( ˆBπ) ˆV k −(Bπ) ˆV k)| = Ea∼π(a|s)|r −r(s, a) + γ
+X"
+REFERENCES,0.5337552742616034,"s′
+Ea′∼π(a′|s′)( ˆP(s′|s, a) −P(s′|s, a))[ ˆV k(s′)]| (14)"
+REFERENCES,0.5358649789029536,"≤Ea∼π(a|s)|r −r(s, a)| + γ|
+X"
+REFERENCES,0.5379746835443038,"s′
+Ea′∼π(a′|s′)( ˆP(s′|s, a′) −P(s′|s, a′))[ ˆV k(s′)]| (15)"
+REFERENCES,0.540084388185654,"≤Ea∼π(a|s)
+Cr,δ + γCP,δ2Rmax/(1 −γ)
+p"
+REFERENCES,0.5421940928270043,"|D(s, a)|
+(16)"
+REFERENCES,0.5443037974683544,"The error in estimation due to sampling can therefore be bounded by a constant, dependent on Cr,δ
+and Ct,δ. We define this constant as Cr,T,δ."
+REFERENCES,0.5464135021097046,Thus we obtain:
+REFERENCES,0.5485232067510548,"∀V, s ∈D, | ˆBπV (s) −BπV (s)| ≤Ea∼π(a|s)
+Cr,t,δ
+(1 −γ)
+p"
+REFERENCES,0.5506329113924051,"|D(s, a)|
+(17)"
+REFERENCES,0.5527426160337553,"Next we provide an important lemma.
+Lemma A.2. (Interpolation Lemma) For any f ∈[0, 1], and any given distribution ρ(s), let df be
+an f-interpolation of ρ and D, i.e.,df(s) := fd(s) + (1 −f)ρ(s), let v(ρ, f) := Es∼ρ(s)[ ρ(s)−d(s)"
+REFERENCES,0.5548523206751055,"df (s)
+],
+then v(ρ, f) satisfies v(ρ, f) ≥0."
+REFERENCES,0.5569620253164557,"The proof can be found in [6]. By setting f as 1, we have Es∼ρ(s)[ ρ(s)−d(s)"
+REFERENCES,0.5590717299578059,"d(s)
+] > 0."
+REFERENCES,0.5611814345991561,"Proof of Theorem 3.2: The V function of approximate dynamic programming in iteration k can be
+obtained as:
+ˆV k+1(s) = ˆ
+Bπ ˆV k(s) −α[ d(s)"
+REFERENCES,0.5632911392405063,"du(s) −1] ∀s, k
+(18)"
+REFERENCES,0.5654008438818565,The fixed point:
+REFERENCES,0.5675105485232067,ˆV π(s) = ˆBπ ˆV π(s) −α[ d(s)
+REFERENCES,0.569620253164557,"du(s) −1] ≤Bπ ˆV π(s) + Ea∼π(a|s)
+Cr,t,δRmax
+(1 −γ)
+p"
+REFERENCES,0.5717299578059072,"|D(s, a)|
+−α[ d(s)"
+REFERENCES,0.5738396624472574,du(s) −1]
+REFERENCES,0.5759493670886076,"(19)
+Thus we obtain:"
+REFERENCES,0.5780590717299579,"ˆV π(s) ≤V π(s) + (I −γP π)−1Ea∼π(a|s)
+Cr,t,δRmax
+(1 −γ)
+p"
+REFERENCES,0.580168776371308,"|D(s, a)|
+−α(I −γP π)−1[ d(s)"
+REFERENCES,0.5822784810126582,du(s) −1] (20)
+REFERENCES,0.5843881856540084,",
+where
+P π
+is
+the
+transition
+matrix
+coupled
+with
+the
+policy
+π
+and
+P πV (s)
+=
+Ea′∼π(a′|s′)s′∼P (s′|s,a′)[V (s′)]."
+REFERENCES,0.5864978902953587,Then the expectation of V π(s) under distribution d(s) satisfies:
+REFERENCES,0.5886075949367089,"Es∼d(s) ˆV π(s) ≤Es∼d(s)(V π(s)) + Es∼d(s)(I −γP π)−1Ea∼π(a|s)
+Cr,t,δRmax
+(1 −γ)
+p"
+REFERENCES,0.5907172995780591,"|D(s, a)|"
+REFERENCES,0.5928270042194093,−α Es∼d(s)(I −γP π)−1[ d(s)
+REFERENCES,0.5949367088607594,"du(s) −1])
+|
+{z
+}
+>0 (21)"
+REFERENCES,0.5970464135021097,"When α ≥
+Es∼d(s)Ea∼π(a|s)
+Cr,t,δRmax"
+REFERENCES,0.5991561181434599,(1−γ)√
+REFERENCES,0.6012658227848101,"|D(s,a)|
+Es∼d(s)[ d(s)"
+REFERENCES,0.6033755274261603,"du(s) −1])
+, Es∼d(s) ˆV π(s) ≤Es∼d(s)(V π(s))."
+REFERENCES,0.6054852320675106,Proof of Theorem 3.3: The expectation of V π(s) under distribution d(s) satisfies:
+REFERENCES,0.6075949367088608,"Es∼du(s) ˆV π(s) ≤Es∼du(s)(V π(s)) + Es∼du(s)(I −γP π)−1Ea∼π(a|s)
+Cr,t,δRmax
+(1 −γ)
+p"
+REFERENCES,0.609704641350211,"|D(s, a)|"
+REFERENCES,0.6118143459915611,−αEs∼du(s)(I −γP π)−1[ d(s)
+REFERENCES,0.6139240506329114,"du(s) −1])
+(22)"
+REFERENCES,0.6160337552742616,"Noticed that the last term:
+X"
+REFERENCES,0.6181434599156118,"s∼du(s)
+(df(s)"
+REFERENCES,0.620253164556962,"du(s) −1) =
+X"
+REFERENCES,0.6223628691983122,"s
+du(s)(df(s)"
+REFERENCES,0.6244725738396625,"du(s) −1) =
+X"
+REFERENCES,0.6265822784810127,"s
+df(s) −
+X"
+REFERENCES,0.6286919831223629,"s
+du(s) = 0
+(23)"
+REFERENCES,0.630801687763713,We obtain that:
+REFERENCES,0.6329113924050633,"Es∼du(s) ˆV π(s) ≤Es∼du(s)(V π(s)) + Es∼du(s)(I −γP π)−1Ea∼π(a|s)
+Cr,t,δRmax
+(1 −γ)
+p"
+REFERENCES,0.6350210970464135,"|D(s, a)|
+(24)"
+REFERENCES,0.6371308016877637,Proof of Theorem 3.4: Recall that the expression of the V-function iterate is given by:
+REFERENCES,0.6392405063291139,ˆV k+1(s) = Bπk ˆV k(s) −α[ d(s)
+REFERENCES,0.6413502109704642,"du(s) −1]∀s, k
+(25)"
+REFERENCES,0.6434599156118144,Now the expectation of V π(s) under distribution du(s) is given by:
+REFERENCES,0.6455696202531646,Es∼du(s) ˆV k+1(s) = Es∼du(s)
+REFERENCES,0.6476793248945147,"
+Bπk ˆV k(s) −α[ d(s)"
+REFERENCES,0.6497890295358649,"du(s) −1]
+
+= Es∼du(s)Bπk ˆV k(s)
+(26)"
+REFERENCES,0.6518987341772152,The expectation of V π(s) under distribution d(s) is given by:
+REFERENCES,0.6540084388185654,Es∼d(s) ˆV k+1(s) = Es∼d(s)Bπk ˆV k(s)−α[ d(s)
+REFERENCES,0.6561181434599156,du(s) −1] = Es∼d(s)Bπk ˆV k(s)−αEs∼d(s)[ d(s)
+REFERENCES,0.6582278481012658,du(s) −1]
+REFERENCES,0.6603375527426161,"(27)
+Thus we can show that:"
+REFERENCES,0.6624472573839663,Es∼du(s) ˆV k+1(s) −Es∼d(s) ˆV k+1(s) = Es∼du(s)Bπk ˆV k(s) −Es∼d(s)Bπk ˆV k(s) + αEs∼d(s)[ d(s)
+REFERENCES,0.6645569620253164,du(s) −1]
+REFERENCES,0.6666666666666666,= Es∼du(s)V k+1(s) −Es∼d(s)V k+1(s) −Es∼d(s)[Bπk( ˆV k −V k)]
+REFERENCES,0.6687763713080169,+ Es∼du(s)[Bπk( ˆV k −V k)] + αEs∼d(s)[ d(s)
+REFERENCES,0.6708860759493671,du(s) −1] (28)
+REFERENCES,0.6729957805907173,By choosing α:
+REFERENCES,0.6751054852320675,α > Es∼d(s)[Bπk( ˆV k −V k)] −Es∼du(s)[Bπk( ˆV k −V k)]
+REFERENCES,0.6772151898734177,Es∼d(s)[ d(s)
+REFERENCES,0.679324894514768,"du(s) −1]
+(29)"
+REFERENCES,0.6814345991561181,We have Es∼du(s) ˆV k+1(s) −Es∼d(s) ˆV k+1(s) > Es∼du(s)V k+1(s) −Es∼d(s)V k+1(s) hold.
+REFERENCES,0.6835443037974683,"Proof of Theorem 3.5: ˆV is obtained by solving the recursive Bellman fixed point equation in the
+empirical MDP, with an altered reward, r(s, a) −α[ d(s)"
+REFERENCES,0.6856540084388185,"du(s) −1], hence the optimal policy π∗(a|s)
+obtained by optimizing the value under Eq. 3.5."
+REFERENCES,0.6877637130801688,"Proof of Theorem 3.6: The proof of this statement is divided into two parts. We first relates the
+return of π∗in the empirical MDP ˆ
+M with the return of πβ , we can get:"
+REFERENCES,0.689873417721519,"J(π∗, ˆ
+M) −α
+1
+1 −γ Es∼dπ∗
+ˆ
+M (s)[ d(s)"
+REFERENCES,0.6919831223628692,"du(s) −1] ≥J(πβ, ˆ
+M) −0 = J(πβ, ˆ
+M)
+(30)"
+REFERENCES,0.6940928270042194,Algorithm 1 CSVE based Offline RL Algorithm
+REFERENCES,0.6962025316455697,"Input: data D = {(s, a, r, s′)}
+Parametered Models: Qθ, Vψ, πϕ, Qθ, Mν
+Hyperparameters: α, λ, learning rates ηθ, ηψ, ηϕ, ω
+▷Train the transition model with the static dataset D
+Mν ←train(D).
+▷Train the conservative value estimation and policy functions
+Initialize function parameters θ0, ψ0, ϕ0, θ0 = θ0
+for step k = 1 to N do"
+REFERENCES,0.6983122362869199,"ψk ←ψk−1 −ηψ∇ψLπ
+V (Vψ; ˆQθk)
+θk ←θk−1 −ηθ∇θLπ
+Q(Qθ; ˆVψk)
+ϕk ←ϕk−1 −ηϕ∇ϕL+
+π (πϕ)
+θk ←ωθk−1 + (1 −ω)θk
+end for"
+REFERENCES,0.70042194092827,"The next step is to bound the difference between J(πβ, ˆ
+M) and J(πβ, M) and the difference between
+J(π∗, ˆ
+M) and J(π∗, M). We quote a useful lemma from [4] (Lemma D.4.1):"
+REFERENCES,0.7025316455696202,"Lemma A.3. For any MDP M, an empirical MDP ˆ
+M generated by sampling actions according to
+the behavior policy πβ and a given policy π,"
+REFERENCES,0.7046413502109705,"|J(π, ˆ
+M)−J(π, M)| ≤( Cr,δ"
+REFERENCES,0.7067510548523207,"1 −γ + γRmaxCT,δ"
+REFERENCES,0.7088607594936709,"(1 −γ)2
+)Es∼dπ∗
+ˆ
+M (s)[ p |A|
+p"
+REFERENCES,0.7109704641350211,|D(s)| s
+REFERENCES,0.7130801687763713,Ea∼π(a|s)( π(a|s)
+REFERENCES,0.7151898734177216,πβ(a|s))] (31)
+REFERENCES,0.7172995780590717,"Setting π in the above lemma as πβ, we get:"
+REFERENCES,0.7194092827004219,"|J(πβ, ˆ
+M) −J(πβ, M)| ≤( Cr,δ"
+REFERENCES,0.7215189873417721,"1 −γ + γRmaxCT,δ"
+REFERENCES,0.7236286919831224,"(1 −γ)2
+)Es∼dπ∗
+ˆ
+M (s)[ p |A|
+p"
+REFERENCES,0.7257383966244726,|D(s)| s
+REFERENCES,0.7278481012658228,Ea∼π∗(a|s)(π∗(a|s)
+REFERENCES,0.729957805907173,πβ(a|s))] (32)
+REFERENCES,0.7320675105485233,"given that
+q"
+REFERENCES,0.7341772151898734,Ea∼π∗(a|s)[ π∗(a|s)
+REFERENCES,0.7362869198312236,"πβ(a|s)] is a pointwise upper bound of
+q"
+REFERENCES,0.7383966244725738,Ea∼πβ(a|s)[ πβ(a|s)
+REFERENCES,0.740506329113924,"πβ(a|s)]([4]). Thus we
+get,"
+REFERENCES,0.7426160337552743,"J(π∗, ˆ
+M) ≥J(πβ, ˆ
+M) −2( Cr,δ"
+REFERENCES,0.7447257383966245,"1 −γ + γRmaxCT,δ"
+REFERENCES,0.7468354430379747,"(1 −γ)2
+)Es∼dπ∗
+ˆ
+M (s)[ p |A|
+p"
+REFERENCES,0.7489451476793249,|D(s)| s
+REFERENCES,0.7510548523206751,Ea∼π∗(a|s)(π∗(a|s)
+REFERENCES,0.7531645569620253,πβ(a|s))]
+REFERENCES,0.7552742616033755,"+ α
+1
+1 −γ Es∼dπ
+ˆ
+M(s)[ d(s)"
+REFERENCES,0.7573839662447257,du(s) −1]
+REFERENCES,0.759493670886076,"(33)
+which completes the proof."
+REFERENCES,0.7616033755274262,"Here, the second term represents the sampling error, which arises due to the discrepancy between ˆ
+M
+and M. The third term signifies the enhancement in policy performance attributed to our algorithm
+in ˆ
+M. It’s worth noting that when the first term is minimized, smaller values of α can achieve
+improvements over the behavior policy."
+REFERENCES,0.7637130801687764,"B
+CSVE Algorithm and Implementation Details"
+REFERENCES,0.7658227848101266,"In Section 4, we deteiled the complete formula descriptions of the CSVE practical offline RL
+algorithm. Here we consolidate those details and present the full deep offline reinforcement learning
+algorithm as illustrated in Alg. 1. In particular, the dynamic model, value functions, and policy are
+parameterized with deep neural networks and optimized via stochastic gradient descent methods."
+REFERENCES,0.7679324894514767,"We implement our method based on an offline deep reinforcement learning library d3rlpy [34]. The
+code is available at: https://github.com/2023AnnonymousAuthor/csve ."
+REFERENCES,0.770042194092827,Table 3: Hyper-parameters of CSVE evaluation
+REFERENCES,0.7721518987341772,"Hyper-parameters
+Value and description"
+REFERENCES,0.7742616033755274,"B
+5, number of ensembles in dynamics model
+α
+10, to control the penalty of OOD states
+τ
+10, budget parameter in Eq. 8"
+REFERENCES,0.7763713080168776,"β
+In Gym domain, 3 for random and medium tasks, 0.1 for the other tasks;
+In Adroit domain, 30 for human and cloned tasks, 0.01 for expert tasks
+γ
+0.99, discount factor.
+H
+1 million for Mujoco while 0.1 million for Adroit tasks.
+w
+0.005, target network smoothing coefficient.
+lr of actor
+3e-4, policy learning rate
+lr of critic
+1e-4, critic learning rate"
+REFERENCES,0.7784810126582279,"C
+Additional Ablation Study"
+REFERENCES,0.7805907172995781,"Effect of model errors. Compared to traditional model-based offline RL algorithms, CSVE exhibits
+greater resilience to model biases. To access this resilience quantitatively, we measured the perfor-
+mance impact of model biases using the average L2 error in transition prediction as an indicator. As
+shown in Fig. 3, the influence of model bias on RL performance is CSVE is marginal. Specifically, in
+the halfcheetah task, there is no observable impact of model errors on scores, model errors show no
+discernible impact on scores. For the hopper and walker2d tasks, only a minor decline in scores is
+observed as the errors escalate."
+REFERENCES,0.7827004219409283,"6
+7
+8
+9
+errors 0 20 40 60 80 100 120"
+REFERENCES,0.7848101265822784,score(normalized)
+REFERENCES,0.7869198312236287,halfcheetah-medium-v2
+REFERENCES,0.7890295358649789,"original values 
+fitted line"
+REFERENCES,0.7911392405063291,"0.10
+0.12
+0.14
+0.16
+errors 0 20 40 60 80 100 120"
+REFERENCES,0.7932489451476793,hopper-medium-v2
+REFERENCES,0.7953586497890295,"6
+8
+10
+12
+errors 0 20 40 60 80 100 120"
+REFERENCES,0.7974683544303798,walker2d-medium-v2
+REFERENCES,0.79957805907173,"Figure 3: Effect of the model biases to performance scores. The correlation coefficient is −0.32,
+−0.34, and −0.29 respectively."
+REFERENCES,0.8016877637130801,"D
+Experimental Details and Complementary Results"
+REFERENCES,0.8037974683544303,"D.1
+Hyper-parameters of CSVE evaluation in experiments"
+REFERENCES,0.8059071729957806,"Table 3 provides a detailed breakdown of the hyper-parameters used for evaluating CSVE in our
+experiments."
+REFERENCES,0.8080168776371308,"D.2
+Details of Baseline CQL-AWR"
+REFERENCES,0.810126582278481,"To facilitate a direct comparison between the effects of conservative state value estimation and
+Q-value estimation, we formulated a baseline method named CQL-AWR as detailed below:"
+REFERENCES,0.8122362869198312,"ˆQk+1 ←arg min
+Q α (Es∼D,a∼π(a|s)[Q(s, a)] −Es∼D,a∼ˆπβ(a|s)[Q(s, a)]) + 1"
+REFERENCES,0.8143459915611815,"2Es,a,s′∼D[(Q(s, a) −ˆβπ ˆQk(s, a))2]"
+REFERENCES,0.8164556962025317,"π ←arg min
+π′ Lπ(π′) = −Es,a∼D
+h
+log π′(a|s) exp
+
+β ˆAk+1(s, a)
+i
+−λEs∼D,a∼π′(s)
+h
+ˆQk+1(s, a)
+i"
+REFERENCES,0.8185654008438819,"where ˆAk+1(s, a) = ˆQk+1(s, a) −Ea∼π[ ˆQk+1(s, a)]."
+REFERENCES,0.820675105485232,"0
+200
+400
+600
+800
+1000
+grandient steps(thousands) 0 10 20 30 40 50 score"
+REFERENCES,0.8227848101265823,halfcheetah-medium-replay
+REFERENCES,0.8248945147679325,"0.0
+0.5
+1.0
+3.0"
+REFERENCES,0.8270042194092827,"0
+200
+400
+600
+800
+1000
+grandient steps(thousands) 0 20 40 60 80 100 score"
+REFERENCES,0.8291139240506329,hopper-medium-replay
+REFERENCES,0.8312236286919831,"0.0
+0.5
+1.0
+3.0"
+REFERENCES,0.8333333333333334,"0
+200
+400
+600
+800
+1000
+grandient steps(thousands) 0 20 40 60 80 score"
+REFERENCES,0.8354430379746836,walker2d-medium-replay
+REFERENCES,0.8375527426160337,"0.0
+0.5
+1.0
+3.0"
+REFERENCES,0.8396624472573839,"0
+200
+400
+600
+800
+1000
+grandient steps(thousands) 2 4 6 8 loss"
+REFERENCES,0.8417721518987342,halfcheetah-medium-replay
+REFERENCES,0.8438818565400844,"0.0
+0.5
+1.0
+3.0"
+REFERENCES,0.8459915611814346,"0
+200
+400
+600
+800
+1000
+grandient steps(thousands) 0 20 40 60 80 loss"
+REFERENCES,0.8481012658227848,hopper-medium-replay
+REFERENCES,0.8502109704641351,"0.0
+0.5
+1.0
+3.0"
+REFERENCES,0.8523206751054853,"0
+200
+400
+600
+800
+1000
+grandient steps(thousands) 1 2 3 4 5 6 7 loss"
+REFERENCES,0.8544303797468354,walker2d-medium-replay
+REFERENCES,0.8565400843881856,"0.0
+0.5
+1.0
+3.0"
+REFERENCES,0.8586497890295358,Figure 4: Effect of λ to Score (upper figures) and Lπ loss in Eq. 9 (bottom figures)
+REFERENCES,0.8607594936708861,"In CQL-AWR, the critic adopts a standard CQL equation, while the policy improvement part uses an
+AWR extension combined with novel action exploration as denoted by the conservative Q function.
+When juxtaposed with our CSVE implementation, the policy segment of CQL-AWR mirrors ours,
+with the primary distinction being that its exploration is rooted in a Q-based and model-free approach."
+REFERENCES,0.8628691983122363,"D.3
+Reproduction of COMBO"
+REFERENCES,0.8649789029535865,"In Table 1 of our main paper, we used the results of COMBO as presented in the literature [23]. Here
+we detail additional attempts to reproduce the results and compare the performance of CSVE with
+COMBO."
+REFERENCES,0.8670886075949367,"Official Code. We initially aimed to rerun the experiment using the official COMBO code provided
+by the authors. The code is implemented in Tensoflow 1.x and relies on software versions from
+2018. Despite our best efforts to recreate the computational environment, we encountered challenges
+in reproducing the reported results. For instance, Fig. 5 illustrates the asymptotic performance
+on medium datasets up to 1000 epochs, where the scores have been normalized based on SAC
+performance metrics. Notably, for both the hopper and walker2d tasks, the performance scores
+exhibited significant variability. The average scores over the last 10 epochs for halfcheetah, hopper,
+and walker2d were 71.7, 65.3, and -0.26, respectively. Furthermore, we observed that even when
+using the D4RL v0 dataset, COMBO demonstrated similar performance patterns when recommended
+hyper-parameters were applied."
+REFERENCES,0.869198312236287,"0
+200
+400
+600
+800
+1000 0 10 20 30 40 50 60 70 Score"
+REFERENCES,0.8713080168776371,halfcheetah_v2: Score of Return Average
+REFERENCES,0.8734177215189873,"0
+200
+400
+600
+800
+1000 0 10 20 30 40 50 60 70 Score"
+REFERENCES,0.8755274261603375,hopper_v2: Score of Return Average
+REFERENCES,0.8776371308016878,"0
+200
+400
+600
+800
+1000 2 0 2 4 6 8 10 Score"
+REFERENCES,0.879746835443038,walker2d_v2: Score of Return Average
+REFERENCES,0.8818565400843882,"Figure 5: Return of official COMBO implementation on D4RL mujoco v2 tasks, fixing seed=0."
+REFERENCES,0.8839662447257384,"JAX-based optimized implementation Code [35]. We also tested one recent re-implementation
+available in RIQL. This version is regarded as the most highly-tuned implementation to date. The
+results of our tests can be found in Fig.6. For the random and expert datasets, we applied the same
+hyper-parameters as those used for the medium and medium-expert datasets, respectively. For all
+other datasets, we adhered to the default hyper-parameters provided by the authors [35]. Despite
+these efforts, when we compared our outcomes with the original authors’ results (as shown in Table
+10 and Fig.7 of [35]), our reproduced results consistently exhibited both lower performance scores
+and greater variability."
+REFERENCES,0.8860759493670886,"0
+200
+400
+600
+800
+1000
+Time Step (1e3) 0 5 10 15 20 25 30"
+REFERENCES,0.8881856540084389,halfcheetah-random-v2
+REFERENCES,0.890295358649789,"0
+200
+400
+600
+800
+1000
+Time Step (1e3) 5 0 5 10 15 20 25 30"
+REFERENCES,0.8924050632911392,hopper-random-v2
+REFERENCES,0.8945147679324894,"0
+200
+400
+600
+800
+1000
+Time Step (1e3) 0 2 4 6 8 10 12 14 16"
+REFERENCES,0.8966244725738397,walker2d-random-v2
+REFERENCES,0.8987341772151899,"0
+200
+400
+600
+800
+1000
+Time Step (1e3) 0 10 20 30 40 50 60"
+REFERENCES,0.9008438818565401,halfcheetah-medium-v2
+REFERENCES,0.9029535864978903,"0
+200
+400
+600
+800
+1000
+Time Step (1e3) 0 20 40 60 80 100"
+REFERENCES,0.9050632911392406,hopper-medium-v2
+REFERENCES,0.9071729957805907,"0
+200
+400
+600
+800
+1000
+Time Step (1e3) 0 20 40 60 80"
+REFERENCES,0.9092827004219409,walker2d-medium-v2
+REFERENCES,0.9113924050632911,"0
+200
+400
+600
+800
+1000
+Time Step (1e3) 10 20 30 40 50"
+REFERENCES,0.9135021097046413,halfcheetah-medium-replay-v2
+REFERENCES,0.9156118143459916,"0
+200
+400
+600
+800
+1000
+Time Step (1e3) 20 40 60 80 100"
+REFERENCES,0.9177215189873418,hopper-medium-replay-v2
+REFERENCES,0.919831223628692,"0
+200
+400
+600
+800
+1000
+Time Step (1e3) 0 20 40 60 80"
+REFERENCES,0.9219409282700421,walker2d-medium-replay-v2
+REFERENCES,0.9240506329113924,"0
+200
+400
+600
+800
+1000
+Time Step (1e3) 0 20 40 60 80"
+REFERENCES,0.9261603375527426,halfcheetah-medium-expert-v2
+REFERENCES,0.9282700421940928,"0
+200
+400
+600
+800
+1000
+Time Step (1e3) 20 40 60 80 100"
+REFERENCES,0.930379746835443,hopper-medium-expert-v2
+REFERENCES,0.9324894514767933,"0
+200
+400
+600
+800
+1000
+Time Step (1e3) 20 0 20 40 60"
+REFERENCES,0.9345991561181435,walker2d-medium-expert-v2
+REFERENCES,0.9367088607594937,"0
+200
+400
+600
+800
+1000
+Time Step (1e3) 0 10 20 30 40"
+REFERENCES,0.9388185654008439,halfcheetah-expert-v2
+REFERENCES,0.9409282700421941,"0
+200
+400
+600
+800
+1000
+Time Step (1e3) 0 20 40 60 80 100 120"
+REFERENCES,0.9430379746835443,hopper-expert-v2
+REFERENCES,0.9451476793248945,"0
+200
+400
+600
+800
+1000
+Time Step (1e3) 1.0 0.5 0.0 0.5 1.0 1.5 2.0 2.5"
+REFERENCES,0.9472573839662447,walker2d-expert-v2
+REFERENCES,0.9493670886075949,"Figure 6: Return of an optimized COMBO implementation[35] on D4RL mujoco v2 tasks. The data
+are obtained by running with 5 seeds for each task, and the dynamics model has 7 ensembles."
+REFERENCES,0.9514767932489452,"D.4
+Effect of Exploration on Near Dataset Distributions"
+REFERENCES,0.9535864978902954,"As discussed in Section 3.1 and 4.2, the appropriate selection of exploration on the distribution (d)
+beyond data (du) should help policy improvement. The factor λ in Eq. 10 controls the trade-off on
+such ’bonus’ exploration and complying with the data-implied behavior policy."
+REFERENCES,0.9556962025316456,"In section 5.2, we examined the effect of λ on the medium datasets of mujoco tasks. Now let us
+further take the medium-replay type of datasets for more analysis of its effect. In the experiments,
+with fixed β = 0.1, we investigate λ values of {0.0, 0.5, 1.0, 3.0}. As shown in the upper figures in
+Fig. 4, λ shows an obvious effect on policy performance and variances during training. In general,
+there is a value under which increasing λ leads to performance improvement, while above which
+further increasing λ hurts performance. For example, with λ = 3.0 in hopper-medium-replay task
+and walker2d-medium-replay task, the performance gets worse than with smaller λ values. The value
+of λ is task-specific, and we find that its effect is highly related to the loss in Eq. 9 which can be
+observed by comparing the bottom and upper figures in Fig. 4. Thus, in practice, we can choose
+proper λ according to the above loss without online interaction."
+REFERENCES,0.9578059071729957,"D.5
+Conservative State Value Estimation by Perturbing Data State with Noise"
+REFERENCES,0.959915611814346,"In this section, we investigate a model-free method for sampling OOD states and compare its results
+with the model-based method adopted in section 4."
+REFERENCES,0.9620253164556962,"The model-free method samples OOD states by randomly adding Gaussian noise to the sampled
+states from the data. Specifically, we replace the Eq.5 with the following Eq. 34, and other parts are
+consistent with the previous technology."
+REFERENCES,0.9641350210970464,"ˆV k+1 ←arg min
+V
+Lπ
+V (V ; ˆQk) = α
+ 
+Es∼D,s′=s+N(0,σ2)[V (s′)] −Es∼D[V (s)]
+"
+REFERENCES,0.9662447257383966,"+ Es∼D
+h
+(Ea∼π(·|s)[ ˆQk(s, a)] −V (s))2i
+.
+(34)"
+REFERENCES,0.9683544303797469,"The experimental results on the Mujoco control tasks are summarized in Table 4. As shown, with
+different noise levels (σ2), the model-free CSVE perform worse than our original model-based
+CSVE implementation; and for some problems, the model-free method shows very large variances
+across seeds. Intuitively, if the noise level covers the reasonable state distribution around data, its
+performance is good; otherwise, it misbehaves. Unfortunately, it is hard to find a noise level that is
+consistent for different tasks or even the same tasks with different seeds."
+REFERENCES,0.9704641350210971,"Table 4: Performance comparison on Gym control tasks. The results of different noise levels are over
+three seeds."
+REFERENCES,0.9725738396624473,"CQL
+CSVE
+σ2=0.05
+σ2=0.1
+σ2=0.15"
+REFERENCES,0.9746835443037974,Random
+REFERENCES,0.9767932489451476,"HalfCheetah
+17.5 ± 1.5
+26.7 ± 2.0
+20.8 ± 0.4
+20.4 ± 1.3
+18.6 ± 1.1
+Hopper
+7.9 ± 0.4
+27.0 ± 8.5
+4.5 ± 3.1
+14.2 ± 15.3
+6.7 ± 5.4
+Walker2D
+5.1 ± 1.3
+6.1 ± 0.8
+3.9 ± 3.8
+7.5 ± 6.9
+1.7 ± 3.5"
+REFERENCES,0.9789029535864979,Medium
+REFERENCES,0.9810126582278481,"HalfCheetah
+47.0 ± 0.5
+48.6 ± 0.0
+48.2 ± 0.2
+47.5 ± 0.0
+46.0 ± 0.9
+Hopper
+53.0 ± 28.5
+99.4 ± 5.3
+36.9 ± 32.6
+46.1 ± 2.1
+18.4 ± 30.6
+Walker2D
+73.3 ± 17.7
+82.5 ± 1.5
+81.5 ± 1.0
+75.5 ± 1.9
+78.6 ± 2, 9"
+REFERENCES,0.9831223628691983,Medium
+REFERENCES,0.9852320675105485,Replay
+REFERENCES,0.9873417721518988,"HalfCheetah
+45.5 ± 0.7
+54.8 ± 0.8
+44.8 ± 0.4
+44.1 ± 0.5
+43.8 ± 0.4
+Hopper
+88.7 ± 12.9
+91.7 ± 0.3
+85.5 ± 3.0
+78.3 ± 4.3
+70.2 ± 12.0
+Walker2D
+81.8 ± 2.7
+78.5 ± 1.8
+78.7 ± 3.3
+76.8 ± 1.3
+66.8 ± 4.0"
+REFERENCES,0.989451476793249,Medium
+REFERENCES,0.9915611814345991,Expert
+REFERENCES,0.9936708860759493,"HalfCheetah
+75.6 ± 25.7
+93.1 ± 0.3
+87.5 ± 6.0
+89.7 ± 6.6
+93.8 ± 1.6
+Hopper
+105.6 ± 12.9
+95.2 ± 3.8
+63.2 ± 54.4
+99.0 ± 11.0
+37.6 ± 63.9
+Walker2D
+107.9 ± 1.6
+109.0 ± 0.1
+108.4 ± 1.9
+109.5 ± 1.3
+110.4 ± 0.6"
+REFERENCES,0.9957805907172996,Expert
+REFERENCES,0.9978902953586498,"HalfCheetah
+96.3 ± 1.3
+93.8 ± 0.1
+59.0 ± 28.6
+67.5 ± 21.9
+75.3 ± 27.3
+Hopper
+96.5 ± 28.0
+111.2 ± 0.6
+67.3 ± 57.7
+109.2 ± 2.4
+109.4 ± 2.1
+Walker2D
+108.5 ± 0.5
+108.5 ± 0.0
+109.7 ± 1.1
+108.9 ± 1.6
+108.6 ± 0.3"

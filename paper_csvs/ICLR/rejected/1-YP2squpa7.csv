@@ -1,0 +1,3083 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.0014641288433382138,"Message-passing algorithms based on the Belief Propagation (BP) equations con-
+stitute a well-known distributed computational scheme. They yield exact marginals
+on tree-like graphical models and have also proven to be effective in many problems
+deﬁned on loopy graphs, from inference to optimization, from signal processing
+to clustering. The BP-based schemes are fundamentally different from stochastic
+gradient descent (SGD), on which the current success of deep networks is based.
+In this paper, we present and adapt to mini-batch training on GPUs a family of
+BP-based message-passing algorithms with a reinforcement term that biases dis-
+tributions towards locally entropic solutions. These algorithms are capable of
+training multi-layer neural networks with performance comparable to SGD heuris-
+tics in a diverse set of experiments on natural datasets including multi-class image
+classiﬁcation and continual learning, while being capable of yielding improved
+performances on sparse networks. Furthermore, they allow to make approximate
+Bayesian predictions that have higher accuracy than point-wise ones."
+INTRODUCTION,0.0029282576866764276,"1
+INTRODUCTION"
+INTRODUCTION,0.004392386530014641,"Belief Propagation is a method for computing marginals and entropies in probabilistic inference
+problems (Bethe, 1935; Peierls, 1936; Gallager, 1962; Pearl, 1982). These include optimization
+problems as well once they are written as zero temperature limit of a Gibbs distribution that uses the
+cost function as energy. Learning is one particular case, in which one wants to minimize a cost which
+is a data dependent loss function. These problems are generally intractable and message-passing
+techniques have been particularly successful at providing principled approximations through efﬁcient
+distributed computations."
+INTRODUCTION,0.005856515373352855,"A particularly compact representation of inference/optimization problems that is used to build
+massage-passing algorithms is provided by factor graphs. A factor graph is a bipartite graph composed
+of variables nodes and factor nodes expressing the interactions among variables. Belief Propagation
+is exact for tree-like factor graphs (Yedidia et al., 2003)), where the Gibbs distribution is naturally
+factorized, whereas it is approximate for graphs with loops. Still, loopy BP is routinely used with
+success in many real world applications ranging from error correcting codes, vision, clustering, just to
+mention a few. In all these problems, loops are indeed present in the factor graph and yet the variables
+are weakly correlated at long range and BP gives good results. A ﬁeld in which BP has a long history
+is the statistical physics of disordered systems where it is known as Cavity Method (Mézard et al.,
+1987). It has been used to study the typical properties of spin glass models which represent binary
+variables interacting through random interactions over a given graph. It is very well known that in
+spin glass models deﬁned on complete graphs and in locally tree-like random graphs, which are
+both loopy, the weak correlation conditions between variables may hold and BP give asymptotic
+exact results (Mézard & Montanari, 2009). Here we will mostly focus on neural networks ±1 binary
+weights and sign activation functions, for which the messages and the marginals can be described
+simply by the difference between the probabilities associated with the +1 and -1 states, the so called
+magnetizations. The effectiveness of BP for deep learning has never been numerically tested in a
+systematic way, however there is clear evidence that the weak correlation decay condition does not
+hold and thus BP convergence and approximation quality is unpredictable."
+INTRODUCTION,0.007320644216691069,"In this paper we explore the effectiveness of a variant of BP that has shown excellent convergence
+properties in hard optimization problems and in non-convex shallow networks. It goes under the"
+INTRODUCTION,0.008784773060029283,Under review as a conference paper at ICLR 2022
+INTRODUCTION,0.010248901903367497,"name of focusing BP (fBP) and is based on a probability distribution, a likelihood, that focuses on
+highly entropic wide minima, neglecting the contribution to marginals from narrow minima even
+when they are the majority (and hence dominate the Gibbs distribution). This version of BP is thus
+expected to give good results only in models that have such wide entropic minima as part of their
+energy landscape. As discussed in (Baldassi et al., 2016a), a simple way to deﬁne fBP is to add a
+""reinforcement"" term to the BP equations: an iteration-dependent local ﬁeld is introduced for each
+variable, with an intensity proportional to its marginal probability computed in the previous iteration
+step. This ﬁeld is gradually increased until the entire system becomes fully biased on a conﬁguration.
+The ﬁrst version of reinforced BP was introduced in (Braunstein & Zecchina, 2006) as a heuristic
+algorithm to solve the learning problem in shallow binary networks. Baldassi et al. (2016a) showed
+that this version of BP is a limiting case of fBP, i.e., BP equations written for a likelihood that uses
+the local entropy function instead of the error (energy) loss function. As discussed in depth in that
+study, one way to introduce a likelihood that focuses on highly entropic regions is to create y coupled
+replicas of the original system. fBP equations are obtained as BP equations for the replicated system.
+It turns out that the fBP equations are identical to the BP equations for the original system with the
+only addition of a self-reinforcing term in the message passing scheme. The fBP algorithm can be
+used as a solver by gradually increasing the effect of the reinforcement: one can control the size of
+the regions over which the fBP equations estimate the marginals by tuning the parameters that appear
+in the expression of the reinforcement, until the high entropy regions reduce to a single conﬁguration.
+Interestingly, by keeping the size of the high entropy region ﬁxed, the fBP ﬁxed point allows one to
+estimate the marginals and entropy relative to the region."
+INTRODUCTION,0.01171303074670571,"In this work, we present and adapt to GPU computation a family of fBP inspired message passing
+algorithms that are capable of training multi-layer neural networks with generalization performance
+and computational speed comparable to SGD. This is the ﬁrst work that shows that learning by
+message passing in deep neural networks 1) is possible and 2) is a viable alternative to SGD. Our
+version of fBP adds the reinforcement term at each mini-batch step in what we call the Posterior-
+as-Prior (PasP) rule. Furthermore, using the message-passing algorithm not as a solver but as an
+estimator of marginals allows us to make locally Bayesian predictions, averaging the predictions
+over the approximate posterior. The resulting generalization error is signiﬁcantly better than those of
+the solver, showing that, although approximate, the marginals of the weights estimated by message-
+passing retain useful information. Consistently with the assumptions underlying fBP, we ﬁnd that
+the solutions provided by the message passing algorithms belong to ﬂat entropic regions of the loss
+landscape and have good performance in continual learning tasks and on sparse networks as well."
+INTRODUCTION,0.013177159590043924,"We also remark that our PasP update scheme is of independent interest and can be combined with
+different posterior approximation techniques."
+INTRODUCTION,0.014641288433382138,"The paper is structured as follows: in Sec. 2 we give a brief review of some related works. In Sec. 3
+we provide a detailed description of the message-passing equations and of the high level structure
+of the algorithms. In Sec. 4 we compare the performance of the message passing algorithms versus
+SGD based approaches in different learning settings."
+RELATED WORKS,0.016105417276720352,"2
+RELATED WORKS"
+RELATED WORKS,0.017569546120058566,"The literature on message passing algorithms is extensive, we refer to Mézard & Montanari (2009)
+and Zdeborová & Krzakala (2016) for a general overview. More related to our work, multilayer
+message-passing algorithms have been developed in inference contexts (Manoel et al., 2017; Fletcher
+et al., 2018), where they have been shown to produce exact marginals under certain statistical
+assumptions on (unlearned) weight matrices."
+RELATED WORKS,0.01903367496339678,"The properties of message-passing for learning shallow neural networks have been extensively studied
+(see Baldassi et al. (2020) and reference therein). Barbier et al. (2019) rigorously show that message
+passing algorithms in generalized linear models perform asymptotically exact inference under some
+statistical assumptions. Dictionary learning and matrix factorization are harder problems closely
+related to deep network learning problems, in particular to the modelling of a single intermediate
+layer. They have been approached using message passing in Kabashima et al. (2016) and Parker
+et al. (2014), although the resulting predictions are found to be asymptotically inexact (Maillard
+et al., 2021). The same problem is faced by the message passing algorithm recently proposed for a
+multi-layer matrix factorization scenario (Zou et al., 2021). Unfortunately, our framework as well"
+RELATED WORKS,0.020497803806734993,Under review as a conference paper at ICLR 2022
+RELATED WORKS,0.021961932650073207,"doesn’t yield asymptotic exact predictions. Nonetheless, it gives a message passing heuristic that for
+the ﬁrst time is able to train deep neural networks on natural datasets, therefore sets a reference for
+the algorithmic applications of this research line."
+RELATED WORKS,0.02342606149341142,"A few papers advocate the success of SGD to the geometrical structure (smoothness and ﬂatness) of
+the loss landscape in neural networks (Baldassi et al., 2015; Chaudhari et al., 2017; Garipov et al.,
+2018; Li et al., 2018; Pittorino et al., 2021; Feng & Tu, 2021). These considerations do not depend on
+the particular form of the SGD dynamics and should extend also to other types of algorithms, although
+SGD is by far the most popular choice among NNs practitioners due to its simplicity, ﬂexibility,
+speed, and generalization performance."
+RELATED WORKS,0.024890190336749635,"While our work focuses on message passing schemes, some of the ideas presented here, such as
+the PasP rule, can be combined with algorithms for Bayesian neural networks’ training (Hernández-
+Lobato & Adams, 2015; Wu et al., 2018). Recent work extends BP by combining it with graph
+neural networks (Kuck et al., 2020; Satorras & Welling, 2021). Finally, some work in computational
+neuroscience shows similarities to our approach (Rao, 2007)."
+LEARNING BY MESSAGE PASSING,0.02635431918008785,"3
+LEARNING BY MESSAGE PASSING"
+POSTERIOR-AS-PRIOR UPDATES,0.027818448023426062,"3.1
+POSTERIOR-AS-PRIOR UPDATES"
+POSTERIOR-AS-PRIOR UPDATES,0.029282576866764276,"We consider a multi-layer perceptron with L hidden neuron layers, having weight and bias parameters
+W = {W ℓ, bℓ}L
+ℓ=0. We allow for stochastic activations P ℓ(xℓ+1|zℓ), where zℓis the neuron’s pre-
+activation vector for layer ℓ, and P ℓis assumed to be factorized over the neurons. If no stochasticity
+is present, P ℓjust encodes an element-wise activation function. The probability of output y given an
+input x is then given by"
+POSTERIOR-AS-PRIOR UPDATES,0.03074670571010249,"P(y | x, W) =
+Z
+dx1:L
+L
+Y"
+POSTERIOR-AS-PRIOR UPDATES,0.032210834553440704,"ℓ=0
+P ℓ+1(xℓ+1 | W ℓxℓ+ bℓ),
+(1)"
+POSTERIOR-AS-PRIOR UPDATES,0.03367496339677892,"where for convenience we deﬁned x0 = x and xL+1 = y. In a Bayesian framework, given a training
+set D = {(xn, yn)}n and a prior distribution over the weights qθ(W) in some parametric family, the
+posterior distribution is given by"
+POSTERIOR-AS-PRIOR UPDATES,0.03513909224011713,"P(W | D, θ) ∝
+Y"
+POSTERIOR-AS-PRIOR UPDATES,0.036603221083455345,"n
+P(yn | xn, W) qθ(W).
+(2)"
+POSTERIOR-AS-PRIOR UPDATES,0.03806734992679356,"Here ∝denotes equality up to a normalization factor.
+Using the posterior one can com-
+pute the Bayesian prediction for a new data-point x through the average P(y | x, D, θ) =
+R
+dW P(y | x, W) P(W | D, θ). Unfortunately, the posterior is generically intractable due to the
+hard-to-compute normalization factor. On the other hand, we are mainly interested in training a
+distribution that covers wide minima of the loss landscape that generalize well (Baldassi et al., 2016a)
+and in recovering pointwise estimators within these regions. The Bayesian modeling becomes an
+auxiliary tool to set the stage for the message passing algorithms seeking ﬂat minima. We also need
+a formalism that allows for mini-batch training to speed-up the computation and deal with large
+datasets. Therefore, we devise an update scheme that we call Posterior-as-Prior (PasP), where we
+evolve the parameters θt of a distribution qθt(W) computed as an approximate mini-batch posterior,
+in such a way that the outcome of the previous iteration becomes the prior in the following step. In
+the PasP scheme, θt retains the memory of past observations. We also add an exponential factor ρ,
+that we typically set close to 1, tuning the forgetting rate and playing a role similar to the learning
+rate in SGD. Given a mini-batch (Xt, yt) sampled from the training set at time t and a scalar ρ > 0,
+the PasP update reads"
+POSTERIOR-AS-PRIOR UPDATES,0.03953147877013177,"qθt+1(W) ≈
+
+P(W | yt, Xt, θt)
+ρ ,
+(3)"
+POSTERIOR-AS-PRIOR UPDATES,0.040995607613469986,"where ≈denotes approximate equality and we do not account for the normalization factor. A ﬁrst
+approximation may be needed in the computation of the posterior, a second to project the approximate
+posterior onto the distribution manifold spanned by θ (Minka, 2001). In practice, we will consider
+factorized approximate posterior in an exponential family and priors qθ in the same family, although
+Eq. 3 generically allow for more reﬁned approximations."
+POSTERIOR-AS-PRIOR UPDATES,0.0424597364568082,Under review as a conference paper at ICLR 2022
+POSTERIOR-AS-PRIOR UPDATES,0.043923865300146414,"Notice that setting ρ = 1, the batch-size to 1, and taking a single pass over the dataset, we recover
+the Assumed Density Filtering algorithm (Minka, 2001). For large enough ρ (including ρ = 1), the
+iterations of qθt will concentrate on a pointwise estimator. This mechanism mimics the reinforce-
+ment heuristic commonly used to turn Belief Propagation into a solver for constrained satisfaction
+problems (Braunstein & Zecchina, 2006) and related to ﬂat-minima discovery (see focusing-BP in
+Baldassi et al. (2016a)). A different prior updating mechanism which can be understood as empirical
+Bayes has been used in Baldassi et al. (2016b)."
+INNER MESSAGE PASSING LOOP,0.04538799414348463,"3.2
+INNER MESSAGE PASSING LOOP"
+INNER MESSAGE PASSING LOOP,0.04685212298682284,"While the PasP rule takes care of the reinforcement heuristic across mini-batches, we compute the
+mini-batch posterior in Eq. 3 using message passing approaches derived from Belief Propagation.
+BP is an iterative scheme for computing marginals and entropies of statistical models Mézard &
+Montanari (2009). It is most conveniently expressed on factor graphs, that is bipartite graphs where
+the two sets of nodes are called variable nodes and factor nodes. They respectively represent the
+variables involved in the statistical model and their interactions. Message from factor nodes to
+variable nodes and viceversa are exchanged along the edges of the factor graph for a certain number
+of BP iterations or until a ﬁxed point is reached."
+INNER MESSAGE PASSING LOOP,0.048316251830161056,"The factor graph for P(W | Xt, yt, θt) can be derived from Eq. 2, with the following additional
+speciﬁcations. For simplicity, we will ignore the bias term in each layer. We assume factorized
+qθt(W), each factor parameterized by its ﬁrst two moments. In what follows, we drop the PasP
+iteration index t. For each example (xn, yn) in the mini-batch, we introduce the auxiliary variables
+xℓ
+n, ℓ= 1, . . . , L, representing the layers’ activations. For each example, each neuron in the network
+contributes a factor node to the factor graph. The scalar components of the weight matrices and
+the activation vectors become variable nodes. This construction is presented in Appendix A, where
+we also derive the message update rules on the factor graph. The factor graph thus deﬁned is
+extremely loopy and straightforward iteration of BP has convergence issues. Moreover, in presence
+of a homogeneous prior over the weights, the neuron permutation symmetry in each hidden layer
+induces a strongly attractive symmetric ﬁxed point that hinders learning. We work around these
+issues by breaking the symmetry at time t = 0 with an inhomogeneous prior. In our experiments
+a little initial heterogeneity is sufﬁcient to obtain specialized neurons at each following time step.
+Additionally, we do not require message passing convergence in the inner loop (see Algorithm 1) but
+perform one or a few iterations for each θ update. We also include an inertia term commonly called
+damping factor in the message updates (see B.2). As we shall discuss, these simple rules sufﬁce to
+train deep networks by message passing."
+INNER MESSAGE PASSING LOOP,0.04978038067349927,"For the inner loop we adapt to deep neural networks four different message passing algorithms, all of
+which are well known to the literature although derived in simpler settings: Belief Propagation (BP),
+BP-Inspired (BPI) message passing, mean-ﬁeld (MF), and approximate message passing (AMP). The
+last three algorithms can be considered approximations of the ﬁrst one. In the following paragraphs
+we will discuss their common traits, present the BP updates as an example, and refer to Appendix A
+for an in-depth exposition. For all algorithms, message updates can be divided in a forward pass
+and backward pass, as also done in (Fletcher et al., 2018) in a multi-layer inference setting. The BP
+algorithm is compactly reported in Algorithm 1."
+INNER MESSAGE PASSING LOOP,0.05124450951683748,"Meaning of messages.
+All the messages involved in the message passing can be understood in
+terms of cavity marginals or full marginals (as mentioned in the introduction BP is also known as
+Cavity Method, see (Mézard & Montanari, 2009)). Of particular relevance are mℓ
+ki and σℓ
+ki, denoting
+the mean and variance of the weights W ℓ
+ki. The quantities ˆxℓ
+in and ∆ℓ
+in instead denote the mean and
+variance of the i-th neuron’s activation in layer ℓfor a given input xn."
+INNER MESSAGE PASSING LOOP,0.0527086383601757,"Scalar free energies.
+All message passing schemes are conveniently expressed in terms of two
+functions that correspond to the effective free energy (Zdeborová & Krzakala, 2016) of a single"
+INNER MESSAGE PASSING LOOP,0.05417276720351391,Under review as a conference paper at ICLR 2022
+INNER MESSAGE PASSING LOOP,0.055636896046852125,neuron and of a single weight respectively :
+INNER MESSAGE PASSING LOOP,0.05710102489019034,"ϕℓ(B, A, ω, V ) = log
+Z
+dx dz e−1"
+INNER MESSAGE PASSING LOOP,0.05856515373352855,2 Ax2+Bx P ℓ(x|z) e−(ω−z)2
+V,0.060029282576866766,"2V
+ℓ= 1, . . . , L
+(4)"
+V,0.06149341142020498,"ψ(H, G, θ) = log
+Z
+dw e−1"
+V,0.0629575402635432,"2 G2w2+Hw qθ(w)
+(5)"
+V,0.06442166910688141,"Notice that for common deterministic activations such as ReLU and sign, the function ϕ has analytic
+and smooth expressions (see Appendix A.8). The same holds for the function ψ when qθ(w) is
+Gaussian (continuous weights) or a mixture of atoms (discrete weights). At the last layer we impose
+P L+1(y|z) = I(y = sign(z)) in binary classiﬁcation tasks and P L+1(y|z) = I(y = arg max(z))
+in multi-class classiﬁcation (see Appendix A.9). While in our experiments we use hard constraints
+for the ﬁnal output, therefore solving a constraint satisfaction problem, it would be interesting to also
+consider soft constraints and introduce a temperature, but this is beyond the scope of our work."
+V,0.06588579795021962,"Start and end of message passing.
+At the beginning of a new PasP iteration t, we reset the
+messages (see Appendix A) and run message passing for τmax iterations. We then compute the new
+prior’s parameters θt+1 from the posterior given by the message passing."
+V,0.06734992679355783,"BP Forward pass.
+After initialization of the messages at time τ = 0, for each following time we
+propagate a set of message from the ﬁrst to the last layer and then another set from the last to the ﬁrst.
+For an intermediate layer ℓthe forward pass reads"
+V,0.06881405563689605,"ˆxℓ,τ
+in→k
+=
+∂Bϕℓ
+Bℓ,τ−1
+in→k, Aℓ,τ−1
+in
+, ωℓ−1,τ
+in
+, V ℓ−1,τ
+in
+ (6)"
+V,0.07027818448023426,"∆ℓ,τ
+in
+=
+∂2
+Bϕℓ
+Bℓ,τ−1
+in
+, Aℓ,τ−1
+in
+, ωℓ−1,τ
+in
+, V ℓ−1,τ
+in
+ (7)"
+V,0.07174231332357248,"mℓ,τ
+ki→n
+=
+∂Hψ(Hℓ,τ−1
+ki→n , Gℓ,τ−1
+ki
+, θℓ
+ki)
+(8)"
+V,0.07320644216691069,"σℓ,τ
+ki
+=
+∂2
+Hψ(Hℓ,τ−1
+ki
+, Gℓ,τ−1
+ki
+, θℓ
+ki)
+(9)"
+V,0.0746705710102489,"V ℓ,τ
+kn
+=
+X i"
+V,0.07613469985358712,"
+mℓ,τ
+ki→n
+2
+∆ℓ,τ
+in + σℓ,τ
+ki (ˆxℓ,τ
+in→k)2 + σℓ,τ
+ki ∆ℓ,τ
+in  (10)"
+V,0.07759882869692533,"ωℓ,τ
+kn→i
+=
+X"
+V,0.07906295754026355,"i′̸=i
+mℓ,τ
+ki′→nˆxℓ,τ
+i′n→k
+(11)"
+V,0.08052708638360176,"The equations for the ﬁrst layer differ slightly and in an intuitive way from the ones above (see
+Appendix A.3)."
+V,0.08199121522693997,"BP Backward pass.
+The backward pass updates a set of messages from the last to the ﬁrst layer:"
+V,0.08345534407027819,"gℓ,τ
+kn→i
+=
+∂ωϕℓ+1 
+Bℓ+1,τ
+kn
+, Aℓ+1,τ
+kn
+, ωℓ,τ
+kn→i, V ℓ,τ
+kn
+ (12)"
+V,0.0849194729136164,"Γℓ,τ
+kn
+=
+−∂2
+ωϕℓ+1 
+Bℓ+1,τ
+kn
+, Aℓ+1,τ
+kn
+, ωℓ,τ
+kn , V ℓ,τ
+kn
+ (13)"
+V,0.08638360175695461,"Aℓ,τ
+in
+=
+X k"
+V,0.08784773060029283,"
+(mℓ,τ
+ki→n)2 + σℓ,τ
+ki
+
+Γℓ,τ
+kn −σℓ,τ
+ki
+
+gℓ,τ
+kn→i
+2 (14)"
+V,0.08931185944363104,"Bℓ,τ
+in→k
+=
+X"
+V,0.09077598828696926,"k′̸=k
+mℓ,τ
+k′i→ngℓ,τ
+k′n→i
+(15)"
+V,0.09224011713030747,"Gℓ,τ
+ki
+=
+X n"
+V,0.09370424597364568,"
+(ˆxℓ,τ
+in→k)2 + ∆ℓ,τ
+in
+
+Γℓ,τ
+kn −∆ℓ,τ
+in
+
+gℓ,τ
+kn→i
+2 (16)"
+V,0.0951683748169839,"Hℓ,τ
+ki→n
+=
+X"
+V,0.09663250366032211,"n′̸=n
+ˆxℓ,τ
+in′→kgℓ,τ
+kn′→i
+(17)"
+V,0.09809663250366032,"As with the forward pass, we add the caveat that for the last layer the equations are slightly different
+from the ones above."
+V,0.09956076134699854,Under review as a conference paper at ICLR 2022
+V,0.10102489019033675,"Computational complexity
+The message passing equations boil down to element-wise operations
+and tensor contractions that we easily implement using the GPU friendly julia library Tullio.jl (Abbott
+et al., 2021). For a layer of input and output size N and considering a batch-size of B, the time
+complexity of a forth-and-back iteration is O(N 2B) for all message passing algorithms (BP, BPI, MF,
+and AMP), the same as SGD. The prefactor varies and it is generally larger than SGD (see Appendix
+B.9). Also, time complexity for message passing is proportional to τmax (which we typically set to
+1). We provide our implementation in the GitHub repo anonymous."
+V,0.10248901903367497,"Algorithm 1: BP for deep neural networks
+// Message passing used in the PasP Eq.
+3 to approximate.
+// the mini-batch posterior.
+// Here we specifically refer to BP updates.
+// BPI, MF, and AMP updates take the same form but using
+// the rules in Appendix A.4, A.5, and A.7 respectively"
+V,0.10395314787701318,1 Initialize messages.
+V,0.1054172767203514,"2 for τ = 1, . . . τmax do"
+V,0.10688140556368961,// Forward Pass
+V,0.10834553440702782,"3
+for l = 0, . . . , L do"
+V,0.10980966325036604,"4
+compute ˆxℓ, ∆ℓusing (6, 7)"
+V,0.11127379209370425,"5
+compute mℓ, σℓusing (8, 9)"
+V,0.11273792093704246,"6
+compute Vℓ, ωℓusing (10, 11)"
+V,0.11420204978038068,// Backward Pass
+V,0.11566617862371889,"7
+for l = L, . . . , 0 do"
+V,0.1171303074670571,"8
+compute gℓ, Γℓusing (12, 13)"
+V,0.11859443631039532,"9
+compute Aℓ, Bℓusing (14, 15)"
+V,0.12005856515373353,"10
+compute Gℓ, Hℓusing (16, 17)"
+NUMERICAL RESULTS,0.12152269399707175,"4
+NUMERICAL RESULTS"
+NUMERICAL RESULTS,0.12298682284040996,"We implement our message passing algorithms on neural networks with continuous and binary
+weights and with binary activations. In our experiments we ﬁx τmax = 1. We typically do not observe
+an increase in performance taking more steps, except for some speciﬁc cases and in particular for MF
+layers. We remark that for τmax = 1 the BP and the BPI equations are identical, so in most of the
+subsequent numerical results we will only investigate BP."
+NUMERICAL RESULTS,0.12445095168374817,"We compare our algorithms with a SGD-based algorithm adapted to binary architectures (Hubara
+et al., 2016) which we call BinaryNet along the paper (see Appendix B.6 for details). Comparison
+of Bayesian predictions are with the gradient-based Expectation Backpropagation (EBP) algorithm
+(Soudry et al., 2014a), also able to deal with discrete weights and activations. In all architectures we
+avoid the use of bias terms and batch-normalization layers."
+NUMERICAL RESULTS,0.1259150805270864,"We ﬁnd that message-passing algorithms are able to train generic MLP architectures with varying num-
+bers and sizes of hidden layers. As for the datasets, we are able to perform both binary classiﬁcation
+and multi-class classiﬁcation on standard computer vision datasets such as MNIST, Fashion-MNIST,
+and CIFAR-10. Since these datasets consist of 10 classes, for the binary classiﬁcation task we divide
+each dataset in two classes (even vs odd)."
+NUMERICAL RESULTS,0.1273792093704246,"We report that message passing algorithms are able to solve these optimization problems with
+generalization performance comparable to or better than SGD-based algorithms. Some of the
+message passing algorithms (BP and AMP in particular) need fewer epochs to achieve low error than
+the ones required by SGD-based algorithms, even if adaptive methods like Adam are considered.
+Timings of our GPU implementations of message passing algorithms are competitive with SGD (see
+Appendix B.9)."
+NUMERICAL RESULTS,0.12884333821376281,Under review as a conference paper at ICLR 2022
+EXPERIMENTS ACROSS ARCHITECTURES,0.13030746705710103,"4.1
+EXPERIMENTS ACROSS ARCHITECTURES"
+EXPERIMENTS ACROSS ARCHITECTURES,0.13177159590043924,"We select a speciﬁc task, multi-class classiﬁcation on Fashion-MNIST, and we compare the message
+passing algorithms with BinaryNet for different choices of the architecture (i.e. we vary the number
+and the size of the hidden layers). In Fig.1 (Left) we present the learning curves for a MLP with
+3 hidden layers with 501 units with binary weights and activations. Similar results hold in our
+experiments with 2 or 3 hidden layers of 101, 501 or 1001 units and with batch sizes from 1 to from
+1024. The parameters used in our simulations are reported in Appendix B.3. Results on networks
+with continuous weights can be found in Fig.2 (Right)."
+SPARSE LAYERS,0.13323572474377746,"4.2
+SPARSE LAYERS"
+SPARSE LAYERS,0.13469985358711567,"Since the BP algorithm has notoriously been successful on sparse graphs, we perform a straight-
+forward implementation of pruning at initialization, i.e. we impose a random boolean mask on the
+weights that we keep ﬁxed along the training. We call sparsity the fraction of zeroed weights. This
+kind of non-adaptive pruning is known to largely hinder learning (Frankle et al., 2021; Sung et al.,
+2021). In the right panel of Fig. 1, we report results on sparse binary networks in which we train
+a MLP with 2 hidden layers of 101 units on the MNIST dataset. For reference, results on pruning
+quantized/binary networks can be found in Refs. (Han et al., 2016; Ardakani et al., 2017; Tung &
+Mori, 2018; Diffenderfer & Kailkhura, 2021). Experimenting with sparsity up to 90%, we observe
+that BP and MF perform better than BinaryNet. AMP struggles behind BinaryNet instead."
+SPARSE LAYERS,0.13616398243045388,"0
+20
+40
+60
+80
+100
+epochs 0 5 10 15 20 25"
+SPARSE LAYERS,0.1376281112737921,error (%)
+SPARSE LAYERS,0.1390922401171303,"BP  train
+BP  test
+AMP train
+AMP test"
+SPARSE LAYERS,0.14055636896046853,"MF train
+MF test
+BinaryNet train
+BinaryNet test"
+SPARSE LAYERS,0.14202049780380674,"90
+80
+70
+60
+50
+40
+30
+20
+10
+0"
+SPARSE LAYERS,0.14348462664714495,sparsity (%) 60 65 70 75 80 85 90 95 100
+SPARSE LAYERS,0.14494875549048317,test accuracy (%)
+SPARSE LAYERS,0.14641288433382138,"BP test
+Bayes BP test
+AMP test
+Bayes AMP test
+MF test
+Bayes MF test
+BinaryNet test"
+SPARSE LAYERS,0.1478770131771596,"Figure 1: (Left) Training curves of message passing algorithms compared with BinaryNet on the
+Fashion-MNIST dataset (multi-class classiﬁcation) with a binary MLP with 3 hidden layers of 501
+units. (Right) Final test accuracy when varying the layer’s sparsity in a binary MLP with 2 hidden
+layers of 101 units on the MNIST dataset (multi-class). In both panels the batch-size is 128 and
+curves are averaged over 5 realizations of the initial conditions (and sparsity pattern in the right
+panel)."
+EXPERIMENTS ACROSS DATASETS,0.1493411420204978,"4.3
+EXPERIMENTS ACROSS DATASETS"
+EXPERIMENTS ACROSS DATASETS,0.15080527086383602,"We now ﬁx the architecture, a MLP with 2 hidden layers of 501 neurons each with binary weights and
+activations. We vary the dataset, i.e. we test the BP-based algorithms on standard computer vision
+benchmark datasets such as MNIST, Fashion-MNIST and CIFAR-10, in both the multi-class and
+binary classiﬁcation tasks. In Tab. 1 we report the ﬁnal test errors obtained by the message passing
+algorithms compared to the BinaryNet baseline. See Appendix B.4 for the corresponding training
+errors and the parameters used in the simulations. We mention that while the test performance is
+mostly comparable, the train error tends to be lower for the message passing algorithms."
+EXPERIMENTS ACROSS DATASETS,0.15226939970717424,Under review as a conference paper at ICLR 2022
+EXPERIMENTS ACROSS DATASETS,0.15373352855051245,"Dataset
+BinaryNet
+BP
+AMP
+MF
+MNIST (2 classes)
+1.3 ± 0.1
+1.4 ± 0.2
+1.4 ± 0.1
+1.3 ± 0.2
+Fashion-MNIST (2 classes)
+2.4 ± 0.1
+2.3 ± 0.1
+2.4 ± 0.1
+2.3 ± 0.1
+CIFAR-10 (2 classes)
+30.0 ± 0.3
+31.4 ± 0.1
+31.1 ± 0.3
+31.1 ± 0.4
+MNIST
+2.2 ± 0.1
+2.6 ± 0.1
+2.6 ± 0.1
+2.3 ± 0.1
+Fashion-MNIST
+12.0 ± 0.6
+11.8 ± 0.3
+11.9 ± 0.2
+12.1 ± 0.2
+CIFAR-10
+59.0 ± 0.7
+58.7 ± 0.3
+58.5 ± 0.2
+60.4 ± 1.1"
+EXPERIMENTS ACROSS DATASETS,0.15519765739385066,"Table 1: Test error (%) on Fashion-MNIST of various algorithms on a MLP with 2 hidden layers of
+501 units, binary weights and activations. All algorithms are trained with batch-size 128 and for 100
+epochs. Mean and standard deviations are calculated over 5 random initializations."
+LOCALLY BAYESIAN ERROR,0.15666178623718888,"4.4
+LOCALLY BAYESIAN ERROR"
+LOCALLY BAYESIAN ERROR,0.1581259150805271,"The message passing framework used as an estimator of the mini-batch posterior marginals allows
+us to perform approximate Bayesian prediction, i.e. averaging the pointwise predictions over the
+approximate posterior. We observe better generalization error from Bayesian predictions compared
+to point-wise ones, showing that the marginals retain useful information. However, we roughly
+estimate the marginals with the PasP mini-batch procedure (the exact ones should be computed with a
+full-batch procedure, but this converges with difﬁculty in our tests). Since BP-based algorithms tend
+to focus on dense states (as also conﬁrmed by the local energy measure performed in Appendix B.5),
+the Bayesian error we compute can be considered as a local approximation of the full one. We report
+results for binary classiﬁcation on the MNIST dataset in Fig. 2, and we observe the same performance
+increase on different datasets and architectures. We obtain the Bayesian prediction from the output
+marginal given by a single forward pass of the message passing. To obtain good Bayesian estimates
+it is important that the posterior distribution does not concentrate too much, otherwise the Bayesian
+prediction will converge to the prediction of a single conﬁguration."
+LOCALLY BAYESIAN ERROR,0.1595900439238653,"In Fig.2 we also perform a comparison of BP (point-wise and Bayesian) with SGD and another
+algorithm able to perform Bayesian predictions, Expectation Backpropagation (Soudry et al., 2014a)
+see Appendix B.7 for implementation details."
+LOCALLY BAYESIAN ERROR,0.16105417276720352,"0
+20
+40
+60
+80
+100
+epochs 0 1 2 3 4 5"
+LOCALLY BAYESIAN ERROR,0.16251830161054173,test error (%)
+LOCALLY BAYESIAN ERROR,0.16398243045387995,Binary Weights
+LOCALLY BAYESIAN ERROR,0.16544655929721816,"0
+20
+40
+60
+80
+100
+epochs 40 50"
+LOCALLY BAYESIAN ERROR,0.16691068814055637,test error (%)
+LOCALLY BAYESIAN ERROR,0.1683748169838946,"EBP
+Bayes BP
+BP
+BinaryNet
+bayes EBP"
+LOCALLY BAYESIAN ERROR,0.1698389458272328,"0
+20
+40
+60
+80
+100
+epochs 0 1 2 3 4 5"
+LOCALLY BAYESIAN ERROR,0.17130307467057102,test error (%)
+LOCALLY BAYESIAN ERROR,0.17276720351390923,Continuous Weights
+LOCALLY BAYESIAN ERROR,0.17423133235724744,"SGD
+EBP
+bayes EBP"
+LOCALLY BAYESIAN ERROR,0.17569546120058566,"BP
+Bayes BP"
+LOCALLY BAYESIAN ERROR,0.17715959004392387,"Figure 2: (Left) Test error curves for Bayesian and point-wise predictions for a MLP with 2 hidden
+layers of 101 units on the 2-classes MNIST dataset. We report the results for (Left) binary and
+(Right) continuous weights. In both cases, we compare SGD, BP (point-wise and Bayesian) and EBP
+(point-wise and Bayesian). See Appendix B.3 for details."
+CONTINUAL LEARNING,0.17862371888726208,"4.5
+CONTINUAL LEARNING"
+CONTINUAL LEARNING,0.1800878477306003,"Given the high local entropy (i.e. the ﬂatness) of the solutions found by the BP-based algorithms
+(see Appendix B.5), we perform additional tests in a classic setting, continual learning, where the"
+CONTINUAL LEARNING,0.1815519765739385,Under review as a conference paper at ICLR 2022
+CONTINUAL LEARNING,0.18301610541727673,"possibility of locally rearranging the solutions while keeping low training error can be an advantage.
+When a deep network is trained sequentially on different tasks, it tends to forget exponentially fast
+previously seen tasks while learning new ones (McCloskey & Cohen, 1989; Robins, 1995; Fusi et al.,
+2005). Recent work (Feng & Tu, 2021) has shown that searching for a ﬂat region in the loss landscape
+can indeed help to prevent catastrophic forgetting. Several heuristics have been proposed to mitigate
+the problem (Kirkpatrick et al., 2017; Aljundi et al., 2018; Zenke et al., 2017; Laborieux et al., 2021)
+but all require specialized adjustments to the loss or the dynamics ."
+CONTINUAL LEARNING,0.18448023426061494,"Here we show instead that our message passing schemes are naturally prone to learn multiple tasks
+sequentially, mitigating the characteristic memory issues of the gradient-based schemes without the
+need for explicit modiﬁcations. As a prototypical experiment, we sequentially trained a multi-layer
+neural network on 6 different versions of the MNIST dataset, where the pixels of the images have
+been randomly permuted (Goodfellow et al., 2013), giving a ﬁxed budget of 40 epochs on each task.
+We present the results for a two hidden layer neural network with 2001 units on each layer (see
+Appendix B.3 for details). As can be seen in Fig. 3, at the end of the training the BP algorithm is able
+to reach good generalization performances on all the tasks. We compared the BP performance with
+BinaryNet, which already performs better than SGD with continuous weights (see the discussion
+in Laborieux et al. (2021)). While our BP implementation is not competitive with ad-hoc techniques
+speciﬁcally designed for this problem, it beats non-specialized heuristics. Moreover, we believe that
+specialized approaches like the one of Laborieux et al. (2021) can be adapted to message passing as
+well."
+CONTINUAL LEARNING,0.18594436310395315,"1
+2
+3
+4
+5
+6
+task # 0 10 20 30 40 50 60 70 80 90 100"
+CONTINUAL LEARNING,0.18740849194729137,test accuracy (%)
+CONTINUAL LEARNING,0.18887262079062958,"BP
+BinaryNet lr=0.1
+BinaryNet lr=1.0
+BinaryNet lr=10.0"
+CONTINUAL LEARNING,0.1903367496339678,"0
+40
+80
+120
+160
+200
+240
+epochs 0 10 20 30 40 50 60 70 80 90 100"
+CONTINUAL LEARNING,0.191800878477306,test accuracy (%)
+CONTINUAL LEARNING,0.19326500732064422,"BP
+BinaryNet lr=0.1
+BinaryNet lr=1.0
+BinaryNet lr=10.0"
+CONTINUAL LEARNING,0.19472913616398244,"Figure 3: Performance of BP and BinaryNet on the permuted MNIST task (see text) for a two hidden
+layer network with 2001 units on each layer and binary weights and activations. The model is trained
+sequentially on 6 different versions of the MNIST dataset (the tasks), where the pixels have been
+permuted. (Left) Test accuracy on each task after the network has been trained on all the tasks.
+(Right) Test accuracy on the ﬁrst task as a function of the number of epochs. Points are averages over
+5 independent runs, shaded areas are errors on the mean."
+DISCUSSION AND CONCLUSIONS,0.19619326500732065,"5
+DISCUSSION AND CONCLUSIONS"
+DISCUSSION AND CONCLUSIONS,0.19765739385065886,"While successful in many ﬁelds, message passing algorithms, have notoriously struggled to scale
+to deep neural networks training problems. Here we have developed a class of fBP-based message
+passing algorithms and used them within an update scheme, Posterior-as-Prior (PasP), that makes it
+possible to train deep and wide multilayer perceptrons by message passing."
+DISCUSSION AND CONCLUSIONS,0.19912152269399708,"We performed experiments binary activations and either binary or continuous weights. Future work
+should try to include different activations, biases, batch-normalization, and convolutional layers as
+well. Another interesting direction is the algorithmic computation of the (local) entropy of the model
+from the messages."
+DISCUSSION AND CONCLUSIONS,0.2005856515373353,"Further theoretical work is needed for a more complete understanding of the robustness of our
+methods. Recent developments in message passing algorithms (Rangan et al., 2019) and related
+theoretical analysis (Goldt et al., 2020) could provide fruitful inspirations. While our algorithms
+can be used for approximate Bayesian inference, exact posterior calculation is still out of reach for
+message passing approaches and much technical work is needed in that direction."
+DISCUSSION AND CONCLUSIONS,0.2020497803806735,Under review as a conference paper at ICLR 2022
+REFERENCES,0.20351390922401172,REFERENCES
+REFERENCES,0.20497803806734993,"Michael Abbott, Dilum Aluthge, N3N5, Simeon Schaub, Carlo Lucibello, Chris Elrod, and Johnny
+Chen. Tullio.jl julia package, 2021. URL https://github.com/mcabbott/Tullio.jl."
+REFERENCES,0.20644216691068815,"Rahaf Aljundi, Francesca Babiloni, Mohamed Elhoseiny, Marcus Rohrbach, and Tinne Tuytelaars.
+Memory aware synapses: Learning what (not) to forget. In Proceedings of the European Conference
+on Computer Vision (ECCV), pp. 139–154, 2018."
+REFERENCES,0.20790629575402636,"Arash Ardakani, Carlo Condo, and Warren J. Gross. Sparsely-connected neural networks: Towards ef-
+ﬁcient VLSI implementation of deep neural networks. In 5th International Conference on Learning
+Representations, ICLR 2017, Toulon, France, April 24-26, 2017, Conference Track Proceedings.
+OpenReview.net, 2017. URL https://openreview.net/forum?id=r1fYuytex."
+REFERENCES,0.20937042459736457,"Carlo Baldassi, Alfredo Braunstein, Nicolas Brunel, and Riccardo Zecchina. Efﬁcient supervised
+learning in networks with binary synapses. Proceedings of the National Academy of Sciences,
+104(26):11079–11084, 2007. ISSN 0027-8424. doi: 10.1073/pnas.0700324104. URL https:
+//www.pnas.org/content/104/26/11079."
+REFERENCES,0.2108345534407028,"Carlo Baldassi, Alessandro Ingrosso, Carlo Lucibello, Luca Saglietti, and Riccardo Zecchina.
+Subdominant dense clusters allow for simple learning and high computational performance
+in neural networks with discrete synapses.
+Phys. Rev. Lett., 115:128101, Sep 2015.
+doi: 10.1103/PhysRevLett.115.128101. URL https://link.aps.org/doi/10.1103/
+PhysRevLett.115.128101."
+REFERENCES,0.212298682284041,"Carlo Baldassi, Christian Borgs, Jennifer T. Chayes, Alessandro Ingrosso, Carlo Lucibello, Luca
+Saglietti, and Riccardo Zecchina. Unreasonable effectiveness of learning neural networks: From
+accessible states and robust ensembles to basic algorithmic schemes. Proceedings of the National
+Academy of Sciences, 113(48):E7655–E7662, 2016a. ISSN 0027-8424. doi: 10.1073/pnas.
+1608103113. URL https://www.pnas.org/content/113/48/E7655."
+REFERENCES,0.21376281112737922,"Carlo Baldassi, Federica Gerace, Carlo Lucibello, Luca Saglietti, and Riccardo Zecchina. Learning
+may need only a few bits of synaptic precision. Phys. Rev. E, 93:052313, May 2016b. doi: 10.
+1103/PhysRevE.93.052313. URL https://link.aps.org/doi/10.1103/PhysRevE.
+93.052313."
+REFERENCES,0.21522693997071743,"Carlo Baldassi, Fabrizio Pittorino, and Riccardo Zecchina. Shaping the learning landscape in neural
+networks around wide ﬂat minima. Proceedings of the National Academy of Sciences, 117(1):
+161–170, 2020. ISSN 0027-8424. doi: 10.1073/pnas.1908636117. URL https://www.pnas.
+org/content/117/1/161."
+REFERENCES,0.21669106881405564,"Jean Barbier, Florent Krzakala, Nicolas Macris, Léo Miolane, and Lenka Zdeborová. Optimal errors
+and phase transitions in high-dimensional generalized linear models. Proceedings of the National
+Academy of Sciences, 116(12):5451–5460, 2019. ISSN 0027-8424. doi: 10.1073/pnas.1802705116.
+URL https://www.pnas.org/content/116/12/5451."
+REFERENCES,0.21815519765739386,"Hans Bethe. Statistical theory of superlattices. Proc. R. Soc. A, 150:552, 1935."
+REFERENCES,0.21961932650073207,"Alfredo Braunstein and Riccardo Zecchina. Learning by message passing in networks of discrete
+synapses. Phys. Rev. Lett., 96:030201, Jan 2006. doi: 10.1103/PhysRevLett.96.030201. URL
+https://link.aps.org/doi/10.1103/PhysRevLett.96.030201."
+REFERENCES,0.22108345534407028,"Pratik Chaudhari, Anna Choromanska, Stefano Soatto, Yann LeCun, Carlo Baldassi, Christian Borgs,
+Jennifer T. Chayes, Levent Sagun, and Riccardo Zecchina. Entropy-sgd: Biasing gradient descent
+into wide valleys. In 5th International Conference on Learning Representations, ICLR 2017,
+Toulon, France, April 24-26, 2017, Conference Track Proceedings. OpenReview.net, 2017. URL
+https://openreview.net/forum?id=B1YfAfcgl."
+REFERENCES,0.2225475841874085,"James Diffenderfer and Bhavya Kailkhura. Multi-prize lottery ticket hypothesis: Finding accurate
+binary neural networks by pruning a randomly weighted network.
+In International Confer-
+ence on Learning Representations, 2021. URL https://openreview.net/forum?id=
+U_mat0b9iv."
+REFERENCES,0.2240117130307467,Under review as a conference paper at ICLR 2022
+REFERENCES,0.22547584187408493,"Yu Feng and Yuhai Tu. The inverse variance–ﬂatness relation in stochastic gradient descent is critical
+for ﬁnding ﬂat minima. Proceedings of the National Academy of Sciences, 118(9), 2021."
+REFERENCES,0.22693997071742314,"Alyson K Fletcher, Sundeep Rangan, and Philip Schniter. Inference in deep networks in high
+dimensions. In 2018 IEEE International Symposium on Information Theory (ISIT), pp. 1884–1888.
+IEEE, 2018."
+REFERENCES,0.22840409956076135,"Jonathan Frankle, Gintare Karolina Dziugaite, Daniel Roy, and Michael Carbin. Pruning neural
+networks at initialization: Why are we missing the mark? In International Conference on Learning
+Representations, 2021. URL https://openreview.net/forum?id=Ig-VyQc-MLK."
+REFERENCES,0.22986822840409957,"Stefano Fusi, Patrick J Drew, and Larry F Abbott. Cascade models of synaptically stored memories.
+Neuron, 45(4):599–611, 2005."
+REFERENCES,0.23133235724743778,"Marylou Gabrié. Mean-ﬁeld inference methods for neural networks. Journal of Physics A: Mathe-
+matical and Theoretical, 53(22):223002, 2020."
+REFERENCES,0.232796486090776,"Robert Gallager. Low-density parity-check codes. IRE Transactions on information theory, 8(1):
+21–28, 1962."
+REFERENCES,0.2342606149341142,"Timur Garipov, Pavel Izmailov, Dmitrii Podoprikhin, Dmitry P Vetrov, and Andrew G Wilson. Loss
+surfaces, mode connectivity, and fast ensembling of dnns. In S. Bengio, H. Wallach, H. Larochelle,
+K. Grauman, N. Cesa-Bianchi, and R. Garnett (eds.), Advances in Neural Information Processing
+Systems, volume 31. Curran Associates, Inc., 2018. URL https://proceedings.neurips.
+cc/paper/2018/file/be3087e74e9100d4bc4c6268cdbe8456-Paper.pdf."
+REFERENCES,0.23572474377745242,"Xavier Glorot and Yoshua Bengio.
+Understanding the difﬁculty of training deep feedforward
+neural networks. In Yee Whye Teh and Mike Titterington (eds.), Proceedings of the Thirteenth
+International Conference on Artiﬁcial Intelligence and Statistics, volume 9 of Proceedings of
+Machine Learning Research, pp. 249–256, Chia Laguna Resort, Sardinia, Italy, 13–15 May 2010.
+PMLR. URL https://proceedings.mlr.press/v9/glorot10a.html."
+REFERENCES,0.23718887262079064,"Sebastian Goldt, Marc Mézard, Florent Krzakala, and Lenka Zdeborová. Modeling the inﬂuence of
+data structure on learning in neural networks: The hidden manifold model. Physical Review X, 10
+(4):041044, 2020."
+REFERENCES,0.23865300146412885,"Ian J Goodfellow, Mehdi Mirza, Da Xiao, Aaron Courville, and Yoshua Bengio. An empirical investi-
+gation of catastrophic forgetting in gradient-based neural networks. arXiv preprint arXiv:1312.6211,
+2013."
+REFERENCES,0.24011713030746706,"Song Han, Huizi Mao, and William J. Dally. Deep compression: Compressing deep neural network
+with pruning, trained quantization and huffman coding. In Yoshua Bengio and Yann LeCun (eds.),
+4th International Conference on Learning Representations, ICLR 2016, San Juan, Puerto Rico,
+May 2-4, 2016, Conference Track Proceedings, 2016. URL http://arxiv.org/abs/1510.
+00149."
+REFERENCES,0.24158125915080528,"José Miguel Hernández-Lobato and Ryan P. Adams. Probabilistic backpropagation for scalable
+learning of bayesian neural networks. In Proceedings of the 32nd International Conference on
+International Conference on Machine Learning - Volume 37, ICML’15, pp. 1861–1869. JMLR.org,
+2015."
+REFERENCES,0.2430453879941435,"Itay Hubara, Matthieu Courbariaux, Daniel Soudry, Ran El-Yaniv, and Yoshua Bengio.
+Bi-
+narized neural networks.
+In D. Lee, M. Sugiyama, U. Luxburg, I. Guyon, and R. Gar-
+nett (eds.), Advances in Neural Information Processing Systems, volume 29. Curran Asso-
+ciates, Inc., 2016. URL https://proceedings.neurips.cc/paper/2016/file/
+d8330f857a17c53d217014ee776bfd50-Paper.pdf."
+REFERENCES,0.2445095168374817,"Yiding Jiang, Behnam Neyshabur, Hossein Mobahi, Dilip Krishnan, and Samy Bengio. Fantas-
+tic generalization measures and where to ﬁnd them. In International Conference on Learning
+Representations, 2020. URL https://openreview.net/forum?id=SJgIPJBFvH."
+REFERENCES,0.24597364568081992,"Yoshiyuki Kabashima, Florent Krzakala, Marc Mézard, Ayaka Sakata, and Lenka Zdeborová. Phase
+transitions and sample complexity in bayes-optimal matrix factorization. IEEE Transactions on
+Information Theory, 62(7):4228–4265, 2016. doi: 10.1109/TIT.2016.2556702."
+REFERENCES,0.24743777452415813,Under review as a conference paper at ICLR 2022
+REFERENCES,0.24890190336749635,"James Kirkpatrick, Razvan Pascanu, Neil Rabinowitz, Joel Veness, Guillaume Desjardins, Andrei A
+Rusu, Kieran Milan, John Quan, Tiago Ramalho, Agnieszka Grabska-Barwinska, et al. Overcoming
+catastrophic forgetting in neural networks. Proceedings of the national academy of sciences, 114
+(13):3521–3526, 2017."
+REFERENCES,0.25036603221083453,"Jonathan Kuck, Shuvam Chakraborty, Hao Tang, Rachel Luo, Jiaming Song, Ashish Sabharwal, and
+Stefano Ermon. Belief propagation neural networks. In H. Larochelle, M. Ranzato, R. Hadsell,
+M. F. Balcan, and H. Lin (eds.), Advances in Neural Information Processing Systems, volume 33,
+pp. 667–678. Curran Associates, Inc., 2020. URL https://proceedings.neurips.cc/
+paper/2020/file/07217414eb3fbe24d4e5b6cafb91ca18-Paper.pdf."
+REFERENCES,0.2518301610541728,"Axel Laborieux, Maxence Ernoult, Tifenn Hirtzlin, and Damien Querlioz. Synaptic metaplas-
+ticity in binarized neural networks. Nature Communications, 12(1):2549, May 2021. ISSN
+2041-1723.
+doi: 10.1038/s41467-021-22768-y.
+URL https://doi.org/10.1038/
+s41467-021-22768-y."
+REFERENCES,0.25329428989751096,"Hao Li, Zheng Xu, Gavin Taylor, Christoph Studer, and Tom Goldstein. Visualizing the loss land-
+scape of neural nets. In S. Bengio, H. Wallach, H. Larochelle, K. Grauman, N. Cesa-Bianchi, and
+R. Garnett (eds.), Advances in Neural Information Processing Systems, volume 31. Curran As-
+sociates, Inc., 2018. URL https://proceedings.neurips.cc/paper/2018/file/
+a41b3bb3e6b050b6c9067c67f663b915-Paper.pdf."
+REFERENCES,0.2547584187408492,"Antoine Maillard, Florent Krzakala, Marc Mézard, and Lenka Zdeborová. Perturbative construction
+of mean-ﬁeld equations in extensive-rank matrix factorization and denoising. arXiv preprint
+arXiv:2110.08775, 2021."
+REFERENCES,0.2562225475841874,"Andre Manoel, Florent Krzakala, Marc Mézard, and Lenka Zdeborová. Multi-layer generalized linear
+estimation. In 2017 IEEE International Symposium on Information Theory (ISIT), pp. 2098–2102,
+2017. doi: 10.1109/ISIT.2017.8006899."
+REFERENCES,0.25768667642752563,"Michael McCloskey and Neal J Cohen. Catastrophic interference in connectionist networks: The
+sequential learning problem. In Psychology of learning and motivation, volume 24, pp. 109–165.
+Elsevier, 1989."
+REFERENCES,0.2591508052708638,"Marc Mézard. Mean-ﬁeld message-passing equations in the hopﬁeld model and its generalizations.
+Physical Review E, 95(2):022117, 2017."
+REFERENCES,0.26061493411420206,"Marc Mézard, Giorgio Parisi, and Miguel Angel Virasoro. Spin glass theory and beyond: An
+Introduction to the Replica Method and Its Applications, volume 9. World Scientiﬁc Publishing
+Company, 1987."
+REFERENCES,0.26207906295754024,"Thomas P. Minka. Expectation propagation for approximate bayesian inference. In Proceedings of
+the Seventeenth Conference on Uncertainty in Artiﬁcial Intelligence, UAI’01, pp. 362–369, San
+Francisco, CA, USA, 2001. Morgan Kaufmann Publishers Inc. ISBN 1558608001."
+REFERENCES,0.2635431918008785,"Marc Mézard and Andrea Montanari. Information, Physics, and Computation. Oxford University
+Press, Inc., USA, 2009. ISBN 019857083X."
+REFERENCES,0.26500732064421667,"Jason T Parker, Philip Schniter, and Volkan Cevher. Bilinear generalized approximate message
+passing—part i: Derivation. IEEE Transactions on Signal Processing, 62(22):5839–5853, 2014."
+REFERENCES,0.2664714494875549,"Judea Pearl. Reverend Bayes on inference engines: A distributed hierarchical approach. Cognitive
+Systems Laboratory, School of Engineering and Applied Science ..., 1982."
+REFERENCES,0.2679355783308931,"R. Peierls. On ising’s model of ferromagnetism. Mathematical Proceedings of the Cambridge
+Philosophical Society, 32(3):477–481, 1936. doi: 10.1017/S0305004100019174."
+REFERENCES,0.26939970717423134,"Fabrizio Pittorino, Carlo Lucibello, Christoph Feinauer, Gabriele Perugini, Carlo Baldassi, Elizaveta
+Demyanenko, and Riccardo Zecchina. Entropic gradient descent algorithms and wide ﬂat minima.
+In International Conference on Learning Representations, 2021. URL https://openreview.
+net/forum?id=xjXg0bnoDmS."
+REFERENCES,0.2708638360175695,"Sundeep Rangan, Philip Schniter, and Alyson K Fletcher. Vector approximate message passing. IEEE
+Transactions on Information Theory, 65(10):6664–6684, 2019."
+REFERENCES,0.27232796486090777,Under review as a conference paper at ICLR 2022
+REFERENCES,0.27379209370424595,"Rajesh P. N. Rao. Neural models of Bayesian belief propagation., pp. 239–267. Bayesian brain: Prob-
+abilistic approaches to neural coding. MIT Press, Cambridge, MA, US, 2007. ISBN 026204238X
+(Hardcover); 978-0-262-04238-3 (Hardcover)."
+REFERENCES,0.2752562225475842,"Anthony Robins. Catastrophic forgetting, rehearsal and pseudorehearsal. Connection Science, 7(2):
+123–146, 1995."
+REFERENCES,0.2767203513909224,"Victor Garcia Satorras and Max Welling. Neural enhanced belief propagation on factor graphs. In
+International Conference on Artiﬁcial Intelligence and Statistics, pp. 685–693. PMLR, 2021."
+REFERENCES,0.2781844802342606,"Daniel Soudry, Itay Hubara, and Ron Meir.
+Expectation backpropagation:
+Parameter-
+free training of multilayer neural networks with continuous or discrete weights.
+In
+Z. Ghahramani, M. Welling, C. Cortes, N. Lawrence, and K. Q. Weinberger (eds.),
+Advances in Neural Information Processing Systems,
+volume 27. Curran Associates,
+Inc.,
+2014a.
+URL
+https://proceedings.neurips.cc/paper/2014/file/
+076a0c97d09cf1a0ec3e19c7f2529f2b-Paper.pdf."
+REFERENCES,0.2796486090775988,"Daniel Soudry, Itay Hubara, and Ron Meir. Expectation backpropagation: Parameter-free training of
+multilayer neural networks with continuous or discrete weights. In NIPS, volume 1, pp. 2, 2014b."
+REFERENCES,0.28111273792093705,"George Stamatescu, Federica Gerace, Carlo Lucibello, Ian Fuss, and Langford B. White. Critical
+initialisation in continuous approximations of binary neural networks. 2020. URL https:
+//openreview.net/forum?id=rylmoxrFDH."
+REFERENCES,0.28257686676427524,"Yi-Lin Sung, Varun Nair, and Colin Raffel. Training neural networks with ﬁxed sparse masks, 2021."
+REFERENCES,0.2840409956076135,"Frederick Tung and Greg Mori. Clip-q: Deep network compression learning by in-parallel pruning-
+quantization. In 2018 IEEE/CVF Conference on Computer Vision and Pattern Recognition, pp.
+7873–7882, 2018. doi: 10.1109/CVPR.2018.00821."
+REFERENCES,0.28550512445095166,"Anqi Wu, Sebastian Nowozin, Edward Meeds, Richard E Turner, Jose Miguel Hernandez-Lobato,
+and Alexander L Gaunt. Deterministic variational inference for robust bayesian neural networks.
+arXiv preprint arXiv:1810.03958, 2018."
+REFERENCES,0.2869692532942899,"Jonathan S. Yedidia, William T. Freeman, and Yair Weiss. Understanding Belief Propagation and Its
+Generalizations, pp. 239–269. Morgan Kaufmann Publishers Inc., San Francisco, CA, USA, 2003.
+ISBN 1558608117."
+REFERENCES,0.2884333821376281,"Lenka Zdeborová and Florent Krzakala. Statistical physics of inference: Thresholds and algorithms.
+Advances in Physics, 65(5):453–552, 2016."
+REFERENCES,0.28989751098096633,"Friedemann Zenke, Ben Poole, and Surya Ganguli. Continual learning through synaptic intelligence.
+In International Conference on Machine Learning, pp. 3987–3995. PMLR, 2017."
+REFERENCES,0.2913616398243045,"Qiuyun Zou, Haochuan Zhang, and Hongwen Yang. Multi-layer bilinear generalized approximate
+message passing. IEEE Transactions on Signal Processing, 69:4529–4543, 2021. doi: 10.1109/
+TSP.2021.3100305."
+REFERENCES,0.29282576866764276,Under review as a conference paper at ICLR 2022
+REFERENCES,0.29428989751098095,Appendices
+REFERENCES,0.2957540263543192,CONTENTS
+REFERENCES,0.2972181551976574,"A BP-based message passing algorithms
+14"
+REFERENCES,0.2986822840409956,"A.1
+Preliminary considerations . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+14"
+REFERENCES,0.3001464128843338,"A.2
+Derivation of the BP equations . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+15"
+REFERENCES,0.30161054172767204,"A.3
+BP equations
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+18"
+REFERENCES,0.30307467057101023,"A.4
+BPI equations . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+19"
+REFERENCES,0.30453879941434847,"A.5
+MF equations . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+20"
+REFERENCES,0.30600292825768666,"A.6
+Derivation of the AMP equations . . . . . . . . . . . . . . . . . . . . . . . . . . .
+21"
+REFERENCES,0.3074670571010249,"A.7
+AMP equations . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+22"
+REFERENCES,0.3089311859443631,"A.8
+Activation Functions
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+23"
+REFERENCES,0.3103953147877013,"A.9
+The ArgMax layer . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+23"
+REFERENCES,0.3118594436310395,"B
+Experimental details
+25"
+REFERENCES,0.31332357247437775,"B.1
+Hyper-parameters of the BP-based scheme . . . . . . . . . . . . . . . . . . . . . .
+25"
+REFERENCES,0.31478770131771594,"B.2
+Damping scheme for the message passing . . . . . . . . . . . . . . . . . . . . . .
+25"
+REFERENCES,0.3162518301610542,"B.3
+Architectures
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+26"
+REFERENCES,0.31771595900439237,"B.4
+Varying the dataset . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+27"
+REFERENCES,0.3191800878477306,"B.5
+Local energy
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+27"
+REFERENCES,0.3206442166910688,"B.6
+SGD implementation (BinaryNet)
+. . . . . . . . . . . . . . . . . . . . . . . . . .
+28"
+REFERENCES,0.32210834553440704,"B.7
+EBP implementation
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+28"
+REFERENCES,0.3235724743777452,"B.8
+Unit polarization and overlaps . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+29"
+REFERENCES,0.32503660322108346,"B.9
+Computational performance: varying batch-size . . . . . . . . . . . . . . . . . . .
+30"
+REFERENCES,0.32650073206442165,"A
+BP-BASED MESSAGE PASSING ALGORITHMS"
+REFERENCES,0.3279648609077599,"A.1
+PRELIMINARY CONSIDERATIONS"
+REFERENCES,0.3294289897510981,"Given a mini-batch B = {(xn, yn)}n, the factor graph deﬁned by Eqs. (1, 2, 18) is explicitly written
+as:"
+REFERENCES,0.3308931185944363,"P(W, x1:L | B, θ) ∝ L
+Y ℓ=0 Y"
+REFERENCES,0.3323572474377745,"k,n
+P ℓ+1"
+REFERENCES,0.33382137628111275,"xℓ+1
+kn X"
+REFERENCES,0.33528550512445093,"i
+W ℓ
+kixℓ
+in ! Y"
+REFERENCES,0.3367496339677892,"k,i,ℓ
+qθ(W ℓ
+ki),
+(18)"
+REFERENCES,0.33821376281112736,"where x0
+n = xn, xL+1
+n
+= yn. The derivation of the BP equations for this model is straightforward
+albeit lengthy and involved. It is obtained following the steps presented in multiple papers, books,
+and reviews, see for instance (Mézard & Montanari, 2009; Zdeborová & Krzakala, 2016; Mézard,
+2017), although it has not been attempted before in deep neural networks. It should be noted that a
+(common) approximation that we take here with respect to the standard BP scheme, is that messages
+are assumed to be Gaussian distributed and therefore parameterized by their mean and variance. This
+goes by the name of relaxed belied propagation (rBP), just referred to as BP throughout the paper."
+REFERENCES,0.3396778916544656,"We derive the BP equations in A.2 and present them all together in A.3. From BP, we derive other 3
+message passing algorithms useful for the deep network training setting, all of which are well known
+to the literature: BP-Inspired (BPI) message passing A.4, mean-ﬁeld (MF) A.5, and approximate"
+REFERENCES,0.3411420204978038,Under review as a conference paper at ICLR 2022
+REFERENCES,0.34260614934114203,"message passing (AMP) A.7. The AMP derivation is the more involved and given in A.6. In all
+these cases, message updates can be divided in a forward pass and a backward pass, as also done in
+Fletcher et al. (2018) in a multi-layer inference setting. The BP algorithm is compactly reported in
+Algorithm 1."
+REFERENCES,0.3440702781844802,"In our notation, ℓdenotes the layer index, τ the BP iteration index, k an output neuron index, i an
+input neuron index, and n a sample index."
+REFERENCES,0.34553440702781846,"We report below, for convenience, some of the considerations also present in the main text."
+REFERENCES,0.34699853587115664,"Meaning of messages.
+All the messages involved in the message passing equations can be under-
+stood in terms of cavity marginals or full marginals (as mentioned in the introduction BP is also
+known as the Cavity Method, see Mézard & Montanari (2009)). Of particular relevance are the
+quantities mℓ
+ki and σℓ
+ki, denoting the mean and variance of the weights W ℓ
+ki. The quantities ˆxℓ
+in and
+∆ℓ
+in instead denote mean and variance of the i-th neuron’s activation in layer ℓin correspondence of
+an input xn."
+REFERENCES,0.3484626647144949,"Scalar free energies.
+All message passing schemes can be expressed using the following scalar
+functions, corresponding to single neuron and single weight effective free-energies respectively:"
+REFERENCES,0.34992679355783307,"ϕℓ(B, A, ω, V ) = log
+Z
+dx dz e−1"
+REFERENCES,0.3513909224011713,2 Ax2+Bx P ℓ(x | z) e−(ω−z)2
+V,0.3528550512445095,"2V
+,
+(19)"
+V,0.35431918008784774,"ψ(H, G, θ) = log
+Z
+dw e−1"
+V,0.3557833089311859,"2 G2w2+Hw qθ(w).
+(20)"
+V,0.35724743777452417,"These free energies will naturally arise in the derivation of the BP equations in Appendix A.2. For
+the last layer, the neuron function has to be slightly modiﬁed:"
+V,0.35871156661786235,"ϕL+1(y, ω, V ) = log
+Z
+dz P L+1 (y | z) e−(ω−z)2"
+V,0.3601756954612006,"2V
+.
+(21)"
+V,0.3616398243045388,"Notice that for common deterministic activations such as ReLU and sign, the function ϕ has
+analytic and smooth expressions that we give in Appendix A.8. Same goes for ψ when qθ(w)
+is Gaussian (continuous weights) or a mixture of atoms (discrete weights).
+At the last layer
+we impose P L+1(y|z) = I(y = sign(z)) in binary classiﬁcation tasks. For multi-class clas-
+siﬁcation instead, we have to adapt the formalism to vectorial pre-activations z and assume
+P L+1(y|z) = I(y = arg max(z)) (see Appendix A.9). While in our experiments we use hard
+constraints for the ﬁnal output, therefore solving a constraint satisfaction problem, it would be inter-
+esting to also consider generic loss functions. That would require minimal changes to our formalism,
+but this is beyond the scope of our work."
+V,0.363103953147877,"Binary weights.
+In our experiments we use ±1 weights in each layer. Therefore each marginal can
+be parameterized by a single number and our prior/posterior takes the form"
+V,0.3645680819912152,"qθ(W ℓ
+ki) ∝eθℓ
+kiW ℓ
+ki
+(22)"
+V,0.36603221083455345,The effective free energy function Eq. 20 becomes
+V,0.36749633967789164,"ψ(H, G, θℓ
+ki) = log 2 cosh(H + θℓ
+ki)
+(23)"
+V,0.3689604685212299,and the messages G can be dropped from the message passing.
+V,0.37042459736456806,"Start and end of message passing.
+At the beginning of a new PasP iteration t, we reset the
+messages to zero and run message passing for τmax iterations. We then compute the new prior
+qθt+1(W) from the posterior given by the message passing iterations."
+V,0.3718887262079063,"A.2
+DERIVATION OF THE BP EQUATIONS"
+V,0.3733528550512445,"In order to derive the BP equations, we start with the following portion of the factor graph reported in
+Eq. 18 in the main text, describing the contribution of a single data example in the inner loop of the
+PasP updates:"
+V,0.37481698389458273,"Under review as a conference paper at ICLR 2022 L
+Y ℓ=0 Y"
+V,0.3762811127379209,"k
+P ℓ+1"
+V,0.37774524158125916,"xℓ+1
+kn X"
+V,0.37920937042459735,"i
+W ℓ
+kixℓ
+in !"
+V,0.3806734992679356,"where x0
+n = xn, xL+1
+n
+= yn.
+(24)"
+V,0.3821376281112738,"where we recall that the quantity xℓ
+kn corresponds to the activation of neuron k in layer ℓin corre-
+spondence of the input example n."
+V,0.383601756954612,Let us start by analyzing the single factor: P ℓ+1
+V,0.3850658857979502,"xℓ+1
+kn X"
+V,0.38653001464128844,"i
+W ℓ
+kixℓ
+in ! (25)"
+V,0.38799414348462663,"We refer to messages that travel from input to output in the factor graph as upgoing or upwards
+messages, while to the ones that travel from output to input as downgoing or backwards messages."
+V,0.38945827232796487,"Factor-to-variable-W messages
+The factor-to-variable-W messages read:"
+V,0.39092240117130306,"ˆνℓ+1
+kn→ki(W ℓ
+ki) ∝
+Z Y"
+V,0.3923865300146413,"i′̸=i
+dνℓ
+ki′→n(W ℓ
+ki′)
+Y"
+V,0.3938506588579795,"i′
+dνℓ
+i′n→k(xℓ
+i′n) dν↓(xℓ+1
+kn ) P ℓ+1"
+V,0.3953147877013177,"xℓ+1
+kn X"
+V,0.3967789165446559,"i′
+W ℓ
+ki′xℓ
+i′n ! (26)"
+V,0.39824304538799415,where ν↓denotes the messages travelling downwards (from output to input) in the factor graph.
+V,0.39970717423133234,"We denote the means and variances of the incoming messages respectively with mℓ
+ki→n, ˆxℓ
+in→k and
+σℓ
+ki→n, ∆ℓ
+in→k:"
+V,0.4011713030746706,"mℓ
+ki→n =
+Z
+dνℓ
+ki→n(W ℓ
+ki) W ℓ
+ki
+(27)"
+V,0.40263543191800877,"σℓ
+ki→n =
+Z
+dνℓ
+ki→n(W ℓ
+ki)
+ 
+W ℓ
+ki −mℓ
+ki→n
+2
+(28)"
+V,0.404099560761347,"ˆxℓ
+in→k =
+Z
+dνℓ
+in→k(xℓ
+in) xℓ
+in
+(29)"
+V,0.4055636896046852,"∆ℓ
+in→k =
+Z
+dνℓ
+in→k(xℓ
+in)
+ 
+xℓ
+in −ˆxℓ
+in→k
+2
+(30)"
+V,0.40702781844802344,"We now use the central limit theorem to observe that with respect to the incoming messages distri-
+butions - assuming independence of these messages - in the large input limit the preactivation is a
+Gaussian random variable: X"
+V,0.4084919472913616,"i′̸=i
+W ℓ
+ki′xℓ
+i′n ∼N(ωℓ
+kn→i, V ℓ
+kn→i)
+(31)"
+V,0.40995607613469986,where:
+V,0.41142020497803805,"ωℓ
+kn→i = Eν  X"
+V,0.4128843338213763,"i′̸=i
+W ℓ
+ki′xℓ
+i′n  =
+X"
+V,0.4143484626647145,"i′̸=i
+mℓ
+ki′→n ˆxℓ
+i′n→k
+(32)"
+V,0.4158125915080527,"V ℓ
+kn→i = V arν  X"
+V,0.4172767203513909,"i′̸=i
+W ℓ
+ki′xℓ
+i′n   =
+X i′̸=i"
+V,0.41874084919472915,"
+σℓ
+ki′→n ∆ℓ
+i′n→k +
+ 
+mℓ
+ki′→n
+2 ∆ℓ
+i′n→k + σℓ
+ki′→n
+ 
+ˆxℓ
+i′n→k
+2
+(33)"
+V,0.42020497803806733,Therefore we can rewrite the outgoing messages as:
+V,0.4216691068814056,Under review as a conference paper at ICLR 2022
+V,0.42313323572474376,"ˆνℓ+1
+kn→i(W ℓ
+ki) ∝
+Z
+dz dνℓ
+in→k(xℓ
+in) dν↓(xℓ+1
+kn ) e−(z−ωkn→i−W ℓ
+kixℓ
+in)
+2"
+V,0.424597364568082,"2Vkn→i
+P ℓ+1
+
+xℓ+1
+kn"
+V,0.4260614934114202,"z
+
+(34)"
+V,0.42752562225475843,"We now assume W ℓ
+kixℓ
+in to be small compared to the other terms. With a second order Taylor
+expansion we obtain:"
+V,0.4289897510980966,"ˆνℓ
+kn→i(W ℓ
+ki) ∝
+Z
+dz dν↓(xℓ+1
+kn ) e−(z−ωkn→i)2"
+V,0.43045387994143486,"2Vkn→i
+P ℓ+1
+
+xℓ+1
+kn z
+ × "
+V,0.43191800878477304,1 + z −ωkn→i
+V,0.4333821376281113,"Vkn→i
+ˆxℓ
+in→kW ℓ
+ki + (z −ωkn→i)2 −Vkn→i"
+V,0.43484626647144947,2Vkn→i
+V,0.4363103953147877,"
+∆+
+ 
+ˆxℓ
+in→k
+2  
+W ℓ
+ki
+2
+! (35)"
+V,0.4377745241581259,Introducing now the function:
+V,0.43923865300146414,"ϕℓ(B, A, ω, V ) = log
+Z
+dx dz e−1"
+V,0.4407027818448023,2 Ax2+Bx P ℓ(x|z) e−(ω−z)2
+V,0.44216691068814057,"2V
+(36)"
+V,0.44363103953147875,and deﬁning:
+V,0.445095168374817,"gℓ
+kn→i = ∂ωϕℓ+1(Bℓ+1, Aℓ+1, ωℓ
+kn→i, V ℓ
+kn→i)
+(37)"
+V,0.4465592972181552,"Γℓ
+kn→i = −∂2
+ωϕℓ+1(Bℓ+1, Aℓ+1, ωℓ
+kn→i, V ℓ
+kn→i)
+(38)"
+V,0.4480234260614934,the expansion for the log-message reads:
+V,0.4494875549048316,"log ˆνℓ
+kn→i(W ℓ
+ki) ≈const + ˆxℓ
+in→k gℓ
+kn→iW ℓ
+ki −1 2"
+V,0.45095168374816985,"
+∆ℓ
+in→k +
+ 
+ˆxℓ
+in→k
+2
+Γℓ
+kn→i −∆ℓ
+in→k
+ 
+gℓ
+kn→i
+2  
+W ℓ
+ki
+2
+(39)"
+V,0.45241581259150804,"Factor-to-variable-x messages
+The derivation of these messages is analogous to the factor-to-
+variable-W ones in Eq. 26 just reported. The ﬁnal result for the log-message is:"
+V,0.4538799414348463,"log ˆνℓ
+kn→i(xℓ
+in) ≈const + mℓ
+ki→n gℓ
+kn→ixℓ
+in −1 2"
+V,0.45534407027818447,"
+σℓ
+ki→n +
+ 
+mℓ
+ki→n
+2
+Γℓ
+kn→i −σℓ
+ki→n
+ 
+gℓ
+kn→i
+2  
+xℓ
+in
+2
+(40)"
+V,0.4568081991215227,"Variable-W-to-output-factor messages
+The message from variable W ℓ
+ki to the output factor kn
+reads:"
+V,0.4582723279648609,"νℓ
+ki→n(W ℓ
+ki) ∝P ℓ
+θki(W ℓ
+ki)e
+P"
+V,0.45973645680819913,"n′̸=n log ˆνℓ
+kn′→i(W ℓ
+ki)"
+V,0.4612005856515373,"≈P ℓ
+θki(W ℓ
+ki)eHℓ
+ki→nW ℓ
+ki−1"
+V,0.46266471449487556,"2 Gℓ
+ki→n(W ℓ
+ki)
+2
+(41)"
+V,0.46412884333821375,where we have deﬁned:
+V,0.465592972181552,"Hℓ
+ki→n =
+X"
+V,0.4670571010248902,"n′̸=n
+ˆxℓ
+in′→k gℓ
+kn′→i
+(42)"
+V,0.4685212298682284,"Gℓ
+ki→n =
+X n′̸=n"
+V,0.4699853587115666,"
+∆ℓ
+in′→k +
+ 
+ˆxℓ
+in′→k
+2
+Γℓ
+kn′→i −∆ℓ
+in′→k
+ 
+gℓ
+kn′→i
+2
+(43)"
+V,0.47144948755490484,Introducing now the effective free energy:
+V,0.47291361639824303,Under review as a conference paper at ICLR 2022
+V,0.4743777452415813,"ψ(H, G, θ) = log
+Z
+dW P ℓ
+θ (W) eHW −1"
+V,0.47584187408491946,"2 GW 2
+(44)"
+V,0.4773060029282577,"we can express the ﬁrst two cumulants of the message νℓ
+ki→n(W ℓ
+ki) as:"
+V,0.4787701317715959,"mℓ
+ki→n = ∂Hψ(Hℓ
+ki→n, Gℓ
+ki→n, θki)
+(45)"
+V,0.4802342606149341,"σℓ
+ki→n = ∂2
+Hψ(Hℓ
+ki→n, Gℓ
+ki→n, θki)
+(46)"
+V,0.4816983894582723,"Variable-x-to-input-factor messages
+We can write the downgoing message as:"
+V,0.48316251830161056,"ν↓(xℓ
+in) ∝e
+P"
+V,0.48462664714494874,"k log ˆνℓ
+kn→i(xℓ
+in)"
+V,0.486090775988287,"≈eBℓ
+inx−1"
+V,0.48755490483162517,"2 Aℓ
+inx2
+(47)"
+V,0.4890190336749634,where:
+V,0.4904831625183016,"Bℓ
+in =
+X"
+V,0.49194729136163984,"n
+mℓ
+ki→n gℓ
+kn→i
+(48)"
+V,0.493411420204978,"Aℓ
+in =
+X n"
+V,0.49487554904831627,"
+σℓ
+ki→n +
+ 
+mℓ
+ki→n
+2
+Γℓ
+kn→i −σℓ
+ki→n
+ 
+gℓ+1
+kn→i
+2
+(49)"
+V,0.49633967789165445,"Variable-x-to-output-factor messages
+By deﬁning the following cavity quantities:"
+V,0.4978038067349927,"Bℓ
+in→k = Bℓ
+in→k −mℓ
+ki→n gℓ
+kn→i
+(50)"
+V,0.4992679355783309,"Aℓ
+in→k = Aℓ
+in→k −
+
+σℓ
+ki→n +
+ 
+mℓ
+ki→n
+2
+Γℓ
+kn→i −σℓ
+ki→n
+ 
+gℓ
+kn→i
+2
+(51)"
+V,0.5007320644216691,and the following non-cavity ones:
+V,0.5021961932650073,"ωℓ
+kn =
+X"
+V,0.5036603221083455,"i
+mℓ
+ki→n ˆxℓ
+in→k
+(52)"
+V,0.5051244509516838,"V ℓ
+kn =
+X i"
+V,0.5065885797950219,"
+σℓ
+ki→n ∆ℓ
+in→k +
+ 
+mℓ
+ki→n
+2 ∆ℓ
+in→k + σℓ
+ki→n
+ 
+ˆxℓ
+i′n→k
+2
+(53)"
+V,0.5080527086383602,we can express the ﬁrst 2 cumulants of the upgoing messages as:
+V,0.5095168374816984,"ˆxℓ
+in→k = ∂Bϕℓ(Bℓ
+in→k, Aℓ
+in→k, ωℓ−1
+in , V ℓ−1
+in
+)
+(54)"
+V,0.5109809663250366,"∆ℓ
+in→k = ∂2
+Bϕℓ(Bℓ
+in→k, Aℓ
+in→k, ωℓ−1
+in , V ℓ−1
+in
+)
+(55)"
+V,0.5124450951683748,"Wrapping it up
+Additional but straightforward considerations are required for the ﬁnal input and
+output layers (ℓ= 0 and ℓ= L respectively), since they do not receive messages from below and
+above respectively. In the end, thanks to independence assumptions and the central limit theorem that
+we used throughout the derivations, we arrive to a closed set of equations involving the means and
+the variances (or otherwise the corresponding natural parameters) of the messages. Within the same
+approximation assumption, we also replace the cavity quantities corresponding to variances with the
+non-cavity counterparts. Dividing the update equations in a forward and backward pass, and ordering
+them using time indexes in such a way that we have an efﬁcient ﬂow of information, we obtain the
+set of BP equations presented in the main text Eqs. (6-17) and in the Appendix Eqs. (60-71)."
+V,0.513909224011713,"A.3
+BP EQUATIONS"
+V,0.5153733528550513,"We report here the end result of the derivation in last section, the complete set of BP equations also
+presented in the main text as Eqs. (6-17)."
+V,0.5168374816983895,Under review as a conference paper at ICLR 2022
+V,0.5183016105417276,"Initialization
+At τ = 0:"
+V,0.5197657393850659,"Bℓ,0
+in→k = 0
+(56)"
+V,0.5212298682284041,"Aℓ,0
+in = 0
+(57)"
+V,0.5226939970717424,"Hℓ,0
+ki→n = 0
+(58)"
+V,0.5241581259150805,"Gℓ,0
+ki = 0
+(59)"
+V,0.5256222547584187,"Forward Pass
+At each τ = 1, . . . , τmax, for ℓ= 0, . . . , L:"
+V,0.527086383601757,"ˆxℓ,τ
+in→k = ∂Bϕℓ(Bℓ,τ−1
+in→k, Aℓ,τ−1
+in
+, ωℓ−1,τ
+in
+, V ℓ−1,τ
+in
+)
+(60)"
+V,0.5285505124450952,"∆ℓ,τ
+in = ∂2
+Bϕℓ(Bℓ,τ−1
+in
+, Aℓ,τ−1
+in
+, ωℓ−1,τ
+in
+, V ℓ−1,τ
+in
+)
+(61)"
+V,0.5300146412884333,"mℓ,τ
+ki→n = ∂Hψ(Hℓ,τ−1
+ki→n , Gℓ,τ−1
+ki
+, θℓ
+ki)
+(62)"
+V,0.5314787701317716,"σℓ,τ
+ki = ∂2
+Hψ(Hℓ,τ−1
+ki
+, Gℓ,τ−1
+ki
+, θℓ
+ki)
+(63)"
+V,0.5329428989751098,"V ℓ,τ
+kn =
+X i"
+V,0.5344070278184481,"
+mℓ,τ
+ki
+2
+∆ℓ,τ
+in + σℓ,τ−1
+ki
+
+ˆxℓ,τ
+i′n
+2
++ σℓ,τ−1
+ki
+∆ℓ,τ
+in"
+V,0.5358711566617862,"
+(64)"
+V,0.5373352855051244,"ωℓ,τ
+kn→i =
+X"
+V,0.5387994143484627,"i′̸=i
+mℓ,τ
+ki′→n ˆxℓ,τ
+i′n→k
+(65)"
+V,0.5402635431918009,"In these equations for simplicity we abused the notation, in fact for the ﬁrst layer ˆxℓ=0,τ
+n
+is ﬁxed and
+given by the input xn while ∆ℓ=0,τ
+n
+= 0 instead."
+V,0.541727672035139,"Backward Pass
+For τ = 1, . . . , τmax, for ℓ= L, . . . , 0 :"
+V,0.5431918008784773,"gℓ,τ
+kn→i = ∂ωϕℓ+1(Bℓ+1,τ
+kn
+, Aℓ+1,τ
+kn
+, ωℓ,τ
+kn→i, V ℓ,τ
+kn )
+(66)"
+V,0.5446559297218155,"Γℓ,τ
+kn = −∂2
+ωϕℓ+1(Bℓ+1,τ
+kn
+, Aℓ+1,τ
+kn
+, ωℓ,τ
+kn , V ℓ,τ
+kn )
+(67)"
+V,0.5461200585651538,"Aℓ,τ
+in =
+X k"
+V,0.5475841874084919,"
+mℓ,τ
+ki
+2
++ σℓ,τ
+ki"
+V,0.5490483162518301,"
+Γℓ,τ
+kn −σℓ,τ
+ki
+
+gℓ,τ
+kn
+2
+(68)"
+V,0.5505124450951684,"Bℓ,τ
+in→k =
+X"
+V,0.5519765739385066,"k′̸=k
+mℓ,τ
+k′i→n gℓ,τ
+k′n→i
+(69)"
+V,0.5534407027818448,"Gℓ,τ
+ki =
+X n"
+V,0.554904831625183,"
+ˆxℓ,τ
+in
+2
++ ∆ℓ,τ
+in"
+V,0.5563689604685212,"
+Γℓ,τ
+kn −∆ℓ,τ
+in
+
+gℓ,τ
+kn
+2
+(70)"
+V,0.5578330893118595,"Hℓ,τ
+ki→n =
+X"
+V,0.5592972181551976,"n′̸=n
+ˆxℓ,τ
+in′→k gℓ,τ
+kn′→i
+(71)"
+V,0.5607613469985359,"In these equations as well we abused the notation: calling L the number of hidden neuron layers,
+when ℓ= L one should use ϕL+1(y, ω, V ) from Eq. 21 instead of ϕL+1(B, A, ω, V )."
+V,0.5622254758418741,"A.4
+BPI EQUATIONS"
+V,0.5636896046852123,"The BP-Inspired algorithm (BPI) is obtained as an approximation of BP replacing some cavity
+quantities with their non-cavity counterparts. What we obtain is a generalization of the single layer
+algorithm of Baldassi et al. (2007)."
+V,0.5651537335285505,Under review as a conference paper at ICLR 2022
+V,0.5666178623718887,Forward pass.
+V,0.568081991215227,"ˆxℓ,τ
+in
+=
+∂Bϕℓ
+Bℓ,τ−1
+in
+, Aℓ,τ−1
+in
+, ωℓ−1,τ
+in
+, V ℓ−1,τ
+in
+ (72)"
+V,0.5695461200585652,"∆ℓ,τ
+in
+=
+∂2
+Bϕℓ
+Bℓ,τ−1
+in
+, Aℓ,τ−1
+in
+, ωℓ−1,τ
+in
+, V ℓ−1,τ
+in
+ (73)"
+V,0.5710102489019033,"mℓ,τ
+ki
+=
+∂Hψ(Hℓ,τ−1
+ki
+, Gℓ,τ−1
+ki
+, θℓ
+ki)
+(74)"
+V,0.5724743777452416,"σℓ,τ
+ki
+=
+∂2
+Hψ(Hℓ,τ−1
+ki
+, Gℓ,τ−1
+ki
+, θℓ
+ki)
+(75)"
+V,0.5739385065885798,"V ℓ,τ
+kn
+=
+X i"
+V,0.575402635431918,"
+mℓ,τ
+ki
+2
+∆ℓ,τ
+in + σℓ,τ
+ki (ˆxℓ,τ
+in )2 + σℓ,τ
+ki ∆ℓ,τ
+in  (76)"
+V,0.5768667642752562,"ωℓ,τ
+kn
+=
+X"
+V,0.5783308931185944,"i
+mℓ,τ
+ki ˆxℓ,τ
+in
+(77)"
+V,0.5797950219619327,Backward pass.
+V,0.5812591508052709,"gℓ,τ
+kn→i
+=
+∂ωϕℓ+1 
+Bℓ+1,τ
+kn
+, Aℓ+1,τ
+kn
+, ωℓ,τ
+kn −mℓ,τ
+ki ˆxℓ,τ
+ai , V ℓ,τ
+kn
+ (78)"
+V,0.582723279648609,"Γℓ,τ
+kn
+=
+−∂2
+ωϕℓ+1 
+Bℓ+1,τ
+kn
+, Aℓ+1,τ
+kn
+, ωℓ,τ
+kn , V ℓ,τ
+kn
+ (79)"
+V,0.5841874084919473,"Aℓ,τ
+in
+=
+X k"
+V,0.5856515373352855,"
+(mℓ,τ
+ki )2 + σℓ,τ
+ki
+
+Γℓ,τ
+kn −σℓ,τ
+ki
+
+gℓ,τ
+kn
+2 (80)"
+V,0.5871156661786238,"Bℓ,τ
+in
+=
+X"
+V,0.5885797950219619,"k
+mℓ,τ
+ki gℓ,τ
+kn→i
+(81)"
+V,0.5900439238653001,"Gℓ,τ
+ki
+=
+X n"
+V,0.5915080527086384,"
+(ˆxℓ,τ
+in )2 + ∆ℓ,τ
+in
+
+Γℓ,τ
+kn −∆ℓ,τ
+in
+
+gℓ,τ
+kn
+2 (82)"
+V,0.5929721815519766,"Hℓ,τ
+ki
+=
+X"
+V,0.5944363103953147,"n
+ˆxℓ,τ
+in gℓ,τ
+kn→i
+(83)"
+V,0.595900439238653,"A.5
+MF EQUATIONS"
+V,0.5973645680819912,"The mean-ﬁeld (MF) equations are obtained as a further simpliﬁcation of BPI, using only non-cavity
+quantities. Although the simpliﬁcation appears minimal at this point, we empirically observe a
+non-negligible discrepancy between the two algorithms in terms of generalization performance and
+computational time."
+V,0.5988286969253295,Forward pass.
+V,0.6002928257686676,"ˆxℓ,τ
+in
+=
+∂Bϕℓ
+Bℓ,τ−1
+in
+, Aℓ,τ−1
+in
+, ωℓ−1,τ
+in
+, V ℓ−1,τ
+in
+ (84)"
+V,0.6017569546120058,"∆ℓ,τ
+in
+=
+∂2
+Bϕℓ
+Bℓ,τ−1
+in
+, Aℓ,τ−1
+in
+, ωℓ−1,τ
+in
+, V ℓ−1,τ
+in
+ (85)"
+V,0.6032210834553441,"mℓ,τ
+ki
+=
+∂Hψ(Hℓ,τ−1
+ki
+, Gℓ,τ−1
+ki
+, θℓ
+ki)
+(86)"
+V,0.6046852122986823,"σℓ,τ
+ki
+=
+∂2
+Hψ(Hℓ,τ−1
+ki
+, Gℓ,τ−1
+ki
+, θℓ
+ki)
+(87)"
+V,0.6061493411420205,"V ℓ,τ
+kn
+=
+X i"
+V,0.6076134699853587,"
+mℓ,τ
+ki
+2
+∆ℓ,τ
+in + σℓ,τ
+ki (ˆxℓ,τ
+in )2 + σℓ,τ
+ki ∆ℓ,τ
+in  (88)"
+V,0.6090775988286969,"ωℓ,τ
+kn
+=
+X"
+V,0.6105417276720352,"i
+mℓ,τ
+ki ˆxℓ,τ
+in
+(89)"
+V,0.6120058565153733,Under review as a conference paper at ICLR 2022
+V,0.6134699853587116,Backward pass.
+V,0.6149341142020498,"gℓ,τ
+kn
+=
+∂ωϕℓ+1 
+Bℓ+1,τ
+kn
+, Aℓ+1,τ
+kn
+, ωℓ,τ
+kn , V ℓ,τ
+kn
+ (90)"
+V,0.616398243045388,"Γℓ,τ
+kn
+=
+−∂2
+ωϕℓ+1 
+Bℓ+1,τ
+kn
+, Aℓ+1,τ
+kn
+, ωℓ,τ
+kn , V ℓ,τ
+kn
+ (91)"
+V,0.6178623718887262,"Aℓ,τ
+in
+=
+X k"
+V,0.6193265007320644,"
+(mℓ,τ
+ki )2 + σℓ,τ
+ki
+
+Γℓ,τ
+kn −σℓ,τ
+ki
+
+gℓ,τ
+kn
+2 (92)"
+V,0.6207906295754027,"Bℓ,τ
+in
+=
+X"
+V,0.6222547584187409,"k
+mℓ,τ
+ki gℓ,τ
+kn
+(93)"
+V,0.623718887262079,"Gℓ,τ
+ki
+=
+X n"
+V,0.6251830161054173,"
+(ˆxℓ,τ
+in )2 + ∆ℓ,τ
+in
+
+Γℓ,τ
+kn −∆ℓ,τ
+in
+
+gℓ,τ
+kn
+2 (94)"
+V,0.6266471449487555,"Hℓ,τ
+ki
+=
+X"
+V,0.6281112737920937,"n
+ˆxℓ,τ
+in gℓ,τ
+kn
+(95)"
+V,0.6295754026354319,"A.6
+DERIVATION OF THE AMP EQUATIONS"
+V,0.6310395314787701,"In order to obtain the AMP equations, we approximate cavity quantities with non-cavity ones in the
+BP equations Eqs. (60-71) using a ﬁrst order expansion. We start with the mean activation:"
+V,0.6325036603221084,"ˆxℓ,τ
+in→k =∂Bϕℓ(Bℓ,τ−1
+in
+−mℓ,τ−1
+ki→n gℓ,τ−1
+kn→i, Aℓ,τ−1
+in
+, ωℓ−1,τ
+in
+, V ℓ−1,τ
+in
+)"
+V,0.6339677891654466,"≈∂Bϕℓ(Bℓ,τ−1
+in
+, Aℓ,τ−1
+in
+, ωℓ−1,τ
+in
+, V ℓ−1,τ
+in
+)"
+V,0.6354319180087847,"−mℓ,τ−1
+ki→n gℓ,τ−1
+kn→i∂2
+Bϕℓ(Bℓ,τ−1
+in
+, Aℓ,τ−1
+in
+, ωℓ−1,τ
+in
+, V ℓ−1,τ
+in
+)"
+V,0.636896046852123,"≈ˆxℓ,τ
+in −mℓ,τ−1
+ki
+gℓ,τ−1
+kn
+∆ℓ,τ
+in
+(96)"
+V,0.6383601756954612,"Analogously, for the weight’s mean we have:"
+V,0.6398243045387995,"mℓ,τ
+ki→n = ∂Hψ(Hℓ,τ−1
+ki
+−ˆxℓ,τ−1
+in→k gℓ,τ−1
+kn→i, Gℓ,τ−1
+ki
+, θℓ
+ki)"
+V,0.6412884333821376,"≈∂Hψ(Hℓ,τ−1
+ki
+, Gℓ,τ−1
+ki
+, θℓ
+ki) −ˆxℓ,τ−1
+in→k gℓ,τ−1
+kn→i∂2
+Hψ(Hℓ,τ−1
+ki
+, Gℓ,τ−1
+ki
+, θℓ
+ki)"
+V,0.6427525622254758,"≈mℓ,τ
+ki −ˆxℓ,τ−1
+in
+gℓ,τ−1
+kn
+σℓ,τ
+ki .
+(97)"
+V,0.6442166910688141,This brings us to:
+V,0.6456808199121523,"ωℓ,τ
+kn =
+X"
+V,0.6471449487554904,"i
+mℓ,τ
+ki→n ˆxℓ,τ
+in→k ≈
+X"
+V,0.6486090775988287,"i
+mℓ,τ
+ki ˆxℓ,τ
+in −gℓ,τ−1
+kn
+X"
+V,0.6500732064421669,"i
+σℓ,τ
+ki ˆxℓ,τ
+in ˆxℓ,τ−1
+in
+−gℓ,τ−1
+kn
+X"
+V,0.6515373352855052,"i
+mℓ,τ
+ki mℓ,τ−1
+ki
+∆ℓ,τ
+in"
+V,0.6530014641288433,"+ (gℓ,τ−1
+kn
+)2 X"
+V,0.6544655929721815,"i
+σℓ,τ
+ki mℓ,τ−1
+ki
+ˆxℓ,τ−1
+in
+∆ℓ,τ
+in
+(98)"
+V,0.6559297218155198,Let us now apply the same procedure to the other set of cavity messages:
+V,0.657393850658858,"gℓ,τ
+kn→i =∂ωϕℓ+1(Bℓ+1,τ
+kn
+, Aℓ+1,τ
+kn
+, ωℓ,τ
+kn −mℓ,τ
+ki→n ˆxℓ,τ
+in→k, V ℓ,τ
+kn )"
+V,0.6588579795021962,"≈∂ωϕℓ+1(Bℓ+1,τ
+kn
+, Aℓ+1,τ
+kn
+, ωℓ,τ
+kn , V ℓ,τ
+kn )"
+V,0.6603221083455344,"−mℓ,τ
+ki→n ˆxℓ,τ
+in→k∂2
+ωϕℓ+1(Bℓ+1,τ
+kn
+, Aℓ+1,τ
+kn
+, ωℓ,τ
+kn , V ℓ,τ
+kn )"
+V,0.6617862371888726,"≈gℓ,τ
+kn + mℓ,τ
+ki ˆxℓ,τ
+in Γℓ,τ
+kn
+(99)"
+V,0.6632503660322109,Under review as a conference paper at ICLR 2022
+V,0.664714494875549,"Bℓ,τ
+in =
+X"
+V,0.6661786237188873,"k
+mℓ,τ
+ki→n gℓ,τ
+kn→i ≈
+X"
+V,0.6676427525622255,"k
+mℓ,τ
+ki gℓ,τ
+kn −ˆxin
+X k"
+V,0.6691068814055637,"
+gℓ,τ
+kn
+2
+σℓ,τ
+ki + ˆxℓ,τ
+in
+X"
+V,0.6705710102489019,"k
+(mℓ,τ
+ki )2Γℓ,τ
+kn"
+V,0.6720351390922401,"−(ˆxℓ,τ
+in )2 X"
+V,0.6734992679355783,"k
+σℓ,τ
+ki mℓ,τ
+ki gℓ,τ
+kn Γℓ,τ
+kn
+(100)"
+V,0.6749633967789166,"Hℓ,τ
+ki =
+X"
+V,0.6764275256222547,"n
+ˆxℓ,τ
+in→k gℓ,τ
+kn→i ≈
+X"
+V,0.677891654465593,"n
+ˆxℓ,τ
+in gℓ,τ
+kn + mℓ,τ
+ki
+X n"
+V,0.6793557833089312,"
+ˆxℓ,τ
+in
+2
+Γℓ,τ
+kn −mℓ,τ
+ki
+X"
+V,0.6808199121522694,"n
+(gℓ,τ
+kn )2∆ℓ,τ
+in"
+V,0.6822840409956076,"−(mℓ,τ
+ki )2 X"
+V,0.6837481698389458,"n
+gℓ,τ
+kn Γℓ,τ
+kn∆ℓ,τ
+in ˆxℓ,τ
+in
+(101)"
+V,0.6852122986822841,"We are now able to write down the full AMP equations, that we present in the next section."
+V,0.6866764275256223,"A.7
+AMP EQUATIONS"
+V,0.6881405563689604,"In summary, in the last section we derived the AMP algorithm as a closure of the BP messages passing
+over non-cavity quantities, relying on some statistical assumptions on messages and interactions.
+With respect to the MF message passing, we ﬁnd some additional terms that go under the name of
+Onsager corrections. In-depth overviews of the AMP (also known as Thouless-Anderson-Palmer
+(TAP)) approach can be found in Refs. (Zdeborová & Krzakala, 2016; Mézard, 2017; Gabrié, 2020).
+The ﬁnal form of the AMP equations for the multi-layer perceptron is given below."
+V,0.6896046852122987,"Initialization
+At τ = 0:"
+V,0.6910688140556369,"Bℓ,0
+in = 0
+(102)"
+V,0.6925329428989752,"Aℓ,0
+in = 0
+(103)"
+V,0.6939970717423133,"Hℓ,0
+ki = 0 or some values
+(104)"
+V,0.6954612005856515,"Gℓ,0
+ki = 0 or some values
+(105)"
+V,0.6969253294289898,"gℓ,0
+kn = 0
+(106)"
+V,0.698389458272328,"Forward Pass
+At each τ = 1, . . . , τmax, for ℓ= 0, . . . , L:"
+V,0.6998535871156661,"ˆxℓ,τ
+in =∂Bϕℓ(Bℓ,τ−1
+in
+, Aℓ,τ−1
+in
+, ωℓ−1,τ
+in
+, V ℓ−1,τ
+in
+)
+(107)"
+V,0.7013177159590044,"∆ℓ,τ
+in =∂2
+Bϕℓ(Bℓ,τ−1
+in
+, Aℓ,τ−1
+in
+, ωℓ−1,τ
+in
+, V ℓ−1,τ
+in
+)
+(108)"
+V,0.7027818448023426,"mℓ,τ
+ki =∂Hψ(Hℓ,τ−1
+ki
+, Gℓ,τ−1
+ki
+, θℓ
+ki)
+(109)"
+V,0.7042459736456809,"σℓ,τ
+ki =∂2
+Hψ(Hℓ,τ−1
+ki
+, Gℓ,τ−1
+ki
+, θℓ
+ki)
+(110)"
+V,0.705710102489019,"V ℓ,τ
+kn =
+X i"
+V,0.7071742313323572,"
+mℓ,τ
+ki
+2
+∆ℓ,τ
+in + σℓ,τ
+ki
+
+ˆxℓ,τ
+i′n
+2
++ σℓ,τ
+ki ∆ℓ,τ
+in"
+V,0.7086383601756955,"
+(111)"
+V,0.7101024890190337,"ωℓ,τ
+kn =
+X"
+V,0.7115666178623719,"i
+mℓ,τ
+ki ˆxℓ,τ
+in −gℓ,τ−1
+kn
+X"
+V,0.7130307467057101,"i
+σℓ,τ
+ki ˆxℓ,τ
+in ˆxℓ,τ−1
+in
+−gℓ,τ−1
+kn
+X"
+V,0.7144948755490483,"i
+mℓ,τ
+ki mℓ,τ−1
+ki
+∆ℓ,τ
+in"
+V,0.7159590043923866,"+ (gℓ,τ−1
+kn
+)2 X"
+V,0.7174231332357247,"i
+σℓ,τ
+ki mℓ,τ−1
+ki
+ˆxℓ,τ−1
+in
+∆ℓ,τ
+in
+(112)"
+V,0.718887262079063,Under review as a conference paper at ICLR 2022
+V,0.7203513909224012,Backward Pass
+V,0.7218155197657394,"gℓ,τ
+kn =∂ωϕℓ+1(Bℓ+1,τ
+kn
+, Aℓ+1,τ
+kn
+, ωℓ,τ
+kn→i, V ℓ,τ
+kn )
+(113)"
+V,0.7232796486090776,"Γℓ,τ
+kn = −∂2
+ωϕℓ+1(Bℓ+1,τ
+kn
+, Aℓ+1,τ
+kn
+, ωℓ,τ
+kn , V ℓ,τ
+kn )
+(114)"
+V,0.7247437774524158,"Aℓ,τ
+in =
+X k"
+V,0.726207906295754,"
+mℓ,τ
+ki
+2
++ σℓ,τ
+ki"
+V,0.7276720351390923,"
+Γℓ,τ
+kn −σℓ,τ
+ki
+
+gℓ,τ
+kn
+2
+(115)"
+V,0.7291361639824304,"Bℓ,τ
+in =
+X"
+V,0.7306002928257687,"k
+mℓ,τ
+ki gℓ,τ
+kn −ˆxin
+X k"
+V,0.7320644216691069,"
+gℓ,τ
+kn
+2
+σℓ,τ
+ki + ˆxℓ,τ
+in
+X"
+V,0.7335285505124451,"k
+(mℓ,τ
+ki )2Γℓ,τ
+kn"
+V,0.7349926793557833,"−(ˆxℓ,τ
+in )2 X"
+V,0.7364568081991215,"k
+σℓ,τ
+ki mℓ,τ
+ki gℓ,τ
+kn Γℓ,τ
+kn
+(116)"
+V,0.7379209370424598,"Gℓ,τ
+ki =
+X n"
+V,0.739385065885798,"
+ˆxℓ,τ
+in
+2
++ ∆ℓ,τ
+in"
+V,0.7408491947291361,"
+Γℓ,τ
+kn −∆ℓ,τ
+in
+
+gℓ,τ
+kn
+2
+(117)"
+V,0.7423133235724744,"Hℓ,τ
+ki =
+X"
+V,0.7437774524158126,"n
+ˆxℓ,τ
+in gℓ,τ
+kn + mℓ,τ
+ki
+X n"
+V,0.7452415812591509,"
+ˆxℓ,τ
+in
+2
+Γℓ,τ
+kn −mℓ,τ
+ki
+X"
+V,0.746705710102489,"n
+(gℓ,τ
+kn )2∆ℓ,τ
+in"
+V,0.7481698389458272,"−(mℓ,τ
+ki )2 X"
+V,0.7496339677891655,"n
+gℓ,τ
+kn Γℓ,τ
+kn∆ℓ,τ
+in ˆxℓ,τ
+in
+(118)"
+V,0.7510980966325037,"A.8
+ACTIVATION FUNCTIONS"
+V,0.7525622254758418,"A.8.1
+SIGN"
+V,0.7540263543191801,"In most of our experiments we use sign activations in each layer. With this choice, the neuron’s free
+energy 19 takes the form"
+V,0.7554904831625183,"ϕ(B, A, ω, V ) = log  1 2 X"
+V,0.7569546120058566,"x∈{−1,+1}
+eBx H
+
+−xω
+√ V  + 1"
+V,0.7584187408491947,"2 log(2πV ),
+(119) where H = 1"
+ERFC,0.7598828696925329,"2 erfc
+ x
+√ 2"
+ERFC,0.7613469985358712,"
+.
+(120)"
+ERFC,0.7628111273792094,Notice that for sign activations the messages A can be dropped.
+ERFC,0.7642752562225475,"A.8.2
+RELU"
+ERFC,0.7657393850658858,"For ReLU(x) = max(0, x) activations the free energy 19 becomes"
+ERFC,0.767203513909224,"ϕ(B, A, ω, V ) =
+Z
+dxdz e−1"
+ERFC,0.7686676427525623,"2 Ax2+Bx δ(x −max(0, z)) e−(ω−z)2"
+V,0.7701317715959004,"2V
+(121)"
+V,0.7715959004392386,"= log
+
+H
+ ω
+√ V"
+V,0.7730600292825769,"
++ N(ω; B/A, V + 1"
+V,0.7745241581259151,"A)
+A N(B; 0, A)
+H
+
+−
+BV + ω
+√"
+V,0.7759882869692533,V + AV 2
+V,0.7774524158125915,"
++ 1"
+V,0.7789165446559297,"2 log(2πV ), (122) where"
+V,0.780380673499268,"N(x; µ, Σ) =
+1
+√"
+V,0.7818448023426061,"2πΣ
+e−(x−µ)2"
+V,0.7833089311859444,"2Σ
+.
+(123)"
+V,0.7847730600292826,"A.9
+THE ARGMAX LAYER"
+V,0.7862371888726208,"In order to perform multi-class classiﬁcation, we have to perform an argmax operation on the last
+layer of the neural network. Call zk, for k = 1, . . . , K, the Gaussian random variables output of the
+last layer of the network in correspondence of some input x. Assuming the correct label is class k∗,
+the effective partition function Zk∗corresponding to the output constraint reads:"
+V,0.787701317715959,Under review as a conference paper at ICLR 2022
+V,0.7891654465592972,"0
+20
+40
+60
+80
+100
+epochs 0 5 10 15 20 25"
+V,0.7906295754026355,error (%)
+V,0.7920937042459737,"BP  train
+BP  test"
+V,0.7935578330893118,"0
+20
+40
+60
+80
+100
+epochs 0 5 10 15 20 25"
+V,0.7950219619326501,error (%)
+V,0.7964860907759883,"BP  train
+BP  test"
+V,0.7979502196193266,"Figure 4: MLP with 2 hidden layers with 101 hidden units each, batch-size 128 on the Fashion-
+MNIST dataset. In the ﬁrst two layers we use the BP equations, while in the last layer the ArgMax
+ones. (Left) ArgMax layer ﬁrst version; (Right) ArgMax layer second version. Even if it is possible
+to reach similar accuracies with the two versions, we decide to use the ﬁrst one as it is simpler to use."
+V,0.7994143484626647,"Zk∗=
+Z Y"
+V,0.8008784773060029,"k
+dzk N(zk; ωk, Vk)
+Y"
+V,0.8023426061493412,"k̸=k∗
+Θ(zk∗−zk)
+(124)"
+V,0.8038067349926794,"=
+Z
+dzk∗N(zk∗; ωk∗, Vk∗)
+Y"
+V,0.8052708638360175,"k̸=k∗
+H
+
+−zk∗−ωk
+√Vk"
+V,0.8067349926793558,"
+(125)"
+V,0.808199121522694,"Here Θ(x) is the Heaviside indicator function and we used the deﬁnition of H from Eq. 120. The
+integral on the last line cannot be expressed analytically, therefore we have to resort to approximations."
+V,0.8096632503660323,"A.9.1
+APPROACH 1: JENSEN INEQUALITY"
+V,0.8111273792093704,Using the Jensen inequality we obtain:
+V,0.8125915080527086,"φk∗= log Zk∗= log Ez∼N(ωk∗,Vk∗)
+Y"
+V,0.8140556368960469,"k̸=k∗
+H
+
+−z −ωk
+√Vk"
+V,0.8155197657393851,"
+(126) ≥
+X"
+V,0.8169838945827232,"k̸=k∗
+Ez∼N(ωk∗,Vk∗) log H
+
+−z −ωk
+√Vk"
+V,0.8184480234260615,"
+(127)"
+V,0.8199121522693997,Reparameterizing the expectation we have:
+V,0.821376281112738,"˜φk∗=
+X"
+V,0.8228404099560761,"k̸=k∗
+Eϵ∼N(0,1) log H
+
+−ωk∗+ ϵ√Vk∗−ωk
+√Vk"
+V,0.8243045387994143,"
+(128)"
+V,0.8257686676427526,"The derivative ∂ωk ˜φk∗and ∂2
+ωk ˜φk∗that we need can then be estimated by sampling (once) ϵ:"
+V,0.8272327964860908,"∂ωk ˜φk∗= 
+
+ 
+"
+V,0.828696925329429,"−
+1
+√Vk Eϵ∼N(0,1) K
+
+−ωk∗+ϵ√Vk∗−ωk
+√Vk"
+V,0.8301610541727672,"
+k ̸= k∗ P"
+V,0.8316251830161054,"k′̸=k∗
+1
+√"
+V,0.8330893118594437,"Vk′ Eϵ∼N(0,1) K
+
+−ωk∗+ϵ√Vk∗−ωk′
+√ Vk′"
+V,0.8345534407027818,"
+k = k∗
+(129)"
+V,0.83601756954612,where we have deﬁned:
+V,0.8374816983894583,K(x) = N(x)
+V,0.8389458272327965,H(x) = p
+V,0.8404099560761347,"2/π
+erfcx(x/2)
+(130)"
+V,0.8418740849194729,Under review as a conference paper at ICLR 2022
+V,0.8433382137628112,"A.9.2
+APPROACH 2: JENSEN AGAIN"
+V,0.8448023426061494,"A further simpliﬁcation is obtained by applying Jensen inequality again to 128 but in the opposite
+direction, therefore we renounce to having a bound and look only for an approximation. We have the
+new effective free energy:"
+V,0.8462664714494875,"˜φk∗=
+X"
+V,0.8477306002928258,"k̸=k∗
+log Eϵ∼N(0,1)H
+
+−ωk∗+ ϵ√Vk∗−ωk
+√Vk"
+V,0.849194729136164,"
+(131) =
+X"
+V,0.8506588579795022,"k̸=k∗
+log H
+
+−ωk∗−ωk
+√Vk + Vk∗"
+V,0.8521229868228404,"
+(132)"
+V,0.8535871156661786,"This gives, for k ̸= k∗:"
+V,0.8550512445095169,"∂ωk ˜φk∗= 
+
+ 
+"
+V,0.8565153733528551,"−
+1
+√Vk+Vk∗K
+
+−ωk∗−ωk
+√Vk+Vk∗"
+V,0.8579795021961932,"
+k ̸= k∗ P"
+V,0.8594436310395315,"k′̸=k∗
+1
+√"
+V,0.8609077598828697,"Vk′+Vk∗K
+
+−ωk∗−ωk′
+√"
+V,0.862371888726208,Vk′+Vk∗
+V,0.8638360175695461,"
+k = k∗
+(133)"
+V,0.8653001464128843,"Notice that ∂ωk∗˜φk∗= −P
+k̸=k∗∂ωk ˜φk∗. In last formulas we used the deﬁnition of K in Eq. 130."
+V,0.8667642752562226,"We show in Fig. 4 the negligible difference between the two ArgMax versions when using BP on the
+layers before the last one (which performs only the ArgMax)."
+V,0.8682284040995608,"B
+EXPERIMENTAL DETAILS"
+V,0.8696925329428989,"B.1
+HYPER-PARAMETERS OF THE BP-BASED SCHEME"
+V,0.8711566617862372,"We include here a complete list of the hyper-parameters present in the BP-based algorithms. Notice
+that, like in the SGD type of algorithms, many of them can be ﬁxed or it is possible to ﬁnd a
+prescription for their value that works in most cases. However, we expect future research to ﬁnd even
+more effective values of the hyper-parameters, in the same way it has been done for SGD. These
+hyper-parameters are: the mini-batch size bs; the parameter ρ (that has to be tuned similarly to the
+learning rate in SGD); the damping parameter α (that performs a running smoothing on the BP ﬁelds
+along the dynamics by adding a fraction of the ﬁeld at the previous iteration, see Eqs. (134, 135)); the
+initialization coefﬁcient ϵ that we use to to sample the parameters of our prior distribution qθ(W)
+according to θℓ,t=0
+ki
+∼ϵN(0, 1). Different choices of ϵ correspond to different initial distribution of
+the weights’ magnetization mℓ
+ki = tanh(θℓ
+ki), as is shown in Fig. 5); the number of internal steps of
+reinforcement τmax and the associated intensity of the internal reinforcement r. The performances
+of the BP-based algorithms are robust in a reasonable range of these hyper-parameters. A more
+principled choice of a good initialization condition could be made by adapting the technique from
+Stamatescu et al. (2020)."
+V,0.8726207906295754,"Notice that among these parameters, the BP dynamics at each layer is mostly sensitive to ρ and α,
+so that in general we consider them layer-dependent. See Sec. B.8 for details on the effect of these
+parameters on the learning dynamics and on layer polarization (i.e. how the BP dynamics tends to
+bias the weights towards a single point-wise conﬁguration with high probability). Unless otherwise
+stated we ﬁx some of the hyper-parameters, in particular: bs = 128 (results are consistent with other
+values of the batch-size, from bs = 1 up to bs = 1024 in our experiments), ϵ = 1.0, τmax = 1, r = 0."
+V,0.8740849194729137,"B.2
+DAMPING SCHEME FOR THE MESSAGE PASSING"
+V,0.8755490483162518,"We use a damping parameter α ∈(0, 1) to stabilize the training, changing the updated rule for the
+weights’ means as follows"
+V,0.87701317715959,"˜mℓ,τ
+ki =∂Hψ(Hℓ,τ−1
+ki
+, Gℓ,τ−1
+ki
+, θℓ
+ki)
+(134)"
+V,0.8784773060029283,"mℓ,τ
+ki =α mℓ,τ−1
+ki
++ (1 −α) ˜mℓ,τ
+ki
+(135)"
+V,0.8799414348462665,Under review as a conference paper at ICLR 2022
+V,0.8814055636896047,ϵ = 0.1
+V,0.8828696925329429,ϵ = 0.5
+V,0.8843338213762811,ϵ = 1.0
+V,0.8857979502196194,ϵ = 1.5
+V,0.8872620790629575,"-1.0
+-0.5
+0.5
+1.0 m 1 2 3 4 5 P(m)"
+V,0.8887262079062958,"Figure 5: Initial distribution of the magnetizations varying the parameter ϵ. The initial distribution is
+more concentrated around ±1 as ϵ increases (i.e. it is more bimodal and the initial conﬁguration is
+more polarized)."
+V,0.890190336749634,"B.3
+ARCHITECTURES"
+V,0.8916544655929722,"In the experiments in which we vary the architecture (see Sec. 4.1), all simulations of the BP-based
+algorithms use a number of internal reinforcement iterations τmax = 1. Learning is performed on the
+totality of the training dataset, the batch-size is bs = 128, the initialization coefﬁcient is ϵ = 1.0."
+V,0.8931185944363104,"For all architectures and all BP approximations, we use α = 0.8 for each layer, apart for the
+501-501-501 MLP in which we use α = (0.1, 0.1, 0.1, 0.9). Concerning the parameter ρ, we use
+ρ = 0.9 on the last layer for all architectures and BP approximations. On the other layers we
+use: for the 101-101 and the 501-501 MLPs, ρ = 1.0001 for all BP approximations; for the 101-
+101-101 MLP, ρ = 1.0 for BP and AMP while ρ = 1.001 for MF; for the 501-501-501 MLP
+ρ = 1.0001 for all BP approximations. For the BinaryNet simulations, the learning rate is lr = 10.0
+for all MLP architectures, giving the better performance among the learning rates we have tested,
+lr = 100, 10, 1, 0.1, 0.001."
+V,0.8945827232796486,"We notice that while we need some tuning of the hyper-parameters to reach the performances of
+BinaryNet, it is possible to ﬁx them across datasets and architectures (e.g. ρ = 1 and α = 0.8 on
+each layer) without in general losing more than 20% (relative) of the generalization performances,
+demonstrating that the BP-based algorithms are effective for learning also with minimal hyper-
+parameter tuning."
+V,0.8960468521229868,"The experiments on the Bayesian error are performed on a MLP with 2 hidden layers of 101 units
+on the MNIST dataset (binary classiﬁcation). Learning is performed on the totality of the training
+dataset, the batch-size is bs = 128, the initialization coefﬁcient is ϵ = 1.0. In order to ﬁnd the
+pointwise conﬁgurations we use α = 0.8 on each layer and ρ = (1.0001, 1.0001, 0.9), while to ﬁnd
+the Bayesian ones we use α = 0.8 on each layer and ρ = (0.9999, 0.9999, 0.9) (these value prevent
+an excessive polarization of the network towards a particular pointwise conﬁgurations)."
+V,0.8975109809663251,"For the continual learning task (see Sec. 4.5) we ﬁxed ρ = 1 and α = 0.8 on each layer as we
+empirically observed that polarizing the last layer helps mitigating the forgetting while leaving the
+single-task performances almost unchanged."
+V,0.8989751098096632,In Fig. 6 we report training curves on architectures different from the ones reported in the main paper.
+V,0.9004392386530015,Under review as a conference paper at ICLR 2022
+V,0.9019033674963397,"0
+20
+40
+60
+80
+100
+epochs 0 5 10 15 20 25"
+V,0.9033674963396779,error (%)
+V,0.9048316251830161,"BP  train
+BP  test
+AMP train
+AMP test"
+V,0.9062957540263543,"MF train
+MF test
+BinaryNet train
+BinaryNet test"
+V,0.9077598828696926,"0
+20
+40
+60
+80
+100
+epochs 0 5 10 15 20 25"
+V,0.9092240117130308,error (%)
+V,0.9106881405563689,"BP  train
+BP  test
+AMP train
+AMP test"
+V,0.9121522693997072,"MF train
+MF test
+BinaryNet train
+BinaryNet test"
+V,0.9136163982430454,"Figure 6: Training curves of message passing algorithms compared with BinaryNet on the Fashion-
+MNIST dataset (multi-class classiﬁcation) with a binary MLP with 3 hidden layers of 501 units.
+(Right) The batch-size is 128 and curves are averaged over 5 realizations of the initial conditions"
+V,0.9150805270863837,"B.4
+VARYING THE DATASET"
+V,0.9165446559297218,"When varying the dataset (see Sec. 4.3), all simulation of the BP-based algorithms use a number
+of internal reinforcement iterations τmax = 1. Learning is performed on the totality of the training
+dataset, the batch-size is bs = 128, the initialization coefﬁcient is ϵ = 1.0. For all datasets (MNIST
+(2 classes), FashionMNIST (2 classes), CIFAR-10 (2 classes), MNIST, FashionMNIST, CIFAR-10)
+and all algorithms (BP, AMP, MF) we use ρ = (1.0001, 1.0001, 0.9) and α = 0.8 for each layer.
+Using in the ﬁrst layers values of ρ = 1 + ϵ with ϵ ≥0 and sufﬁciently small typically leads to good
+results."
+V,0.91800878477306,"For the BinaryNet simulations, the learning rate is lr = 10.0 (both for binary classiﬁcation and
+multi-class classiﬁcation), giving the better performance among the learning rates we have tested,
+lr = 100, 10, 1, 0.1, 0.001. In Tab. 2 we report the ﬁnal train errors obtained on the different datasets."
+V,0.9194729136163983,"Dataset
+BinaryNet
+BP
+AMP
+MF
+MNIST (2 classes)
+0.05 ± 0.05
+0.0 ± 0.0
+0.0 ± 0.0
+0.0 ± 0.0
+FashionMNIST (2 classes)
+0.3 ± 0.1
+0.06 ± 0.01
+0.06 ± 0.01
+0.09 ± 0.01
+CIFAR10 (2 classes)
+1.2 ± 0.5
+0.37 ± 0.01
+0.4 ± 0.1
+0.9 ± 0.2
+MNIST
+0.09 ± 0.01
+0.12 ± 0.01
+0.12 ± 0.01
+0.03 ± 0.01
+FashionMNIST
+4.0 ± 0.5
+3.4 ± 0.1
+3.7 ± 0.1
+2.5 ± 0.2
+CIFAR10
+13.0 ± 0.9
+4.7 ± 0.1
+4.7 ± 0.2
+9.2 ± 0.5"
+V,0.9209370424597365,"Table 2: Train error (%) on Fashion-MNIST of a multilayer perceptron with 2 hidden layers of 501
+units each for BinaryNet (baseline), BP, AMP and MF. All algorithms are trained with batch-size 128
+and for 100 epochs. Mean and standard deviations are calculated over 5 random initializations."
+V,0.9224011713030746,"B.5
+LOCAL ENERGY"
+V,0.9238653001464129,"We adapt the notion of ﬂatness used in (Jiang et al., 2020; Pittorino et al., 2021), that we call local
+energy, to conﬁgurations with binary weights. Given a weight conﬁguration w ∈{±1}N, we deﬁne
+the local energy δEtrain(w, p) as the average difference in training error Etrain(w) when perturbing w
+by ﬂipping a random fraction p of its elements:"
+V,0.9253294289897511,"δEtrain(w, p) = Ez Etrain(w ⊙z) −Etrain(w),
+(136)"
+V,0.9267935578330894,"where ⊙denotes the Hadamard (element-wise) product and the expectation is over i.i.d. entries for z
+equal to −1 with probability p and to +1 with probability 1 −p. We report the resulting local energy
+proﬁles (in a range [0, pmax]) in Fig. 7 right panel for BP and BinaryNet. The relative error grows"
+V,0.9282576866764275,Under review as a conference paper at ICLR 2022
+V,0.9297218155197657,"slowly when perturbing the trained conﬁgurations (notice the convexity of the curves). This shows
+that both BP-based and SGD-based algorithms ﬁnd conﬁgurations that lie in relatively ﬂat minima in
+the energy landscape. The same qualitative phenomenon holds for different architectures and datasets."
+V,0.931185944363104,"0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+0.30
+0.35
+flip probability p 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+V,0.9326500732064422,local energy
+V,0.9341142020497804,"BinaryNet
+BP"
+V,0.9355783308931186,"Figure 7: Local energy curve of the point-wise conﬁguration found by the BP algorithm compared
+with BinaryNet on a MLP with 2 hidden layers of 101 units on the 2-class MNIST dataset."
+V,0.9370424597364568,"B.6
+SGD IMPLEMENTATION (BINARYNET)"
+V,0.9385065885797951,"We compare the BP-based algorithms with SGD training for neural networks with binary weights
+and activations as introduced in BinaryNet (Hubara et al., 2016). This procedure consists in keeping
+a continuous version of the parameters w which is updated with the SGD rule, with the gradient
+calculated on the binarized conﬁguration wb = sign(w). At inference time the forward pass is
+calculated with the parameters wb. The backward pass with binary activations is performed with the
+so called straight-through estimator."
+V,0.9399707174231332,"Our implementation presents some differences with respect to the original proposal of the algorithm
+in (Hubara et al., 2016), in order to keep the comparison as fair as possible with the BP-based
+algorithms, in particular for what concerns the number of parameters. We do not use biases nor batch
+normalization layers, therefore in order to keep the pre-activations of each hidden layer normalized
+we rescale them by
+1
+√"
+V,0.9414348462664714,"N where N is the size of the previous layer (or the input size in the case of the
+pre-activations afferent to the ﬁrst hidden layer). The standard SGD update rule is applied (instead
+of Adam), and we use the binary cross-entropy loss. Clipping of the continuous conﬁguration w in
+[−1, 1] is applied. We use Xavier initialization (Glorot & Bengio, 2010) for the continuous weights.
+In Fig.2 of the main paper, we apply the Adam optimization rule, noticing that it performs slightly
+better in train and test generalization performance compared to the pure SGD one."
+V,0.9428989751098097,"B.7
+EBP IMPLEMENTATION"
+V,0.9443631039531479,"Expectation Back Propagation (EBP) Soudry et al. (2014b) is parameter-free Bayesian algorithm
+that uses a mean-ﬁeld (MF) approximation (fully factorized form for the posterior) in an online
+environment to estimate the Bayesian posterior distribution after the arrival of a new data point.
+The main differences between EBP and our approach relies in the approximation for the posterior
+distribution. Moreover we explicitly base the estimation of the marginals on the local high entropy
+structure. The fact that EBP works has no clear explanation: certainly it cannot be that the MF
+assumption holds for multi-layer neural networks. Still, it’s certainly very interesting that it works.
+We argue that it might work precisely by virtue of the existence of high local entropy minima and"
+V,0.9458272327964861,Under review as a conference paper at ICLR 2022
+V,0.9472913616398243,"0
+20
+40
+60
+80
+100
+epochs 0 5 10 15 20 25"
+V,0.9487554904831625,error (%)
+V,0.9502196193265008,"BP  train
+BP  test
+AMP train
+AMP test"
+V,0.9516837481698389,"MF train
+MF test
+BinaryNet train
+BinaryNet test
+0
+50
+100
+epochs 0.50 0.75 1.00 q0"
+V,0.9531478770131772,"BP  layer1
+AMP layer1
+MF layer1"
+V,0.9546120058565154,"0
+50
+100
+epochs 0.005 0.010 qab"
+V,0.9560761346998536,"BP  layer1
+AMP layer1
+MF layer1"
+V,0.9575402635431918,"0
+50
+100
+epochs 0.50 0.75 1.00 q0"
+V,0.95900439238653,"BP  layer2
+AMP layer2
+MF layer2"
+V,0.9604685212298683,"0
+50
+100
+epochs"
+V,0.9619326500732065,0.0025
+V,0.9633967789165446,0.0050 qab
+V,0.9648609077598829,"BP  layer2
+AMP layer2
+MF layer2"
+V,0.9663250366032211,"0
+50
+100
+epochs 0.2 0.4 q0"
+V,0.9677891654465594,"BP  layer3
+AMP layer3
+MF layer3"
+V,0.9692532942898975,"0
+50
+100
+epochs 0.00 0.02 0.04 qab"
+V,0.9707174231332357,"BP  layer3
+AMP layer3
+MF layer3"
+V,0.972181551976574,"Figure 8: (Right panels) Polarizations ⟨q0⟩and overlaps ⟨qab⟩on each layer of a MLP with 2 hidden
+layers of 501 units on the Fashion-MNIST dataset (multi-class), the batch-size is bs = 128. (Right)
+Corresponding train and test error curves."
+V,0.9736456808199122,"expect it to give similar performance to the MF case of our algorithm. The online iteration could in
+fact be seen as way of implementing a reinforcement."
+V,0.9751098096632503,"We implemented the EBP code along the lines of the original matlab implementation
+(https://github.com/ExpectationBackpropagation/EBP_Matlab_Code). In order to perform a fair
+comparison we removed the biases both in the binary and continuous weights versions. It is worth
+noticing that we faced numerical issues in training with a moderate to big batchsize All the experi-
+ments were consequently limited to a batchsize of 10 patterns"
+V,0.9765739385065886,"B.8
+UNIT POLARIZATION AND OVERLAPS"
+V,0.9780380673499268,"We deﬁne the self-overlap or polarization of a given unit a as qa
+0 =
+1
+N
+P"
+V,0.9795021961932651,"i(wa
+i )2, where N is the
+number of parameters of the unit and {wa
+i }N
+i=1 its weights. It quantiﬁes how much the unit is polarized
+towards a unique point-wise binary conﬁguration (qa
+0 = 1 corresponding to high conﬁdence in a
+given conﬁgurations while qa
+0 = 0 to low). The overlap between two units a and b (considered in the
+same layer) is qab = 1"
+V,0.9809663250366032,"N
+P wa
+i wb
+i. The number of parameters N is the same for units belonging to the
+same fully connected layer. We denote by ⟨q0⟩=
+1
+Nout
+PNout
+a=1 qa
+0 and ⟨qab⟩=
+1
+Nout
+PNout
+a<b qab the
+mean polarization and mean overlap in a given layer (where Nout is the number of units in the layer)."
+V,0.9824304538799414,"The parameters ρ and α govern the dynamical evolution of the polarization of each layer during
+training. A value ρ ⪆1 has the effect to progressively increase the units polarization during training,
+while ρ < 1 disfavours it. The damping α which takes values in [0, 1] has the effect to slow the
+dynamics by a smoothing process (the intensity of which depends on the value of α), generically
+favoring convergence. Given the nature of the updates in Algorithm 1, each layer presents its own
+dynamics given the values of ρℓand αℓat layer ℓ, that in general can differ from each other."
+V,0.9838945827232797,"We ﬁnd that it is is beneﬁcial to control the polarization layer-per-layer, see Fig. 8 for the correspond-
+ing typical behavior of the mean polarization and the mean overlaps during training. Empirically, we
+have found that (as we could expect) when training is successful the layers polarize progressively
+towards q0 = 1, i.e. towards a precise point-wise solution, while the overlaps between units in each
+hidden layer are such that qab ≪1 (indicating low symmetry between intra-layer units, as expected
+for a non-redundant solution). To this aim, in most cases αℓcan be the same for each layer, while
+tuning ρℓfor each layer allows to ﬁnd better generalization performances in some cases (but is not
+strictly necessary for learning)."
+V,0.9853587115666179,"In particular, it is possible to use the same value ρℓfor each layer before the last one (ℓ< L
+where L is the number of layers in the network), while we have found that the last layer tends to"
+V,0.986822840409956,Under review as a conference paper at ICLR 2022
+V,0.9882869692532943,"polarize immediately during the dynamics (probably due to its proximity to the output constraints).
+Empirically, it is usually beneﬁcial for learning that this layer does not or only slightly polarize, i.e.
+⟨q0⟩≪1 (this can be achieved by imposing ρL < 1). Learning is anyway possible even when the
+last layer polarizes towards ⟨q0⟩= 1 along the dynamics, i.e. by choosing ρL sufﬁciently large."
+V,0.9897510980966325,"As a simple general prescription in most experiments we can ﬁx α = 0.8 and ρL = 0.9, therefore
+leaving ρℓ<L as the only hyper-parameter to be tuned, akin to the learning rate in SGD. Its value has
+to be very close to 1.0 (a value smaller than 1.0 tends to depolarize the layers, without focusing on a
+particular point-wise binary conﬁguration, while a value greater than 1.0 tends to lead to numerical
+instabilities and parameters’ divergence)."
+V,0.9912152269399708,"B.9
+COMPUTATIONAL PERFORMANCE: VARYING BATCH-SIZE"
+V,0.9926793557833089,"In order to compare the time performances of the BP-based algorithms with our implementation
+of BinaryNet, we report in Fig. 9 the time in seconds taken by a single epoch of each algorithm
+in function of the batch-size, on a MLP of 2 layers of 501 units on Fashion-MNIST. We test both
+algorithms on a NVIDIA GeForce RTX 2080 Ti GPU. Multi-class and binary classiﬁcation present
+a very similar time scaling with the batch-size, in both cases comparable with BinaryNet. Let us
+also notice that BP-based algorithms are able to reach generalization performances comparable to
+BinaryNet for all the values of the batch-size reported in this section."
+V,0.9941434846266471,"100
+101
+102
+103
+batch size 100 101 102"
+V,0.9956076134699854,time per epoch (s)
+V,0.9970717423133236,"BP 
+BPI 
+AMP 
+MF 
+BinaryNet"
+V,0.9985358711566618,"Figure 9: Algorithms time scaling with the batch-size on a MLP with 2 hidden layers of 501 hidden
+units each on the Fashion-MNIST dataset (multi-class classiﬁcation). The reported time (in seconds)
+refers to one epoch for each algorithm."

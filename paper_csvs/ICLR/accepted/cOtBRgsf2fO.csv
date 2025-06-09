@@ -1,0 +1,2612 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.001451378809869376,"Two-party split learning is a popular technique for learning a model across feature-
+partitioned data. In this work, we explore whether it is possible for one party to
+steal the private label information from the other party during split training, and
+whether there are methods that can protect against such attacks. Speciﬁcally, we
+ﬁrst formulate a realistic threat model and propose a privacy loss metric to quan-
+tify label leakage in split learning. We then show that there exist two simple yet
+effective methods within the threat model that can allow one party to accurately
+recover private ground-truth labels owned by the other party. To combat these at-
+tacks, we propose several random perturbation techniques, including Marvell,
+an approach that strategically ﬁnds the structure of the noise perturbation by min-
+imizing the amount of label leakage (measured through our quantiﬁcation metric)
+of a worst-case adversary. We empirically1 demonstrate the effectiveness of our
+protection techniques against the identiﬁed attacks, and show that Marvell in
+particular has improved privacy-utility tradeoffs relative to baseline approaches."
+INTRODUCTION,0.002902757619738752,"1
+INTRODUCTION
+With increasing concerns over data privacy in machine learning, federated learning (FL) (McMahan
+et al., 2017) has become a promising direction of study. Based on how sensitive data are distributed
+among parties, FL can be classiﬁed into different categories, notable among which are horizontal
+FL and vertical FL (Yang et al., 2019). In contrast to horizontal FL where the data are partitioned
+by examples, vertical FL considers data partitioned by features (including labels). As a canonical
+example of vertical FL, consider an online media platform A which displays advertisements from
+company B to its users, and charges B for each conversion (e.g., a user clicking the ad and buying
+the product). In this case, both parties have different features for each user: A has features on the
+user’s media viewing records, while B has the user’s conversion labels. B’s labels are not available
+to A because each user’s purchase behaviors happen entirely on B’s website/app."
+INTRODUCTION,0.0043541364296081275,"If both parties want to jointly learn a model to predict conversion without data sharing, split learn-
+ing (Gupta & Raskar, 2018; Vepakomma et al., 2018) can be used to split the execution of a deep
+network between the parties on a layer-wise basis. In vanilla split learning, before training begins,
+both parties use Private Set Intersection (PSI) protocols (Kolesnikov et al., 2016; Pinkas et al., 2018)
+to ﬁnd the intersection of their data records and achieve an example ID alignment. This alignment
+paves the way for the split training phase. During training (Figure 1), the party without labels (non-
+label party) sends the intermediate layer (cut layer) outputs rather than the raw data to the party with
+labels (label party), and the label party completes the rest of the forward computation to obtain the
+training loss. To compute the gradients with respect to model parameters, the label party initiates
+backpropagation from its training loss and computes its own parameters’ gradients. To allow the
+non-label party to also compute gradients of its parameters, the label party also computes the gradi-
+ents with respect to the cut layer outputs and communicates this information back to the non-label
+party. As a result of the ID alignment, despite not knowing the label party’s raw label data, the
+non-label party can identify the gradient value returned by the label party for each example."
+INTRODUCTION,0.005805515239477504,"At ﬁrst glance, the process of split learning appears privacy-preserving because only the intermedi-
+ate computations of the cut layer—rather than raw features or labels—are communicated between
+the two parties. However, such “gradient sharing” schemes have been shown to be vulnerable to
+privacy leakage in horizontal FL settings (e.g., Zhu et al., 2019). In vertical FL (and speciﬁcally
+split learning), it remains unclear whether the raw data can similarly be leaked during communi-"
+INTRODUCTION,0.00725689404934688,"∗work done during internship at ByteDance Inc. †oscarli@cmu.edu §jiankai.sun@bytedance.com
+1Code available at https://github.com/OscarcarLi/label-protection"
+INTRODUCTION,0.008708272859216255,Published as a conference paper at ICLR 2022 L
+INTRODUCTION,0.010159651669085631,cut layer
+INTRODUCTION,0.011611030478955007,"X
+f(X)
+ℓ= h( f(X))
+f(X)"
+INTRODUCTION,0.013062409288824383,positive logit
+INTRODUCTION,0.01451378809869376,"dL
+dL = 1"
+INTRODUCTION,0.015965166908563134,"{0,
+1} ∋y"
+INTRODUCTION,0.01741654571843251,"forward 
+computation"
+INTRODUCTION,0.018867924528301886,backward
+INTRODUCTION,0.020319303338171262,"gradient 
+computation"
+INTRODUCTION,0.02177068214804064,"non-label party
+label party"
+INTRODUCTION,0.023222060957910014,weights of h
+INTRODUCTION,0.02467343976777939,communication
+INTRODUCTION,0.026124818577648767,"cross entropy
+f
+h"
+INTRODUCTION,0.027576197387518143,"dL
+dℓ= (˜p1−y)
+ 
+g := ∇f(X)L"
+INTRODUCTION,0.02902757619738752,= (˜p1−y)∇zh(z)
+INTRODUCTION,0.030478955007256895,z=f(X)
+INTRODUCTION,0.03193033381712627,g := ∇f(X)L
+INTRODUCTION,0.033381712626995644,weights of f
+INTRODUCTION,0.03483309143686502,"no 
+buy
+buy"
+INTRODUCTION,0.036284470246734396,"user 
+features"
+INTRODUCTION,0.03773584905660377,"Can  leak ?
+Can we protect against this? g
+y"
+INTRODUCTION,0.03918722786647315,"Figure 1: Communication diagram of two-party split training for an example of online advertising. We study
+whether it is possible for the communicated gradient g to leak private label information."
+INTRODUCTION,0.040638606676342524,"cation. In particular, as the raw labels often contain highly sensitive information (e.g., what a user
+has purchased (in online advertising) or whether a user has a disease or not (in disease predic-
+tion) Vepakomma et al. (2018)), developing a rigorous understanding of the threat of label leakage
+and its protection is particularly important. Towards this goal, we make the following contributions:"
+WE FORMALIZE A THREAT MODEL FOR LABEL LEAKAGE IN TWO-PARTY SPLIT LEARNING IN THE CONTEXT OF BINARY,0.0420899854862119,"1. We formalize a threat model for label leakage in two-party split learning in the context of binary
+classiﬁcation (Section 3.1), and propose speciﬁc privacy quantiﬁcation metrics to measure the
+severity of such threats (Section 3.2).
+2. We identify two simple and realistic methods within this threat model which can accurately
+recover the label party’s private label information (Section 3.3).
+3. We propose several random perturbation techniques to limit the label-stealing ability of the
+non-label party (Section 4). Among them, our principled approach Marvell directly searches
+for the optimal random perturbation noise structure to minimize label leakage (as measured via
+our quantiﬁcation metric) against a worst-case adversarial non-label party.
+4. We experimentally demonstrate the effectiveness of our protection techniques and MARVELL’s
+improved privacy-utility tradeoffs compared to other protection baselines (Section 5)."
+RELATED WORK,0.04354136429608128,"2
+RELATED WORK"
+RELATED WORK,0.04499274310595065,"Privacy leakage in split learning. Although raw data is not shared in federated learning, sensitive
+information may still be leaked when gradients and/or model parameters are communicated between
+parties. In horizontal FL, Zhu et al. (2019) showed that an honest-but-curious server can uncover
+the raw features and labels of a device by knowing the model architecture, parameters, and com-
+municated gradient of the loss on the device’s data. Based on their techniques, Zhao et al. (2020)
+showed that the ground truth label of an example can be extracted by exploiting the directions of
+the gradients of the weights connected to the logits of different classes. Here we study a different
+setting—two-party split learning (in vertical FL) (Yang et al., 2019), where no party has access to the
+model architecture or model parameters of the other party. In this setting, Vepakomma et al. (2019)
+studied how the forward communication of feature representations can leak the non-label party’s
+raw data to the label party. We instead study whether label information may be leaked from the
+label party to the non-label party during the backward communication. Despite the importance of
+maintaining the privacy of these labels, we are unaware of prior work that has studied this problem."
+RELATED WORK,0.04644412191582003,"Privacy protection and quantiﬁcation. Techniques to protect communication privacy in FL gen-
+erally fall into three categories: 1) cryptographic methods such as secure multi-party computation
+(e.g., Bonawitz et al., 2017); 2) system-based methods including trusted execution environments
+(Subramanyan et al., 2017); and 3) perturbation methods that shufﬂe or modify the communicated
+messages (e.g., Abadi et al., 2016; McMahan et al., 2018; Erlingsson et al., 2019; Cheu et al., 2019;
+Zhu et al., 2019). Our protection techniques belong to the third category, as we add random per-
+turbations to the gradients to protect the labels. Many randomness-based protection methods have
+been proposed in the domain of horizontal FL. In this case, differential privacy (DP) (Dwork, 2006;
+Dwork et al., 2014) is commonly used to measure the proposed random mechanisms’ ability to
+anonymize the identity of any single participating example in the model iterates. However, in split
+learning, after PSI, both parties know exactly the identity of which example has participated in a
+given gradient update. As we explain in Section 3.1, the object we aim to protect (the communi-
+cated cut layer gradients), unlike the model iterates, is not an aggregate function of all the examples
+but are instead example-speciﬁc. As a result, DP and its variants (e.g. label DP (Chaudhuri &
+Hsu, 2011; Ghazi et al., 2021)) are not directly applicable metrics in our setting, and we instead
+propose a different metric (discussed in Section 3.2)."
+RELATED WORK,0.047895500725689405,Published as a conference paper at ICLR 2022
+LABEL LEAKAGE IN SPLIT LEARNING,0.04934687953555878,"3
+LABEL LEAKAGE IN SPLIT LEARNING"
+LABEL LEAKAGE IN SPLIT LEARNING,0.05079825834542816,"We ﬁrst introduce the two-party split learning problem for binary classiﬁcation, and then formally
+describe our threat model and privacy quantiﬁcation metrics with two concrete attack examples."
+TWO-PARTY SPLIT LEARNING IN BINARY CLASSIFICATION,0.05224963715529753,"3.1
+TWO-PARTY SPLIT LEARNING IN BINARY CLASSIFICATION"
+TWO-PARTY SPLIT LEARNING IN BINARY CLASSIFICATION,0.05370101596516691,"Problem setup. Consider two parties learning a composition model h ◦f jointly for a binary
+classiﬁcation problem over the domain X × {0, 1} (Figure 1). The non-label party owns the repre-
+sentation function f : X →Rd and each example’s raw feature X ∈X while the label party owns
+the logit function h : Rd →R and each example’s label y ∈{0, 1}2. Let ℓ= h(f(X)) be
+the logit of the positive class whose predicted probability is given through the sigmoid function:
+ep1 = 1/(1 + exp(−ℓ)). We measure the loss of such prediction through the cross entropy loss
+L = log(1 + exp(−ℓ)) + (1 −y)ℓ. During model inference, the non-label party computes f(X)
+and sends it to the label party who will then execute the rest of forward computation in Figure 1."
+TWO-PARTY SPLIT LEARNING IN BINARY CLASSIFICATION,0.055152394775036286,"Model training (Figure 1: backward gradient computation). To train the model using gradient
+descent, the label party starts by ﬁrst computing the gradient of the loss L with respect to the logit
+dL"
+TWO-PARTY SPLIT LEARNING IN BINARY CLASSIFICATION,0.05660377358490566,"dℓ= (ep1 −y). Using the chain rule, the label party can then compute the gradient of L with
+respect to its function h’s parameters and perform the gradient updates. To also allow the non-label
+party to learn its function f, the label party needs to additionally compute the gradient with respect
+to cut layer feature f(X) and communicate it to the non-label party. We denote this gradient by
+g := ∇f(X)L = (ep1 −y)∇zh(z)|z=f(X) ∈Rd (by chain rule). After receiving g, the non-label
+party continues the backpropagation towards f’s parameters and also perform the gradient updates."
+TWO-PARTY SPLIT LEARNING IN BINARY CLASSIFICATION,0.05805515239477504,"Why Not Differential Privacy? Note that for a given iteration, the non-label party randomly
+chooses B example IDs to form a batch. Therefore, the identity of which examples are used is
+known to the non-label party by default. In addition, the communicated features f(X) and returned
+gradients g will both be matrices in RB×d with each row belonging to a speciﬁc example in the batch.
+The different gradients (rows of the matrix) are not with respect to the same model parameters, but
+are instead with respect to different examples’ cut-layer features; thus, no averaging over or shufﬂing
+of the rows of the gradient matrix can be done prior to communication to ensure correct computa-
+tion of f’s parameters on the non-label party side. This example-aware and example-speciﬁc nature
+of the communicated gradient matrix makes differential privacy (which focuses on anonymizing an
+example’s participation in an aggregate function) inapplicable for this problem (see also Section 2)."
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.059506531204644414,"3.2
+THREAT MODEL AND PRIVACY QUANTIFICATION"
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.06095791001451379,"Below we specify several key aspects of our threat model, including the adversary’s objective and
+capabilities, our metric for quantifying privacy loss, and the possible inclusion of side information."
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.062409288824383166,"Adversary’s objective. At a given moment in time during training (with f and h ﬁxed), since the
+communicated cut layer gradient g is a deterministic function of y (see Section 3.1), we consider
+an adversarial non-label party whose objective is to recover the label party’s hidden label y based on
+the information contained in g for every training example."
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.06386066763425254,"Adversary’s capability. We consider an honest-but-curious non-label party which cannot tamper
+with training by selecting which examples to include in a batch or sending incorrect features f(X);
+instead, we assume that the adversary follows the agreed-upon split training procedure while trying
+to guess the label y. This can be viewed as a binary classiﬁcation problem where the (input, output)
+distribution is the induced distribution of (g, y). We allow the adversary to use any binary classiﬁer
+q : Rd →{0, 1} to guess the labels. This classiﬁer can be represented by a (scoring function r,
+threshold t) tuple, where r : Rd →R maps an example’s cut layer gradient to a real-valued score
+and the threshold t ∈R determines a cut-off so that q(g) = 1 if r(g) > t and q(g) = 0 if r(g) ≤t.
+Moving forward, we use this tuple representation to describe adversarial non-label party classiﬁers."
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.06531204644412192,"Privacy loss quantiﬁcation. As we consider binary classiﬁcation, a natural metric to quantify
+the performance of an adverary’s scoring function r is the AUC of its ROC curve. Denote the
+unperturbed class-conditional distributions of the cut-layer gradients by P (1) and P (0) for the"
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.06676342525399129,"2To simplify notation, we assume no additional features in the label party to compute the logit. The data
+leakage problem still holds true for other more complicated settings (see WDL experiment setting in Section 5)."
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.06821480406386067,Published as a conference paper at ICLR 2022 (a)
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.06966618287373004,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+|p1
+y| 100"
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.07111756168359942,update iteration
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.07256894049346879,"y=1
+y=0 200 300 400 500 (b)"
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.07402031930333818,"0.5
+1.0
+1.5
+2.0
+2.5
+3.0
+3.5
+4.0
+4.5
+||
+zh(z)|z = f(X)||2 100"
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.07547169811320754,update iteration
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.07692307692307693,"y=1
+y=0 200 300 400 500 (c)"
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.0783744557329463,"0.5
+0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0
+3.5
+||g||2 100"
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.07982583454281568,update iteration
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.08127721335268505,"y=1
+y=0 200 300 400 500 (d)"
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.08272859216255443,"0.65
+0.70
+0.75
+0.80
+0.85
+0.90
+0.95
+1.00
+1.05
+cos(
+zh(z)|z = f(Xa),
+zh(z)|z = f(Xb)) 100"
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.0841799709724238,update iteration
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.08563134978229318,"between all possible pair of example (a, b) 200 300 400 500 (e)"
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.08708272859216255,"1.0
+0.5
+0.0
+0.5
+1.0
+cos(g, g + ) 100"
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.08853410740203194,update iteration
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.0899854862119013,"y=1
+y=0 200 300 400 500"
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.09143686502177069,"Figure 2: Distributions of quantities discussed in Observations 1-4 after the ﬁrst 100, 200, 300, 400, 500 steps
+of stochastic gradient descent training of the WDL model on Criteo (see experiments)."
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.09288824383164006,"positive and negative class, respectively. The ROC curve of a scoring function r is a paramet-
+ric curve t 7→(FPRr(t), TPRr(t)) ∈[0, 1]2 which maps a threshold value t ∈R to the corre-
+sponding (False Positive Rate, True Positive Rate) tuple of the classiﬁer represented by (r, t), with
+FPRr(t) := P (0)({g : r(g) > t}) and TPRr(t) := P (1)({g : r(g) > t}). The AUC of the ROC
+curve of a scoring function r (denote by AUC(r)) can be expressed as an integral:
+AUC(r) =
+R −∞
+∞
+TPRr(t) dFPRr(t)
+∈[0, 1]
+(Leak AUC)
+(more details on this expression see Appendix A.1.) We use this value as the privacy loss quantiﬁ-
+cation metric for a speciﬁc adversary scoring function r and refer to it as the leak AUC. This metric
+summarizes the predictive performance of all classiﬁers that can be constructed through all threshold
+values t and removes the need to tune this classiﬁer-speciﬁc hyperparameter. The leak AUC being
+close to 1 implies that the corresponding scoring function r can very accurately recover the private
+label, whereas a value of around 0.5 means r is non-informative in predicting the labels. In practice,
+during batch training, the leak AUC of r can be estimated at every gradient update iteration using
+the minibatch of cut-layer gradients together with their labels."
+THREAT MODEL AND PRIVACY QUANTIFICATION,0.09433962264150944,"Side information. Among all the scoring functions within our threat model, it is conceivable that
+only some would recover the hidden labels accurately. Picking such effective ones would require
+the non-label party to have population-level side information speciﬁcally regarding the properties of
+(and distinction between) the positive and negative class’s cut-layer gradient distributions. Since we
+allow the adversary to pick any speciﬁc (measurable) scoring function, we implicitly allow for such
+population-level side information for the adversary. However, we assume the non-label party has no
+example-level side information that is different example by example. Thus we also don’t use local
+DP for privacy quantiﬁcation (detailed explanation in Appendix A.8). Next we provide two example
+scoring functions which use population-level side-information to effectively recover the label."
+PRACTICAL ATTACK METHODS,0.09579100145137881,"3.3
+PRACTICAL ATTACK METHODS"
+PRACTICAL ATTACK METHODS,0.09724238026124818,"Attack 1: Norm-based scoring function. Note that ∥g∥2 = |ep1 −y| · ∥∇ah(a)|a=f(X)∥2. We
+make the following observations for |ep1 −y| and ∥∇ah(a)|a=f(X)∥2, which hold true for a wide
+range of real-world learning problems."
+PRACTICAL ATTACK METHODS,0.09869375907111756,"• Observation 1: Throughout training, the model tends to be less conﬁdent about a positive ex-
+ample being positive than a negative example being negative. In other words, the conﬁdence gap
+of a positive example 1−ep1 = |ep1 −y| (when y = 1) is typically larger than the conﬁdence gap
+of a negative example 1 −ep0 = ep1 = |ep1 −y| (when y = 0) (see Figure 2(a)). This observation
+is particularly true for problems like advertising conversion prediction and disease prediction,
+where there is inherently more ambiguity for the positive class than the negative. For example,
+in advertising, uninterested users of a product will never click on its ad and convert, but those
+interested, even after clicking, might make the purchase only a fraction of the time depending
+on time/money constraints. (See A.2 for such an ambiguity even for a class-balanced setting.)
+• Observation 2: Throughout training, the norm of the gradient vector ∥∇zh(z)|z=f(X)∥2 is
+on the same order of magnitude (has similar distribution) for both the positive and negative
+examples (Figure 2(b)). This is natural because ∇ah(a)|a=f(X) is not a function of y."
+PRACTICAL ATTACK METHODS,0.10014513788098693,Published as a conference paper at ICLR 2022
+PRACTICAL ATTACK METHODS,0.10159651669085631,"As a consequence of Observation 1 and 2, the gradient norm ∥g∥2 of the positive instances are
+generally larger than that of the negative ones (Figure 2(c)). Thus, the scoring function rn(g) =
+∥g∥2 is a strong predictor of the unseen label y. We name the privacy loss (leak AUC) measured
+against the attack rn the norm leak AUC. In Figure 2(c), the norm leak AUCs are consistently above
+0.9, signaling a high level of label leakage throughout training."
+PRACTICAL ATTACK METHODS,0.10304789550072568,"Attack 2: Direction-based scoring function. We now show that the direction of g (in addition to
+its magnitude) can also leak the label. For a pair of examples, (Xa, ya), (Xb, yb), let their respective
+predicted positive class probability be ep1,a, ep1,b and their communicated gradients be ga, gb. Let
+cos : Rd × Rd →R denote the cosine similarity function cos(ga, gb) = gT
+a gb/(∥ga∥2∥gb∥2). It is easy
+to see that cos(ga, gb) = sgn(ep1,a −ya) · sgn(ep1,a −yb) · cos(∇zh(z)|z=f(Xa), ∇zh(z)|z=f(Xb)), where
+sgn(x) is the sign function which returns 1 if x ≥0, and −1 if x < 0. We highlight two additional
+observations that can allow us to use cosine similarity to recover the label."
+PRACTICAL ATTACK METHODS,0.10449927431059507,"• Observation 3: When the examples a, b are of different classes, the term sgn(ep1,a −ya) ·
+sgn(ep1,a −yb) = −1 is negative. On the other hand, when examples a, b are of the same
+class (both positive/both negative), this product will have a value of 1 and thus be positive.
+• Observation 4: Throughout training, for any two examples a, b, their gradients of the function h
+always form an acute angle, i.e. cos(∇zh(z)|z=f(Xa), ∇zh(z)|z=f(Xb)) > 0 (Figure 2(d)). For
+neural networks that use monotonically increasing activation functions (such as ReLU, sigmoid,
+tanh), this is caused by the fact that the gradients of these activation functions with respect to its
+inputs are coordinatewise nonnegative and thus always lie in the ﬁrst closed hyperorthant.
+Since cos(ga, gb) is the product of the terms from Observation 3 and 4, we see that for a given
+example, all the examples that are of the same class result in a positive cosine similarity, while all
+opposite class examples result in a negative cosine similarity. If the problem is class-imbalanced
+and the non-label party knows there are fewer positive examples than negative ones, it can thus
+determine the label of each example: the class is negative if more than half of the examples result
+in positive cosine similarity; otherwise it is positive. For many practical applications, the non-label
+party may reasonably guess which class has more examples in the dataset a priori without ever
+seeing any data—for example, in disease prediction, the percentage of the entire population having
+a certain disease is almost always much lower than 50%; in online advertising conversion prediction,
+the conversion rate (fraction of positive examples) is rarely higher than 30%. Note that the non-label
+party doesn’t need knowledge of the exact sample proportion of each class for this method to work."
+PRACTICAL ATTACK METHODS,0.10595065312046444,"To simplify this attack for evaluation, we consider an even worse oracle scenario where the non-label
+party knows the clean gradient of one positive example g+. Unlike the aforementioned practical
+majority counting attack which needs to ﬁrst ﬁgure out the direction of one positive gradient, this
+oracle scenario assumes the non-label party is directly given this information. Thus, any protection
+method capable of defending this oracle attack would also protect against the more practical one.
+With g+ given, the direction-based scoring function rd is simply rd(g) = cos(g, g+). We name
+the privacy loss (leak AUC) against this oracle attack rd the cosine leak AUC. In practice, we
+randomly choose a positive class clean gradient from each batch as g+ for evaluation. For iterations
+in Figure 2(e), the cosine leak AUC all have the highest value of 1 (complete label leakage)."
+LABEL LEAKAGE PROTECTION METHODS,0.10740203193033382,"4
+LABEL LEAKAGE PROTECTION METHODS"
+LABEL LEAKAGE PROTECTION METHODS,0.10885341074020319,"In this section, we ﬁrst introduce a heuristic random perturbation approach designed to prevent the
+practical attacks identiﬁed in Section 3.3. We then propose a theoretically justiﬁed method that aims
+to protect against the entire class of scoring functions considered in our threat model (Section 3.2)."
+A HEURISTIC PROTECTION APPROACH,0.11030478955007257,"4.1
+A HEURISTIC PROTECTION APPROACH"
+A HEURISTIC PROTECTION APPROACH,0.11175616835994194,"Random perturbation and the isotropic Gaussian baseline. To protect against label leakage, the
+label party should ideally communicate essential information about the gradient without commu-
+nicating its actual value. Random perturbation methods generally aim to achieve this goal. One
+obvious consideration for random perturbation is to keep the perturbed gradients unbiased. In other
+words, suppose ˜g is the perturbed version of an example’s true gradient g, then we want E[˜g | g] = g.
+By chain rule and linearity of expectation, this ensures the computed gradients of the non-label
+party’s parameters f will also be unbiased, a desirable property for stochastic optimization. Among
+unbiased perturbation methods, a simple approach is to add iid isotropic Gaussian noise to every
+gradient to mix the positive and negative gradient distribution before sending to the non-label party."
+A HEURISTIC PROTECTION APPROACH,0.11320754716981132,Published as a conference paper at ICLR 2022
+A HEURISTIC PROTECTION APPROACH,0.11465892597968069,"Although isotropic Gaussian noise is a valid option, it may not be optimal because 1) the gradients
+are vectors but not scalars, so the structure of the noise covariance matrix matters. Isotropic noise
+might neglect the direction information; 2) due to the asymmetry of the positive and negative gradi-
+ent distribution, the label party could add noise with different distributions to each class’s gradients."
+A HEURISTIC PROTECTION APPROACH,0.11611030478955008,"Norm-alignment heuristic. We now introduce an improved heuristic approach of adding zero-
+mean Gaussian noise with non-isotropic and example-dependent covariance. [Magnitude choice]
+As we have seen that ∥g∥2 can be different for positive and negative examples and thus leak label
+information, this heuristic ﬁrst aims to make the norm of each perturbed gradient indistinguishable
+from one another. Speciﬁcally, we want to match the expected squared 2-norm of every perturbed
+gradient in a mini-batch to the largest squared 2-norm in this batch (denote by ∥gmax∥2
+2). [Direction
+choice] In addition, as we have seen empirically from Figure 2(e), the positive and negative gradients
+lie close to a one-dimensional line in Rd, with positive examples pointing in one direction and
+negative examples in the other. Thus we consider only adding noise (roughly speaking) along “this
+line”. More concretely, for a gradient gj in the batch, we add a zero-mean Gaussian noise vector
+ηj supported only on the one-dimensional space along the line of gj. In other words, the noise’s
+covariance is the rank-1 matrix Cov[ηj] = σ2
+j gjgT
+j . To calculate σj, we aim to match E[∥gj +ηj∥2
+2] ="
+A HEURISTIC PROTECTION APPROACH,0.11756168359941944,"∥gmax∥2
+2. A simple calculation gives σj =
+p"
+A HEURISTIC PROTECTION APPROACH,0.11901306240928883,"∥gmax∥2
+2/∥gj∥2
+2 −1. Since we align to the maximum
+norm, we name this heuristic protection method max norm. The advantage of max norm is that
+it has no parameter to tune. Unfortunately, it does not have a strong theoretical motivation, cannot
+ﬂexibly trade-off between model utility and privacy, and may be broken by some unknown attacks."
+A HEURISTIC PROTECTION APPROACH,0.1204644412191582,"4.2
+OPTIMIZED PERTURBATION METHOD: MA R V E L L
+Motivated by the above issues of max norm, we next study how to achieve a more principled
+trade-off between model performance (utility) and label protection (privacy). To do so, we directly
+minimize the worst-case adversarial scoring function’s leak AUC under a utility constraint. We
+name this protection method Marvell (optiMized perturbAtion to pReVEnt Label Leakage)."
+A HEURISTIC PROTECTION APPROACH,0.12191582002902758,"Noise perturbation structure. Due to the distribution difference between the positive and nega-
+tive class’s cut layer gradients, we consider having the label party additively perturb the randomly
+sampled positive g(1) and negative g(0) gradients with independent zero-mean random noise vectors"
+A HEURISTIC PROTECTION APPROACH,0.12336719883889695,"η(1) and η(0) with possibly different distributions (denoted by D(1) and D(0)). We use e
+P (1) and e
+P (0)
+to denote the induced perturbed positive and negative gradient distributions. Our goal is to ﬁnd the
+optimal noise distributions D(1) and D(0) by optimizing our privacy objective described below."
+A HEURISTIC PROTECTION APPROACH,0.12481857764876633,"Privacy protection optimization objective. As the adversarial non-label party in our threat model
+is allowed to use any measurable scoring function r for label recovery, we aim to protect against all
+such scoring functions by minimizing the privacy loss of the worst case scoring function measured
+through our leak AUC metric. Formally, our optimization objective is minD(1),D(0) maxr AUC(r).
+Here to compute AUC(r), the FPRr(t) and TPRr(t) needs to be computed using the perturbed
+distributions e
+P (1) and e
+P (0) instead of the unperturbed P (1) and P (0) (Section 3.2). Since AUC is
+difﬁcult to directly optimize, we consider optimizing an upper bound through the following theorem:
+Theorem 1. For 0 ≤ϵ < 4 and any perturbed gradient distributions e
+P (1) and e
+P (0) that are abso-
+lutely continuous with respect to each other,"
+A HEURISTIC PROTECTION APPROACH,0.1262699564586357,"KL( eP (1) ∥eP (0)) + KL( eP (0) ∥eP (1)) ≤ϵ
+implies
+maxr AUC(r) ≤1"
+A HEURISTIC PROTECTION APPROACH,0.12772133526850507,"2 +
+√ϵ 2 −ϵ 8."
+A HEURISTIC PROTECTION APPROACH,0.12917271407837447,"From Theorem 1 (proof in Appendix A.3), we see that as long as the sum KL divergence is below 4,
+the smaller sumKL is, the smaller maxr AUC(r) is. (1/2 + √ϵ/2 −ϵ/8 decreases as ϵ decreases.)
+Thus we can instead minimize the sum KL divergence between the perturbed gradient distributions:"
+A HEURISTIC PROTECTION APPROACH,0.13062409288824384,"sumKL∗:= minD(1),D(0) KL( eP (1) ∥eP (0)) + KL( eP (0) ∥eP (1)).
+(1)"
+A HEURISTIC PROTECTION APPROACH,0.1320754716981132,"Utility constraint. In an extreme case, we could add inﬁnite noise to both the negative and positive
+gradients. This would minimize (1) optimally to 0 and make the worst case leak AUC 0.5, which is
+equivalent to a random guess. However, stochastic gradient descent cannot converge under inﬁnitely
+large noise, so it is necessary to control the variance of the added noise. We thus introduce the noise
+power constraint: p · tr(Cov[η(1)]) + (1 −p) · tr(Cov[η(0)]) ≤P, where p is the fraction of positive
+examples (already known to the label party); tr(Cov[η(i)]) denotes the trace of the covariance matrix
+of the random noise η(i); and the upper bound P is a tunable hyperparameter to control the level
+of noise: larger P would achieve a lower sumKL and thus lower worst-case leak AUC and better
+privacy; however, it would also add more noise to the gradients, leading to slower optimization"
+A HEURISTIC PROTECTION APPROACH,0.13352685050798258,Published as a conference paper at ICLR 2022
+A HEURISTIC PROTECTION APPROACH,0.13497822931785197,"convergence and possibly worse model utility. We weight each class’s noise level tr(Cov[η(i)]) by its
+example proportion (p or 1 −p) since, from an optimization perspective, we want to equally control
+every training example’s gradient noise. The constrained optimization problem becomes:"
+A HEURISTIC PROTECTION APPROACH,0.13642960812772134,"min
+D(1),D(0) KL( eP (1) ∥eP (0)) + KL( eP (0) ∥eP (1)) s.t. p · tr(Cov[η(1)]) + (1 −p) · tr(Cov[η(0)]) ≤P. (2)"
+A HEURISTIC PROTECTION APPROACH,0.1378809869375907,"Optimizing the objective in practice. To solve the optimization problem we ﬁrst introduce some
+modelling assumptions. We assume that the unperturbed gradient of each class follows a Gaussian
+distribution: g(1) ∼N(¯g(1), vId×d) and g(0) ∼N(¯g(0), uId×d). Despite this being an approximation,
+as we see later in Section 5, it can achieve strong protection quality against our identiﬁed attacks. In
+addition, it makes the optimization easier (see below) and provides us with insight on the optimal
+noise structure. We also search for perturbation distributions that are Gaussian: D(1) = N(0, Σ1) and
+D(0) = N(0, Σ0) with commuting covariance matrices: Σ1Σ0 = Σ0Σ1. The commutative require-
+ment slightly restricts our search space but also makes the optimization problem more tractable. Our
+goal is to solve for the optimal noise structure, i.e. the positive semideﬁnite covariance matrices Σ0,
+Σ1. Let ∆g := ¯g(1) −¯g(0) denote the difference between the positive and negative gradient’s mean
+vectors. We now have the following theorem (proof and interpretation in Appendix A.4):
+Theorem 2. The optimal Σ∗
+1 and Σ∗
+0 to (2) with the above assumptions have the form:"
+A HEURISTIC PROTECTION APPROACH,0.13933236574746008,"Σ∗
+1 = λ(1)∗
+1
+−λ(1)∗
+2
+∥∆g∥2
+2
+(∆g)(∆g)⊤+ λ(1)∗
+2
+Id,
+Σ∗
+0 = λ(0)∗
+1
+−λ(0)∗
+2
+∥∆g∥2
+2
+(∆g)(∆g)⊤+ λ(0)∗
+2
+Id,
+(3)"
+A HEURISTIC PROTECTION APPROACH,0.14078374455732948,"where (λ(0)∗
+1
+, λ(0)∗
+2
+, λ(1)∗
+1
+, λ(1)∗
+2
+) is the solution to the following 4-variable optimization problem:"
+A HEURISTIC PROTECTION APPROACH,0.14223512336719885,"min
+λ(0)
+1
+,λ(1)
+1
+,λ(0)
+2
+,λ(1)
+2
+(d −1)λ(0)
+2
++ u"
+A HEURISTIC PROTECTION APPROACH,0.14368650217706821,"λ(1)
+2
++ v
++ (d −1) λ(1)
+2
++ v"
+A HEURISTIC PROTECTION APPROACH,0.14513788098693758,"λ(0)
+2
++ u
++ λ(0)
+1
++ u + ∥∆g∥2
+2
+λ(1)
+1
++ v
++ λ(1)
+1
++ v + ∥∆g∥2
+2
+λ(0)
+1
++ u"
+A HEURISTIC PROTECTION APPROACH,0.14658925979680695,"s.t.
+pλ(1)
+1
++ p(d −1)λ(1)
+2
++ (1 −p)λ(0)
+1
++ (1 −p)(d −1)λ(0)
+2
+≤P,"
+A HEURISTIC PROTECTION APPROACH,0.14804063860667635,"−λ(1)
+1
+≤0,
+−λ(0)
+1
+≤0,
+−λ(1)
+2
+≤0,
+−λ(0)
+2
+≤0,
+λ(1)
+2
+−λ(1)
+1
+≤0,
+λ(0)
+2
+−λ(0)
+1
+≤0"
+A HEURISTIC PROTECTION APPROACH,0.14949201741654572,"Additional details of Marvell.
+By Theorem 2, our optimization problem over two positive
+semideﬁnite matrices is reduced to a much simpler 4-variable optimization problem. We include
+a detailed description of how the constants in the problem are estimated in practice and what solver
+we use in a full description of the Marvell algorithm in Appendix A.5. Beyond optimization de-
+tails, it is worth noting how to set the power constraint hyperparameter P in Equation 2 in practice.
+As directly choosing P requires knowledge of the scale of the gradients in the speciﬁc application
+and the scale could also shrink as the optimization converges, we instead express P = s ∥∆g∥2
+2, and
+tune for a ﬁxed hyperparameter s > 0. This alleviates the need to know the scale of the gradients
+in advance, and the resulting value of P can also dynamically change throughout training as the
+distance between the two gradient distributions’ mean ∥∆g∥2 changes."
+EXPERIMENTS,0.1509433962264151,"5
+EXPERIMENTS"
+EXPERIMENTS,0.15239477503628446,"In this section, we ﬁrst describe our experiment setup and then demonstrate the label protection
+quality of Marvell as well as its privacy-utility trade-off relative to baseline approaches."
+EXPERIMENTS,0.15384615384615385,"Empirical Setup. We use three real-world binary classiﬁcation datasets for evaluation: Criteo and
+Avazu, two online advertising prediction datasets with millions of examples; and ISIC, a healthcare
+image dataset for skin cancer prediction. All three datasets exhibit severe label leakage problem
+without protection. (see Appendix A.6.1 on dataset and preprocessing details). We defer similar
+results on Avazu to Appendix A.7 and focus on Criteo and ISIC in this section. For Criteo, we train
+a Wide&Deep model (Cheng et al., 2016) where the non-label party owns the embedding layers for
+input features and the ﬁrst three 128-unit ReLU activated MLP layers (ﬁrst half of the deep part)
+while the label party owns the remaining layers of the deep part and the entire wide part of the
+model3. For ISIC, we train a model with 6 convolutional layers each with 64 channels followed by
+a 64-unit ReLU MLP layer, and the cut layer is after the fourth convolutional layer. In this case,
+an example’s cut layer feature f(X) and gradient g are both in R5×5×64. We treat such tensors as
+vectors in R1600 to ﬁt into our analysis framework (for additional model architecture and training
+details see Appendix A.6.2, A.6.3)."
+EXPERIMENTS,0.15529753265602322,"3In this setting, the label party will also process input features (through the wide part) just like the non-label
+party, further relaxing our formal split learning setup in Section 3."
+EXPERIMENTS,0.1567489114658926,Published as a conference paper at ICLR 2022
+EXPERIMENTS,0.15820029027576196,"0
+10000
+20000
+30000
+number of sgd updates 0.5 0.6 0.7 0.8 0.9 1.0"
+EXPERIMENTS,0.15965166908563136,norm leak auc
+EXPERIMENTS,0.16110304789550073,(a) ISIC cut layer
+EXPERIMENTS,0.1625544267053701,"no_noise
+Marvell, s=0.1
+Marvell, s=0.25
+Marvell, s=1.0
+Marvell, s=4.0"
+EXPERIMENTS,0.16400580551523947,"0
+10000
+20000
+30000
+number of sgd updates 0.5 0.6 0.7 0.8 0.9 1.0"
+EXPERIMENTS,0.16545718432510886,cosine leak auc
+EXPERIMENTS,0.16690856313497823,(b) ISIC cut layer
+EXPERIMENTS,0.1683599419448476,"0
+10000
+20000
+30000
+number of sgd updates 0.5 0.6 0.7 0.8 0.9 1.0"
+EXPERIMENTS,0.16981132075471697,norm leak auc
+EXPERIMENTS,0.17126269956458637,(c) ISIC first layer
+EXPERIMENTS,0.17271407837445574,"0
+10000
+20000
+30000
+number of sgd updates 0.5 0.6 0.7 0.8 0.9 1.0"
+EXPERIMENTS,0.1741654571843251,cosine leak auc
+EXPERIMENTS,0.17561683599419448,(d) ISIC first layer
+EXPERIMENTS,0.17706821480406387,"Figure 3: Norm and cosine leak AUC (computed every batch) at the cut layer and at the ﬁrst layer under no
+protection vs. Marvell with different scale hyperparameter s throughout the ISIC training."
+EXPERIMENTS,0.17851959361393324,"5.1
+LABEL LEAKAGE AND MARVE L L’S STRONG AND FLEXIBLE PROTECTION"
+EXPERIMENTS,0.1799709724238026,"We ﬁrst evaluate the protection quality of Marvell against the norm and cosine attacks dis-
+cussed in Section 3.3. We also compare against the leakage metrics when no protection is applied
+(no noise). As the results across the three datasets are highly similar, we use ISIC as an example
+(other datasets see Appendix A.7.1). We see in Figure 3(a)(b) that unlike no noise where the label
+information is completely leaked (leak AUC ≈1) throughout training, Marvell achieves a ﬂex-
+ible degree of protection (by varying s) against both the norm 2(a) and direction attacks 2(b)
+on the cut layer gradients and has strong protection (leak AUC ≈0.5) at s = 4.0. Additionally,
+it is natural to ask whether the gradients of layers before the cut layer (on the non-label party side)
+can also leak the labels as the non-label party keeps back propagating towards the ﬁrst layer. In Fig-
+ure 3(c)(d), we compute the leak AUC values when using the non-label party’s ﬁrst layer activation
+gradient as inputs to the scoring functions to predict y. Without protection, the ﬁrst layer gradient
+still leaks the label very consistently. In constrast, Marvell still achieves strong privacy protection
+at the ﬁrst layer (s = 4.0) despite the protection being analyzed at the cut layer."
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.18142235123367198,"5.2
+PRIVACY-UTILITY TRADE-OFF COMPARISON"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.18287373004354138,"After showing Marvell can provide strong privacy protection against our identiﬁed attacks, we
+now see how well it can preserve utility by comparing its privacy-utility tradeoff against other pro-
+tection baselines: no noise, isotropic Gaussian (iso), and our proposed heuristic max norm.
+Similar to how we allow Marvell to use a power constraint to depend on the current iteration’s
+gradient distribution through P = s∥∆g∥2
+2, we also allow iso to have such type of dependence—
+speciﬁcally, we add η ∼N(0, (t/d) · ∥gmax∥2
+2Id×d) to every gradient in a batch with t a tunable
+privacy hyperparameter to be ﬁxed throughout training. To trace out the complete tradeoff curve
+for Marvell and iso, we conduct more than 20 training runs for each protection method with a
+different value of privacy hyperparameter (s for Marvell, t for iso) in each run on every dataset.
+(Note that no noise and max norm do not have privacy hyperparameters.)"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.18432510885341075,"We present the tradeoffs between privacy (measured through norm and cosine leak AUC at cut
+layer/ﬁrst layer) and utility (measured using test loss and test AUC) in Figure 4. To summarize the
+leak AUC over a given training run, we pick the 95% quantile over the batch-computed leak AUCs
+throughout all training iterations. This quantile is chosen instead of the mean because we want to
+measure the most-leaked iteration’s privacy leakage (highest leak AUC across iterations) to ensure
+the labels are not leaked at any points during training. 95% quantile is chosen instead of the max
+(100%) as we want this privacy leak estimate to be robust against randomness of the training process."
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.18577648766328012,"Privacy-Utility Tradeoff comparison results. In measuring the privacy-utility tradeoff, we aim to
+ﬁnd a method that consistently achieves a lower leak AUC (better privacy) for the same utility value."
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.18722786647314948,"• [Marvell vs iso] As shown in Figure 4, Marvell almost always achieves a better trade-
+off than iso against both of our proposed attacks at both the cut layer and the ﬁrst layer on
+both the ISIC and Criteo datasets. It is important to note that although the utility constraint is
+in terms of training loss optimization, Marvell’s better tradeoff still translates to the gener-
+alization performance when the utility is measured through test loss or test AUC. Additionally,
+despite achieving reasonable (though still worse than Marvell) privacy-utility tradeoff against
+the norm-based attack, iso performs much worse against the direction-based attack: on ISIC,
+even after applying a signiﬁcant amount of isotropic noise (with t > 20), iso’s cosine leak
+AUC is still higher than 0.9 at the cut layer (Figure 4(b,f)). In contrast, Marvell is effective
+against this direction-based attack with a much lower cosine leak AUC ≈0.6."
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.18867924528301888,Published as a conference paper at ICLR 2022
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.19013062409288825,"0.36
+0.38
+0.40
+0.42
+test loss 0.70 0.80 0.90 1.00"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.19158200290275762,95% quantile norm leak AUC
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.193033381712627,(a) ISIC cut layer
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.19448476052249636,"iso
+Marvell
+max_norm
+no_noise"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.19593613933236576,"0.36
+0.38
+0.40
+0.42
+test loss 0.70 0.80 0.90 1.00"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.19738751814223512,95% quantile cosine leak AUC
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.1988388969521045,(b) ISIC cut layer
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.20029027576197386,"iso
+Marvell
+max_norm
+no_noise"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.20174165457184326,"0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+test loss 0.60 0.70 0.80 0.90"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.20319303338171263,95% quantile norm leak AUC
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.204644412191582,(c) Criteo cut layer
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.20609579100145137,"iso
+Marvell
+max_norm
+no_noise"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.20754716981132076,"0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+test loss 0.60 0.70 0.80 0.90 1.00"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.20899854862119013,95% quantile cosine leak AUC
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.2104499274310595,(d) Criteo cut layer
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.21190130624092887,"iso
+Marvell
+max_norm
+no_noise"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.21335268505079827,"0.80
+0.81
+0.82
+0.83
+0.84
+0.85
+test auc 0.70 0.80 0.90 1.00"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.21480406386066764,95% quantile norm leak AUC
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.216255442670537,(e) ISIC cut layer
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.21770682148040638,"iso
+Marvell
+max_norm
+no_noise"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.21915820029027577,"0.80
+0.81
+0.82
+0.83
+0.84
+0.85
+test auc 0.70 0.80 0.90 1.00"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.22060957910014514,95% quantile cosine leak AUC
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.2220609579100145,(f) ISIC cut layer
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.22351233671988388,"iso
+Marvell
+max_norm
+no_noise"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.22496371552975328,"0.73
+0.74
+0.75
+0.76
+0.77
+0.78
+test auc 0.60 0.70 0.80 0.90"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.22641509433962265,95% quantile norm leak AUC
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.22786647314949202,(g) Criteo cut layer
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.22931785195936139,"iso
+Marvell
+max_norm
+no_noise"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.23076923076923078,"0.73
+0.74
+0.75
+0.76
+0.77
+0.78
+test auc 0.60 0.70 0.80 0.90 1.00"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.23222060957910015,95% quantile cosine leak AUC
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.23367198838896952,(h) Criteo cut layer
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.2351233671988389,"iso
+Marvell
+max_norm
+no_noise"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.2365747460087083,"0.80
+0.81
+0.82
+0.83
+0.84
+0.85
+test auc 0.70 0.80 0.90 1.00"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.23802612481857766,95% quantile norm leak AUC
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.23947750362844702,(i) ISIC first layer
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.2409288824383164,"iso
+Marvell
+max_norm
+no_noise"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.24238026124818576,"0.80
+0.81
+0.82
+0.83
+0.84
+0.85
+test auc 0.70 0.80 0.90 1.00"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.24383164005805516,95% quantile cosine leak AUC
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.24528301886792453,(j) ISIC first layer
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.2467343976777939,"iso
+Marvell
+max_norm
+no_noise"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.24818577648766327,"0.73
+0.74
+0.75
+0.76
+0.77
+0.78
+test auc 0.60 0.70 0.80 0.90"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.24963715529753266,95% quantile norm leak AUC
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.251088534107402,(k) Criteo first layer
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.2525399129172714,"iso
+Marvell
+max_norm
+no_noise"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.2539912917271408,"0.73
+0.74
+0.75
+0.76
+0.77
+0.78
+test auc 0.60 0.70 0.80 0.90 1.00"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.25544267053701014,95% quantile cosine leak AUC
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.25689404934687954,(l) Criteo first layer
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.25834542815674894,"iso
+Marvell
+max_norm
+no_noise"
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.2597968069666183,"Figure 4: Privacy (norm & cosine leak AUC) vs Utility (test loss & test AUC) trade-off of protection methods
+(Marvell, iso, no noise, max norm) at the cut and ﬁrst layer on ISIC and Criteo."
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.2612481857764877,"• [max norm heuristic] Beyond Marvell, we see that our heuristic approach max norm can
+match and sometimes achieve even lower (Figure 4(a,f,i)) leak AUC value than Marvell at the
+same utility level. We believe this speciﬁcally results from our norm and direction consideration
+when designing this heuristic. However, without a tunable hyperparameter, max norm cannot
+tradeoff between privacy and utility. Additionally, unlike Marvell which is designed to protect
+against the entire class of adversarial scoring functions, max norm might still fail to protect
+against other future attack methods beyond those considered here."
+PRIVACY-UTILITY TRADE-OFF COMPARISON,0.262699564586357,"In summary, our principled method Marvell signiﬁcantly outperforms the isotropic Gaussian
+baseline, and our proposed max norm heuristic can also work particularly well against the
+norm- and direction-based attacks which we identiﬁed in Section 3.3."
+CONCLUSION,0.2641509433962264,"6
+CONCLUSION"
+CONCLUSION,0.2656023222060958,"In this paper, we formulate a label leakage threat model in the two-party split learning binary clas-
+siﬁcation problem through a novel privacy loss quantiﬁcation metric (leak AUC). Within this threat
+model, we provide two simple yet effective attack methods that can accurately uncover the private
+labels of the label party. To counter such attacks, we propose a heuristic random perturbation method
+max norm as well as a theoretically principled method Marvell which searches for the optimal
+noise distributions to protect against the worst-case adversaries in the threat model. We have con-
+ducted extensive experiments to demonstrate the effectiveness of Marvell and max norm over
+the isotropic Gaussian perturbation baseline iso."
+CONCLUSION,0.26705370101596515,"Open questions and future work. Our work is the ﬁrst we are aware of to identify, rigorously
+quantify, and protect against the threat of label leakage in split-learning, and opens up a number of
+worthy directions of future study. In particular, as the model parameters are updated every batch in
+our problem setup, the true gradient of an example and the gradient distribution would both change.
+An interesting question is whether the adversarial non-label party can remember the stale gradient
+of the same example from past updates (possibly separated by hundreds of updates steps) in order to
+recover the label information in the current iteration in a more complex threat model. It would also be
+interesting to build on our results to study whether there exist attack methods when the classiﬁcation
+problem is multiclass instead of binary, and when the split learning scenario involves more than two
+parties with possibly more complicated training communication protocols (e.g., Vepakomma et al.,
+2018)."
+CONCLUSION,0.26850507982583455,Published as a conference paper at ICLR 2022
+ETHICS STATEMENT,0.26995645863570394,"Ethics Statement.
+In our paper, we have identiﬁed a realistic threat of label leakage in the two-
+party split learning binary classiﬁcation problem. We aim to raise awareness about potential privacy
+issues in this problem domain, where many industrial applications have been deployed. Beyond
+making such threats clear, we have taken the ﬁrst steps towards protection—we have proposed both
+heuristic and principled methods that can preserve label privacy. We hope our work will pave the
+way for future analyses that make the two-party split learning framework more effective and secure."
+REPRODUCIBILITY STATEMENT,0.2714078374455733,"Reproducibility Statement.
+To make our paper reproducible, we provide:"
+REPRODUCIBILITY STATEMENT,0.2728592162554427,"• Proofs of our Theorem 1 and Theorem 2 in Appendix A.3,A.4;
+• Detailed experiment description including 1) data preprocessing, 2) model architecture, 3)
+training algorithm and hyperparameters in Appendix A.6.
+• Source code with running instructions (in README.md) at"
+REPRODUCIBILITY STATEMENT,0.274310595065312,https://github.com/OscarcarLi/label-protection.
+REFERENCES,0.2757619738751814,REFERENCES
+REFERENCES,0.2772133526850508,"Martin Abadi, Andy Chu, Ian Goodfellow, H Brendan McMahan, Ilya Mironov, Kunal Talwar, and
+Li Zhang. Deep learning with differential privacy. In Proceedings of the 2016 ACM SIGSAC
+Conference on Computer and Communications Security, pp. 308–318, 2016."
+REFERENCES,0.27866473149492016,"Avazu.
+Avazu click-through rate prediction, 2015.
+URL https://www.kaggle.com/c/
+avazu-ctr-prediction/data."
+REFERENCES,0.28011611030478956,"Keith Bonawitz, Vladimir Ivanov, Ben Kreuter, Antonio Marcedone, H Brendan McMahan, Sarvar
+Patel, Daniel Ramage, Aaron Segal, and Karn Seth. Practical secure aggregation for privacy-
+preserving machine learning. In Proceedings of the 2017 ACM SIGSAC Conference on Computer
+and Communications Security, pp. 1175–1191, 2017."
+REFERENCES,0.28156748911465895,"Kamalika Chaudhuri and Daniel Hsu. Sample complexity bounds for differentially private learn-
+ing. In Proceedings of the 24th Annual Conference on Learning Theory, pp. 155–186. JMLR
+Workshop and Conference Proceedings, 2011."
+REFERENCES,0.2830188679245283,"Heng-Tze Cheng, Levent Koc, Jeremiah Harmsen, Tal Shaked, Tushar Chandra, Hrishi Aradhye,
+Glen Anderson, Greg Corrado, Wei Chai, Mustafa Ispir, et al. Wide & deep learning for recom-
+mender systems. In Proceedings of the 1st workshop on deep learning for recommender systems,
+pp. 7–10, 2016."
+REFERENCES,0.2844702467343977,"Albert Cheu, Adam Smith, Jonathan Ullman, David Zeber, and Maxim Zhilyaev. Distributed differ-
+ential privacy via shufﬂing. In Annual International Conference on the Theory and Applications
+of Cryptographic Techniques, pp. 375–403. Springer, 2019."
+REFERENCES,0.28592162554426703,"Criteo.
+Criteo display advertising challenge, 2014.
+URL https://www.kaggle.com/c/
+criteo-display-ad-challenge/data."
+REFERENCES,0.28737300435413643,"Cynthia Dwork. Differential privacy. In Michele Bugliesi, Bart Preneel, Vladimiro Sassone, and
+Ingo Wegener (eds.), Automata, Languages and Programming, pp. 1–12, Berlin, Heidelberg,
+2006. Springer Berlin Heidelberg. ISBN 978-3-540-35908-1."
+REFERENCES,0.2888243831640058,"Cynthia Dwork, Aaron Roth, et al. The algorithmic foundations of differential privacy. Foundations
+and Trends in Theoretical Computer Science, 9(3-4):211–407, 2014."
+REFERENCES,0.29027576197387517,"´Ulfar Erlingsson, Vitaly Feldman, Ilya Mironov, Ananth Raghunathan, Kunal Talwar, and
+Abhradeep Thakurta. Ampliﬁcation by shufﬂing: From local to central differential privacy via
+anonymity. In Proceedings of the Thirtieth Annual ACM-SIAM Symposium on Discrete Algo-
+rithms, pp. 2468–2479. SIAM, 2019."
+REFERENCES,0.29172714078374457,"Badih Ghazi, Noah Golowich, Ravi Kumar, Pasin Manurangsi, and Chiyuan Zhang. On deep learn-
+ing with label differential privacy. arXiv preprint arXiv:2102.06062, 2021."
+REFERENCES,0.2931785195936139,"Otkrist Gupta and Ramesh Raskar. Distributed learning of deep neural network over multiple agents.
+Journal of Network and Computer Applications, 116:1–8, 2018."
+REFERENCES,0.2946298984034833,Published as a conference paper at ICLR 2022
+REFERENCES,0.2960812772133527,"ISIC.
+Siim-isic melanoma classiﬁcation, 2020.
+URL https://www.kaggle.com/c/
+siim-isic-melanoma-classification/data."
+REFERENCES,0.29753265602322204,"Vladimir Kolesnikov, Ranjit Kumaresan, Mike Rosulek, and Ni Trieu. Efﬁcient batched oblivi-
+ous prf with applications to private set intersection. In Proceedings of the 2016 ACM SIGSAC
+Conference on Computer and Communications Security, CCS ’16, pp. 818–829, 2016."
+REFERENCES,0.29898403483309144,"Brendan McMahan, Eider Moore, Daniel Ramage, Seth Hampson, and Blaise Aguera y Arcas.
+Communication-efﬁcient learning of deep networks from decentralized data. In Artiﬁcial Intelli-
+gence and Statistics, pp. 1273–1282. PMLR, 2017."
+REFERENCES,0.30043541364296084,"H. Brendan McMahan, Daniel Ramage, Kunal Talwar, and Li Zhang. Learning differentially private
+recurrent language models. In International Conference on Learning Representations, 2018. URL
+https://openreview.net/forum?id=BJ0hF1Z0b."
+REFERENCES,0.3018867924528302,"Benny Pinkas, Thomas Schneider, and Michael Zohner. Scalable private set intersection based on
+ot extension. ACM Transactions on Privacy and Security (TOPS), 21(2):1–35, 2018."
+REFERENCES,0.3033381712626996,"Pramod Subramanyan, Rohit Sinha, Ilia Lebedev, Srinivas Devadas, and Sanjit A Seshia. A formal
+foundation for secure remote execution of enclaves. In Proceedings of the 2017 ACM SIGSAC
+Conference on Computer and Communications Security, pp. 2435–2450, 2017."
+REFERENCES,0.3047895500725689,"Praneeth Vepakomma, Otkrist Gupta, Tristan Swedish, and Ramesh Raskar. Split learning for health:
+Distributed deep learning without sharing raw patient data. arXiv preprint arXiv:1812.00564,
+2018."
+REFERENCES,0.3062409288824383,"Praneeth Vepakomma, Otkrist Gupta, Abhimanyu Dubey, and Ramesh Raskar. Reducing leakage in
+distributed deep learning for sensitive health data. arXiv preprint arXiv:1812.00564, 2019."
+REFERENCES,0.3076923076923077,"Qiang Yang, Yang Liu, Tianjian Chen, and Yongxin Tong. Federated machine learning: Concept
+and applications. ACM Transactions on Intelligent Systems and Technology (TIST), 10(2):1–19,
+2019."
+REFERENCES,0.30914368650217705,"Bo Zhao, Konda Reddy Mopuri, and Hakan Bilen. idlg: Improved deep leakage from gradients.
+arXiv preprint arXiv:2001.02610, 2020."
+REFERENCES,0.31059506531204645,"Ligeng Zhu, Zhijian Liu, and Song Han. Deep leakage from gradients. In Advances in Neural
+Information Processing Systems, pp. 14774–14784, 2019."
+REFERENCES,0.31204644412191584,Published as a conference paper at ICLR 2022
+REFERENCES,0.3134978229317852,"A
+APPENDIX"
+REFERENCES,0.3149492017416546,Appendix Outline
+REFERENCES,0.3164005805515239,A.1 Expressing AUC(r) as an integral
+REFERENCES,0.3178519593613933,A.2 Toy Class-balanced Example of Positive Example Prediction Lacking Conﬁdence
+REFERENCES,0.3193033381712627,A.3 Proof of Theorem 1
+REFERENCES,0.32075471698113206,A.4 Proof and Interpretation of Theorem 2
+REFERENCES,0.32220609579100146,A.5 Marvell Algorithm Description
+REFERENCES,0.32365747460087085,A.5.1 Marvell Time Complexity
+REFERENCES,0.3251088534107402,A.5.2 Marvell Empirical Run Time
+REFERENCES,0.3265602322206096,A.6 Data Setup and Experimental Details
+REFERENCES,0.32801161103047893,A.6.1 Dataset Preprocessing
+REFERENCES,0.32946298984034833,A.6.2 Model Architecture Details
+REFERENCES,0.3309143686502177,A.6.3 Model Training Details
+REFERENCES,0.33236574746008707,A.7 Complete Experimental Results
+REFERENCES,0.33381712626995647,A.7.1 AUC Progression for Avazu and Criteo
+REFERENCES,0.3352685050798258,A.7.2 Complete Privacy-Utility Tradeoffs
+REFERENCES,0.3367198838896952,A.7.3 Impact of Activation Gradients’ Layer Location on the Corresponding Leak AUC
+REFERENCES,0.3381712626995646,A.8 Reasons why we don’t use local DP in our setup
+REFERENCES,0.33962264150943394,Published as a conference paper at ICLR 2022
+REFERENCES,0.34107402031930334,"A.1
+EXPRESSING AUC(r) AS AN INTEGRAL"
+REFERENCES,0.34252539912917274,"Recall that the ROC curve of a scoring function r : Rd →R is a parametric curve cr : R →[0, 1]2
+such that cr(t) = (FPRr(t), TPRr(t)), with"
+REFERENCES,0.3439767779390421,"FPRr : R →[0, 1], such that FPRr(t) := P (0) n
+g ∈Rd : r(g) > t
+o"
+REFERENCES,0.3454281567489115,"TPRr : R →[0, 1], such that TPRr(t) := P (1) n
+g ∈Rd : r(g) > t
+o
+."
+REFERENCES,0.3468795355587808,"We notice that FPRr and TPRr are both monotonically decreasing functions in t with
+lim
+t→−∞FPRr(t) = 1,
+lim
+t→∞FPRr(t) = 0"
+REFERENCES,0.3483309143686502,"lim
+t→−∞TPRr(t) = 1,
+lim
+t→∞TPRr(t) = 0."
+REFERENCES,0.3497822931785196,"However, FPRr and TPRr does not need to be differentiable everywhere with respect to t. Thus we
+cannot simply express the area under the curve using
+R −∞
+∞
+TPRr(t) FPR′
+r(t)dt. On the other hand,
+because both FPRr and TPRr are functions of bounded variations, we can express the area under the
+parametric curve cr through the Riemann-Stieltjes integral which involves integrating the function
+TPRr with respect to the function FPRr:"
+REFERENCES,0.35123367198838895,"AUC(r) =
+Z t=−∞"
+REFERENCES,0.35268505079825835,"t=∞
+TPRr(t) dFPRr(t)"
+REFERENCES,0.35413642960812775,"Here the integration boundary is from ∞to −∞in order to ensure the integral evaluates to a positive
+value."
+REFERENCES,0.3555878084179971,"A.2
+TOY CLASS-BALANCED EXAMPLE OF POSITIVE EXAMPLE PREDICTION LACKING
+CONFIDENCE"
+REFERENCES,0.3570391872278665,"As mentioned in Observation 1 of norm-based attack in Section 3.3, for many practical applications,
+there is inherently more ambiguity for the positive class than the negative class. To make this more
+concrete, let’s consider a simple toy example."
+REFERENCES,0.3584905660377358,"Suppose the binary classiﬁcation problem is over the real line. Here, 50% of the data is positive and
+lies uniformly in the interval [0, 1]. On the other hand, the remaining negative data (the other 50% of
+the total data) is a mixture distribution: 10% of the negative data also lies uniformly in [0, 1], while
+the rest 90% of the negative data lies uniformly in [1, 2].
+p(x | y = 1) = 1(x ∈[0, 1]),
+p(y = 1) = 0.5.
+p(x | y = 0) = 0.1 · 1(x ∈[0, 1]) + 0.9 · 1(x ∈[1, 2]),
+p(y = 0) = 0.5."
+REFERENCES,0.3599419448476052,"This setup mirrors our online advertising example where for all the users interested in the product
+(with feature x ∈[0, 1]), only a part of them would actually make the purchase after clicking on its
+advertisement."
+REFERENCES,0.3613933236574746,"In this case, the best possible probabilistic classiﬁers Copt that can be ever learned, by Bayes Rule,
+would predict any example in [0, 1] to be of the positive class with probability 10"
+REFERENCES,0.36284470246734396,"11, while it would
+predict any example in [1, 2] to be of the negative class with probability 1:"
+REFERENCES,0.36429608127721336,"Copt(y = 1 | x) =
+ 10"
+REFERENCES,0.36574746008708275,"11
+if x ∈[0, 1]
+0
+if x ∈[1, 2] ."
+REFERENCES,0.3671988388969521,"Thus even for this best possible classiﬁer Copt, every positive example would have a conﬁdence
+gap of
+1
+11 while 90% of the negative examples (the ones in [1, 2]) would have a conﬁdence gap of 0.
+Hence we see that in this toy example, our empirical observation of the lack of prediction conﬁdence
+for positive examples would still hold true."
+REFERENCES,0.3686502177068215,"Besides, it is important to notice that this lack of positive prediction conﬁdence phenomenon hap-
+pens even in this class-balanced toy example (p(y = 1) = p(y = 0) = 0.5). Thus, Observation 1
+does not require the data distribution to be class-imbalanced to hold, which further demonstrates
+the generality of our norm-based attack."
+REFERENCES,0.37010159651669083,Published as a conference paper at ICLR 2022
+REFERENCES,0.37155297532656023,"A.3
+PROOF OF THEOREM 1"
+REFERENCES,0.37300435413642963,"(Theorem 1). For 0 ≤ϵ < 4 and any perturbed gradient distributions e
+P (1) and e
+P (0) that are
+absolutely continuous with respect to each other,"
+REFERENCES,0.37445573294629897,"KL( eP (1) ∥eP (0)) + KL( eP (0) ∥eP (1)) ≤ϵ
+implies
+max
+r
+AUC(r) ≤1"
+REFERENCES,0.37590711175616837,"2 +
+√ϵ 2 −ϵ 8."
+REFERENCES,0.37735849056603776,"Proof of Theorem 1. Combining Pinsker’s inequality with Jensen’s inequality, we can obtain an up-
+per bound of total variation distance by the symmetrized KL divergence (sumKL) for a pair of
+distributions (P, Q) that are absolutely continuous with respect to each other:"
+REFERENCES,0.3788098693759071,"TV(P, Q) ≤1 2(
+p"
+REFERENCES,0.3802612481857765,"KL(P ∥Q)/2 +
+p"
+REFERENCES,0.38171262699564584,KL(Q ∥P)/2) ≤1 2 p
+REFERENCES,0.38316400580551524,"KL(P ∥Q) + KL(Q ∥P).
+(4)"
+REFERENCES,0.38461538461538464,"By our assumption, this implies that TV( eP (1), eP (0)) ≤
+√ϵ"
+REFERENCES,0.386066763425254,"2 . By the equivalent deﬁnition of total
+variation distance TV( eP (1), eP (0))) = maxA⊂Rd[ eP (1)(A) −eP (0)(A)], we know that for any A ⊂
+Rd,
+eP (1)(A) −eP (0)(A) ≤
+√ϵ"
+REFERENCES,0.3875181422351234,"2 . For any scoring function r and any threshold value t, let A =
+{g : r(g) > t}, then we have TPRr(t) −FPRr(t) = eP (1)(A) −eP (0)(A) ≤
+√ϵ 2 ."
+REFERENCES,0.3889695210449927,"Therefore, the AUC of the scoring function r can be upper bounded in the following way:"
+REFERENCES,0.3904208998548621,"AUC(r) =
+Z −∞"
+REFERENCES,0.3918722786647315,"∞
+TPRr(t) dFPRr(t)
+(5)"
+REFERENCES,0.39332365747460085,"≤
+Z −∞"
+REFERENCES,0.39477503628447025,"∞
+min
+
+FPRr(t) +
+√ϵ"
+REFERENCES,0.39622641509433965,"2 , 1
+
+dFPRr(t),
+(6)"
+REFERENCES,0.397677793904209,where in (6) we use the additional fact that TPRr(t) ≤1 for all t ∈R.
+REFERENCES,0.3991291727140784,"When ϵ ∈[0, 4), we have 1 −
+√ϵ"
+REFERENCES,0.4005805515239477,"2
+∈(0, 1].
+As FPRr(t) is a monotonically nonincreas-"
+REFERENCES,0.4020319303338171,"ing function in t with range in [0, 1], the set
+n
+t : FPRr(t) ≤1 −
+√ϵ"
+O,0.4034833091436865,"2
+o
+̸= φ is not empty. Let"
+O,0.40493468795355586,"k := inf
+n
+t : FPRr(t) ≤1 −
+√ϵ"
+O,0.40638606676342526,"2
+o
+. Again by FPRr(t) being a monotonically nonincreasing function
+in t, we can break the integration in Equation (6) into two terms:"
+O,0.40783744557329465,"AUC(r) =
+Z k"
+O,0.409288824383164,"∞
+min
+
+FPRr(t) +
+√ϵ"
+O,0.4107402031930334,"2 , 1
+
+dFPRr(t) +
+Z −∞"
+O,0.41219158200290273,"k
+min
+
+FPRr(t) +
+√ϵ"
+O,0.41364296081277213,"2 , 1
+
+dFPRr(t)
+(7) ≤
+Z k ∞"
+O,0.41509433962264153,"
+FPRr(t) +
+√ϵ 2"
+O,0.41654571843251087,"
+dFPRr(t) +
+Z −∞"
+O,0.41799709724238027,"k
+1 dFPRr(t)
+(8)"
+O,0.41944847605224966,"=
+[FPRr(t)]2"
+O,0.420899854862119,"2
++
+√ϵ"
+O,0.4223512336719884,"2 FPRr(t)
+ t=k"
+O,0.42380261248185774,"t=∞
++ FPRr(t) t=−∞"
+O,0.42525399129172714,"t=k
+(9)"
+O,0.42670537010159654,"≤(1 −
+√ϵ 2 )2"
+O,0.4281567489114659,"2
++
+√ϵ 2"
+O,0.4296081277213353,"
+1 −
+√ϵ 2"
+O,0.4310595065312046,"
++
+
+1 −
+
+1 −
+√ϵ 2"
+O,0.432510885341074,"
+(10) = 1"
+O,0.4339622641509434,"2 +
+√ϵ 2 −ϵ"
+O,0.43541364296081275,"8
+(11)"
+O,0.43686502177068215,"Since this inequality is true for any scoring function r, it is true for the maximum value. Thus the
+proof is complete."
+O,0.43831640058055155,Published as a conference paper at ICLR 2022
+O,0.4397677793904209,"A.4
+PROOF AND INTERPRETATION OF THEOREM 2"
+O,0.4412191582002903,"(Theorem 2). The optimal Σ∗
+1 and Σ∗
+0 to the following problem"
+O,0.4426705370101596,"min
+Σ0,Σ1∈SKL(N(¯g(1), vI + Σ1) ∥N(¯g(0), uI + Σ0)) + KL(N(¯g(0), uI + Σ0) ∥N(¯g(1), vI + Σ1))"
+O,0.444121915820029,subject to
+O,0.4455732946298984,"Σ0Σ1 = Σ1Σ0,
+p · tr(Σ1) + (1 −p) · tr(Σ0) ≤P,
+Σ1 ⪰0,
+Σ0 ⪰0."
+O,0.44702467343976776,have the form:
+O,0.44847605224963716,"Σ∗
+1 = λ(1)∗
+1
+−λ(1)∗
+2
+∥∆g∥2
+2
+(∆g)(∆g)⊤+ λ(1)∗
+2
+Id,
+Σ∗
+0 = λ(0)∗
+1
+−λ(0)∗
+2
+∥∆g∥2
+2
+(∆g)(∆g)⊤+ λ(0)∗
+2
+Id,
+(12)"
+O,0.44992743105950656,"where (λ(0)∗
+1
+, λ(0)∗
+2
+, λ(1)∗
+1
+, λ(1)∗
+2
+) is the solution to the following 4-variable optimization problem:"
+O,0.4513788098693759,"min
+λ(0)
+1
+,λ(1)
+1
+,λ(0)
+2
+,λ(1)
+2
+(d −1)λ(0)
+2
++ u"
+O,0.4528301886792453,"λ(1)
+2
++ v
++ (d −1)λ(1)
+2
++ v"
+O,0.45428156748911463,"λ(0)
+2
++ u
++ λ(0)
+1
++ u + ∥∆g∥2
+2
+λ(1)
+1
++ v
++ λ(1)
+1
++ v + ∥∆g∥2
+2
+λ(0)
+1
++ u"
+O,0.45573294629898403,"s.t.
+pλ(1)
+1
++ p(d −1)λ(1)
+2
++ (1 −p)λ(0)
+1
++ (1 −p)(d −1)λ(0)
+2
+≤P,"
+O,0.45718432510885343,"−λ(1)
+1
+≤0,
+−λ(0)
+1
+≤0,
+−λ(1)
+2
+≤0,
+−λ(0)
+2
+≤0,"
+O,0.45863570391872277,"λ(1)
+2
+−λ(1)
+1
+≤0,
+λ(0)
+2
+−λ(0)
+1
+≤0"
+O,0.46008708272859217,"Proof of Theorem 2. By writing out the analytical close-form of the KL divergence between two
+Gaussian distributions, the optimization can be written as:"
+O,0.46153846153846156,"min
+Σ0,Σ1∈S tr((Σ1 + vI)−1(Σ0 + uI)) + tr((Σ0 + uI)−1(Σ1 + vI))+"
+O,0.4629898403483309,"(¯g(1) −¯g(0))⊤ 
+(Σ1 + vI)−1 + (Σ0 + uI)−1
+(¯g(1) −¯g(0))"
+O,0.4644412191582003,subject to
+O,0.46589259796806964,"Σ0Σ1 = Σ1Σ0,
+p · tr(Σ1) + (1 −p) · tr(Σ0) ≤P,
+Σ1 ⪰0,
+Σ0 ⪰0. (13)"
+O,0.46734397677793904,"By the commutative constraint on the two positive semideﬁnite matrices Σ1 and Σ0, we know that
+we can factor these two matrices using the same set of eigenvectors. We thus write:"
+O,0.46879535558780844,"Σ0 =Q⊤diag(λ(0)
+1 , . . . , λ(0)
+d )Q,"
+O,0.4702467343976778,"Σ1 =Q⊤diag(λ(1)
+1 , . . . , λ(1)
+d )Q,
+(14)"
+O,0.4716981132075472,"where Q ∈Rd×d is an orthogonal matrix and the eigenvalues λ(0)
+i , λ(1)
+i
+are nonnegative and de-
+creasing in value."
+O,0.4731494920174166,"Using this alternative expression of Σ1 and Σ0, we can express the optimization in terms of
+{λ(1)
+i }, {λ(0)
+i }, Q:"
+O,0.4746008708272859,"min
+{λ(1)
+i
+},{λ(0)
+i
+},Q d
+X i=1"
+O,0.4760522496371553,"λ(0)
+i
++ u"
+O,0.47750362844702465,"λ(1)
+i
++ v
++ d
+X i=1"
+O,0.47895500725689405,"λ(1)
+i
++ v"
+O,0.48040638606676345,"λ(0)
+i
++ u
++"
+O,0.4818577648766328,"h
+Q(¯g(1) −¯g(0))
+i⊤
+diag "
+O,0.4833091436865022,". . . ,
+1"
+O,0.4847605224963715,"λ(0)
+i
++ u
++
+1"
+O,0.4862119013062409,"λ(1)
+i
++ v
+, . . . !"
+O,0.4876632801161103,Q(¯g(1) −¯g(0))
+O,0.48911465892597966,Published as a conference paper at ICLR 2022
+O,0.49056603773584906,"subject to
+p( d
+X"
+O,0.49201741654571846,"i=1
+λ(1)
+i ) + (1 −p)( d
+X"
+O,0.4934687953555878,"i=1
+λ(0)
+i ) ≤P"
+O,0.4949201741654572,"−λ(1)
+i
+≤0, ∀i ∈[d]"
+O,0.49637155297532654,"−λ(0)
+i
+≤0, ∀i ∈[d]."
+O,0.49782293178519593,"λ(1)
+i
+≥λ(1)
+j , ∀i < j."
+O,0.49927431059506533,"λ(0)
+i
+≥λ(0)
+j , ∀i < j."
+O,0.5007256894049347,Q orthogonal.
+O,0.502177068214804,"For any ﬁxed feasible {λ(1)
+i }, {λ(0)
+i }, we see that the corresponding minimizing Q will set its ﬁrst
+row to be the unit vector in the direction of ∆g. Thus by ﬁrst minimizing Q, the optimization
+objective reduces to: d
+X i=1"
+O,0.5036284470246735,"λ(0)
+i
++ u"
+O,0.5050798258345428,"λ(1)
+i
++ v
++ d
+X i=1"
+O,0.5065312046444121,"λ(1)
+i
++ v"
+O,0.5079825834542816,"λ(0)
+i
++ u
++
+g"
+O,0.5094339622641509,"λ(0)
+1
++ u
++
+g"
+O,0.5108853410740203,"λ(1)
+1
++ v = d
+X i=2"
+O,0.5123367198838897,"λ(0)
+i
++ u"
+O,0.5137880986937591,"λ(1)
+i
++ v
++ d
+X i=2"
+O,0.5152394775036284,"λ(1)
+i
++ v"
+O,0.5166908563134979,"λ(0)
+i
++ u
++ λ(1)
+1
++ v + ∥∆g∥2
+2
+λ(0)
+1
++ u
++ λ(0)
+1
++ u + ∥∆g∥2
+2
+λ(1)
+1
++ v"
+O,0.5181422351233672,"We see that for the pair of variable (λ(1)
+i , λ(0)
+i ) (i ≥2), the function λ(0)
+i
++u"
+O,0.5195936139332366,"λ(1)
+i
++v + λ(1)
+i
++v"
+O,0.521044992743106,"λ(0)
+1
++u is strictly"
+O,0.5224963715529753,"convex over the line segment pλ(1)
+i
++ (1 −p)λ(0)
+i
+= c for any nonnegative c and attains the the
+minimum value at λ(1)
+i
+= 0 when u < v and λ(0)
+i
+= 0 when u ≥v. Suppose without loss of
+generality u ≥v, then for the optimal solution we must have λ(0)
+i
+= 0 for all i ≥2. Under this
+condition, we notice that the function m(x) =
+u
+x+v + x+v"
+O,0.5239477503628447,"u
+is strictly convex on the positive reals."
+O,0.525399129172714,"Thus for all
+n
+λ(1)
+i
+o
+that satisﬁes Pd
+i=2 λ(1)
+i
+= c for a ﬁxed nonnegative c, by Jensen inequality, we
+have"
+O,0.5268505079825835,"1
+d −1 d
+X i=2 u"
+O,0.5283018867924528,"λ(1)
+i
++ v
++ λ(1)
+i
++ v
+u !"
+O,0.5297532656023222,"=
+1
+d −1 d
+X"
+O,0.5312046444121916,"i=2
+m(λ(1)
+i ) ≥m"
+O,0.532656023222061,"1
+d −1 d
+X"
+O,0.5341074020319303,"i=2
+λ(1)
+i !"
+O,0.5355587808417998,"= m
+
+c
+d −1 
+."
+O,0.5370101596516691,"From this, we see that the optimal solution’s variables {λ(1)
+i } must take on the same value (
+c
+d−1) for
+all i ≥2. The case when u ≤v is similar. As a result, we have proved that at the optimal solution,
+we must have:"
+O,0.5384615384615384,"λ(0)
+i
+= λ(0)
+j
+and λ(1)
+i
+= λ(1)
+j , for i, j ≥2."
+O,0.5399129172714079,Published as a conference paper at ICLR 2022
+O,0.5413642960812772,"Hence, the optimization problem over the 2d variables
+n
+λ(1)
+i
+od"
+O,0.5428156748911466,"i=1
+S n
+λ(0)
+i
+od"
+O,0.5442670537010159,i=1 can be reduced to
+O,0.5457184325108854,"an optimization problem over the four variables
+n
+λ(1)
+1 , λ(1)
+2 , λ(0)
+1 , λ(0)
+2
+o
+:"
+O,0.5471698113207547,"min
+λ(0)
+1
+,λ(1)
+1
+,λ(0)
+2
+,λ(1)
+2
+(d −1)λ(0)
+2
++ u"
+O,0.548621190130624,"λ(1)
+2
++ v
++ (d −1)λ(1)
+2
++ v"
+O,0.5500725689404935,"λ(0)
+2
++ u
++ λ(0)
+1
++ u + ∥∆g∥2
+2
+λ(1)
+1
++ v
++ λ(1)
+1
++ v + ∥∆g∥2
+2
+λ(0)
+1
++ u
+(15)"
+O,0.5515239477503628,"subject to
+pλ(1)
+1
++ p(d −1)λ(1)
+2
++ (1 −p)λ(0)
+1
++ (1 −p)(d −1)(λ(0)
+2 ) ≤P"
+O,0.5529753265602322,"−λ(1)
+1
+≤0"
+O,0.5544267053701016,"−λ(0)
+1
+≤0"
+O,0.555878084179971,"−λ(1)
+2
+≤0"
+O,0.5573294629898403,"−λ(0)
+2
+≤0"
+O,0.5587808417997098,"λ(1)
+2
+−λ(1)
+1
+≤0"
+O,0.5602322206095791,"λ(0)
+2
+−λ(0)
+1
+≤0."
+O,0.5616835994194485,"Given the optimal solution to the above 4-variable problem (λ(0)∗
+1
+, λ(0)∗
+2
+, λ(1)∗
+1
+, λ(1)∗
+2
+), we can set
+Q to be any orthogonal matrix whose ﬁrst row is the vector
+∆g
+∥∆g∥2 . Plugging this back into the
+expression of Σ1 and Σ0 in Equation (14) gives us the ﬁnal result."
+O,0.5631349782293179,Thus the proof is complete.
+O,0.5645863570391872,"Remark (Interpreting the optimal Σ∗
+1 and Σ∗
+0). From the form of the optimal solution in (12), we
+see that the optimal covariance matrices are both linear combinations of two terms: a rank one
+matrix (∆g)(∆g)⊤and the identity matrix Id. Because a zero-mean Gaussian random vector with
+convariance matrix (A + B) can be constructed as the sum of two independent zero-mean Gaussian
+random vectors with covariance matrices A and B respectively, we see that the optimal additive
+noise random variables η(1) and η(0) each consist of two independent components: one random
+component lies along the line that connects the positive and negative gradient mean vectors (whose
+covariance matrix is proportional to ∆g∆g⊤); the other component is sampled from an isotropic
+Gaussian. The use of the ﬁrst random directional component and the fact that the isotropic Gaussian
+component have different variance scaling for the positive and negative class clearly distinguishes
+Marvell from the isotropic Gaussian baseline iso."
+O,0.5660377358490566,"Remark (How to solve). By analyzing the KKT condition of this four variable problem we can ﬁnd
+that the optimal solution must exactly lie on the hyperplane pλ(1)
+1
++ p(d −1)λ(1)
+2
++ (1 −p)λ(0)
+1
++
+(1 −p)(d −1)λ(0)
+2
+= P. From the proof above we additionally know that λ(1)∗
+2
+= 0 if u < v and
+λ(0)∗
+2
+= 0 if u ≥v. Thus the problem is further reduced to a 3-variable problem. If we consider
+keeping one of the 3 remaining variables’ values ﬁxed, then the feasible region becomes restricted
+to a line segment. We can simply perform a line search optimization of the convex objective and
+ﬁnd the optimal values for the remaining two free variables. We can then alternate over which one
+of the three variables to ﬁx and optimize over the other two. This optimization procedure would
+eventually converge and give us the optimal solution. This approach mimics the Sequential Minimal
+Optimization technique used to solve the dual of the support vector machine (SVM)."
+O,0.5674891146589259,Published as a conference paper at ICLR 2022
+O,0.5689404934687954,"A.5
+MARVELL ALGORITHM DESCRIPTION"
+O,0.5703918722786647,"We use 1 ∈Rd to denote the vector with 1 in each coordinate. We use g[j] to denote the j-th row of
+the matrix g and y[j] to denote the j-th coordinate of the vector y."
+O,0.5718432510885341,"Algorithm 1: Marvell algorithm
+input : g ∈RB×d,
+a size-B batch of unperturbed gradients
+y ∈{0, 1}B, the label for each example in the batch
+s,
+privacy hyperparameter for the power constraint P
+output: ˜g ∈RB×d,
+batch of perturbed gradients
+// Step 1:
+estimate the optimization constants from the batch
+gradients using maximum likelihood estimation (MLE)"
+O,0.5732946298984035,1 p ←1T y
+O,0.5747460087082729,"d
+;
+/* positive fraction */"
+O,0.5761973875181422,"2 ¯g(1) ←
+1
+1T ygT y ;
+/* positive mean */"
+O,0.5776487663280117,"3 ¯g(0) ←
+1
+B−1T ygT (1 −y) ;
+/* negative mean */"
+O,0.579100145137881,4 ∆g = ¯g(1) −¯g(0);
+O,0.5805515239477503,"5 v ←
+1
+d·(1T y)
+PB
+j=1 y[j] ·
+g[j] −¯g(1)2
+2 ;
+/* positive convariance */"
+O,0.5820029027576198,"6 u ←
+1
+d·(B−1T y)
+PB
+j=1(1 −y[j]) ·
+g[j] −¯g(0)2
+2 ;
+/* negative convariance */"
+O,0.5834542815674891,"7 P ←s · ∥∆g∥2
+2 ;
+/* power constraint hyperparameter */
+// Step 2:
+optimize the four-variable problem"
+O,0.5849056603773585,8 if u < v then
+O,0.5863570391872278,"9
+λ(1)
+2
+←0 ;
+/* this variable is optimal at 0 */"
+O,0.5878084179970973,"10
+Randomly initialize the optimization variables λ(1)
+1 , λ(0)
+1 , λ(0)
+2
+in the feasible region in (15)."
+ELSE,0.5892597968069666,11 else
+ELSE,0.590711175616836,"12
+λ(0)
+2
+←0 ;
+/* this variable is optimal at 0
+*/"
+ELSE,0.5921625544267054,"13
+Randomly initialize the optimization variables λ(1)
+1 , λ(1)
+2 , λ(0)
+1
+in the feasible region in (15)."
+END,0.5936139332365747,14 end
+WHILE NOT CONVERGED DO,0.5950653120464441,15 while not converged do
+WHILE NOT CONVERGED DO,0.5965166908563135,"16
+Fix one of the newly updated optimization variables;
+// The 4-variable optimal solution lies on a hyperplane in R4 (see
+Appendix A.4 Remark) so fixing two variables gives us a
+line-segment"
+WHILE NOT CONVERGED DO,0.5979680696661829,"17
+Update the remaining two optimization variables by performing 1-d line-search
+minimization of the convex function (15) while satisfying the constraints;"
+END,0.5994194484760522,18 end
+END,0.6008708272859217,"// Step 3:
+compute the optimal covariance matrices"
+END,0.602322206095791,"19 Σ∗
+1 ←λ(1)
+1
+−λ(1)
+2
+∥∆g∥2
+2 (∆g)(∆g)⊤+ λ(1)
+2 Id;"
+END,0.6037735849056604,"20 Σ∗
+0 ←λ(0)
+1
+−λ(0)
+2
+∥∆g∥2
+2 (∆g)(∆g)⊤+ λ(0)
+2 Id;"
+END,0.6052249637155298,"// Step 4:
+perturb the gradients"
+END,0.6066763425253991,"21 ˜g ←0B×d ;
+/* an empty matrix to store the perturbed gradients */"
+END,0.6081277213352685,22 for j ←1 to B do
+END,0.6095791001451378,"23
+if y[j] = 1 then"
+END,0.6110304789550073,"24
+˜g[j] ←g[j] + η(1), where η(1) ∼N(0, Σ∗
+1);"
+END,0.6124818577648766,"25
+else // y[j] = 0"
+END,0.613933236574746,"26
+˜g[j] ←g[j] + η(0), where η(0) ∼N(0, Σ∗
+0);"
+END,0.6153846153846154,"27
+end"
+END,0.6168359941944848,28 end
+END,0.6182873730043541,Published as a conference paper at ICLR 2022
+END,0.6197387518142236,"A.5.1
+MARVELL TIME COMPLEXITY"
+END,0.6211901306240929,The Marvell algorithm in 1 consists of the following steps:
+END,0.6226415094339622,"Step 1. Compute the positive and negative gradient mean and their difference (line 1 - 4). This
+amounts to averaging over at most B numbers over each of the d gradient dimensions.
+Thus would have a time complexity of O(Bd).
+Step 2. Compute the positive and negative covariance constants u and v (line 5, 6). This operation
+also takes O(Bd) as it averages over squares of coordinate differences.
+Step 3. Use the results from step 1 and 2, solve the 4-variable optimization problem (line 7-18).
+Here because the constant size of the number of optimization variables. Solving this prob-
+lem up to a ﬁxed precision takes constant time O(1).
+Step 4. Perform the actual random perturbation (line 19 - 28). Because of the additive structure
+of each class’s covariance matrix, for every example’s gradient in the batch, we can in-
+dependently sample one random Gaussian vector with rank-1 covariance and also another
+spherical Gaussian random vector and add both vectors to this gradient for perturbation.
+This step would take O(d) for each example and thus takes O(Bd) in total."
+END,0.6240928882438317,"As a result, the entire Marvell algorithm has a time complexity of O(Bd). This can be further sped
+up through parallel computation using multi-threading/multi-core. Considering backpropagation
+through the cut layer would also require O(Bd) time complexity, the Marvell algorithm would not
+slow down the split-learning process in any signiﬁcant way at all."
+END,0.625544267053701,"A.5.2
+MARVELL EMPIRICAL RUN TIME"
+END,0.6269956458635704,"Empirically, in Table 1, we present the average amount of time it takes to run Marvell with the
+privacy hyperparameter value s = 4 for the three models (one for each dataset) we considered in
+our experiments (s value is chosen as it achieves good privacy protection as shown with purple line
+in Figure 3, 5, 6). We also compare it to the average time it takes to run one update iteration. We
+additionally include the 95% conﬁdence interval for the mean estimator of the run time. Here we
+notice that the total run time of Marvell only takes up a very small amount of the total training time
+for each method, further corroborating our algorithm’s time efﬁciency advantage."
+END,0.6284470246734397,"batch
+cut layer feature
+average
+average
+size
+dimension
+Marvell run time
+update time
+B
+d
+(seconds / run)
+(seconds / iteration)"
+END,0.6298984034833092,"ISIC
+128
+1600
+1.79 × 10−2
+3.94 × 10−1"
+END,0.6313497822931785,"= 5 × 5 × 64
+± 7.03 × 10−5
+± 4.05 × 10−3"
+END,0.6328011611030478,"Criteo
+1024
+128
+1.68 × 10−2
+4.84
+± 8.67 × 10−5
+± 3.28 × 10−1"
+END,0.6342525399129173,"Avazu
+32768
+128
+1.75 × 10−2
+6.22
+± 1.47 × 10−4
+± 3.71 × 10−1"
+END,0.6357039187227866,"Table 1: Average run time of Marvell (s = 4) and average total update time per iteration for models trained
+on ISIC, Criteo, and Avazu."
+END,0.637155297532656,Published as a conference paper at ICLR 2022
+END,0.6386066763425254,"A.6
+DATA SETUP AND EXPERIMENTAL DETAILS"
+END,0.6400580551523948,"We ﬁrst describe how we preprocess each of the datasets in A.6.1. We then describe the model
+architecture used for each dataset in A.6.2. Finally, we describe what the training hyperparameters
+are used for each dataset/model combination and the amount of compute used for the experiments
+in A.6.3."
+END,0.6415094339622641,"A.6.1
+DATASET PREPROCESSING"
+END,0.6429608127721336,"[Criteo]
+Every record of Criteo has 27 categorical input features and 14 real-valued input features.
+We ﬁrst replace all the NA values in categorical features with a single new category (which we
+represent using the empty string) and replace all the NA values in real-valued features with 0. For
+each categorical feature, we convert each of its possible value uniquely to an integer between 0
+(inclusive) and the total number of unique categories (exclusive). For each real-valued feature, we
+linearly normalize it into [0, 1]. We then randomly sample 10% of the entire Criteo publicly provided
+training set as our entire dataset (for faster training to generate privacy-utility trade-off comparision)
+and further make the subsampled dataset into a 90%-10% train-test split."
+END,0.6444121915820029,"[Avazu]
+Unlike Criteo, each record in Avazu only has categorical input features. We similarly
+replace all NA value with a single new category (the empty string), and for each categorical feature,
+we convert each of its possible value uniquely to an integer between 0 (inclusive) and the total
+number of unique categories (exclusive). We use all the records in provided in Avazu and randomly
+split it into 90% for training and 10% for test."
+END,0.6458635703918723,"[ISIC]
+The ofﬁcial SIIM-ISIC Melanoma Classiﬁcation dataset has a total 33126 of skin lesion
+images with less than 2% positive examples. Because for image classiﬁcation model training it is
+desirable to use a batch size of ∼102, it is highly likely that there won’t be any positive examples
+sampled in a batch of such size. Thus to make the label leakage problem more severe, we modify
+the dataset by retaining all the 584 positive examples and randomly choosing 584 × 9 examples out
+of all the negative examples. By doing this, we enforce that there are 10% positive examples in this
+modiﬁed dataset. We randomly split these 5840 examples into a 80%-20% training and test split.
+We also resize the images to size 84 × 84 for efﬁcient model training."
+END,0.6473149492017417,"A.6.2
+MODEL ARCHITECTURE DETAILS"
+END,0.648766328011611,"[Criteo, Avazu]
+We use a popular deep learning model architecture WDL (Cheng et al., 2016)
+for online advertising. Here the deep and wide part each ﬁrst processes the categorical features in
+a given record by applying an embedding lookup for every categorical feature’s value. We use an
+embedding dimension of 4 for the deep part and embedding dimension of 1 for the wide part. After
+the lookup, the deep/wide embeddings are then concatenated with the continuous features to form the
+raw input vectors for both the deep part and wide part respectively. (This step is skipped for Avazu
+as it has no continuous features.) Then the wide part computes the wide part logit value through
+a real-valued linear function (with bias) of its raw input vectors, while the deep part processes its
+raw input features using 6 ReLU-activated 128-unit MLP layers before producing a single deep part
+logit. The two logits are summed up to form the ﬁnal logic value. The cut layer is after the output
+of the 3rd ReLU layer on the deep part."
+END,0.6502177068214804,"[ISIC]
+Every input image after resizing is of size 84×84×3. We use a convolutional model with 6
+convolutional layers each with 64 channels 3×3 ﬁlter size with 1×1 stride size. Each convolutional
+layer is followed by a ReLU activation function whose output is then max pooled with 2×2 window
+and stride size 2×2. The max-pooled output of the 6th layer is then ﬂattened and pass into a 64-unit
+ReLU-activated MLP layer before ﬁnally being linearly transformed into a single logit score. The
+cut layer is after the output of the 4th max pool layer. Thus the cut layer feature and gradient are
+both of shape 5 × 5 × 64."
+END,0.6516690856313497,"A.6.3
+MODEL TRAINING DETAILS"
+END,0.6531204644412192,"Because the protection mechanism requires adding noise to the cut layer gradient, the induced vari-
+ance of the gradients of non-label party’s f-parameters becomes larger. Thus to ensure smooth"
+END,0.6545718432510885,Published as a conference paper at ICLR 2022
+END,0.6560232220609579,"optimization and sufﬁcient training loss minimization, we use a slightly smaller learning rate than
+what is normally used."
+END,0.6574746008708273,"[Criteo]
+We use the Adam optimizer with a batch size of 1024 and a learning rate of 1e−4 through-
+out the entire training of 5 epochs (approximately 20k stochastic gradient updates)."
+END,0.6589259796806967,"[ISIC]
+We use the Adam optimizer with a batch size of 128 and a learning rate of 1e−5 throughout
+the entire training of 1000 epochs (approximately 35k stochastic gradient updates)."
+END,0.660377358490566,"[Avazu]
+We use the Adam optimizer with a batch size of 32768 and a learning rate of 1e−4
+throughout the entire training of 5 epochs (approximately 5.5k stochastic gradient updates)."
+END,0.6618287373004355,"We conduct our experiments over 16 Nvidia 1080Ti GPU card. Each run of Avazu takes about 11
+hours to ﬁnish on a single GPU card occupying 8GB of GPU RAM. Each run of Criteo takes about
+37 hours to ﬁnish on a single GPU card using 5 GB of GPU RAM. Each run of ISIC takes about 12
+hours to ﬁnish on a single GPU card occupying 4GB of GPU RAM."
+END,0.6632801161103048,Published as a conference paper at ICLR 2022
+END,0.6647314949201741,"A.7
+COMPLETE EXPERIMENTAL RESULTS"
+END,0.6661828737300436,"A.7.1
+LEAK AUC PROGRESSION FOR AVAZU AND CRITEO"
+END,0.6676342525399129,"In addition to the leak AUC progression on ISIC shown in Figure 3 in the main paper, we also show
+the leak AUC progression on the Avazu and Criteo datasets throughout training here in Figure 5 and
+Figure 6. We similarly compare Marvell with different levels of protection strength (s values)
+against the no protection baseline no noise. As we can see, Marvell still achieves strong and
+ﬂexible privacy protection on these two datasets against our label attacks at different model layers."
+END,0.6690856313497823,"0
+2000
+4000
+number of sgd updates 0.5 0.6 0.7 0.8 0.9 1.0"
+END,0.6705370101596516,norm leak auc
+END,0.6719883889695211,(a) Avazu cut layer
+END,0.6734397677793904,"no_noise
+Marvell, s=0.1
+Marvell, s=0.25
+Marvell, s=1.0
+Marvell, s=4.0"
+END,0.6748911465892597,"0
+2000
+4000
+number of sgd updates 0.5 0.6 0.7 0.8 0.9 1.0"
+END,0.6763425253991292,cosine leak auc
+END,0.6777939042089985,(b) Avazu cut layer
+END,0.6792452830188679,"0
+2000
+4000
+number of sgd updates 0.5 0.6 0.7 0.8 0.9 1.0"
+END,0.6806966618287373,norm leak auc
+END,0.6821480406386067,(c) Avazu first layer
+END,0.683599419448476,"0
+2000
+4000
+number of sgd updates 0.5 0.6 0.7 0.8 0.9 1.0"
+END,0.6850507982583455,cosine leak auc
+END,0.6865021770682148,(d) Avazu first layer
+END,0.6879535558780842,"Figure 5: Norm and cosine leak AUC (computed every batch) at the cut layer and at the ﬁrst layer of
+no noise (no protection) vs. Marvell with different scale hyperparameter s throughout the Avazu training."
+END,0.6894049346879536,"0
+5000
+10000
+15000
+20000
+number of sgd updates 0.4 0.6 0.8 1.0"
+END,0.690856313497823,norm leak auc
+END,0.6923076923076923,(a) Criteo cut layer
+END,0.6937590711175616,"no_noise
+Marvell, s=0.1
+Marvell, s=0.25
+Marvell, s=1.0
+Marvell, s=4.0"
+END,0.6952104499274311,"0
+5000
+10000
+15000
+20000
+number of sgd updates 0.4 0.6 0.8 1.0"
+END,0.6966618287373004,cosine leak auc
+END,0.6981132075471698,(b) Criteo cut layer
+END,0.6995645863570392,"0
+5000
+10000
+15000
+20000
+number of sgd updates 0.4 0.6 0.8 1.0"
+END,0.7010159651669086,norm leak auc
+END,0.7024673439767779,(c) Criteo first layer
+END,0.7039187227866474,"0
+5000
+10000
+15000
+20000
+number of sgd updates 0.4 0.6 0.8 1.0"
+END,0.7053701015965167,cosine leak auc
+END,0.706821480406386,(d) Criteo first layer
+END,0.7082728592162555,"Figure 6: Norm and cosine leak AUC (computed every batch) at the cut layer and at the ﬁrst layer of
+no noise (no protection) vs. Marvell with different scale hyperparameter s throughout the Criteo training."
+END,0.7097242380261248,"A.7.2
+COMPLETE PRIVACY-UTILITY TRADEOFFS"
+END,0.7111756168359942,"We show additional Privacy-Utility tradeoff results for all three datasets considered in this paper.
+(Some of the plots have already been shown in the main paper but we still include them here for
+completeness and ease of reference.) For each dataset, we compare the privacy-utility tradeoff over
+multiple measures of privacy and utility:"
+END,0.7126269956458636,Privacy
+END,0.714078374455733,"We consider our introduced privacy metrics using the activation gradient from the cut layer and the
+ﬁrst layer of the non-label party :"
+END,0.7155297532656023,"• 95% norm leak AUC at cut layer
+• 95% cosine leak AUC at cut layer
+• 95% norm leak AUC at ﬁrst layer
+• 95% cosine leak AUC at ﬁrst layer"
+END,0.7169811320754716,Utility
+END,0.7184325108853411,We consider three metrics of utility:
+END,0.7198838896952104,"• training loss (train loss): the lowest loss achieved on the training set throughout training.
+This directly measures how much the random protection perturbation inﬂuences the opti-
+mization.
+• test loss. Because we only control the training optimization stochastic gradient’s variance,
+measuring test loss directly tells us how much impact the training optimization random per-
+turbation inﬂuences beyond optimization but on the learned model’s generalization ability.
+• test AUC. As we are dealing with binary classiﬁcation problem (where performance is
+commonly measured through test AUC), we also naturally consider it as a utility metric."
+END,0.7213352685050798,Published as a conference paper at ICLR 2022
+END,0.7227866473149492,"As shown in Figure 7,8,9, Marvell consistently outperforms the isotropic Gaussian baseline over
+all the different privacy-utility deﬁnitions. In addition, our proposed heuristic max norm is also
+particularly effective against our identiﬁed norm and direction-based attacks."
+END,0.7242380261248186,"0.46
+0.48
+0.50
+0.52
+0.54
+0.56
+0.58
+train loss 0.50 0.60 0.70 0.80 0.90 1.00"
+END,0.7256894049346879,95% quantile norm leak AUC
+END,0.7271407837445574,(a) Avazu cut layer
+END,0.7285921625544267,"iso
+Marvell
+max_norm
+no_noise"
+END,0.7300435413642961,"0.46
+0.48
+0.50
+0.52
+0.54
+0.56
+0.58
+train loss 0.60 0.70 0.80 0.90 1.00"
+END,0.7314949201741655,95% quantile cosine leak AUC
+END,0.7329462989840348,(b) Avazu cut layer
+END,0.7343976777939042,"iso
+Marvell
+max_norm
+no_noise"
+END,0.7358490566037735,"0.46
+0.48
+0.50
+0.52
+0.54
+0.56
+0.58
+train loss 0.50 0.60 0.70 0.80 0.90 1.00"
+END,0.737300435413643,95% quantile norm leak AUC
+END,0.7387518142235123,(c) Avazu first layer
+END,0.7402031930333817,"iso
+Marvell
+max_norm
+no_noise"
+END,0.7416545718432511,"0.46
+0.48
+0.50
+0.52
+0.54
+0.56
+0.58
+train loss 0.60 0.70 0.80 0.90 1.00"
+END,0.7431059506531205,95% quantile cosine leak AUC
+END,0.7445573294629898,(d) Avazu first layer
+END,0.7460087082728593,"iso
+Marvell
+max_norm
+no_noise"
+END,0.7474600870827286,"0.46
+0.48
+0.50
+0.52
+0.54
+0.56
+test loss 0.50 0.60 0.70 0.80 0.90 1.00"
+END,0.7489114658925979,95% quantile norm leak AUC
+END,0.7503628447024674,(e) Avazu cut layer
+END,0.7518142235123367,"iso
+Marvell
+max_norm
+no_noise"
+END,0.7532656023222061,"0.46
+0.48
+0.50
+0.52
+0.54
+0.56
+test loss 0.60 0.70 0.80 0.90 1.00"
+END,0.7547169811320755,95% quantile cosine leak AUC
+END,0.7561683599419449,(f) Avazu cut layer
+END,0.7576197387518142,"iso
+Marvell
+max_norm
+no_noise"
+END,0.7590711175616836,"0.46
+0.48
+0.50
+0.52
+0.54
+0.56
+test loss 0.50 0.60 0.70 0.80 0.90 1.00"
+END,0.760522496371553,95% quantile norm leak AUC
+END,0.7619738751814223,(g) Avazu first layer
+END,0.7634252539912917,"iso
+Marvell
+max_norm
+no_noise"
+END,0.7648766328011611,"0.46
+0.48
+0.50
+0.52
+0.54
+0.56
+test loss 0.60 0.70 0.80 0.90 1.00"
+END,0.7663280116110305,95% quantile cosine leak AUC
+END,0.7677793904208998,(h) Avazu first layer
+END,0.7692307692307693,"iso
+Marvell
+max_norm
+no_noise"
+END,0.7706821480406386,"0.740
+0.745
+0.750
+0.755
+0.760
+test auc 0.50 0.60 0.70 0.80 0.90 1.00"
+END,0.772133526850508,95% quantile norm leak AUC
+END,0.7735849056603774,(i) Avazu cut layer
+END,0.7750362844702468,"iso
+Marvell
+max_norm
+no_noise"
+END,0.7764876632801161,"0.740
+0.745
+0.750
+0.755
+0.760
+test auc 0.60 0.70 0.80 0.90 1.00"
+END,0.7779390420899854,95% quantile cosine leak AUC
+END,0.7793904208998549,(j) Avazu cut layer
+END,0.7808417997097242,"iso
+Marvell
+max_norm
+no_noise"
+END,0.7822931785195936,"0.740
+0.745
+0.750
+0.755
+0.760
+test auc 0.50 0.60 0.70 0.80 0.90 1.00"
+END,0.783744557329463,95% quantile norm leak AUC
+END,0.7851959361393324,(k) Avazu first layer
+END,0.7866473149492017,"iso
+Marvell
+max_norm
+no_noise"
+END,0.7880986937590712,"0.740
+0.745
+0.750
+0.755
+0.760
+test auc 0.60 0.70 0.80 0.90 1.00"
+END,0.7895500725689405,95% quantile cosine leak AUC
+END,0.7910014513788098,(l) Avazu first layer
+END,0.7924528301886793,"iso
+Marvell
+max_norm
+no_noise"
+END,0.7939042089985486,"Figure 7: Privacy (norm and cosine leak AUC) vs Utility (train loss, test loss, and test AUC) trade-off of
+protection methods (Marvell, iso, no noise, max norm) at the cut layer and ﬁrst layer on Avazu."
+END,0.795355587808418,"0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+train loss 0.60 0.70 0.80 0.90"
+END,0.7968069666182874,95% quantile norm leak AUC
+END,0.7982583454281568,(a) Criteo cut layer
+END,0.7997097242380261,"iso
+Marvell
+max_norm
+no_noise"
+END,0.8011611030478955,"0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+train loss 0.60 0.70 0.80 0.90 1.00"
+END,0.8026124818577649,95% quantile cosine leak AUC
+END,0.8040638606676342,(b) Criteo cut layer
+END,0.8055152394775036,"iso
+Marvell
+max_norm
+no_noise"
+END,0.806966618287373,"0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+train loss 0.60 0.70 0.80 0.90"
+END,0.8084179970972424,95% quantile norm leak AUC
+END,0.8098693759071117,(c) Criteo first layer
+END,0.8113207547169812,"iso
+Marvell
+max_norm
+no_noise"
+END,0.8127721335268505,"0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+train loss 0.60 0.70 0.80 0.90 1.00"
+END,0.8142235123367199,95% quantile cosine leak AUC
+END,0.8156748911465893,(d) Criteo first layer
+END,0.8171262699564587,"iso
+Marvell
+max_norm
+no_noise"
+END,0.818577648766328,"0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+test loss 0.60 0.70 0.80 0.90"
+END,0.8200290275761973,95% quantile norm leak AUC
+END,0.8214804063860668,(e) Criteo cut layer
+END,0.8229317851959361,"iso
+Marvell
+max_norm
+no_noise"
+END,0.8243831640058055,"0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+test loss 0.60 0.70 0.80 0.90 1.00"
+END,0.8258345428156749,95% quantile cosine leak AUC
+END,0.8272859216255443,(f) Criteo cut layer
+END,0.8287373004354136,"iso
+Marvell
+max_norm
+no_noise"
+END,0.8301886792452831,"0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+test loss 0.60 0.70 0.80 0.90"
+END,0.8316400580551524,95% quantile norm leak AUC
+END,0.8330914368650217,(g) Criteo first layer
+END,0.8345428156748912,"iso
+Marvell
+max_norm
+no_noise"
+END,0.8359941944847605,"0.50
+0.55
+0.60
+0.65
+0.70
+0.75
+test loss 0.60 0.70 0.80 0.90 1.00"
+END,0.8374455732946299,95% quantile cosine leak AUC
+END,0.8388969521044993,(h) Criteo first layer
+END,0.8403483309143687,"iso
+Marvell
+max_norm
+no_noise"
+END,0.841799709724238,"0.73
+0.74
+0.75
+0.76
+0.77
+0.78
+test auc 0.60 0.70 0.80 0.90"
+END,0.8432510885341074,95% quantile norm leak AUC
+END,0.8447024673439768,(i) Criteo cut layer
+END,0.8461538461538461,"iso
+Marvell
+max_norm
+no_noise"
+END,0.8476052249637155,"0.73
+0.74
+0.75
+0.76
+0.77
+0.78
+test auc 0.60 0.70 0.80 0.90 1.00"
+END,0.8490566037735849,95% quantile cosine leak AUC
+END,0.8505079825834543,(j) Criteo cut layer
+END,0.8519593613933236,"iso
+Marvell
+max_norm
+no_noise"
+END,0.8534107402031931,"0.73
+0.74
+0.75
+0.76
+0.77
+0.78
+test auc 0.60 0.70 0.80 0.90"
+END,0.8548621190130624,95% quantile norm leak AUC
+END,0.8563134978229318,(k) Criteo first layer
+END,0.8577648766328012,"iso
+Marvell
+max_norm
+no_noise"
+END,0.8592162554426706,"0.73
+0.74
+0.75
+0.76
+0.77
+0.78
+test auc 0.60 0.70 0.80 0.90 1.00"
+END,0.8606676342525399,95% quantile cosine leak AUC
+END,0.8621190130624092,(l) Criteo first layer
+END,0.8635703918722787,"iso
+Marvell
+max_norm
+no_noise"
+END,0.865021770682148,"Figure 8: Privacy (norm and cosine leak AUC) vs Utility (train loss, test loss, and test AUC) trade-off of
+protection methods (Marvell, iso, no noise, max norm) at the cut layer and ﬁrst layer on Criteo."
+END,0.8664731494920174,Published as a conference paper at ICLR 2022
+END,0.8679245283018868,"0.34
+0.36
+0.38
+0.40
+0.42
+train loss 0.70 0.80 0.90 1.00"
+END,0.8693759071117562,95% quantile norm leak AUC
+END,0.8708272859216255,(a) ISIC cut layer
+END,0.872278664731495,"iso
+Marvell
+max_norm
+no_noise"
+END,0.8737300435413643,"0.34
+0.36
+0.38
+0.40
+0.42
+train loss 0.70 0.80 0.90 1.00"
+END,0.8751814223512336,95% quantile cosine leak AUC
+END,0.8766328011611031,(b) ISIC cut layer
+END,0.8780841799709724,"iso
+Marvell
+max_norm
+no_noise"
+END,0.8795355587808418,"0.34
+0.36
+0.38
+0.40
+0.42
+train loss 0.70 0.80 0.90 1.00"
+END,0.8809869375907112,95% quantile norm leak AUC
+END,0.8824383164005806,(c) ISIC first layer
+END,0.8838896952104499,"iso
+Marvell
+max_norm
+no_noise"
+END,0.8853410740203193,"0.34
+0.36
+0.38
+0.40
+0.42
+train loss 0.70 0.80 0.90 1.00"
+END,0.8867924528301887,95% quantile cosine leak AUC
+END,0.888243831640058,(d) ISIC first layer
+END,0.8896952104499274,"iso
+Marvell
+max_norm
+no_noise"
+END,0.8911465892597968,"0.36
+0.38
+0.40
+0.42
+test loss 0.70 0.80 0.90 1.00"
+END,0.8925979680696662,95% quantile norm leak AUC
+END,0.8940493468795355,(e) ISIC cut layer
+END,0.895500725689405,"iso
+Marvell
+max_norm
+no_noise"
+END,0.8969521044992743,"0.36
+0.38
+0.40
+0.42
+test loss 0.70 0.80 0.90 1.00"
+END,0.8984034833091437,95% quantile cosine leak AUC
+END,0.8998548621190131,(f) ISIC cut layer
+END,0.9013062409288825,"iso
+Marvell
+max_norm
+no_noise"
+END,0.9027576197387518,"0.36
+0.38
+0.40
+0.42
+test loss 0.70 0.80 0.90 1.00"
+END,0.9042089985486212,95% quantile norm leak AUC
+END,0.9056603773584906,(g) ISIC first layer
+END,0.9071117561683599,"iso
+Marvell
+max_norm
+no_noise"
+END,0.9085631349782293,"0.36
+0.38
+0.40
+0.42
+test loss 0.70 0.80 0.90 1.00"
+END,0.9100145137880987,95% quantile cosine leak AUC
+END,0.9114658925979681,(h) ISIC first layer
+END,0.9129172714078374,"iso
+Marvell
+max_norm
+no_noise"
+END,0.9143686502177069,"0.80
+0.81
+0.82
+0.83
+0.84
+0.85
+test auc 0.70 0.80 0.90 1.00"
+END,0.9158200290275762,95% quantile norm leak AUC
+END,0.9172714078374455,(i) ISIC cut layer
+END,0.918722786647315,"iso
+Marvell
+max_norm
+no_noise"
+END,0.9201741654571843,"0.80
+0.81
+0.82
+0.83
+0.84
+0.85
+test auc 0.70 0.80 0.90 1.00"
+END,0.9216255442670537,95% quantile cosine leak AUC
+END,0.9230769230769231,(j) ISIC cut layer
+END,0.9245283018867925,"iso
+Marvell
+max_norm
+no_noise"
+END,0.9259796806966618,"0.80
+0.81
+0.82
+0.83
+0.84
+0.85
+test auc 0.70 0.80 0.90 1.00"
+END,0.9274310595065312,95% quantile norm leak AUC
+END,0.9288824383164006,(k) ISIC first layer
+END,0.93033381712627,"iso
+Marvell
+max_norm
+no_noise"
+END,0.9317851959361393,"0.80
+0.81
+0.82
+0.83
+0.84
+0.85
+test auc 0.70 0.80 0.90 1.00"
+END,0.9332365747460087,95% quantile cosine leak AUC
+END,0.9346879535558781,(l) ISIC first layer
+END,0.9361393323657474,"iso
+Marvell
+max_norm
+no_noise"
+END,0.9375907111756169,"Figure 9: Privacy (norm and cosine leak AUC) vs Utility (train loss, test loss, and test AUC) trade-off of
+protection methods (Marvell, iso, no noise, max norm) at the cut layer and ﬁrst layer on ISIC."
+END,0.9390420899854862,Published as a conference paper at ICLR 2022
+END,0.9404934687953556,"A.7.3
+IMPACT OF ACTIVATION GRADIENTS’ LAYER LOCATION ON THE CORRESPONDING
+LEAK AUC"
+END,0.941944847605225,"In Section 5.1, we have shown that the activation gradients of not only the cut layer but also the
+ﬁrst layer can leak the label if no protection is applied. In this section, we analyze the effect of
+this layer location on the degree of label leakage under our proposed attacks measured through leak
+AUC. Here, for the convolutional neural network trained on ISIC, we have allocated 4 Conv-ReLU-
+MaxPool layers on the non-label party side. Here each of these 4 layers’ activation (from ReLU
+output) gradients can be used to infer the label. In Figure 10, we plot the progression of norm and
+cosine leak AUC for layer 2 and 3 in addition to the ﬁrst layer (layer 1) and the cut layer (layer
+4) when applying no protection or Marvell with s = 4. We notice that when no protection is
+applied, the norm and cosine leak AUC are approximately the same across the layers and both
+at a very high level, indicating a strong degree of label leakage. In contrast, when Marvell is
+applied, the leak AUCs are much lowered to a reasonable level of around 0.6 throughout all the
+layers. Empirically, we notice that the leak AUCs for a given training iteration are close among all
+the layers with a maximum difference of around 0.05. Here it is unclear whether the earlier layers’
+gradients would leak the labels more than the cut layer or not — for norm leak AUC, the earlier
+layers have a higher AUC values (more leakage) than the cut layer, while for cosine leak AUC, the
+earlier layers have a lower AUC values (less leakage) than the cut layer. Further understanding the
+relationship between these leak AUC values across different layers is an open question motivated by
+our observations here."
+END,0.9433962264150944,"0
+10000
+20000
+30000
+number of sgd updates 0.95 0.96 0.97 0.98 0.99 1.00"
+END,0.9448476052249637,norm leak auc
+END,0.9462989840348331,(a) no_noise
+END,0.9477503628447025,"layer 1 (first layer)
+layer 2
+layer 3
+layer 4 (cut layer)"
+END,0.9492017416545718,"0
+10000
+20000
+30000
+number of sgd updates 0.95 0.96 0.97 0.98 0.99 1.00"
+END,0.9506531204644412,cosine leak auc
+END,0.9521044992743106,(b) no_noise
+END,0.95355587808418,"0
+10000
+20000
+30000
+number of sgd updates 0.54 0.56 0.58"
+END,0.9550072568940493,norm leak auc
+END,0.9564586357039188,"(c) Marvell, s=4.0"
+END,0.9579100145137881,"0
+10000
+20000
+30000
+number of sgd updates 0.58 0.60 0.62 0.64"
+END,0.9593613933236574,cosine leak auc
+END,0.9608127721335269,"(d) Marvell, s=4.0"
+END,0.9622641509433962,"ISIC, non-label party's convolution network f with four Conv-ReLU-MaxPool layers"
+END,0.9637155297532656,"Figure 10: For a non-label party’s four-layer convolutional architecture trained on ISIC, we plot the progression
+of the norm or cosine leak AUC computed using the activation gradients from each of the four layers throughout
+training in (a), (b) when no random protection is applied and in (c), (d) when using Marvell with privacy
+hyperparameter s = 4 at the cut layer (layer 4). The four curves overlap in (b) at the value of 1.0. For each
+layer’s data in each ﬁgure, a 1-d Gaussian kernel with standard deviation of 5 is convolved with the raw 1-d
+array of leak AUC values to smooth out the ﬂuctuations and make the different layers’ degree of leakage more
+visually distinct."
+END,0.965166908563135,"Beyond the four layer convolutional neural network trained on ISIC, we also train a new MLP model
+architecture on Criteo. Here instead of having 3 128-unit ReLU-activated MLP layers for the non-
+label party’s function f as described in Section A.6.2, we use 8 such layers for f while keeping
+every other architectural component the same. We plot the progression of leak AUC values on each
+of the eight layers in Figure 11. Here the observations are very similar to what we see in Figure 10,
+conﬁrming our aforementioned conclusions in this section."
+END,0.9666182873730044,Published as a conference paper at ICLR 2022
+END,0.9680696661828737,"0
+5000
+10000 15000 20000
+number of sgd updates 0.85 0.90 0.95 1.00"
+END,0.969521044992743,norm leak auc
+END,0.9709724238026125,(a) no_noise
+END,0.9724238026124818,"layer 1 (first layer)
+layer 2"
+END,0.9738751814223512,"layer 3
+layer 4"
+END,0.9753265602322206,"layer 5
+layer 6"
+END,0.97677793904209,"layer 7
+layer 8 (cut layer)"
+END,0.9782293178519593,"0
+5000
+10000 15000 20000
+number of sgd updates 0.980 0.985 0.990 0.995 1.000 1.005"
+END,0.9796806966618288,cosine leak auc
+END,0.9811320754716981,(b) no_noise
+END,0.9825834542815675,"0
+10000
+20000
+number of sgd updates 0.45 0.50 0.55 0.60"
+END,0.9840348330914369,norm leak auc
+END,0.9854862119013063,"(c) Marvell, s=4.0"
+END,0.9869375907111756,"0
+10000
+20000
+number of sgd updates 0.60 0.62 0.64 0.66"
+END,0.988388969521045,cosine leak auc
+END,0.9898403483309144,"(d) Marvell, s=4.0"
+END,0.9912917271407837,"Criteo, non-label party's MLP network f with eight 128-unit ReLU-activated MLP layers"
+END,0.9927431059506531,"Figure 11: For a non-label party’s eight-layer MLP architecture trained on Criteo, we plot the progression of
+the norm or cosine leak AUC computed using the activation gradients from each of the eight layers throughout
+training in (a), (b) when no random protection is applied and in (c), (d) when using Marvell with privacy
+hyperparameter s = 4 at the cut layer (layer 4). The eight curves overlap in (b) at the value of 1.0. For each
+layer’s data in each ﬁgure, a 1-d Gaussian kernel with standard deviation of 100 is convolved with the raw 1-d
+array of leak AUC values to smooth out the ﬂuctuations and make the different layers’ degree of leakage more
+visually distinct."
+END,0.9941944847605225,Published as a conference paper at ICLR 2022
+END,0.9956458635703919,"A.8
+REASONS WHY WE DON’T USE LOCAL DP IN OUR SETUP"
+END,0.9970972423802612,"It is possible to use a local differential privacy deﬁnition to analyze our problem setup if we treat any
+single training example as a dataset and two examples (dataset) are adjacent if they share the same X
+but have the opposite label y. Then one can analyze the activation gradient computation function’s
+local DP properties. However, we choose not to use local DP in our setup for the following two
+reasons:"
+WE ARE NOT AWARE OF ANY ATTACKS ASSOCIATED WITH LOCAL DP THAT ARE SUITABLE FOR PRACTICAL,0.9985486211901307,"1. We are not aware of any attacks associated with local DP that are suitable for practical
+use in our problem setup. In contrast, our leak AUC privacy quantiﬁcation metrics have
+corresponding concrete, realistic attack methods that the non-label party can use in practice.
+2. Even if there exists a practical attack associated with local DP, this attack would require
+example-level side information as the activation gradient distributions would be example-
+speciﬁc. Distinguishing between such gradient distributions for a pair of adjacent examples
+(with same X but opposite label y) would require knowledge about the two distributions
+speciﬁc to this example pair itself. As we have mentioned in Section 3.2, we do not assume
+the non-label party would realistically have access to such ﬁne-grained knowledge.
+Instead, in our setup, the non-label party uses a scoring function that only takes in the
+communicated cut layer gradient without any additional information."

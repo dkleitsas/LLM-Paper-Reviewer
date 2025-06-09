@@ -1,0 +1,1553 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.002638522427440633,"We introduce a new constrained optimization method for policy gradient rein-
+forcement learning, which uses two trust regions to regulate each policy update.
+In addition to using the proximity of one single old policy as the ﬁrst trust region
+as done by prior works, we propose to form a second trust region through the
+construction of another virtual policy that represents a wide range of past poli-
+cies. We then enforce the new policy to stay closer to the virtual policy, which is
+beneﬁcial in case the old policy performs badly. More importantly, we propose a
+mechanism to automatically build the virtual policy from a memory buffer of past
+policies, providing a new capability for dynamically selecting appropriate trust re-
+gions during the optimization process. Our proposed method, dubbed as Memory-
+Constrained Policy Optimization (MCPO), is examined on a diverse suite of en-
+vironments including robotic locomotion control, navigation with sparse rewards
+and Atari games, consistently demonstrating competitive performance against re-
+cent on-policy constrained policy gradient methods."
+INTRODUCTION,0.005277044854881266,"1
+INTRODUCTION"
+INTRODUCTION,0.0079155672823219,"Reinforcement learning (RL) combined with neural networks is the current workhorse in machine
+learning. Using neural networks to approximate value and policy functions enables classical ap-
+proaches such as Q-learning and policy gradient to achieve promising results on many challenging
+problems such as Go, Atari games and robotics (Silver et al., 2017; Mnih et al., 2015; Lillicrap
+et al., 2016; Mnih et al., 2016). Compared to Deep Q-learning, deep policy gradient (PG) methods
+are often more ﬂexible and applicable to both discrete and continuous action problems. However,
+these methods tend to suffer from high sample complexity and training instability since the gradient
+may not accurately reﬂect the policy gain when the policy changes substantially (Kakade & Lang-
+ford, 2002). This is exacerbated for deep policy networks where numerous parameters need to be
+optimized and small updates in parameter space can lead to huge changes in policy space."
+INTRODUCTION,0.010554089709762533,"To address this issue, one solution is to regularize each policy update by restricting the Kullback–
+Leibler (KL) divergence between the new policy and the previous one, which can guarantee mono-
+tonic policy improvement (Schulman et al., 2015a). However, jointly optimizing the approximate
+advantage function and the KL term does not work in practice. Therefore, Schulman et al. (2015a)
+proposed Trust Region Policy Optimization (TRPO) to constrain the new policy within a KL di-
+vergence radius, which requires second-order gradients. Alternatives such as Proximal Policy Op-
+timization (PPO) (Schulman et al., 2017) use a simpler ﬁrst-order optimization with adaptive KL
+or clipped surrogate objective while still maintaining the reliable performance of TRPO. Recent
+methods recast the problem through a new lens using Expectation-Maximization or Mirror Descent
+Optimization, and this also results in ﬁrst-order optimization with KL divergence term in the loss
+function (Abdolmaleki et al., 2018; Song et al., 2019; Yang et al., 2019; Tomar et al., 2020)."
+INTRODUCTION,0.013192612137203167,"An issue with the above methods is that the previous policy used to restrict the new policy may
+be suboptimal and thus unreliable in practice. For example, due to stochasticity and imperfect ap-
+proximations, consider that the new policy may fall into a local optimum even under trust-region
+optimizations. Then in the next update, this policy will become the “previous” policy, and will con-
+tinue pulling the next policy to stay in the local optimum, thus slowing down the training progress.
+For on-policy methods using mini-batch updates like PPO, the situation is more complicated as the
+“previous” policy is deﬁned as the old policy that was used to collect data, which can be either very
+far or close to the current policy. There is no guarantee that the old policy deﬁnes a reasonable trust
+region for regulating the new policy."
+INTRODUCTION,0.0158311345646438,Under review as a conference paper at ICLR 2022
+INTRODUCTION,0.018469656992084433,"In this paper, we propose a novel constrained policy iteration procedure, dubbed as Memory-
+Constrained Policy Optimization (MCPO), wherein a virtual policy representing past policies takes
+part in regularizing each policy update. The virtual and the old policy together form two trust re-
+gions that attract the new policy by minimizing two KL divergences. The virtual policy is designed
+to complement the old policy, attracting the new policy more when the old policy performs badly.
+As such, we assign different coefﬁcient weights to the two KL terms. The coefﬁcient weights are
+computed dynamically based on the performance of the two policies (the higher performer yields
+higher coefﬁcient weights). To create the virtual policy, we maintain a memory buffer of past poli-
+cies, from which we build a mixture of policies. In particular, we use a neural network–named the
+attention network, which takes the context surrounding the current, the old and the virtual policy,
+to generate the attention weights to each policy in the memory. Then, we use the attention weights
+to perform a convex combination of the parameters of each policy, forming the virtual policy. The
+attention network is optimized to maximize the approximate expected advantages of the virtual pol-
+icy. To train our system, we jointly optimize the policy and attention networks, alternating between
+sampling data from the policy and updating the networks in a mini-batch manner."
+INTRODUCTION,0.021108179419525065,"We verify our proposed MCPO through a diverse set of experiments and compare ours with the per-
+formance of recent constrained policy optimization baselines. In our experiment on classical control
+tasks, amongst tested models, MCPO shows minimal sensitivity to hyperparameter changes, con-
+sistently achieving good performance across tasks and hyperparameters. Our testbed on 6 Mujoco
+tasks shows that MCPO with a big policy memory consistently outperforms others where the atten-
+tion network plays an important role. We also demonstrate MCPO’s capability of learning efﬁciently
+on sparse reward and high-dimensional problems such as navigation and Atari games. Finally, our
+ablation study highlights the necessity of each component in MCPO."
+INTRODUCTION,0.023746701846965697,"2
+BACKGROUND: POLICY OPTIMIZATION WITH TRUST REGION"
+INTRODUCTION,0.026385224274406333,"In this section, we brieﬂy review some fundamental constrained policy optimization approaches. A
+general idea is to force the new policy πθ to be close to a recent policy πθold. In this paper, we refer
+to a policy as its parameters (i.e. policy θ means policy πθ)."
+INTRODUCTION,0.029023746701846966,"Conservative Policy Iteration (CPI) The method starts with a basic objective of policy gradient
+algorithms, which is to maximize the expected advantage ˆAt."
+INTRODUCTION,0.0316622691292876,LCP I (θ) = ˆEt
+INTRODUCTION,0.03430079155672823, πθ (at|st)
+INTRODUCTION,0.036939313984168866,"πθold (at|st)
+ˆAt "
+INTRODUCTION,0.0395778364116095,"where the advantage ˆAt is a function of returns collected from (st, at) by using πθold (see Appendix
+A.2) and ˆEt [·] indicates the empirical average over a ﬁnite batch of data. To constrain policy updates,
+the new policy is a mixture of the old and the greedy policy: ˜θ = argmax LCP I (θ). That is,
+θ = αθold + (1 −α)˜θ where α is the mixture hyperparameter (Kakade & Langford, 2002). As
+the data is sampled from previous iteration’s policy θold, the objective needs importance sampling
+estimation. Hereafter, we denote
+πθ(at|st)
+πθold(at|st) as ratt (θ) for short."
+INTRODUCTION,0.04221635883905013,"KL-Regularized Policy Optimization (with ﬁxed or adaptive KL coefﬁcient) Another way to
+enforce the constraint is to jointly maximize the expected advantage and minimize KL divergence
+between the new and old policy, which ensures monotonic improvement (Schulman et al., 2015a)."
+INTRODUCTION,0.044854881266490766,"LKLP O (θ) = ˆEt
+h
+ratt (θ) ˆAt −βKL [πθold (·|st) , πθ (·|st)]
+i"
+INTRODUCTION,0.047493403693931395,"where β is a hyperparameter that controls the degree of update conservativeness, which can be ﬁxed
+(KL Fixed) or changed (KL Adaptive) during training (Schulman et al., 2017)."
+INTRODUCTION,0.05013192612137203,"Trust Region Policy Optimization (TRPO) The method optimizes the expected advantage with
+hard constraint (Schulman et al., 2015a). This is claimed as a practical implementation that is less
+conservative than the theoretically justiﬁed algorithm using KL regularizer mentioned above."
+INTRODUCTION,0.052770448548812667,Under review as a conference paper at ICLR 2022
+INTRODUCTION,0.055408970976253295,"LT RP O (θ) = ˆEt
+h
+ratt (θ) ˆAt
+i"
+INTRODUCTION,0.05804749340369393,"st δ ≥KL [πθold (·|st) , πθ (·|st)]"
+INTRODUCTION,0.06068601583113457,where δ is the KL constraint radius.
+INTRODUCTION,0.0633245382585752,"Proximal Policy Optimization (PPO) PPO is a family of constrained policy optimization, which
+uses ﬁrst-order optimization and mini-batch updates including KL Adaptive and clipped PPO. In
+this paper, we use PPO to refer to the method that limits the change in policy by clipping the loss
+function (clipped PPO) (Schulman et al., 2017)."
+INTRODUCTION,0.06596306068601583,"LP P O (θ) = ˆEt
+h
+min
+
+ratt (θ) ˆAt, clip (ratt (θ) , 1 −ϵ, 1 + ϵ) ˆAt
+i"
+INTRODUCTION,0.06860158311345646,where ϵ is the clip hyperparameter.
+INTRODUCTION,0.0712401055408971,"In the above equations, θ is the currently optimized policy, which is also referred to as the current
+policy. θold represents a past policy, which can be one step before the current policy or the last policy
+used to interact with the environment. In either case, the rule to decide θold is ﬁxed throughout
+training. If for some reason, θold is not optimal, it is unavoidable that the following updates will be
+negatively impacted. We will address this issue in the next section."
+INTRODUCTION,0.07387862796833773,"3
+MEMORY-CONSTRAINED POLICY OPTIMIZATION (MCPO)"
+TWO KL DIVERGENCE CONSTRAINTS,0.07651715039577836,"3.1
+TWO KL DIVERGENCE CONSTRAINTS"
+TWO KL DIVERGENCE CONSTRAINTS,0.079155672823219,"In trust-region methods with mini-batch updates such as PPO, the old policy θold is often chosen as
+the last policy that is used to collect observations from the environment. Before the next environment
+interaction, this old policy is ﬁxed across policy updates, and can be one or many steps before
+the current policy depending on the mini-batch size and the number of update loops. This can be
+detrimental to the optimization if this old policy is poor in quality, forcing the following updates to
+be close to a poor solution. To tackle this issue, we propose to constrain the new policy not only to
+the policy θold, but also to a changeable policy that is representative of many past policies. Let ψ
+denote the virtual policy that represents the history of policies. ψ is dynamically computed based on
+the past policies using attention mechanism (see Sec. 3.2). In contrast to the ﬁxed θold, depending
+on the attention weights, ψ can represent a further or closer checkpoint to the current policy than
+θold. We use both ψ and θold to construct the objective function as follows,"
+TWO KL DIVERGENCE CONSTRAINTS,0.08179419525065963,"L1 (θ) = ˆEt
+h
+ratt (θ) ˆAt
+i"
+TWO KL DIVERGENCE CONSTRAINTS,0.08443271767810026,"−βˆEt [(1 −αt (·|st)) KL [πθold (·|st) , πθ (·|st)]]
+(1)"
+TWO KL DIVERGENCE CONSTRAINTS,0.0870712401055409,"−βˆEt [αt (·|st) KL [πψ (·|st) , πθ (·|st)]]"
+TWO KL DIVERGENCE CONSTRAINTS,0.08970976253298153,"where αt (·|st) is the coefﬁcient weight resembling a forget gate, and β is the scaling coefﬁcient of
+the KL constraint terms. In this paper, the expectation is estimated by taking average over t in a
+mini-batch of sampled data."
+TWO KL DIVERGENCE CONSTRAINTS,0.09234828496042216,"The forget gate determines how much the new policy should forget the virtual policy from the
+memory and focus on the θold. Intuitively, if the virtual policy is better than the old policy, the new
+policy should be kept close to the virtual policy and vice versa. Hence, αt =
+eRt(ψ)"
+TWO KL DIVERGENCE CONSTRAINTS,0.09498680738786279,eRt(ψ)+eRt(θold) where
+TWO KL DIVERGENCE CONSTRAINTS,0.09762532981530343,"Rt (ψ) measures the performance of the policy ψ, which can be estimated by weighted importance
+sampling. That is Rt (ψ) = ratt (ψ) ˆAt."
+TWO KL DIVERGENCE CONSTRAINTS,0.10026385224274406,"Besides deciding which trust region the new policy should rely on, we dynamically weigh the whole
+KL terms via adjusting β. Using a ﬁxed threshold dtarg to change β (e.g in KL Adaptive, if
+KL [πθold (·|st) , πθ (·|st)] > dtarg, increase β (Schulman et al., 2017)) showed limited perfor-
+mance since dtarg should vary depending on the current learning. We instead make use of ψ as a"
+TWO KL DIVERGENCE CONSTRAINTS,0.10290237467018469,Under review as a conference paper at ICLR 2022
+TWO KL DIVERGENCE CONSTRAINTS,0.10554089709762533,"reference for selecting β. Let d (a, b) = ˆEt [KL [πa (·|st) , πb (·|st)]] denote the “distance” between
+2 policies πa and πb, we propose a switching-β rule as follows,"
+TWO KL DIVERGENCE CONSTRAINTS,0.10817941952506596,"β = βmax
+if d (θold, θ) > d (θold, ψ)
+β = βmin
+otherwise
+(2)"
+TWO KL DIVERGENCE CONSTRAINTS,0.11081794195250659,"The intuition is that we encourage the enforcement of the constraint when πθ is too far from πθold
+using the distance between πθold and πψ as a reference."
+TWO KL DIVERGENCE CONSTRAINTS,0.11345646437994723,"Algorithm 1 Memory-Constrained Policy Optimization (for 1 actor).
+Require: A policy buffer M, an initial policy πθold. T, K, B are the learning horizon, number of
+update epochs, and batch size, respectively.
+1: Initialize ψold ←θold, θ ←θold
+2: for iteration = 1, 2, ... do
+3:
+Run policy πθold in environment for T timesteps. Compute advantage estimates ˆA1, ..., ˆAT
+4:
+for epoch = 1, 2, ...K do
+5:
+for batch = 1, 2, ...T/B do
+6:
+Compute ψ (Eq. 4) using ψold, θ, θold, then optimize LMCP O wrt θ (Eq. 5)
+7:
+if d (θ, ψ) > d (θold, ψ) then add θ to M
+8:
+if |M| > N then remove the last item from M
+9:
+ψold ←ψ
+10:
+end for
+11:
+end for
+12:
+θold ←θ
+13: end for"
+LEARNING TO GENERATE THE VIRTUAL POLICY,0.11609498680738786,"3.2
+LEARNING TO GENERATE THE VIRTUAL POLICY"
+LEARNING TO GENERATE THE VIRTUAL POLICY,0.11873350923482849,"It is critical to compute a suitable virtual policy. On one hand, if the virtual policy is too far from
+the currently optimizing point, it will be irrelevant, pulling the new policy back and postponing the
+learning. On the other hand, if the virtual policy is too recent, it will not complement θold and cannot
+prevent major changes in the policy update. Also, it is reasonable to ﬁnd a virtual policy that has
+good performance on current data. Otherwise, using trust regions near poor policies could destroy
+the learning. We will utilize these intuitions to build the virtual policy."
+LEARNING TO GENERATE THE VIRTUAL POLICY,0.12137203166226913,"Policy Memory We ﬁrst maintain a memory buffer M that stores past policy parameters M =
+{θj}|M|
+j=1. During optimization, we add a policy’s parameter to M if it is far enough from ψ. In
+particular, we measure the distances d (θold, ψ) and d (θ, ψ), then propose conditional writing:"
+LEARNING TO GENERATE THE VIRTUAL POLICY,0.12401055408970976,"Add θ to M if d (θ, ψ) > d (θold, ψ)
+(3)"
+LEARNING TO GENERATE THE VIRTUAL POLICY,0.1266490765171504,"The memory capacity is N. When the memory is full, we discard the earliest policy in M."
+LEARNING TO GENERATE THE VIRTUAL POLICY,0.12928759894459102,"Context Vector We hypothesize that the context surrounding θold, ψold and θ, where ψold is
+the last virtual policy, plays a role in determining the next virtual policy. We build the context
+by extracting speciﬁc features: pair-wise distances between policies (d (θold, ψold), d (θ, ψold),
+d (θold, θ)), the empirical returns of these policies (ˆEt [Rt (ψold)], ˆEt [Rt (θ)], ˆEt [Rt (θold)]),
+policy entropy (ˆEt [−log (πψold (·|st))], ˆEt [−log (πθ (·|st))], ˆEt [−log (πθold (·|st))]) and value
+losses (ˆEt (Vψold (st) −Vtarget (st))2, ˆEt (Vθ (st) −Vtarget (st))2, ˆEt (Vθold (st) −Vtarget (st))2).
+These features form a context vector vcontext that captures the properties of each policy and the re-
+lationship between them, which can represent the context that generates the attention weights."
+LEARNING TO GENERATE THE VIRTUAL POLICY,0.13192612137203166,"Attention Mechanism We argue that the virtual policy should be determined based on the context.
+A simple strategy such as taking average of policies in M is likely sub-optimal as the quality of
+these policies vary and some can be irrelevant to the current learning context. Hence, we propose to
+sum the policies in a weighted manner wherein the weights are generated by a neural network whose
+input is vcontext. We compute ψ by performing “attention” in the parameter space as follows,"
+LEARNING TO GENERATE THE VIRTUAL POLICY,0.1345646437994723,Under review as a conference paper at ICLR 2022
+LEARNING TO GENERATE THE VIRTUAL POLICY,0.13720316622691292,"Model
+Pendulum
+LunarLander
+BWalker
+1M
+1M
+5M
+KL Adaptive (dtarg = 0.003)
+-407.74±484.16
+238.30±34.07
+206.99±5.34
+KL Adaptive (dtarg = 0.01)
+-147.52±9.90
+254.26±19.43
+247.70±14.16
+KL Adaptive (dtarg = 0.03)
+-601.09±273.18
+246.93±12.57
+259.80±6.33
+KL Fixed (β = 0.01)
+-1051.14±158.81
+247.61±19.79
+221.55±38.64
+KL Fixed (β = 0.1)
+-464.29±426.27
+256.75±20.53
+263.56±10.04
+KL Fixed (β = 1)
+-136.40±4.49
+192.62±32.97
+215.13±13.29
+PPO (clip ϵ = 0.1)
+-282.20±243.42
+242.98±13.50
+205.07±19.13
+PPO (clip ϵ = 0.2)
+-514.28±385.34
+256.88±20.33
+253.58±7.49
+PPO (clip ϵ = 0.3)
+-591.31±229.32
+259.93±22.52
+260.51±17.86
+MDPO (β0 = 0.5)
+-136.45±8.21
+247.96±4.74
+251.18±29.10
+MDPO (β0 = 1)
+-139.14±10.32
+207.96±43.86
+245.27±10.47
+MDPO (β0 = 2)
+-135.52±5.28
+227.76±16.96
+226.80±15.67
+VMPO (α0 = 0.1)
+-144.51±7.04
+201.87±29.48
+236.57±10.62
+VMPO (α0 = 1)
+-139.50±5.54
+212.85±43.35
+238.82±11.11
+VMPO (α0 = 5)
+-296.48±213.06
+222.13±35.55
+164.40±40.36
+MCPO (N = 5)
+-133.42±4.53
+262.23±12.47
+265.80±5.55
+MCPO (N = 10)
+-146.88±3.78
+263.04±11.48
+266.26±8.87
+MCPO (N = 40)
+-135.57±5.22
+267.19±13.42
+249.51±12.75"
+LEARNING TO GENERATE THE VIRTUAL POLICY,0.13984168865435356,"Table 1: Mean and std. over 5 runs on classical control tasks (with number of training environment
+steps). Bold denotes the best mean. Underline denotes good results (if exist), statistically indifferent
+from the best in terms of Cohen effect size less than 0.5. ψ = |M|
+X"
+LEARNING TO GENERATE THE VIRTUAL POLICY,0.1424802110817942,"j
+fϕ (vcontext)j θj
+(4)"
+LEARNING TO GENERATE THE VIRTUAL POLICY,0.14511873350923482,"where fϕ is the attention network– a feed-forward neural network parameterized by ϕ with softmax
+activation. The network outputs a N-dimensional output vector establishing the attention weights.
+Here ψ is a function of ϕ and we train ϕ to improve ψ’s performance."
+LEARNING TO GENERATE THE VIRTUAL POLICY,0.14775725593667546,"Objective function Given the virtual policy ψ (ϕ), we ﬁnd ϕ to maximize its performance L2 (ϕ) =
+ˆEt [Rt (ψ (ϕ))]. We aim to obtain the best representative of past policies without examining the per-
+formance of each individual policy in M since evaluating all policies is highly expensive, especially
+when |M| is large. In addition, learning a “soft” attention is more ﬂexible than searching for a
+“hard” policy that performs best (in terms of L2) since the performance measurement itself can be
+noisy and not always reliable. To train the whole system, we use gradient ascent to maximize"
+LEARNING TO GENERATE THE VIRTUAL POLICY,0.1503957783641161,"LMCP O = L1 (θ) + L2 (ϕ) .
+(5)"
+LEARNING TO GENERATE THE VIRTUAL POLICY,0.15303430079155672,"When optimizing L1, we ﬁx ϕ and only update θ to avoid gradient back-propagation via ϕ (similarly,
+when optimizing L2, we ﬁx θ and only update ϕ). Theoretical motivation for the design of L1 and
+L2 is given in Appendix C. We implement MCPO using minibatch update procedure (Schulman
+et al., 2017). Algo. 1 illustrates a high-level implementation of MCPO with 1 actor."
+EXPERIMENTAL RESULTS,0.15567282321899736,"4
+EXPERIMENTAL RESULTS"
+EXPERIMENTAL RESULTS,0.158311345646438,"In our experiments, the main baselines are recent on-policy constrained methods that use ﬁrst-order
+optimization, in which most of them employ KL terms in the objective function. They are KL
+Adaptive, KL Fixed, PPO (Schulman et al., 2017), MDPO (Tomar et al., 2020) and VMPO (Song
+et al., 2019). We also include second-order methods such as TRPO (Schulman et al., 2015a) and
+ACKTR (Wu et al., 2017). Across experiments, for MCPO, we ﬁx βmax = 10, βmin = 0.01 and
+only tune N. More details on the baselines and tasks are given in Appendix B.1."
+EXPERIMENTAL RESULTS,0.16094986807387862,Under review as a conference paper at ICLR 2022
+EXPERIMENTAL RESULTS,0.16358839050131926,"0
+25K
+50K
+75K
+100K
+Step 0.0 0.5"
+EXPERIMENTAL RESULTS,0.1662269129287599,Avg. Return
+EXPERIMENTAL RESULTS,0.16886543535620052,"0.9
+0.9
+Unlock"
+EXPERIMENTAL RESULTS,0.17150395778364116,"0
+250K
+500K
+750K
+1M
+Step 0.0 0.5"
+EXPERIMENTAL RESULTS,0.1741424802110818,UnlockPickup
+EXPERIMENTAL RESULTS,0.17678100263852242,"KL Ada ptive 
+KL Fixed 
+MCPO  (Ours)
+MDPO"
+EXPERIMENTAL RESULTS,0.17941952506596306,"PPO 
+VMPO"
+EXPERIMENTAL RESULTS,0.1820580474934037,Figure 1: Unlock (left) and UnlockPickup (right)’s learning curves (mean and std. over 10 runs).
+EXPERIMENTAL RESULTS,0.18469656992084432,"4.1
+CLASSICAL CONTROL: HYPERPARAMETER SENSITIVITY TEST"
+EXPERIMENTAL RESULTS,0.18733509234828497,"In this section, we compare MCPO to other ﬁrst-order policy gradient methods (KL Adaptive, KL
+Fixed, PPO, MDPO and VMPO) on 3 classical control tasks: Pendulum, LunarLander and Bipedal-
+Walker, which are trained for one, one and ﬁve million environment steps, respectively. Here, we
+are curious to know whether tuning hyperparameters helps the baselines solve these simple tasks,
+and how their performances ﬂuctuate as the hyperparameters vary. For each model, we choose one
+hyperparameter that controls the conservativeness of policy update, and we try different values for
+the signature hyperparameter while keeping the others the same. For example, for PPO, we tune
+the clip value ϵ; for KL Fixed we tune β coefﬁcient and these possible values are chosen following
+prior works. For our MCPO, we tune the size of the policy memory N (5, 10 and 40). We do not
+try bigger policy memory size to keep MCPO running efﬁciently (see Appendix B.2 for details of
+baselines, the choice of hyperparameters and running time analysis)."
+EXPERIMENTAL RESULTS,0.18997361477572558,"Table 1 reports the results of MCPO and 5 baselines with different hyperparameters. For these simple
+tasks, tuning the hyperparameters often helps the model achieve at least moderate performance.
+However, models like KL Adaptive and VMPO cannot reach good performance despite being tuned.
+PPO shows good results on LunarLander and BipedalWalker, yet underperfoms others on Pendulum.
+Interestingly, if tuned properly, the vanilla KL Fixed can show competitive results compared to
+PPO and MDPO in BipedalWalker. Amongst all, our MCPO with suitable N achieves the best
+performance on all tasks. Remarkably, its performance does not ﬂuctuate much as N changes from
+5 to 40, often obtaining good and best results. On the contrary, other methods observe clear drop in
+performance if the hyperparameters are set incorrectly (see Appendix B.2 for full learning curves)."
+EXPERIMENTAL RESULTS,0.19261213720316622,"4.2
+NAVIGATION TASKS: SAMPLE EFFICIENCY TEST"
+EXPERIMENTAL RESULTS,0.19525065963060687,"Here, we validate our method on sparse reward environments using MiniGrid library (Chevalier-
+Boisvert et al., 2018). In particular, we test MCPO and other baselines (same as above) on Unlock
+and UnlockPickup tasks. In these tasks, the agent navigates through rooms and picks up objects to
+complete the episode. The agent only receives reward +1 if it can complete the episode successfully.
+For sample efﬁciency test, we train all models on Unlock (ﬁnd key and open the door) and Unlock-
+Pickup (ﬁnd key, open the door and pickup an object), for only 100,000 and 1 million environment
+steps, respectively. The models use the best conservative hyperparameters found in the previous task
+(more in Appendix B.3)."
+EXPERIMENTAL RESULTS,0.19788918205804748,"Fig. 1 shows the learning curves of examined models on these two tasks. For Unlock task, except
+for MCPO and VMPO, 100,000 steps seem not enough for the models to learn useful policies.
+When trained with 1 million steps on UnlockPickup, the baselines can ﬁnd better policies, yet still
+underpefrom MCPO. Here VMPO shows faster learning progress than MCPO at the beginning,
+however it fails to converge to the best solution. Our MCPO is the best performer, consistently
+ending up with average return of 0.9 (90% of episodes ﬁnished successfully)."
+EXPERIMENTAL RESULTS,0.20052770448548812,"To illustrate how the virtual policy supports building trust regions to boost MCPO’s performance,
+we analyze the relationships amongst the old (θ), the virtual policy (ψ) and the policies stored in
+M (θj) throughout Unlock training. Fig. 2 (a) plots the location of these policies over a truncated
+period of training (from update step 5160 to 7070). Due to conditional writing rule, the steps where
+policies are added to M can be uneven (ﬁrst row-red lines), often distributed right after the locations
+of the old policy (second row-green lines). We query at 10-th step behind the old policy (fourth row-
+cyan lines) to ﬁnd which policy in M has the highest attention (third row-yellow lines, linked by
+blue arrows). As shown in Fig. 2 (a) (second and third row), the attended policy, which mostly"
+EXPERIMENTAL RESULTS,0.20316622691292877,Under review as a conference paper at ICLR 2022
+EXPERIMENTAL RESULTS,0.20580474934036938,"5160
+7070"
+EXPERIMENTAL RESULTS,0.20844327176781002,Update timesteps corresponding to diﬀerent policy types query
+EXPERIMENTAL RESULTS,0.21108179419525067,"0
+2000
+4000
+6000
+Policy Update Step 0.0 0.2 0.4 0.6 0.8"
+EXPERIMENTAL RESULTS,0.21372031662269128,Average Return old
+EXPERIMENTAL RESULTS,0.21635883905013192,"0
+2M
+4M
+6M
+8M
+10M
+Step 10 15 20 25 30 35"
+EXPERIMENTAL RESULTS,0.21899736147757257,Most Attended Slot j*
+EXPERIMENTAL RESULTS,0.22163588390501318,"Hopper
+Humanoid
+HumanoidStandup (a)"
+EXPERIMENTAL RESULTS,0.22427440633245382,"(c)
+(b) ~"
+EXPERIMENTAL RESULTS,0.22691292875989447,"Figure 2: (a) Policy analysis on Unlock. First row (red lines): steps where a policy is added to M, i.e.
+the steps of θj. Second row (green lines): steps of old policies θold. Third row (yellow lines): steps of
+mostly attended policy, approximating ψ. Fourth row (cyan lines): 3 steps of interest where we want
+to ﬁnd their attended steps. Blue arrows link a query step and the step that receives highest attention.
+(b) Quality of ψ vs. θold. Average return collected by ψ and θold at different stages of training. (c) 3
+Mujoco tasks. The slot in M received the highest attention j∗= argmaxj fϕ (vcontext)j over time."
+EXPERIMENTAL RESULTS,0.22955145118733508,"resembles ψ, can be further or closer to the query step than the old policy depending on the training
+stage. Since we let the attention network learn to attend to the policy that maximizes the advantage
+of current mini-batch data, the attended one is not necessarily the same as the old policy."
+EXPERIMENTAL RESULTS,0.23218997361477572,"The choice of the chosen virtual policy being better than the old policy is shown in Fig. 2 (b) where
+we collect several checkpoints of virtual and old policies across training and evaluate each of them
+on 10 testing episodes. Here using ψ to form the second KL constraint is beneﬁcial as the new
+policy is generally pulled toward a better policy during training. That contributes to the excellent
+performance of MCPO compared to other single trust-region baselines, especially KL Fixed and
+Adaptive, which are very close to MCPO in term of objective function style."
+EXPERIMENTAL RESULTS,0.23482849604221637,"4.3
+MUJOCO CONTINUOUS CONTROL: EFFECTIVENESS OF LEARNED ψ"
+EXPERIMENTAL RESULTS,0.23746701846965698,"Next, we examine MCPO and some trust-region methods from the literature that are known to have
+good performance on continuous control problems: TRPO, PPO and MDPO. To understand the role
+of the attention network in MCPO, we design a variant of MCPO: Mean ψ, which simply constructs
+ψ by taking average over policy parameters in M. We pick 6 hard Mujoco tasks and train each
+model for 10 million environment steps. For each baseline, we again only tune the conservative
+hyperparameters and report the best conﬁgurations in Table 2 (see Appendix B.4 for full results)."
+EXPERIMENTAL RESULTS,0.24010554089709762,"The results show that MCPO is the best performer on 5 out of 6 tasks, where clear outperformance
+gaps can be found in HalfCheetah, Ant, Humanoid and HumanoidStandup. We note that this is only
+achieved as MCPO uses N = 40, which indicates that bigger policy memory (more conservative-
+ness) is beneﬁcial in this case. The variant Mean ψ demonstrates reasonable performance for the
+ﬁrst 4 tasks, yet almost fails to learn on the last two, which means using a mean virtual policy is
+unsuitable in these tasks."
+EXPERIMENTAL RESULTS,0.24274406332453827,"To understand the effectiveness of the attention network, we visualize the attention pattern of MCPO
+on the last two tasks and on Hopper-a task that Mean ψ performs well. Fig. 2 (c) illustrates that for
+the ﬁrst two harder tasks, MCPO gradually learns to favour older policies in M (j∗> 35), which
+puts more restriction on the policy change as the model converges. This strategy seems critical
+for those tasks as the difference in average return between learned ψ and Mean ψ is huge in these
+cases. On the other hand, on Hopper, the top attended slots are just above the middle policies in M
+(j∗∼25), which means this task prefers an average restriction."
+EXPERIMENTAL RESULTS,0.24538258575197888,Under review as a conference paper at ICLR 2022
+EXPERIMENTAL RESULTS,0.24802110817941952,"Model
+HalfCheetah
+Walker2d
+Hopper
+Ant
+Humanoid
+HumanoidStandup
+TRPO
+2,811±114
+3,966±56
+3,159±72
+2,438±402
+4,576±106
+145,143±3,702
+PPO
+4,753±1,614
+5,278±594
+2,968±1,002
+3,421±534
+3,375±1,684
+155,494±6,663
+MDPO
+4,774±1,598
+4,957±330
+3,153±956
+3,553±696
+1,620±2,145
+90,646±5,855
+Mean ψ
+4,942±3,095
+5,056±842
+3,430±259
+4,570±548
+353±27
+71,308±11,113
+MCPO
+6,173±595
+5,120±588
+3,620±252
+4,673±249
+4,848±711
+195,404±32,801"
+EXPERIMENTAL RESULTS,0.25065963060686014,Table 2: Mean and std. over 5 runs on 6 Mujoco tasks at 10M environment steps. VMPO 1 2 3
+EXPERIMENTAL RESULTS,0.2532981530343008,Avg. Return
+EXPERIMENTAL RESULTS,0.2559366754617414,"1e3
+BeamRider 0 1 2 3 4"
+EXPERIMENTAL RESULTS,0.25857519788918204,"1e2
+Breakout 0 2 4 6 8"
+EXPERIMENTAL RESULTS,0.2612137203166227,"1e2
+Enduro"
+EXPERIMENTAL RESULTS,0.2638522427440633,"0
+2M
+4M
+6M
+8M
+10M
+Step 1 2 3"
+EXPERIMENTAL RESULTS,0.26649076517150394,Avg. Return
+EXPERIMENTAL RESULTS,0.2691292875989446,"1e3
+Gopher"
+EXPERIMENTAL RESULTS,0.2717678100263852,"0
+2M
+4M
+6M
+8M
+10M
+Step 0.5 1.0 1.5"
+EXPERIMENTAL RESULTS,0.27440633245382584,"1e3
+Seaquest"
+EXPERIMENTAL RESULTS,0.2770448548812665,"0
+2M
+4M
+6M
+8M
+10M
+Step 2 4 6"
+EXPERIMENTAL RESULTS,0.2796833773087071,"8
+1e2
+SpaceInvaders"
+EXPERIMENTAL RESULTS,0.28232189973614774,"ACKTR
+MCPO 
+PPO"
+EXPERIMENTAL RESULTS,0.2849604221635884,Figure 3: Mean and std. over 5 runs on 6 Atari games over 10M environment steps.
+EXPERIMENTAL RESULTS,0.287598944591029,"4.4
+ATARI GAMES: SCALING TO HIGHER DIMENSIONS"
+EXPERIMENTAL RESULTS,0.29023746701846964,"As showcasing the robustness of our method to high-dimensional inputs, we execute an experiment
+on a subset of Atari games wherein the states are screen images and the policy and value function ap-
+proximator uses deep convolutional neural networks. We choose 6 typical games (Mnih et al., 2013)
+and benchmark MCPO against PPO, ACKTR and VMPO, training all models for only 10 million
+environment steps. In this experiment, MCPO uses N = 10 and other baselines’ hyperparameters
+are selected based on the original papers (see Appendix B.5)."
+EXPERIMENTAL RESULTS,0.2928759894459103,"Fig. 3 visualizes the learning curves of the models. Regardless of our regular tuning, VMPO per-
+forms poorly, indicating that this method is unsuitable or needs extensive tuning to work for low-
+sample training regime. ACKTR, works extremely well on certain games (Breakout and Seaquest),
+but shows mediocre results on others (Enduro, BeamRider), overall underperfoming MCPO. PPO is
+always similar or inferior to MCPO on this testbed. Our MCPO always demonstrates competitive
+results, outperforming all other models in 4 games, especially on Enduro and Gopher, and showing
+comparable results with that of the best model in the other 2 games."
+ABLATION STUDY,0.2955145118733509,"4.5
+ABLATION STUDY"
+ABLATION STUDY,0.29815303430079154,"Finally, we verify MCPO’s 3 components: virtual policy (Eq. 1), switching-β (Eq. 2) and con-
+ditional writing rule (Eq. 3). We also conﬁrm the role of choosing the right memory size N and
+learning to attend to the virtual policy ψ. As such, we pick BipedalWalkerHardcore from OpenAI
+Gym and train MCPO with different conﬁgurations for 50M steps. First, we tune N (5,10 and 40)
+using the normal MCPO with all components on and ﬁnd out that N = 10 is the best, reaching about
+169 return score. Keeping N = 10, for each component, we ablate or replace our component with
+an alternative and report the ﬁndings as follows."
+ABLATION STUDY,0.3007915567282322,"Virtual policy To show the beneﬁt of pushing the new policy toward the virtual policy, we imple-
+ment a variant of MCPO that does not use ψ’s KL term in Eq. 1 (a.k.a. αt = 0). This variant
+underperfoms the normal MCPO by a margin of 100 return. Switching-β The results show that
+compared to the annealed β strategy adopted from MDPO, our switching-β achieves signiﬁcantly
+better results with about 50 return score higher. Conditional writing We compare our proposal with
+the vanilla approach that adds a new policy to M at every update step (frequent writing) and another"
+ABLATION STUDY,0.3034300791556728,Under review as a conference paper at ICLR 2022
+ABLATION STUDY,0.30606860158311344,"version that writes to M every interval of 10 update steps (uniform writing). Both frequent and uni-
+form writing show slow learning progress, and ends up with negative rewards. Perhaps, frequently
+adding policies to M makes the memory content similar, hastening the removal of older, yet maybe
+valuable policies. Uniform writing is better, yet it can still add similar policies to M and requires
+additional effort for tuning the writing interval. Learned ψ To benchmark, we try alternatives: (1)
+using Mean ψ and (2) only using half of the features in vcontext to generate ψ (Eq. 4). The results
+conﬁrm that the Mean ψ is not a strong baseline for this task, only reaping moderate rewards. Using
+less features for the context causes information loss, hinder generations of useful ψ, and thus, un-
+derperforms the full-feature version by a margin of 50 return. For completeness, we also compare
+our methods to heavily tuned baselines and conﬁrm that the normal MCPO (N = 10) is the best
+performer. All the learning curves and details can be found in Appendix B.6."
+RELATED WORKS,0.3087071240105541,"5
+RELATED WORKS"
+RELATED WORKS,0.3113456464379947,"A framework for model-free reinforcement learning with policy gradient is approximate policy itera-
+tion (API), which alternates between estimating the advantage of the current policy, and updating the
+current policy’s parameters to obtain a new policy by maximizing the expected advantage (Bertsekas
+& Tsitsiklis, 1995; Sutton et al., 2000). Theoretical studies have shown that constraining policy up-
+dates is critical for API (Kakade & Langford, 2002; Schulman et al., 2015a; Shani et al., 2020;
+Vieillard et al., 2020b). An early attempt to improve API is Conservative Policy Iteration (CPI),
+which sets the new policy as a stochastic mixture of previous greedy policies (Kakade & Langford,
+2002). The mixture idea of CPI inspires other methods which explore different ways to estimate the
+greedy policy (Pirotta et al., 2013) or employs neural networks as function approximators (Vieillard
+et al., 2020a). Our paper differs from these works in three aspects: (1) we do not directly set the new
+policy to the mixture, rather, we use a mixture of previously found policies (the virtual policy) to
+deﬁne the trust region constraining the new policy via KL regularization; (2) our mixture can consist
+of more than 2 modes, and thus using multiple mixture weights (attention weights); (3) we use the
+attention network to learn these weights based on the training context."
+RELATED WORKS,0.31398416886543534,"Also motivated by Kakade & Langford (2002), TRPO extends the theory to general stochastic poli-
+cies, rather than just mixture polices, ensuring monotonic improvement by combining maximizing
+the approximate expected advantage with minimizing the KL divergence between two consecutive
+policies (Schulman et al., 2015a). Arguing that optimizing this way is too conservative and hard
+to tune, the authors reformulate the objective as a constrained optimization problem to solve it with
+conjugate gradient and line search. To simplify the implementation of TRPO, Schulman et al. (2017)
+introduces ﬁrst-order optimization methods and code-level improvement, which results in PPO–an
+API method that optimizes a clipped surrogate objective using minibatch updates."
+RELATED WORKS,0.316622691292876,"Another line of works views constrained policy improvement as Expectation-Maximization algo-
+rithm where minimizing KL-term corresponds to the Expectation step, which can be off-policy (Ab-
+dolmaleki et al., 2018) or on-policy (Song et al., 2019). From mirror descent perspective, several
+works also use KL divergence to regularize policy updates (Yang et al., 2019; Tomar et al., 2020;
+Shani et al., 2020). A recent analysis also points out the advantages of using KL term as a regular-
+izer over a hard constraint (Lazi´c et al., 2021). Some other works improve the standard trust-region
+with adaptive clip range (Wang et al., 2019) or off-policy data (Fakoor et al., 2020). Our approach
+shares similarities with them where we also jointly optimize the approximate expected advantage
+and KL constraint terms for multiple epochs of minibatch updates. However, we propose a novel
+dynamic virtual policy to construct the second trust region as a supplement to the traditional trust
+region deﬁned by the old or previous policy."
+DISCUSSION,0.31926121372031663,"6
+DISCUSSION"
+DISCUSSION,0.32189973614775724,"We have presented Memory-Constrained Policy Optimization, a new method to regularize each
+policy update with two-trust regions with respect to one single old policy and another virtual policy
+representing history of past policies. The new policy is encouraged to stay closer to the region
+surrounding the policy that performs better. The virtual policy is determined online through a learned
+attention to a memory of past policies. MCPO is applicable in various problems and settings, less
+sensitive to hyperparameter changes, and showing better performance in many environments."
+DISCUSSION,0.3245382585751979,Under review as a conference paper at ICLR 2022
+REFERENCES,0.32717678100263853,REFERENCES
+REFERENCES,0.32981530343007914,"Abbas Abdolmaleki, Jost Tobias Springenberg, Yuval Tassa, Remi Munos, Nicolas Heess, and Mar-
+tin Riedmiller. Maximum a posteriori policy optimisation. In International Conference on Learn-
+ing Representations, 2018."
+REFERENCES,0.3324538258575198,"Dimitri P Bertsekas and John N Tsitsiklis. Neuro-dynamic programming: an overview. In Pro-
+ceedings of 1995 34th IEEE conference on decision and control, volume 1, pp. 560–564. IEEE,
+1995."
+REFERENCES,0.33509234828496043,"Maxime Chevalier-Boisvert, Lucas Willems, and Suman Pal. Minimalistic gridworld environment
+for openai gym. https://github.com/maximecb/gym-minigrid, 2018."
+REFERENCES,0.33773087071240104,"Rasool Fakoor, Pratik Chaudhari, and Alexander J Smola. P3o: Policy-on policy-off policy opti-
+mization. In Uncertainty in Artiﬁcial Intelligence, pp. 1017–1027. PMLR, 2020."
+REFERENCES,0.3403693931398417,"S. Kakade and J. Langford. Approximately optimal approximate reinforcement learning. In ICML,
+2002."
+REFERENCES,0.34300791556728233,"Nevena Lazi´c, Botao Hao, Yasin Abbasi-Yadkori, Dale Schuurmans, and Csaba Szepesvári. Opti-
+mization issues in kl-constrained approximate policy iteration. arXiv preprint arXiv:2102.06234,
+2021."
+REFERENCES,0.34564643799472294,"Hung Le, Truyen Tran, and Svetha Venkatesh. Learning to remember more with less memorization.
+arXiv preprint arXiv:1901.01347, 2019."
+REFERENCES,0.3482849604221636,"Timothy P Lillicrap, Jonathan J Hunt, Alexander Pritzel, Nicolas Heess, Tom Erez, Yuval Tassa,
+David Silver, and Daan Wierstra. Continuous control with deep reinforcement learning. In ICLR
+(Poster), 2016."
+REFERENCES,0.35092348284960423,"Volodymyr Mnih, Koray Kavukcuoglu, David Silver, Alex Graves, Ioannis Antonoglou, Daan Wier-
+stra, and Martin Riedmiller.
+Playing atari with deep reinforcement learning.
+arXiv preprint
+arXiv:1312.5602, 2013."
+REFERENCES,0.35356200527704484,"Volodymyr Mnih, Koray Kavukcuoglu, David Silver, Andrei A Rusu, Joel Veness, Marc G Belle-
+mare, Alex Graves, Martin Riedmiller, Andreas K Fidjeland, Georg Ostrovski, et al. Human-level
+control through deep reinforcement learning. nature, 518(7540):529–533, 2015."
+REFERENCES,0.3562005277044855,"Volodymyr Mnih, Adria Puigdomenech Badia, Mehdi Mirza, Alex Graves, Timothy Lillicrap, Tim
+Harley, David Silver, and Koray Kavukcuoglu. Asynchronous methods for deep reinforcement
+learning. In International conference on machine learning, pp. 1928–1937. PMLR, 2016."
+REFERENCES,0.35883905013192613,"Matteo Pirotta, Marcello Restelli, Alessio Pecorino, and Daniele Calandriello. Safe policy iteration.
+In International Conference on Machine Learning, pp. 307–315. PMLR, 2013."
+REFERENCES,0.36147757255936674,"John Schulman, Sergey Levine, Pieter Abbeel, Michael Jordan, and Philipp Moritz. Trust region
+policy optimization. In International conference on machine learning, pp. 1889–1897. PMLR,
+2015a."
+REFERENCES,0.3641160949868074,"John Schulman, Philipp Moritz, Sergey Levine, Michael Jordan, and Pieter Abbeel.
+High-
+dimensional continuous control using generalized advantage estimation.
+arXiv preprint
+arXiv:1506.02438, 2015b."
+REFERENCES,0.36675461741424803,"John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy
+optimization algorithms. arXiv preprint arXiv:1707.06347, 2017."
+REFERENCES,0.36939313984168864,"Lior Shani, Yonathan Efroni, and Shie Mannor. Adaptive trust region policy optimization: Global
+convergence and faster rates for regularized mdps. In Proceedings of the AAAI Conference on
+Artiﬁcial Intelligence, volume 34, pp. 5668–5675, 2020."
+REFERENCES,0.3720316622691293,"David Silver, Julian Schrittwieser, Karen Simonyan, Ioannis Antonoglou, Aja Huang, Arthur Guez,
+Thomas Hubert, Lucas Baker, Matthew Lai, Adrian Bolton, et al. Mastering the game of go
+without human knowledge. nature, 550(7676):354–359, 2017."
+REFERENCES,0.37467018469656993,Under review as a conference paper at ICLR 2022
+REFERENCES,0.37730870712401055,"H Francis Song, Abbas Abdolmaleki, Jost Tobias Springenberg, Aidan Clark, Hubert Soyer, Jack W
+Rae, Seb Noury, Arun Ahuja, Siqi Liu, Dhruva Tirumala, et al. V-mpo: On-policy maximum a
+posteriori policy optimization for discrete and continuous control. In International Conference
+on Learning Representations, 2019."
+REFERENCES,0.37994722955145116,"Richard S Sutton, David A McAllester, Satinder P Singh, and Yishay Mansour. Policy gradient
+methods for reinforcement learning with function approximation. In Advances in neural informa-
+tion processing systems, pp. 1057–1063, 2000."
+REFERENCES,0.38258575197889183,"Manan Tomar, Lior Shani, Yonathan Efroni, and Mohammad Ghavamzadeh. Mirror descent policy
+optimization. arXiv preprint arXiv:2005.09814, 2020."
+REFERENCES,0.38522427440633245,"Nino Vieillard, Olivier Pietquin, and Matthieu Geist. Deep conservative policy iteration. In Pro-
+ceedings of the AAAI Conference on Artiﬁcial Intelligence, volume 34, pp. 6070–6077, 2020a."
+REFERENCES,0.38786279683377306,"Nino Vieillard, Bruno Scherrer, Olivier Pietquin, and Matthieu Geist. Momentum in reinforcement
+learning. In International Conference on Artiﬁcial Intelligence and Statistics, pp. 2529–2538.
+PMLR, 2020b."
+REFERENCES,0.39050131926121373,"Yuhui Wang, Hao He, Xiaoyang Tan, and Yaozhong Gan. Trust region-guided proximal policy
+optimization. Advances in Neural Information Processing Systems, 32:626–636, 2019."
+REFERENCES,0.39313984168865435,"Yuhuai Wu, Elman Mansimov, Shun Liao, Roger Grosse, and Jimmy Ba. Scalable trust-region
+method for deep reinforcement learning using kronecker-factored approximation. In Proceedings
+of the 31st International Conference on Neural Information Processing Systems, pp. 5285–5294,
+2017."
+REFERENCES,0.39577836411609496,"Long Yang, Gang Zheng, Haotian Zhang, Yu Zhang, Qian Zheng, Jun Wen, and Gang Pan. Policy
+optimization with stochastic mirror descent. arXiv preprint arXiv:1906.10462, 2019."
+REFERENCES,0.39841688654353563,Under review as a conference paper at ICLR 2022
+REFERENCES,0.40105540897097625,APPENDIX
+REFERENCES,0.40369393139841686,"A
+METHOD DETAILS"
+REFERENCES,0.40633245382585753,"A.1
+THE ATTENTION NETWORK"
+REFERENCES,0.40897097625329815,The attention network is implemented as a feedforward neural network with one hidden layer:
+REFERENCES,0.41160949868073876,"• Input layer: 12 units
+• Hidden layer: N units coupled with a dropout layer p = 0.5
+• Output layer: N units, softmax activation function"
+REFERENCES,0.41424802110817943,N is the capacity of policy memory. The 12 features of the input vcontext is listed in Table 3.
+REFERENCES,0.41688654353562005,"A.2
+THE ADVANTAGE FUNCTION"
+REFERENCES,0.41952506596306066,"In this paper, we use GAE (Schulman et al., 2015b) as the advantage function for all models and
+experiments"
+REFERENCES,0.42216358839050133,"ˆAt =
+1
+Nactor"
+REFERENCES,0.42480211081794195,"Nactor
+X i"
+REFERENCES,0.42744063324538256,"T −t−1
+X"
+REFERENCES,0.43007915567282323,"k=0
+(γλ)k  
+ri
+t+k + γV
+ 
+si
+t+k+1
+
+−V
+ 
+si
+t+k
+"
+REFERENCES,0.43271767810026385,"where γ is the discounted factor and Nactor is the number of actors. The term ri
+t+k + γV
+ 
+si
+t+k+1
+"
+REFERENCES,0.43535620052770446,"is also known as Vtarget in computing the value loss. Note that Algo. 1 illustrates the procedure for
+1 actor. In practice, we use Nactor depending on the tasks."
+REFERENCES,0.43799472295514513,"A.3
+THE OBJECTIVE FUNCTION"
+REFERENCES,0.44063324538258575,"Following Schulman et al. (2017), our objective function also includes value loss and entropy terms.
+This is applied to all of the baselines. For example, the complete objective function for MCPO reads"
+REFERENCES,0.44327176781002636,"L = LMCP O −c1ˆEt (Vθ (st) −Vtarget (st))2 + c2ˆEt [−log (πψold (·|st))]
+where c1 and c2 are value and entropy coefﬁcient hyperparameters, respectively. Vθ is the value
+network, also parameterized with θ."
+REFERENCES,0.44591029023746703,"B
+EXPERIMENTAL DETAILS"
+REFERENCES,0.44854881266490765,"B.1
+BASELINES AND TASKS"
+REFERENCES,0.45118733509234826,"All baselines in this paper share the same setting of policy and value networks. Except for TRPO, all
+other baselines use minibatch training. The only difference is the objective function, which revolves
+around KL and advantage terms. We train all models with Adam optimizer. We summarize the
+policy and value network architecture in Table 4."
+REFERENCES,0.45382585751978893,"The baselines ACKTR, PPO1, TRPO2 use available public code. They are Pytorch reimplementation
+of OpenAI’s stable baselines, which can reproduce the original performance relatively well. For
+MDPO, we refer to the authors’ source code3 to reimplement the method. For VMPO, we refer
+to this open source code4 to reimplement the method. We implement KL Fixed and KL Adaptive,
+using objective function deﬁned in Sec. 2."
+REFERENCES,0.45646437994722955,"We use environments from Open AI gyms 5, which are public and using The MIT License. Mujoco
+environments use Mujoco software6 (our license is academic lab). Table 5 lists all the environments."
+REFERENCES,0.45910290237467016,"1https://github.com/ikostrikov/pytorch-a2c-ppo-acktr-gail
+2https://github.com/ikostrikov/pytorch-trpo
+3https://github.com/manantomar/Mirror-Descent-Policy-Optimization
+4https://github.com/YYCAAA/V-MPO_Lunarlander
+5https://gym.openai.com/envs/
+6https://www.roboti.us/license.html"
+REFERENCES,0.46174142480211083,Under review as a conference paper at ICLR 2022
+REFERENCES,0.46437994722955145,"Dimension
+Feature
+Meaning
+1
+d (θ, ψold)
+“Distance” between θ and ψold
+2
+d (θold, ψold)
+“Distance” between θold and ψold
+3
+d (θold, θ)
+“Distance” between θold and θ
+4
+ˆEt [Rt (ψold)]
+Approximate expected advantage of ψold
+5
+ˆEt [Rt (θold)]
+Approximate expected advantage of θold
+6
+ˆEt [Rt (θ)]
+Approximate expected advantage of θ
+7
+ˆEt [−log (πψold (·|st))]
+Approximate entropy of ψold
+8
+ˆEt [−log (πθold (·|st))]
+Approximate entropy of θold
+9
+ˆEt [−log (πθ (·|st))]
+Approximate entropy of θ
+10
+ˆEt (Vψold (st) −Vtarget (st))2
+Value loss of ψold
+11
+ˆEt (Vθold (st) −Vtarget (st))2
+Value loss of θold
+12
+ˆEt (Vθ (st) −Vtarget (st))2
+Value loss of θ"
+REFERENCES,0.46701846965699206,Table 3: Features of the context vector.
+REFERENCES,0.46965699208443273,"Input type
+Policy/Value networks"
+REFERENCES,0.47229551451187335,"Vector
+2-layer feedforward
+net (tanh, h=64)"
+REFERENCES,0.47493403693931396,"Image
+3-layer ReLU CNN with
+kernels {32/8/4, 64/4/2, 32/3/1}+2-layer
+feedforward net (ReLU, h=512)"
+REFERENCES,0.47757255936675463,Table 4: Network architecture shared across baselines.
+REFERENCES,0.48021108179419525,"Tasks
+Continuous
+Gym
+action
+category
+Pendulum-v0
+X
+Classical
+LunarLander-v2
+Box2d
+BipedalWalker-v3
+
+Unlock-v0
+X
+MiniGrid
+UnlockPickup-v0
+MuJoCo tasks (v2): HalfCheetah
+
+MuJoCo
+Walker2d, Hopper, Ant
+Humanoid, HumanoidStandup
+Atari games (NoFramskip-v4):"
+REFERENCES,0.48284960422163586,"X
+Atari
+Beamrider, Breakout
+Enduro, Gopher
+Seaquest, SpaceInvaders
+BipedalWalkerHardcore-v3
+
+Box2d"
+REFERENCES,0.48548812664907653,Table 5: Tasks used in the paper.
+REFERENCES,0.48812664907651715,Under review as a conference paper at ICLR 2022
+REFERENCES,0.49076517150395776,"Hyperparameter
+Pendulum
+LunarLander
+BipedalWalker
+MiniGrid
+BipedalWaker
+Hardcore
+Horizon T
+2048
+2048
+2048
+2048
+2048
+Adam step size
+3 × 10−4
+3 × 10−4
+3 × 10−4
+3 × 10−4
+3 × 10−4
+Num. epochs K
+10
+10
+10
+10
+10
+Minibatch size B
+64
+64
+64
+64
+64
+Discount γ
+0.99
+0.99
+0.99
+0.99
+0.99
+GAE λ
+0.95
+0.95
+0.95
+0.95
+0.95
+Num. actors Nactor
+4
+4
+32
+4
+128
+Value coefﬁcient c1
+0.5
+0.5
+0.5
+0.5
+0.5
+Entropy coefﬁcient c2
+0
+0
+0
+0
+0"
+REFERENCES,0.49340369393139843,"Table 6: Network architecture shared across baselines on Pendulum, LunarLander, BipedalWalker,
+MiniGrid and BipedalWaker Hardcore"
+REFERENCES,0.49604221635883905,"Model
+Speed (env. steps/s)
+MCPO (N=5)
+1,170
+MCPO (N=10)
+927
+MCPO (N=40)
+560
+PPO
+1,250"
+REFERENCES,0.49868073878627966,Table 7: Computing cost of MCPO and PPO on Pendulum.
+REFERENCES,0.5013192612137203,"B.2
+DETAILS ON CLASSICAL CONTROL"
+REFERENCES,0.503957783641161,"For these tasks, all models share hyperparameters listed in Table 6. Besides, each method has its
+own set of additional hyperparameters. For example, PPO, KL Fixed and KL Adaptive have ϵ, β
+and dtarg, respectively. These hyperparameters directly control the conservativeness of the policy
+update for each method. For MDPO, β is automatically reduced overtime through an annealing
+process from 1 to 0 and thus should not be considered as a hyperparameter. However, we can still
+control the conservativeness if β is annealed from a different value β0 rather 1. We realize that
+tuning β0 helped MDPO (Table 1). We quickly tried with several values β0 ranging from 0.01 to 10
+on Pendulum, and realize that only β0 ∈{0.5, 1, 2} gave reasonable results. Thus, we only tuned
+MDPO with these β0 in other tasks. For VMPO there are many other hyperparameters such as η0,
+α0, ϵη and ϵα. Due to limited compute, we do not tune all of them. Rather, we only tune α0-the initial
+value of the Lagrange multiplier that scale the KL term in the objective function. We refer to the
+paper’s and the code repository’s default values of α0 to determine possible values α0 ∈{0.1, 1, 5}.
+For our MCPO, we can tune several hyperparameters such as N, βmin, and βmax. However, for
+simplicity, we only tune N ∈{5, 10, 40} and ﬁx βmin = 0.01 and βmax = 10."
+REFERENCES,0.5065963060686016,"On our machines using 1 GPU Tesla V100-SXM2, we measure the running time of MCPO with
+different N compared to PPO on Pendulum task, which is reported in Table 7. As N increases, the
+running speed of MCPO decreases. For this reason, we do not test with N > 40. However, we
+realize that with N = 5 or N = 10, MCPO only runs slightly slower than PPO. We also realize that
+the speed gap is even reduced when we increase the number of actors Nactor as in other experiments.
+In terms of memory usage, maintaining a policy memory will deﬁnitely cost more. However, as our
+policy, value and attention networks are very simple. The maximum storage even for N = 40 is less
+than 5GB."
+REFERENCES,0.5092348284960422,"In addition to the conﬁgurations reported in Table 1, for KL Fixed and PPO, we also tested with
+extreme values β = 10 and ϵ ∈{0.5, 0.8}. Figs. 6, 7 and 8 visualize the learning curves of all
+conﬁgurations for all models."
+REFERENCES,0.5118733509234829,"B.3
+DETAILS ON MINIGRID NAVIGATION"
+REFERENCES,0.5145118733509235,"Based on the results from the above tasks, we pick the best signature hyperparameters for the models
+to use in this task as in Table 8. In particular, for each model, we rank the hyperparameters per task
+(higher rank is better), and choose the one that has the maximum total rank. For hyperparameters"
+REFERENCES,0.5171503957783641,Under review as a conference paper at ICLR 2022
+REFERENCES,0.5197889182058048,"Model
+Chosen hyperparameter
+KL Adaptive
+dtarg = 0.01
+KL Fixed
+β = 0.1
+PPO
+ϵ = 0.2
+MDPO
+β0 = 0.5
+VMPO
+α0 = 1
+MCPO
+N = 10"
+REFERENCES,0.5224274406332454,Table 8: Signature hyperparameters used in MiniGrid tasks.
+REFERENCES,0.525065963060686,"Hyperparameter
+Mujoco
+Atari"
+REFERENCES,0.5277044854881267,"Horizon T
+2048
+128
+Adam step size
+3 × 10−4
+2.5 × 10−4
+Num. epochs K
+10
+4
+Minibatch size B
+32
+32
+Discount γ
+0.99
+0.99
+GAE λ
+0.95
+0.95
+Num. actors Nactor
+16
+32
+Value coefﬁcient c1
+0.5
+1.0
+Entropy coefﬁcient c2
+0
+0.01"
+REFERENCES,0.5303430079155673,Table 9: Network architecture shared across baselines on Mujoco and Atari
+REFERENCES,0.5329815303430079,"that share the same total rank, we prefer the middle value. The other hyperparameters for this task
+is listed in Table 6."
+REFERENCES,0.5356200527704486,"B.4
+DETAILS ON MUJOCO"
+REFERENCES,0.5382585751978892,"For shared hyperparameters, we use the values suggested in the PPO’s paper, except for the number
+of actors, which we increase to 16 for faster training as our models are trained for 10M environment
+steps (see Table 9)."
+REFERENCES,0.5408970976253298,"For the signature hyperparameter of each method, we select some of the reasonable values. For
+PPO, the authors already examined with ϵ ∈{0.1, 0.2, 0.3} on the same task and found 0.2 the best.
+This is somehow backed up in our previous experiments where we did not see major difference in
+performance between these values. Hence, seeking for other ϵ rather than the optimal ϵ = 0.2, we
+ran our PPO implementation with ϵ ∈{0.2, 0.5, 0.8}. For TRPO, the authors only used the KL
+radius threshold δ = 0.01, which may be already the optimal hyperparameter. Hence, we only tried
+δ ∈{0.005, 0.01}. The results showed that δ = 0.005 always performed worse. For MCPO and
+Mean ψ, we only ran with extreme N ∈{5, 40}. For MDPO, we still tested with β0 ∈{0.5, 1, 2}.
+Full learning curves with different hyperparameter are reported in Fig. 9. Learning curves including
+TRGPPO7 are reported in Fig. 10"
+REFERENCES,0.5435356200527705,"B.5
+DETAILS ON ATARI"
+REFERENCES,0.5461741424802111,"For shared hyperparameters, we use the values suggested in the PPO’s paper, except for the number
+of actors, which we increase to 32 for faster training (see Table 9). For the signature hyperparam-
+eter of the baselines, we used the recommended value in the original papers. For MCPO, we use
+N = 10 to balance between running time and performance. Table 10 shows the values of these
+hyperparameters."
+REFERENCES,0.5488126649076517,"We also report the average normalized human score (mean and median) of the models over 6 games
+in Table 11. As seen, MCPO is signiﬁcantly better than other baselines in terms of both mean and
+median normalized human score. We also report full learning curves of models and normalized
+human score including TRGPPO in 9 games in Fig. 4 and Table 12, respectively."
+REFERENCES,0.5514511873350924,"7We use the authors’ source code https://github.com/wangyuhuix/TRGPPO using default con-
+ﬁguration. Training setting is adjusted to follow the common setting as for other baselines (see Table 9)."
+REFERENCES,0.554089709762533,Under review as a conference paper at ICLR 2022
+REFERENCES,0.5567282321899736,"Model
+Chosen hyperparameter
+PPO
+ϵ = 0.2
+ACKTR
+δ = 0.01
+VMPO
+α0 = 5
+MCPO
+N = 10"
+REFERENCES,0.5593667546174143,Table 10: Signature hyperparameters used in Atari tasks.
+REFERENCES,0.5620052770448549,"Model
+Mean
+Median
+PPO
+154.63
+48.36
+ACKTR
+266.73
+21.99
+VMPO
+412.19
+20.85
+MCPO
+300.25
+100.28"
+REFERENCES,0.5646437994722955,"Table 11: Average normalized human score over 6 games. For each model, the performance of each
+run is measured by the best checkpoint during training over 10 million frames, then take average
+over 5 runs."
+REFERENCES,0.5672823218997362,"To verify whether MCPO can maintain its performance over longer training, we examine Atari
+training for 40 million frames. As shown in Fig. 5, MCPO is still the best performer in this training
+regime."
+REFERENCES,0.5699208443271768,"B.6
+DETAILS ON ABLATION STUDY"
+REFERENCES,0.5725593667546174,"In this section, we give more details on the ablated baselines."
+REFERENCES,0.575197889182058,• No ψ We only changed the objective to
+REFERENCES,0.5778364116094987,"L1 (θ) = ˆEt
+h
+ratt (θ) ˆAt
+i"
+REFERENCES,0.5804749340369393,"−βˆEt [KL [πθold (·|st) , πθ (·|st)]]
+(6)"
+REFERENCES,0.58311345646438,where β is still determined by the β-switching rule.
+REFERENCES,0.5857519788918206,"• Annealed β We determine the β in Eq. 1 by MDPO’s annealing rule, a.k.a, βi = 1.0 −
+i
+Ttotal where Ttotal is the total number of training policy update steps and i is the current
+update step. We did not test with other rules such as ﬁxed or adaptive β as we realize that
+MDPO is often better than KL Fixed and KL Adaptive in our experiments, indicating that
+the annealed β is a stronger baseline."
+REFERENCES,0.5883905013192612,• Frequent writing We add a new policy to M at every policy update step.
+REFERENCES,0.5910290237467019,"• Uniform writing Inspired by the uniform writing mechanism in Memory-Augmented Neu-
+ral Networks (Le et al., 2019), we add a new policy to M at every interval of 10 update
+steps. The interval size could be tuned to get better results but it would require additional
+effort, so we preferred our conditional writing over this one."
+REFERENCES,0.5936675461741425,• Mean ψ The virtual policy is determined as
+REFERENCES,0.5963060686015831,"Model
+Mean
+Median
+PPO
+131.19
+52.85
+ACKTR
+195.52
+25.30
+VMPO
+18.20
+13.56
+TRGPPO
+116.80
+43.24
+MCPO
+229.99
+65.78"
+REFERENCES,0.5989445910290238,"Table 12: Average normalized human score over 9 games. For each model, the performance of each
+run is measured by the best checkpoint during training over 10 million frames, then take average
+over 5 runs."
+REFERENCES,0.6015831134564644,Under review as a conference paper at ICLR 2022 1 2 3
+REFERENCES,0.604221635883905,Avg. Return
+REFERENCES,0.6068601583113457,"1e3
+BeamRider 0 2 4"
+REFERENCES,0.6094986807387863,"1e2
+Breakout 0 5"
+REFERENCES,0.6121372031662269,"1e2
+Enduro 1 2 3"
+REFERENCES,0.6147757255936676,Avg. Return
+REFERENCES,0.6174142480211082,"1e3
+Gopher 0.5 1.0 1.5"
+REFERENCES,0.6200527704485488,"1e3
+Seaquest 2.5 5.0 7.5"
+REFERENCES,0.6226912928759895,"1e2
+SpaceInvaders"
+REFERENCES,0.6253298153034301,"0
+2M
+5M
+7M
+10M
+Step 0 2 4"
+REFERENCES,0.6279683377308707,Avg. Return
+REFERENCES,0.6306068601583114,"1e3
+Qbert"
+REFERENCES,0.633245382585752,"0
+2M
+5M
+7M
+10M
+Step 0.0 0.5 1.0"
+REFERENCES,0.6358839050131926,"1e3
+BankHeist"
+REFERENCES,0.6385224274406333,"0
+2M
+5M
+7M
+10M
+Step 1.0 0.5"
+REFERENCES,0.6411609498680739,"1e1
+IceHockey"
+REFERENCES,0.6437994722955145,"ACKTR
+MCPO
+PPO
+TRGPPO
+VMPO"
+REFERENCES,0.6464379947229552,Figure 4: Atari games: learning curves (mean and std. over 5 runs) across 10M training steps. 2 4 6 8
+REFERENCES,0.6490765171503958,Avg. Return
+REFERENCES,0.6517150395778364,"1e3
+Bea m Rider 0 2 4"
+REFERENCES,0.6543535620052771,"6
+1e2
+Brea kout 0 1 2 3"
+REFERENCES,0.6569920844327177,"1e3
+Enduro"
+REFERENCES,0.6596306068601583,"0
+10M
+20M
+30M
+40M
+Step 0 1 2 3 4 5"
+REFERENCES,0.662269129287599,Avg. Return
+REFERENCES,0.6649076517150396,"1e4
+Gopher"
+REFERENCES,0.6675461741424802,"0
+10M
+20M
+30M
+40M
+Step 0.5 1.0 1.5"
+REFERENCES,0.6701846965699209,"1e3
+Sea quest"
+REFERENCES,0.6728232189973615,"0
+10M
+20M
+30M
+40M
+Step 0.5 1.0 1.5 2.0 2.5"
+REFERENCES,0.6754617414248021,"1e3
+Spa ceInva ders"
+REFERENCES,0.6781002638522428,"ACKTR
+MCPO
+PPO"
+REFERENCES,0.6807387862796834,Figure 5: Atari games: learning curves (mean and std. over 5 runs) across 40M training steps.
+REFERENCES,0.683377308707124,Under review as a conference paper at ICLR 2022 1250 1000 750 500 250
+REFERENCES,0.6860158311345647,KL Adaptive
+REFERENCES,0.6886543535620053,"d=0.003
+d=0.01
+d=0.03"
+REFERENCES,0.6912928759894459,KL Fixed =0.01 =0.1 =1 =10
+REFERENCES,0.6939313984168866,MCPO (Ours)
+REFERENCES,0.6965699208443272,"N=10
+N=40
+N=5"
+REFERENCES,0.6992084432717678,"0
+200K
+400K
+600K
+800K
+1M 1250 1000 750 500 250 MDPO 0=0.5 0=1 0=2"
+REFERENCES,0.7018469656992085,"0
+200K
+400K
+600K
+800K
+1M PPO"
+REFERENCES,0.7044854881266491,"clip=0.1
+clip=0.2
+clip=0.3
+clip=0.5
+clip=0.8"
+REFERENCES,0.7071240105540897,"0
+200K
+400K
+600K
+800K
+1M VMPO 0=0.1 0=1 0=5"
+REFERENCES,0.7097625329815304,Figure 6: Pendulum-v0: learning curves (mean and std. over 5 runs) across 1M training steps. 200 100 0 100 200
+REFERENCES,0.712401055408971,KL Adaptive
+REFERENCES,0.7150395778364116,"d=0.003
+d=0.01
+d=0.03"
+REFERENCES,0.7176781002638523,KL Fixed =0.01 =0.1 =1 =10
+REFERENCES,0.7203166226912929,MCPO (Ours)
+REFERENCES,0.7229551451187335,"N=10
+N=40
+N=5"
+REFERENCES,0.7255936675461742,"0
+200K
+400K
+600K
+800K
+1M 200 100 0 100 200 MDPO 0=0.5 0=1 0=2"
+REFERENCES,0.7282321899736148,"0
+200K
+400K
+600K
+800K
+1M PPO"
+REFERENCES,0.7308707124010554,"clip=0.1
+clip=0.2
+clip=0.3
+clip=0.5
+clip=0.8"
+REFERENCES,0.7335092348284961,"0
+200K
+400K
+600K
+800K
+1M VMPO 0=0.1 0=1 0=5"
+REFERENCES,0.7361477572559367,"Figure 7: LunarLander-v2: learning curves (mean and std. over 5 runs) across 5M training steps. ψ = |M|
+X"
+REFERENCES,0.7387862796833773,"j
+θj
+(7)"
+REFERENCES,0.741424802110818,• Half feature We only use features from 1 to 6 listed in Table 3.
+REFERENCES,0.7440633245382586,"The other baselines including KL Adaptive, KL Fixed, MDPO, PPO, and VMPO are the same as in
+B.2. The full learning curves of all models with different hyperparameters are plotted in Fig. 11."
+REFERENCES,0.7467018469656992,"C
+THEORETICAL ANALYSIS OF MCPO"
+REFERENCES,0.7493403693931399,"In this section, we explain the design of our objective function L1 and L2. Similar to Schulman et al.
+(2015a), we can construct a theoretically guaranteed version of our practical objective functions that
+ensures monotonic policy improvement."
+REFERENCES,0.7519788918205804,"First, we explain the design of L1 by recasting L1 as"
+REFERENCES,0.7546174142480211,"L1θold (θ) = Lθold (θ)
+−C1Dmax
+KL (θold, θ)
+−C2Dmax
+KL (ψ, θ)
+where Lθold (θ) = η (πθold) + P"
+REFERENCES,0.7572559366754618,s ρπθold (s) P
+REFERENCES,0.7598944591029023,"a πθ (a|s) Aπθold (s, a)–the local approximation
+to the expected discounted reward η (θ), Dmax
+KL (a, b) = maxs KL (πa (·|s) , πb (·|s)), C1 =
+4 maxs,a|Aπ(s,a)|γ"
+REFERENCES,0.762532981530343,"(1−γ)2
+and C2 > 0."
+REFERENCES,0.7651715039577837,Under review as a conference paper at ICLR 2022 100 0 100 200 300
+REFERENCES,0.7678100263852242,KL Adaptive
+REFERENCES,0.7704485488126649,"d=0.003
+d=0.01
+d=0.03"
+REFERENCES,0.7730870712401056,KL Fixed =0.01 =0.1 =1 =10
+REFERENCES,0.7757255936675461,MCPO (Ours)
+REFERENCES,0.7783641160949868,"N=10
+N=40
+N=5"
+REFERENCES,0.7810026385224275,"0
+1M
+2M
+3M
+4M
+5M 100 0 100 200 300 MDPO 0=0.5 0=1 0=2"
+REFERENCES,0.783641160949868,"0
+1M
+2M
+3M
+4M
+5M PPO"
+REFERENCES,0.7862796833773087,"clip=0.1
+clip=0.2
+clip=0.3
+clip=0.5
+clip=0.8"
+REFERENCES,0.7889182058047494,"0
+1M
+2M
+3M
+4M
+5M VMPO 0=0.1 0=1 0=5"
+REFERENCES,0.7915567282321899,Figure 8: BipedalWalker-v3: learning curves (mean and std. over 5 runs) across 1M training steps. 0 5000
+REFERENCES,0.7941952506596306,"Avg. Return
+Halfcheetah TRPO"
+REFERENCES,0.7968337730870713,"=0.005
+=0.01 Mean"
+REFERENCES,0.7994722955145118,"N=40
+N=5"
+REFERENCES,0.8021108179419525,MCPO (Ours)
+REFERENCES,0.8047493403693932,"N=40
+N=5 MDPO 0=0.5 0=1 0=2 Step PPO"
+REFERENCES,0.8073878627968337,"clip=0.2
+clip=0.5
+clip=0.8
+TRG 0 2500 5000"
+REFERENCES,0.8100263852242744,"Avg. Return
+Walker2d"
+REFERENCES,0.8126649076517151,"=0.005
+=0.01"
+REFERENCES,0.8153034300791556,"N=40
+N=5"
+REFERENCES,0.8179419525065963,"N=40
+N=5 0=0.5 0=1 0=2 Step"
+REFERENCES,0.820580474934037,"clip=0.2
+clip=0.5
+clip=0.8
+TRG 0 2000 4000"
+REFERENCES,0.8232189973614775,"Avg. Return
+Hopper"
+REFERENCES,0.8258575197889182,"=0.005
+=0.01"
+REFERENCES,0.8284960422163589,"N=40
+N=5"
+REFERENCES,0.8311345646437994,"N=40
+N=5 0=0.5 0=1 0=2 Step"
+REFERENCES,0.8337730870712401,"clip=0.2
+clip=0.5
+clip=0.8
+TRG 0 2500 5000"
+REFERENCES,0.8364116094986808,"Avg. Return
+Ant"
+REFERENCES,0.8390501319261213,"=0.005
+=0.01"
+REFERENCES,0.841688654353562,"N=40
+N=5"
+REFERENCES,0.8443271767810027,"N=40
+N=5 0=0.5 0=1 0=2 Step"
+REFERENCES,0.8469656992084432,"clip=0.2
+clip=0.5
+clip=0.8
+TRG 2500 5000"
+REFERENCES,0.8496042216358839,"Avg. Return
+Humanoid"
+REFERENCES,0.8522427440633246,"=0.005
+=0.01"
+REFERENCES,0.8548812664907651,"N=40
+N=5"
+REFERENCES,0.8575197889182058,"N=40
+N=5 0=0.5 0=1 0=2 Step"
+REFERENCES,0.8601583113456465,"clip=0.2
+clip=0.5
+clip=0.8
+TRG"
+REFERENCES,0.862796833773087,"0
+5M
+10M"
+REFERENCES,0.8654353562005277,100000
+REFERENCES,0.8680738786279684,200000
+REFERENCES,0.8707124010554089,"Avg. Return
+HumanoidStandup"
+REFERENCES,0.8733509234828496,"=0.005
+=0.01"
+REFERENCES,0.8759894459102903,"0
+5M
+10M"
+REFERENCES,0.8786279683377308,"N=40
+N=5"
+REFERENCES,0.8812664907651715,"0
+5M
+10M"
+REFERENCES,0.8839050131926122,"N=40
+N=5"
+REFERENCES,0.8865435356200527,"0
+5M
+10M 0=0.5 0=1 0=2"
+REFERENCES,0.8891820580474934,"0
+5M
+10M"
+REFERENCES,0.8918205804749341,"clip=0.2
+clip=0.5
+clip=0.8
+TRG"
+REFERENCES,0.8944591029023746,Figure 9: Mujoco: learning curves (mean and std. over 5 runs) across 10M training steps.
+REFERENCES,0.8970976253298153,Under review as a conference paper at ICLR 2022 0 2 4 6
+REFERENCES,0.899736147757256,Avg. Return
+REFERENCES,0.9023746701846965,"1e3
+HalfCheetah 0 2 4"
+REFERENCES,0.9050131926121372,"1e3
+Walker2d 0 1 2 3"
+REFERENCES,0.9076517150395779,"1e3
+Hopper"
+REFERENCES,0.9102902374670184,"0
+2M
+4M
+6M
+8M
+10M
+Step 0 2 4"
+REFERENCES,0.9129287598944591,Avg. Return
+REFERENCES,0.9155672823218998,"1e3
+Ant"
+REFERENCES,0.9182058047493403,"0
+2M
+4M
+6M
+8M
+10M
+Step 0 2 4 6"
+REFERENCES,0.920844327176781,"1e3
+Humanoid"
+REFERENCES,0.9234828496042217,"0
+2M
+4M
+6M
+8M
+10M
+Step 0.5 1.0 1.5"
+REFERENCES,0.9261213720316622,"2.0
+1e5
+HumanoidStandup"
+REFERENCES,0.9287598944591029,"MCPO (Ours) 
+MDPO"
+REFERENCES,0.9313984168865436,"Mean 
+PPO"
+REFERENCES,0.9340369393139841,"TRGPPO
+TRPO"
+REFERENCES,0.9366754617414248,Figure 10: Mujoco: learning curves (mean and std. over 5 runs) across 10M training steps. 150 100 50 0 50 100 150 200
+REFERENCES,0.9393139841688655,KL Adaptive
+REFERENCES,0.941952506596306,"d=0.003
+d=0.01
+d=0.03"
+REFERENCES,0.9445910290237467,KL Fixed =0.01 =0.1 =1 =10
+REFERENCES,0.9472295514511874,MCPO (Ours)
+REFERENCES,0.9498680738786279,"N=10
+N=40
+N=5
+annelled beta
+frequent writing
+half feature
+mean
+no"
+REFERENCES,0.9525065963060686,uniform writing
+REFERENCES,0.9551451187335093,"0
+10M
+20M
+30M
+40M
+50M 150 100 50 0 50 100 150 200 MDPO 0=0.5 0=1 0=2"
+REFERENCES,0.9577836411609498,"0
+10M
+20M
+30M
+40M
+50M PPO"
+REFERENCES,0.9604221635883905,"clip=0.1
+clip=0.2
+clip=0.3
+clip=0.5
+clip=0.8"
+REFERENCES,0.9630606860158312,"0
+10M
+20M
+30M
+40M
+50M VMPO 0=0.1 0=1 0=5"
+REFERENCES,0.9656992084432717,"Figure 11: BibedalWalkerHardcore-v3: learning curves (mean and std. over 5 runs) across 50M
+training steps."
+REFERENCES,0.9683377308707124,Under review as a conference paper at ICLR 2022
+REFERENCES,0.9709762532981531,"As the KL is non-negative, L1θold (θ) ≤Lθold (θ) −C1Dmax
+KL (θold, θ). According to Schulman
+et al. (2015a), the RHS is a lower bound on η (θ), so L1 is also a lower bound on η (θ) and thus, it
+is reasonable to maximize the practical L1, which is an approximation of L1θold."
+REFERENCES,0.9736147757255936,"Next, we show that by optimizing both L1 and L2, we can interpret our algorithm as a monotonic
+policy improvement procedure. As such, we need to reformulate L2 as"
+REFERENCES,0.9762532981530343,"L2θold (ψ) = Lθold (ψ) −C1Dmax
+KL (θold, ψ)"
+REFERENCES,0.978891820580475,"Note that compared to the practical L2 (as deﬁned in the main paper on page 5), we have introduced
+here an additional KL term, which means we need to ﬁnd ψ that is close to θold and maximizes the
+approximate advantage Lθold (ψ). As we maximize L2θold (ψ), the maximizer ψ satisﬁes"
+REFERENCES,0.9815303430079155,L2θold (ψ) ≥L2θold (θold) = Lθold (θold)
+REFERENCES,0.9841688654353562,We also have
+REFERENCES,0.9868073878627969,"η (θ) ≥L1θold (θ)
+(8)
+η (θold) = Lθold (θold) ≤L2θold (ψ)
+= Lθold (ψ) −C1Dmax
+KL (θold, ψ)
+= L1θold (ψ)
+(9)"
+REFERENCES,0.9894459102902374,Subtracting both sides of Eq. 9 from Eq. 8 yields
+REFERENCES,0.9920844327176781,η (θ) −η (θold) ≥L1θold (θ) −L1θold (ψ)
+REFERENCES,0.9947229551451188,"Thus by maximizing L1θold (θ), we guarantee that the true objective η (θ) is non-decreasing."
+REFERENCES,0.9973614775725593,"Although
+the
+theory
+suggests
+that
+the
+practical
+L2
+could
+be
+L∗
+2
+=
+ˆEt [Rt (ψ (ϕ)) −C1KL [πθold (·|st) , πψ (·|st)]],
+it would require additional tuning of C1.
+More importantly, optimizing an objective in form of L∗
+2 needs a very small step size, and could
+converge slowly. Hence, we simply discard the KL term and only optimize L2 = ˆEt [Rt (ψ (ϕ))]
+instead.
+Empirical results show that using this simpliﬁcation, MCPO’s learning curves still
+generally improve monotonically over training time."

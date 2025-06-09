@@ -1,0 +1,4215 @@
+Section,Section Appearance Order,Paragraph
+UNIVERSITY OF THE WITWATERSRAND,0.0,"1University of the Witwatersrand
+2University of Oxford
+3University College London"
+ABSTRACT,0.001483679525222552,Abstract
+ABSTRACT,0.002967359050445104,"While reinforcement learning has achieved remarkable successes in several do-
+mains, its real-world application is limited due to many methods failing to gener-
+alise to unfamiliar conditions. In this work, we consider the problem of generalising
+to new transition dynamics, corresponding to cases in which the environment’s
+response to the agent’s actions differs. For example, the gravitational force exerted
+on a robot depends on its mass and changes the robot’s mobility. Consequently,
+in such cases, it is necessary to condition an agent’s actions on extrinsic state
+information and pertinent contextual information reflecting how the environment
+responds. While the need for context-sensitive policies has been established, the
+manner in which context is incorporated architecturally has received less attention.
+Thus, in this work, we present an investigation into how context information should
+be incorporated into behaviour learning to improve generalisation. To this end, we
+introduce a neural network architecture, the Decision Adapter, which generates
+the weights of an adapter module and conditions the behaviour of an agent on the
+context information. We show that the Decision Adapter is a useful generalisation
+of a previously proposed architecture and empirically demonstrate that it results in
+superior generalisation performance compared to previous approaches in several
+environments. Beyond this, the Decision Adapter is more robust to irrelevant
+distractor variables than several alternative methods."
+INTRODUCTION,0.004451038575667656,"1
+Introduction"
+INTRODUCTION,0.005934718100890208,"Reinforcement learning (RL) is a powerful tool, and has displayed recent success in several settings [1–
+4]. However, despite its potential, RL faces a significant challenge: generalisation. Current agents
+and algorithms struggle to perform well beyond the narrow settings in which they were trained [5–7],
+which is a major limitation that hinders the practical application of RL. For RL algorithms to be
+effective in real-world scenarios, they must be capable of adapting to changes in the environment and
+performing well in settings that are different, but related, to those they trained on [7]."
+INTRODUCTION,0.00741839762611276,"To illustrate this point, consider a legged robot trained to walk on a tiled floor. While the agent would
+perform well in these conditions, it will likely struggle in other reasonable settings, such as walking
+on asphalt or when carrying cargo. When walking on another surface, the friction characteristics
+would differ from what the robot trained on, which may cause it to slip. When carrying additional
+weight, the robot is heavier, with a potentially different center of mass. This may mean that the robot
+must exert more force to lift its legs or be more careful to prevent falling over. This limitation is far
+from ideal; we want our agents to excel in tasks with minor differences in dynamics (the effect of the
+agent’s actions) without requiring additional training."
+INTRODUCTION,0.008902077151335312,"∗Correspondence to mbeukman@robots.ox.ac.uk. Work done while at the University of the Witwatersrand,
+now at the University of Oxford."
+INTRODUCTION,0.010385756676557863,"Several methods have been proposed to address this problem, including training a single agent in
+various settings in the hope that it learns a generalisable and robust behaviour [3, 8–11]. However,
+this approach is not without its drawbacks, as it fails when variations are too large for a single
+behaviour to perform well in all settings [12, 13]. For example, using the same behaviour when
+walking unencumbered and under load may lead to suboptimal performance in one or both cases."
+INTRODUCTION,0.011869436201780416,"This observation has led to other methods that instead use contextual information to choose actions,
+allowing the agent to adapt its behaviour to the setting it is in. For instance, if the agent knows when
+it is walking unencumbered vs. carrying something heavy, it can perform slightly differently in each
+case [14]. The context differs conceptually from the state information, which generally includes data
+that the robot observes using its sensors, such as its joint angles, acceleration, and camera views. The
+crucial distinction between context and state is that context changes at a longer timescale compared
+to state; for instance, the floor friction and additional mass remain the same for a long time, whereas
+the robot’s joint angles change after every action [15]. Currently, the predominant approach is to
+use context as part of the state information, ignoring the conceptual difference between these two as-
+pects [16–18]. However, this may lead to the agent confounding the context and state, and thus exhibit
+worse generalisation [15]. This problem can be exacerbated in real-world settings, where identifying
+which variables affect the dynamics may be challenging [18]. This may lead to several irrelevant vari-
+ables being added to the context, further expanding the state space and making learning more difficult."
+INTRODUCTION,0.013353115727002967,"To address this problem, we introduce an approach to incorporating context into RL that leads to
+improved generalisation performance. Our method separates the context and state, allowing the agent
+to decide how to process the state information based on the context, thus adapting its behaviour
+to the setting it is in. Our experimental results demonstrate the effectiveness of our approach in
+improving generalisation compared to other methods. We show that our approach outperforms (1)
+not incorporating context information at all; (2) simply concatenating context and state; and (3)
+competitive baselines. We also demonstrate that our approach is more robust to irrelevant distractor
+variables than the concatenation-based approach across multiple domains. We further provide a
+theoretical characterisation of problems where incorporating context is necessary and empirically
+demonstrate that a context-unaware method performs poorly.1"
+BACKGROUND,0.01483679525222552,"2
+Background"
+BACKGROUND,0.016320474777448073,"Reinforcement learning problems are frequently modelled using a Markov Decision Process
+(MDP) [19, 20]. An MDP is defined by a tuple ⟨S, A, T , R, γ⟩, where S is the set of states, A
+is the set of actions. T : S × A × S →[0, 1] is the transition function, where T (s′|s, a) specifies the
+probability of ending up in a certain state s′ after starting in another state s and performing a specific
+action a. R : S × A × S →R is the reward function, where R(st, at, st+1) = Rt+1 specifies the re-
+ward obtained from executing action at in a state st and γ ∈[0, 1] is the environment discount factor,
+specifying how short-term and long-term rewards should be weighted. The goal in reinforcement
+learning is to find a policy π : S →A that maximises the return Gt = P∞
+k=0 γkRt+k+1 [21]."
+BACKGROUND,0.017804154302670624,"We consider the Contextual Markov Decision Process (CMDP) [15] formalism, which is defined
+by a tuple ⟨C, S, A, M′, γ⟩, where C is the context space, S and A are the state and action spaces
+respectively, and M′ is a function that maps a context c ∈C to an MDP M = ⟨S, A, T c, Rc, γ⟩. A
+CMDP thus defines a family of MDPs, that all share an action and state space, but the transition (T c)
+and reward (Rc) functions differ depending on the context. Our goal is to train on a particular set of
+contexts, such that we can generalise well to another set of evaluation contexts. We focus solely on
+generalising over changing dynamics and therefore fix the reward function, i.e., Rc = R, ∀c ∈C."
+RELATED WORK,0.019287833827893175,"3
+Related Work"
+RELATED WORK,0.020771513353115726,"Generalisation in RL is a widely studied problem, with one broad class of approaches focusing on
+robustness. Here, a single policy is trained to be robust to changes that may occur during testing,
+i.e., to perform well without failing catastrophically [3, 6, 8, 22–29]. Many of these approaches are
+successful in this goal and can generalise well when faced with small perturbations. However, using
+one policy for multiple environments (or contexts) may lead to this policy being conservative, as it
+cannot exploit the specifics of the current environment [12]. Furthermore, these policies are limited"
+RELATED WORK,0.02225519287833828,1We publicly release code at https://github.com/Michael-Beukman/DecisionAdapter.
+RELATED WORK,0.02373887240356083,"to performing the same action when faced with the same state, regardless of the setting. This may be
+suboptimal, especially when the gap between the different settings widens [13, 30]."
+RELATED WORK,0.025222551928783383,"This observation motivates the next class of methods, context-adaptive approaches. These techniques
+often use a version of the CMDP [15] formalism, and use the context to inform the agent’s choice
+of action. This allows agents to exhibit different behaviours in different settings, which may be
+necessary to achieve optimality or generalisation when faced with large variations [13]. There are
+several ways to obtain this context, such as assuming the ground truth context [13], using supervised
+learning to approximate it during evaluation [14, 31], or learning some unsupervised representation of
+the problem and inferring a latent context from a sequence of environment observations [18, 32–34]."
+RELATED WORK,0.026706231454005934,"Despite the progress in inferring context, how best to incorporate context has received less attention.
+The most prevalent approach is to simply concatenate the context to the state, and use this directly
+as input to the policy [16–18, 35–38], which is trained using methods such as Soft Actor-Critic [39]
+or Proximal Policy Optimisation [40]. This ignores the conceptual difference between the state and
+context, and may lead to worse generalisation [15]. This approach may also be limited when there are
+many more context features compared to state features [41]. While concatenation is the most common,
+some other approaches have also been proposed. For instance, Biedenkapp et al. [41] learn separate
+representations for context and state, and then concatenate the representations near the end of the
+network. They also use another baseline that concatenates a static embedding of the context features to
+the state. Both of these techniques generalise better than the concatenation approach. Another method,
+FLAP [42], aims to improve generalisation by learning a shared representation across tasks, which is
+then processed by a task-specific adapter in the form of a linear layer. Given state s, the policy network
+outputs features ϕ(s) ∈Rd, which are shared across tasks. The final action is chosen according to
+Wiϕ(s) + bi, with a unique weight matrix Wi and bias vector bi which are learned separately for
+each task. Concurrently, a supervised learning model is trained to map between transition tuples
+(st, at, rt+1, st+1) and these learned weights. At test time, this supervised model generates the
+weights, while the policy network remains fixed. FLAP generalises better to out-of-distribution tasks
+compared to other meta-learning approaches [36, 43, 44]. However, this approach requires a separate
+head for each task, which may scale poorly if we have many tasks or see each task only a few times."
+RELATED WORK,0.028189910979228485,"One promising approach that has been used in other fields is Feature-wise Linear Modulation
+(FiLM) [45, 46]. In this method, features in one modality (e.g., natural language text) linearly
+modulate the neural-network features obtained from another modality (e.g., visual images). An
+example of this would be processing a visual scene, modulated by different natural language questions
+which would lead to a different final answer. In RL, Benjamins et al. [13] introduce cGate,2 which
+follows a similar procedure to FiLM; in particular, the neural network policy receives the state as
+input and outputs an action. Before the final layer, however, the context is first transformed by a
+separate network, and then used to modulate the state-based features. This approach showed promise,
+but restricted the context features’ effect on the state-based features to be linear."
+RELATED WORK,0.02967359050445104,"Another research area that has garnered more attention recently is learning general foundation models
+for control [48–50]. Inspired by recent work in fields such as natural language processing [51] and
+computer vision [52], these models aim to provide a general foundation that can be easily fine-tuned
+for particular tasks of interest. For instance, Gupta et al. [53] learns a general controller for several
+different robot morphologies. The robot’s configuration is encoded and passed to a transformer [54],
+allowing one model to control a wide variety of morphologies. While these works directly train
+policies, Schubert et al. [55] instead train a dynamics model, and use a standard planning technique—
+model-predictive control [56–58]—to choose actions. They find that this approach achieves better
+zero-shot generalisation compared to directly learning a policy. On a different note, Sun et al. [59]
+pre-train a foundation model that predicts observations and actions. Then, during fine-tuning, they
+train a policy to perform a particular task using the pre-trained representations, which enables the use
+of either imitation learning or reinforcement learning in the downstream fine-tuning stage."
+RELATED WORK,0.03115727002967359,"Finally, much work in meta-reinforcement learning [60] relates to the problem of generalisation.
+Meta-learning approaches generally aim to use multiple tasks during training to learn how to learn;
+this knowledge can then be used during testing to rapidly adapt to a new task [43, 60–67]. In this
+problem setting, Beck et al. [68] use a recurrent model to encode the current task, and generate the
+weights of the agent policy based on the task encoding. Sarafian et al. [69] take a similar approach, but"
+RELATED WORK,0.032640949554896145,"2Benjamins et al. [13] introduced the cGate method, and then published a revised version of the paper—not
+containing cGate—under the same name. We therefore cite both versions [13, 47]."
+RELATED WORK,0.03412462908011869,"instead generate the weights using the environment state, and processing the encoded context using
+the generated network. Another approach, MAML [44] aims to learn the weights of a neural network
+such that, for any new task, performing only a few gradient updates would lead to a high-performing
+task-specific network. While meta-learning can lead to highly adaptable agents, many methods
+require multiple episodes of experience in the target domain [36, 44], and may therefore be less
+well-suited to the zero-shot setting we consider [7]."
+THEORETICAL INTUITIONS,0.03560830860534125,"4
+Theoretical Intuitions"
+THEORETICAL INTUITIONS,0.037091988130563795,"Now, while only a context-conditioned policy is guaranteed to be optimal on a general CMDP [47],
+in many cases simply training an unaware policy on a large number of diverse environments can
+lead to impressive empirical generalisation [5]. In this section, we characterise and unify these
+two observations. In particular, for a specific problem setting—where the context defines the target
+location an agent must travel to—we find that:"
+THEORETICAL INTUITIONS,0.03857566765578635,"(i) For some context sets, an unaware policy will perform arbitrarily poorly on average, due to
+it being forced to take the same action in the same state, regardless of context.
+(ii) However, for other context sets—where the different contexts are similar enough—an
+unaware policy can perform well on average, as it can simultaneously solve each task."
+THEORETICAL INTUITIONS,0.040059347181008904,"We defer the formal statement of this theorem and its proof to Appendix A, but here we briefly provide
+some intuition. Overall, our results rely on the fact that a context-unaware agent must perform the
+same action in the same state, regardless of context. Therefore, in a setting where we have different
+goals (indicated by the context), and making progress on one goal leads to making negative progress
+on another, a context-unaware agent cannot simultaneously perform well on both of these contexts.
+By contrast, if the goals are aligned in the sense that making progress on one leads to progress on
+another, a context-unaware agent can perform well on average. A context-aware agent, however, can
+always choose the correct action in either scenario. c1
+c2 c3
+c4"
+THEORETICAL INTUITIONS,0.04154302670623145,(a) Non-overlapping
+THEORETICAL INTUITIONS,0.04302670623145401,"c1
+c3
+c2 c4"
+THEORETICAL INTUITIONS,0.04451038575667656,(b) Overlapping
+THEORETICAL INTUITIONS,0.04599406528189911,"Figure 1: An illustration of the two cases discussed above, with the agent’s start state being the origin.
+The agent will receive a reward if it enters the circle corresponding to the current context and zero
+reward otherwise. In (a) there is no overlap between the goals, so an unaware policy (red) must visit
+each goal in sequence, whereas a context-aware policy (green) can go directly to the correct goal. In
+(b), the goals overlap, so an unaware policy can go directly to the joint intersection point of the goals,
+leading to only a slightly suboptimal value function compared to the optimal context-aware policy."
+THEORETICAL INTUITIONS,0.04747774480712166,"Fig. 1 visually illustrates these two cases and summarises the implications. In Fig. 1a, if there is no
+overlap between goals, an unaware policy is forced to visit each one in sequence. This is because
+it must perform the same action in the same state, regardless of the context, meaning that it cannot
+always travel to the correct goal. This policy will therefore have a low value function compared to
+the optimal context-aware policy. By contrast, in Fig. 1b, a single unaware policy can directly go to
+the intersection of all the goals, leading to only slightly less return than the optimal context-aware"
+THEORETICAL INTUITIONS,0.04896142433234421,"policy. While the formal result in Appendix A merely shows the existence of some problems with
+these properties, we believe the concept generalises to more complex settings. In particular, if the
+problem exhibits some structure where the same policy can simultaneously make progress on each
+context, an unaware model can perform well. However, if making progress on one goal leads to the
+agent moving away from another, a context-unaware policy can at best perform arbitrarily worse than
+a context-aware one, and incorporating context is crucial. We empirically substantiate these findings
+in Section 7 and formally consider this example in Appendix A. Finally, see Appendix B for more
+details about how these theoretical results connect back to our empirical observations."
+THE DECISION ADAPTER,0.050445103857566766,"5
+The Decision Adapter"
+THE DECISION ADAPTER,0.05192878338278932,"An adapter is a (usually small) neural network with the same input and output dimensions. This
+network can be inserted between the layers of an existing primary network to change its behaviour
+in some way. These modules have seen much use in natural language processing (NLP) [70–74] and
+computer vision, usually for parameter-efficient adaptation [75–81]. In these settings, one adapter
+is usually trained per task, and the base model remains constant across tasks. Our method is inspired
+by the use of adapters in these fields, with a few core differences."
+THE DECISION ADAPTER,0.05341246290801187,"First, since our aim is zero-shot generalisation, having a separate adapter module for each task
+(corresponding to context in our case) provides no clear means for generalisation. Relatedly, since
+tasks are generally discrete in NLP, but we allow for continuous contexts, this approach would be
+problematic. Furthermore, the number of learnable parameters increases with the number of training
+contexts, presenting a computational limitation to the scalability. To circumvent these problems,
+we use a hypernetwork [82] to generate the weights of the adapter module based on the context.
+This allows the agent to modify its behaviour for each context by having a shared feature-extractor
+network which is modulated by the context-aware adapter. Moreover, since the hypernetwork is
+shared, experience gained in one context could transfer to another [72]. Second, instead of having
+separate pre-training and adaptation phases as is common in NLP [76], we do not alter the standard RL
+training procedure at all. We change only the architecture and train normally—allowing for the easy
+integration of our approach into standard RL libraries. Finally, our method is agnostic to the exact
+RL algorithm and can be applied to most off-the-shelf algorithms without much additional effort."
+THE DECISION ADAPTER,0.05489614243323442,"Algorithm 1 Decision Adapter—Changes to the stan-
+dard forward pass in blue."
+THE DECISION ADAPTER,0.05637982195845697,"1: procedure ADAPTERFORWARD(s ∈S, c ∈C)
+2:
+x1 = s
+3:
+for i ∈{1, 2, . . . , n} do
+4:
+if Ai ̸= null then
+5:
+θi
+A = Hi(c)
+// Generate Weights
+6:
+x′
+i = Ai(xi|θi
+A)
+// Forward Pass
+7:
+xi = xi + x′
+i
+// Skip connection
+8:
+end if
+9:
+xi+1 = Li(xi)
+10:
+end for
+11:
+return xn+1
+12: end procedure"
+THE DECISION ADAPTER,0.057863501483679525,"Adapter
+s
+s
+a c"
+THE DECISION ADAPTER,0.05934718100890208,Hypernetwork
+THE DECISION ADAPTER,0.06083086053412463,Generated Weights
+THE DECISION ADAPTER,0.06231454005934718,"Figure 2: An illustration of our network architecture, the Decision Adapter, alongside pseudocode for
+the forward pass. The bottom network is the hypernetwork, which generates the magenta weights for
+the top, primary, network. The light grey nodes in the top network are added by the adapter."
+THE DECISION ADAPTER,0.06379821958456973,"To formally describe our approach (illustrated in Fig. 2), suppose we have a state s ∈S, context
+c ∈C, and a standard n-layer fully-connected neural network architecture that predicts our action a.
+Here xi+1 = Li(xi) = σi(Wixi+bi), x1 = s and xn+1 = a. We add an adapter module Ai between
+layers Li−1 and Li. This adapter module is a multilayer neural network Ai : Rdi →Rdi consisting
+of parameters θi
+A ∈RPi.3 These parameters are generated by the corresponding context-conditioned"
+THE DECISION ADAPTER,0.06528189910979229,3di is the output dimension of layer Li−1 and Pi is the number of parameters in the adapter.
+THE DECISION ADAPTER,0.06676557863501484,"hypernetwork Hi : C →RPi (line 5 in Algorithm 1) and reshaped to form multiple weight matrices.
+Then, before we process xi using layer Li, we pass xi through the adapter module Ai (line 6) defined
+by the generated weights and biases to obtain x′
+i = Ai(xi|θi
+A). Furthermore, akin to the application
+of adapters in other fields [75, 76], we add a skip connection, by setting xi = xi + x′
+i (line 7). This
+updated xi is then the input to layer Li (line 9). Additionally, we could have multiple adapter modules
+in the primary network, with at most one module between any two consecutive layers (lines 3 and 4)."
+THE DECISION ADAPTER,0.06824925816023739,"Finally, we note that the Decision Adapter model can learn to implement the same function as
+cGate [13], but is theoretically more powerful. While cGate uses a linear elementwise product
+between the context and state features, our model uses a hypernetwork to generate the weights of a
+nonlinear adapter module. Our hypernetwork is general enough to be able to recover this elementwise
+product, but is not constrained to do so. See Appendix C for a more formal treatment of this point."
+EXPERIMENTAL SETUP,0.06973293768545995,"6
+Experimental Setup"
+METRICS,0.0712166172106825,"6.1
+Metrics"
+METRICS,0.07270029673590504,"Our evaluation strategy is as follows:
+We take the trained model, and compute the av-
+erage of the total episode reward over n
+=
+5 episodes on each evaluation context c to
+obtain a collection of contexts C and corresponding rewards R.
+We then calculate the
+Average Evaluation Reward (AER) : AER =
+1
+cmax−cmin
+R cmax
+cmin R(c)dc, where cmin and cmax
+are the minimum and maximum context values in C respectively, and R(c) is the reward obtained on
+context c. This metric is high when the agent performs well across a wide range of contexts, and thus
+corresponds to generalisation performance. However, since we generally have Ctrain ⊂Cevaluation,
+this metric also incorporates how well the agent performs on the training contexts.4 Despite this, it
+is still a useful metric for generalisation, as our training context set typically contains only a handful
+of contexts, with most of the evaluation contexts being unseen."
+BASELINES,0.07418397626112759,"6.2
+Baselines"
+BASELINES,0.07566765578635015,"We use Soft-Actor-Critic [39] for all methods, to isolate and fairly compare the network architectures.
+We aim to have an equal number of learnable parameters for each method and adjust the number of
+hidden nodes to achieve this. We use the following baselines, with more details in Appendix D:"
+BASELINES,0.0771513353115727,"Unaware This model simply ignores the contextual information and just uses the state. This approach
+allows us to evaluate how well a method that does not incorporate context performs."
+BASELINES,0.07863501483679525,"Concat
+This method forms a new, augmented state space S′ = S × C, and then gives the model
+the concatenation [s; c] of the state and context [16–18, 37]. This baseline allows us to
+compare our method to the current standard approach of using contextual information."
+BASELINES,0.08011869436201781,"cGate
+cGate [13] learns separate state (ϕ(s)) and context (g(c)) encoders, and predicts the action
+a = f(ϕ(s) ⊙g(c)), where f is the learned policy and ⊙is the elementwise product."
+BASELINES,0.08160237388724036,"FLAP
+FLAP [42] learns a shared state representation across tasks, which is then processed by
+a task-specific linear layer that is generated by conditioning on the context."
+BASELINES,0.0830860534124629,"Our Adapter configuration is more fully described in Appendix D.3, and Appendix E contains ablation
+experiments comparing the performance of different hyperparameter settings."
+ENVIRONMENTS,0.08456973293768547,"6.3
+Environments"
+ODE,0.08605341246290801,"6.3.1
+ODE"
+ODE,0.08753709198813056,"This environment is described by an ordinary differential equation (ODE), parametrised by n variables
+making up the context. The dynamics equation is xt+1 = xt+ ˙xtdt, with ˙x = c0a+c1a2+c2a3+. . . ,
+truncated at some cn−1. The episode terminates after 200 timesteps, with the reward function:"
+ODE,0.08902077151335312,"4The AER can be computed over only the unseen evaluation contexts, but we include the training contexts to
+obtain a more general measure of performance. However, the difference between the two versions is minor, see
+Appendix F.4."
+ODE,0.09050445103857567,"Rt =
+ 1
+if |x| < 0.05
+1
+2
+if |x| < 0.1
+1
+3
+if |x| < 0.2
+1
+4
+if |x| < 0.5
+1
+20
+if |x| < 2
+0
+otherwise"
+ODE,0.09198813056379822,"This incentivises the agent to give control a to keep the state close to x = 0. The context in this
+environment is c = [c0, . . . , cn−1] ∈Rn. The action space is two-dimensional, continuous and
+bounded, i.e., a0, a1 ∈[−1, 1]. The action is interpreted as a complex number, a = a0 + a1i, to
+allow the dynamics equation to be solvable, even in normally unsolvable cases such as ˙x = a2. Here,
+restricting a to R would result in ˙x ≥0 and an unsolvable system for initial conditions x0 > 0. We
+keep only the real part of the updated state and clip it to always fall between −20 and 20."
+ODE,0.09347181008902077,"The ODE acts as a conceptually simple environment where we can arbitrarily scale both the number
+(i.e., n) and magnitude (i.e., |ci|) of the contexts and precisely measure the effects. Furthermore,
+since many dynamical systems can be modelled using differential equations [83–85], the ODE can
+be considered a distilled version of these. Finally, context is necessary to perform well in this
+environment, making it a good benchmark. See Appendix D for more details."
+CARTPOLE,0.09495548961424333,"6.3.2
+CartPole"
+CARTPOLE,0.09643916913946587,"CartPole [86] is a task where an agent must control the movement of a cart to balance a pole vertically
+placed upon it. The observation space is a 4-dimensional real vector containing the cart’s position x
+and velocity ˙x, as well as the pole’s angle θ and angular velocity ˙θ. We use a continuous action space
+where a ∈[−1, 1] corresponds to the force applied to the cart (where negative values push the cart
+to the left and positive values to the right). The reward function is +1 for each step that the pole is
+upright. An episode terminates when the pole is tilted too far off-center, the cart’s position is outside
+the allowable bounds or the number of timesteps is greater than 500. We follow prior work and
+consider the variables Gravity, Cart Mass, Pole Length, Pole Mass and Force Magnitude
+collectively as the context [13], even if only a subset of variables change. Here, we change only the
+pole length and evaluate how susceptible each model is to distractor variables. In particular, during
+training, we also add k additional dimensions to the context, each with a constant value of 1. Then,
+during evaluation, we set these values to 0. This may occur during a real-world example, where
+accurately identifying or inferring the pertinent context variables may be challenging [18, 87], and
+lead to several irrelevant variables. Overall, this means that the context is represented as a 5 + k-
+dimensional vector. This environment is useful as it (1) is a simple setting with models that can be
+trained quickly, and (2) still has desirable aspects, namely a way to perturb some underlying variables
+to change the dynamics of the environment. Furthermore, prior work has shown that even standard,
+unaware RL algorithms can generalise well in this environment [88] (in the absence of distractor
+context variables), which allows us to investigate the benefits of context and detriment of distractors."
+MUJOCO ANT,0.09792284866468842,"6.3.3
+Mujoco Ant"
+MUJOCO ANT,0.09940652818991098,"As a more complex and high-dimensional problem, we consider Ant from the Mujoco suite of
+environments [89, 90]. Here, the task is to control a 4-legged robot such that it walks. The observation
+space consists of the robot’s joint angles and velocities, as well as contact forces and torques applied
+to each link, totalling 111 dimensions. The action space A = [−1, 1]8 represents the torque applied
+to each of the 8 joints. Furthermore, each episode is terminated after 1000 timesteps, with a positive
+reward for not having fallen over at each step and moving forward. The reward function also penalises
+large control forces. Here, the mass is the context variable, which is 5 by default. We train on the set
+{5, 35, 75} and evaluate on 200 evenly spaced points between 0.5 and 100."
+RESULTS,0.10089020771513353,"7
+Results"
+GENERALISATION PERFORMANCE,0.10237388724035608,"7.1
+Generalisation Performance"
+GENERALISATION PERFORMANCE,0.10385756676557864,"In this section, we consider the ODE environment, with a training context set of {−5, −1, 1, 5} and
+300k training timesteps. To measure generalisation, we use an evaluation context range consisting
+of 201 equally spaced points between −10 and 10 (inclusive). In the left pane of Fig. 3, we plot
+the average performance across the entire evaluation range (as discussed in Section 6.1) at different
+points during training."
+GENERALISATION PERFORMANCE,0.10534124629080119,"Firstly, we can see that the Unaware model fails to generalise well, since the optimal actions in
+the same state for two different contexts may be completely different. This result substantiates our
+theoretical analysis in Section 4, highlighting the importance of using context in this domain. Concat,
+cGate and FLAP perform reasonably well, but our Decision Adapter outperforms all methods
+and converges rapidly. In Appendix F, we plot separate subsets of the evaluation range: Train,
+Interpolation and Extrapolation, corresponding to the contexts in the training set, the contexts
+within the region [−5, 5] and the contexts outside the convex hull of the training contexts, containing
+c ∈[−10, −5) ∪(5, 10], respectively. There we find that most methods, with the exception of the
+Unaware model, perform well on the training contexts, and the Adapter outperforms all methods
+when extrapolating. These results also extend to the multidimensional context case, shown in Fig. 3
+(right). We train on the context set given by {1, 0, −1}2 ∪{5, 0, −5}2, with the context (0, 0) being
+omitted due to it being unsolvable.5 The evaluation range consists of the cartesian product A2, where
+A contains 21 equally-spaced points between −10 and 10. The Adapter outperforms all methods,
+with the Concat model coming second. FLAP and the Unaware models struggle in this case."
+GENERALISATION PERFORMANCE,0.10682492581602374,"0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0 0 50 100 150 200 AER"
+D CONTEXT,0.1083086053412463,1D Context
+D CONTEXT,0.10979228486646884,"0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0 1e5"
+D CONTEXT,0.11127596439169139,2D Context
+D CONTEXT,0.11275964391691394,Training Time (Steps)
+D CONTEXT,0.1142433234421365,"Unaware
+Concat
+Adapter
+cGate
+FLAP
+Optimal"
+D CONTEXT,0.11572700296735905,"Figure 3: The average reward over the evaluation range at various points during training for the ODE
+domain. Mean performance is shown, with standard deviation (across 16 seeds) shaded. The left pane
+shows the one-dimensional context results, while the right pane shows the two-dimensional results."
+ROBUSTNESS TO DISTRACTORS,0.1172106824925816,"7.2
+Robustness to Distractors"
+ROBUSTNESS TO DISTRACTORS,0.11869436201780416,"For this and the next section, we consider the Concat and cGate models as baselines. The reasons
+for this are that (1) the Concat model performed comparably to or better than the other baselines in
+the previous sections, making it a representative example of the context-aware approaches; and (2)
+the Concat model is currently a very prevalent way of incorporating context [16–18, 35–38]; and (3)
+cGate is the closest approach to our work in the current literature."
+ROBUSTNESS TO DISTRACTORS,0.1201780415430267,"The results for CartPole are shown in Fig. 4. When there are no distractor variables, the Adapter,
+Concat and cGate models perform comparably. In this case, each architecture achieves near the
+maximum possible reward for the domain. Further, we see little effect after adding just one con-
+founding context variable. However, as we add additional distractor variables, the Concat and cGate
+models’ performances drop significantly, whereas the Adapter’s performance remains relatively
+stable. Strikingly, the Adapter architecture trained with 100 distractor context variables is still able to
+perform well on this domain and significantly outperforms the Concat model with significantly fewer
+(just 20) distractor variables. This demonstrates that, given only useful context, concatenating state
+and context is a reasonable approach in some environments. However, this is a strong assumption
+in many practical cases where we may be uncertain about which context variables are necessary. In
+such cases, the consequences of ignoring the conceptual differences between state and context are
+catastrophic and it is necessary to use the Adapter architecture. We find a similar result in the ODE,
+which we show in Appendix F.5."
+ROBUSTNESS TO DISTRACTORS,0.12166172106824925,"As an extension to the previous experiment, here we consider using non-fixed distractor variables, i.e.,
+sampling them from Gaussian distribution with different means. The intuition behind this experiment
+is similar to before, but allows for small variations within training and testing. In particular, we use
+σ = 0.2 and a mean of either 0 or 1. In this experiment, a new distractor context is sampled at the
+start of every episode. During training this is sampled from N(1, 0.2) and during evaluation we"
+ROBUSTNESS TO DISTRACTORS,0.12314540059347182,"5Here, for a set S, S2 = S × S = {(a, b)|a, b ∈S} denotes the cartesian product of S with itself."
+ROBUSTNESS TO DISTRACTORS,0.12462908011869436,"0
+2
+4
+6
+8 100 200 300 400 500 AER"
+ROBUSTNESS TO DISTRACTORS,0.1261127596439169,Concat
+ROBUSTNESS TO DISTRACTORS,0.12759643916913946,"0
+2
+4
+6
+8"
+ROBUSTNESS TO DISTRACTORS,0.129080118694362,Adapter
+ROBUSTNESS TO DISTRACTORS,0.13056379821958458,"0
+2
+4
+6
+8 1e5 cGate"
+ROBUSTNESS TO DISTRACTORS,0.13204747774480713,Training Time (Steps)
+ROBUSTNESS TO DISTRACTORS,0.13353115727002968,"Number of distractor dimensions
+0
+1
+20
+100
+Optimal Reward"
+ROBUSTNESS TO DISTRACTORS,0.13501483679525222,"Figure 4: Showing the sensitivity of the (left) Concat, (middle) Adapter and (right) cGate models to
+distractor context variables in CartPole. The mean and standard deviation over 16 seeds are shown."
+ROBUSTNESS TO DISTRACTORS,0.13649851632047477,"sample from N(0, 0.2). In CartPole, the results in Fig. 5 show that the Adapter is still more robust
+to changing distractor variables compared to either Concat or cGate. See Appendix F.6 for more
+details, results on the ODE domain, and additional experiments when the mean of the Gaussian does
+not change between training and testing."
+ROBUSTNESS TO DISTRACTORS,0.13798219584569732,"0
+1
+2
+3 100 200 300 400 500 AER"
+ROBUSTNESS TO DISTRACTORS,0.1394658753709199,Concat
+ROBUSTNESS TO DISTRACTORS,0.14094955489614244,"0
+1
+2
+3"
+ROBUSTNESS TO DISTRACTORS,0.142433234421365,Adapter
+ROBUSTNESS TO DISTRACTORS,0.14391691394658754,"0
+1
+2
+3
+1e5 cGate"
+ROBUSTNESS TO DISTRACTORS,0.14540059347181009,Training Time (Steps)
+ROBUSTNESS TO DISTRACTORS,0.14688427299703263,"Number of distractor dimensions
+0
+1
+20
+100
+Optimal Reward"
+ROBUSTNESS TO DISTRACTORS,0.14836795252225518,"Figure 5: The sensitivity of Concat, Adapter and cGate to distractor context variables—sampled
+from a Gaussian distribution—in CartPole. We show the mean and standard deviation over 16 seeds."
+HIGH-DIMENSIONAL CONTROL,0.14985163204747776,"7.3
+High-Dimensional Control"
+HIGH-DIMENSIONAL CONTROL,0.1513353115727003,"We next consider a more complex and challenging continuous-control environment, that of the
+Mujoco Ant. We run the same experiment as in CartPole, where we add distractor variables, with no
+effect on the dynamics, and different values between training and testing. These results are shown in
+Fig. 6. Overall, we observe a similar result to that of CartPole—the Concat and cGate models are
+significantly less robust to having irrelevant distractor variables. By contrast, the Adapter consistently
+performs well regardless of how many distractor dimensions are added."
+LIMITATIONS,0.15281899109792285,"8
+Limitations"
+LIMITATIONS,0.1543026706231454,"While our Adapter model performs well empirically, it does have some limitations, which we sum-
+marise here and expand on in Appendix G. First, we find that using an incorrect and noisy context
+(Appendix G.1) generally resulted in the Adapter model performing worse, particularly as we in-
+creased the level of noise. However, the Adapter model still performs comparably to the Concat model
+in this case. Second, we generally normalise the contexts before we pass them to the models, relative
+to the maximum context encountered during training. While our Adapter performs well when the con-
+text normalisation is incorrect by a factor of 2 or 3, its performance does suffer when the normalisation
+value is orders of magnitudes too small, leading to very large contexts being input into the model (see
+Appendix G.2 for further discussion). Third, when training on a context range that is too narrow (see
+Appendix G.3) or does not exhibit sufficient variation, our model is susceptible to overfitting, which"
+LIMITATIONS,0.15578635014836795,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0 2000 0 2000 4000 AER"
+LIMITATIONS,0.1572700296735905,Concat
+LIMITATIONS,0.15875370919881307,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0"
+LIMITATIONS,0.16023738872403562,Adapter
+LIMITATIONS,0.16172106824925817,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+1e6 cGate"
+LIMITATIONS,0.1632047477744807,Training Time (Steps)
+LIMITATIONS,0.16468842729970326,"Number of distractor dimensions
+0
+1
+20
+100"
+LIMITATIONS,0.1661721068249258,"Figure 6: Showing the sensitivity of the (left) Concat, (middle) Adapter and (right) cGate models to
+distractor context variables in Ant. The mean and standard deviation over 16 seeds are shown."
+LIMITATIONS,0.16765578635014836,"leads to worse generalisation. Even if our model does not overfit, an overly narrow context range
+would also lead to poor generalisation. Thus, ensuring that agents are trained in sufficiently diverse
+environments is still important. Fourth, while we assumed access to the ground-truth context, it may
+not always be available in practice [31]. Therefore, integrating the Decision Adapter into existing
+context inference methods [18, 33] is a promising avenue for future work. A final limitation of our
+Adapter is its longer wall-clock training time compared to other methods (given the same training
+timesteps and a similar number of parameters). This is likely caused by the hypernetwork that we
+use. However, we did not utilise strategies such as caching the generated weights for a particular
+context (which would be possible since context remains constant for an episode), or more effectively
+batching the forward passes through the Adapter which could ameliorate this issue in practice."
+LIMITATIONS,0.16913946587537093,"Beyond addressing these limitations, there are several logical directions for future work. First, we
+only consider state and context features to be numerical vectors; therefore, extending our approach
+to different modalities—for instance, image observations and natural language context—would be
+a natural extension. In principle, our Adapter model could be directly applied in this setting without
+any fundamental modifications. One option would be to explore adding the hypernetwork directly
+into the modality-specific model (e.g., a convolutional neural network in the case of images), and the
+alternative would be to integrate the adapter module in the final (fully-connected) layers of the RL
+policy. Second, while we focused on the problem of zero-shot generalisation, our approach may also
+be suitable for efficient few-shot learning. In particular, adapters in NLP are often added to a large
+pre-trained model and then fine-tuned while freezing the primary model [76]. Using the Decision
+Adapter in this paradigm is a promising direction for future work, especially in cases where the
+difference between training and testing is so large that we cannot expect effective zero-shot generali-
+sation. Combining our work with fine-tuning-based [91–93] or meta-learning [36, 60, 68, 69, 94–96]
+approaches, which generally focus more on this case, could likewise be promising."
+CONCLUSION,0.17062314540059348,"9
+Conclusion"
+CONCLUSION,0.17210682492581603,"In this work, we consider the problem of generalising to new transition dynamics. We first illustrate
+that for some classes of problems, a context-unaware policy cannot perform well over the entire
+problem space—necessitating the use of context. We next turned our attention to how context should
+best be incorporated, introducing the Decision Adapter—a method that generates the weights of an
+adapter module based on the context. When context is necessary, our Decision Adapter outperforms
+all of our baselines, including the prevalent Concat model. Next, when there are some irrelevant
+context variables that change between training and testing, the Concat and cGate models fail to
+generalise, whereas our Decision Adapter performs well. This result holds in several domains,
+including the more complex Ant. Furthermore, our Adapter is theoretically more powerful and
+empirically more effective than cGate, showing that our hypernetwork-based perspective is useful
+when dealing with context. Ultimately, we find that the Decision Adapter is a natural, and robust,
+approach to reliably incorporate context into RL, in a factored way. This appears to be of particular
+benefit when there are several irrelevant context variables, for instance, in real-world settings [97]."
+CONCLUSION,0.17359050445103857,Acknowledgements
+CONCLUSION,0.17507418397626112,"Computations were performed using High Performance Computing infrastructure provided by the
+Mathematical Sciences Support unit at the University of the Witwatersrand. M.B. is supported by the
+Rhodes Trust. D.J. is a Google PhD Fellow and Commonwealth Scholar. B.R. is a CIFAR Azrieli
+Global Scholar in the Learning in Machines & Brains program."
+REFERENCES,0.17655786350148367,References
+REFERENCES,0.17804154302670624,"[1] Volodymyr Mnih, Koray Kavukcuoglu, David Silver, Andrei A Rusu, Joel Veness, Marc G Bellemare,
+Alex Graves, Martin Riedmiller, Andreas K Fidjeland, Georg Ostrovski, et al. Human-level control
+through deep reinforcement learning. Nature, 518(7540):529–533, 2015."
+REFERENCES,0.1795252225519288,"[2] David Silver, Thomas Hubert, Julian Schrittwieser, Ioannis Antonoglou, Matthew Lai, Arthur Guez,
+Marc Lanctot, Laurent Sifre, Dharshan Kumaran, Thore Graepel, et al. A general reinforcement learning
+algorithm that masters chess, shogi, and go through self-play. Science, 362(6419):1140–1144, 2018."
+REFERENCES,0.18100890207715134,"[3] Ilge Akkaya, Marcin Andrychowicz, Maciek Chociej, Mateusz Litwin, Bob McGrew, Arthur Petron, Alex
+Paino, Matthias Plappert, Glenn Powell, Raphael Ribas, et al. Solving rubik’s cube with a robot hand.
+arXiv preprint arXiv:1910.07113, 2019."
+REFERENCES,0.1824925816023739,"[4] Oriol Vinyals, Igor Babuschkin, Junyoung Chung, Michael Mathieu, Max Jaderberg, Wojtek Czarnecki,
+Andrew Dudzik, Aja Huang, Petko Georgiev, et al. AlphaStar: Mastering the Real-Time Strategy
+Game StarCraft II. https://deepmind.com/blog/alphastar-mastering-real-time-strategy-
+game-starcraft-ii/, 2019."
+REFERENCES,0.18397626112759644,"[5] Amy Zhang, Nicolas Ballas, and Joelle Pineau. A dissection of overfitting and generalization in continuous
+reinforcement learning. CoRR, abs/1806.07937, 2018. URL http://arxiv.org/abs/1806.07937."
+REFERENCES,0.18545994065281898,"[6] Karl Cobbe, Oleg Klimov, Christopher Hesse, Taehoon Kim, and John Schulman. Quantifying generaliza-
+tion in reinforcement learning. In Proceedings of the 36th International Conference on Machine Learning,
+pages 1282–1289. PMLR, 2019. URL http://proceedings.mlr.press/v97/cobbe19a.html."
+REFERENCES,0.18694362017804153,"[7] Robert Kirk, Amy Zhang, Edward Grefenstette, and Tim Rocktäschel. A survey of zero-shot generalisation
+in deep reinforcement learning. J. Artif. Intell. Res., 76:201–264, 2023. doi: 10.1613/jair.1.14174. URL
+https://doi.org/10.1613/jair.1.14174."
+REFERENCES,0.1884272997032641,"[8] Lerrel Pinto, James Davidson, Rahul Sukthankar, and Abhinav Gupta. Robust adversarial reinforcement
+learning. In Proceedings of the 34th International Conference on Machine Learning, pages 2817–2826.
+PMLR, 06–11 Aug 2017. URL https://proceedings.mlr.press/v70/pinto17a.html."
+REFERENCES,0.18991097922848665,"[9] Mohammed Amin Abdullah, Hang Ren, Haitham Bou-Ammar, Vladimir Milenkovic, Rui Luo, Mingtian
+Zhang, and Jun Wang. Wasserstein robust reinforcement learning. CoRR, abs/1907.13196, 2019. URL
+http://arxiv.org/abs/1907.13196."
+REFERENCES,0.1913946587537092,"[10] Daniel J. Mankowitz, Nir Levine, Rae Jeong, Abbas Abdolmaleki, Jost Tobias Springenberg, Yuanyuan
+Shi, Jackie Kay, Todd Hester, Timothy A. Mann, and Martin A. Riedmiller. Robust reinforcement
+learning for continuous control with model misspecification. In 8th International Conference on Learning
+Representations. OpenReview.net, 2020. URL https://openreview.net/forum?id=HJgC60EtwB."
+REFERENCES,0.19287833827893175,"[11] Gilbert Feng, Hongbo Zhang, Zhongyu Li, Xue Bin Peng, Bhuvan Basireddy, Linzhu Yue, Zhitao Song,
+Lizhi Yang, Yunhui Liu, Koushil Sreenath, and Sergey Levine. Genloco: Generalized locomotion
+controllers for quadrupedal robots. In Conference on Robot Learning, pages 1893–1903. PMLR, 2022."
+REFERENCES,0.1943620178041543,"[12] Wenxuan Zhou, Lerrel Pinto, and Abhinav Gupta.
+Environment probing interaction policies.
+In
+7th International Conference on Learning Representations. OpenReview.net, 2019.
+URL https:
+//openreview.net/forum?id=ryl8-3AcFX."
+REFERENCES,0.19584569732937684,"[13] Carolin Benjamins, Theresa Eimer, Frederik Schubert, Aditya Mohan, André Biedenkapp, Bodo Rosen-
+hahn, Frank Hutter, and Marius Lindauer. Contextualize me - the case for context in reinforcement
+learning. CoRR, abs/2202.04500, 2022. URL https://arxiv.org/abs/2202.04500v1."
+REFERENCES,0.19732937685459942,"[14] Wenhao Yu, Jie Tan, C. Karen Liu, and Greg Turk. Preparing for the unknown: Learning a universal
+policy with online system identification. In Robotics: Science and Systems XIII, 2017. doi: 10.15607/
+RSS.2017.XIII.048. URL http://www.roboticsproceedings.org/rss13/p48.html."
+REFERENCES,0.19881305637982197,"[15] Assaf Hallak, Dotan Di Castro, and Shie Mannor. Contextual markov decision processes. CoRR,
+abs/1502.02259, 2015. URL http://arxiv.org/abs/1502.02259."
+REFERENCES,0.20029673590504452,"[16] Philip J. Ball, Cong Lu, Jack Parker-Holder, and Stephen J. Roberts.
+Augmented world mod-
+els facilitate zero-shot dynamics generalization from a single offline environment. In Proceedings
+of the 38th International Conference on Machine Learning, pages 619–629. PMLR, 2021.
+URL
+http://proceedings.mlr.press/v139/ball21a.html."
+REFERENCES,0.20178041543026706,"[17] Shagun Sodhani, Amy Zhang, and Joelle Pineau. Multi-task reinforcement learning with context-based
+representations. In Proceedings of the 38th International Conference on Machine Learning, volume 139,
+pages 9767–9779. PMLR, 2021. URL http://proceedings.mlr.press/v139/sodhani21a.html."
+REFERENCES,0.2032640949554896,"[18] Shagun Sodhani, Franziska Meier, Joelle Pineau, and Amy Zhang. Block contextual MDPs for continual
+learning. In Learning for Dynamics and Control Conference, L4DC 2022, 23-24 June 2022, Stanford
+University, Stanford, CA, USA, pages 608–623. PMLR, 2022. URL https://proceedings.mlr.press/
+v168/sodhani22a.html."
+REFERENCES,0.20474777448071216,"[19] Richard Bellman. A markovian decision process. Indiana Univ. Math. J., 6:679–684, 1957. ISSN
+0022-2518."
+REFERENCES,0.2062314540059347,"[20] Martin L Puterman and Eugene A Feinberg. Markov decision processes: discrete stochastic dynamic
+programming. SIAM review, 38(4):689, 1996."
+REFERENCES,0.20771513353115728,"[21] Richard S Sutton and Andrew G Barto. Reinforcement learning: An introduction. MIT press, 2018."
+REFERENCES,0.20919881305637983,"[22] Josh Tobin, Rachel Fong, Alex Ray, Jonas Schneider, Wojciech Zaremba, and Pieter Abbeel. Domain ran-
+domization for transferring deep neural networks from simulation to the real world. In International Con-
+ference on Intelligent Robots and Systems, pages 23–30. IEEE, 2017. doi: 10.1109/IROS.2017.8202133.
+URL https://doi.org/10.1109/IROS.2017.8202133."
+REFERENCES,0.21068249258160238,"[23] Fereshteh Sadeghi and Sergey Levine. CAD2RL: real single-image flight without a single real image.
+In Robotics: Science and Systems XIII, 2017. doi: 10.15607/RSS.2017.XIII.034. URL http://
+www.roboticsproceedings.org/rss13/p34.html."
+REFERENCES,0.21216617210682492,"[24] Xue Bin Peng, Marcin Andrychowicz, Wojciech Zaremba, and Pieter Abbeel. Sim-to-real transfer of
+robotic control with dynamics randomization. In International Conference on Robotics and Automa-
+tion, pages 1–8. IEEE, 2018. doi: 10.1109/ICRA.2018.8460528. URL https://doi.org/10.1109/
+ICRA.2018.8460528."
+REFERENCES,0.21364985163204747,"[25] Jan Matas, Stephen James, and Andrew J. Davison. Sim-to-real reinforcement learning for deformable
+object manipulation. In Conference on Robot Learning, pages 734–743. PMLR, 2018. URL http:
+//proceedings.mlr.press/v87/matas18a.html."
+REFERENCES,0.21513353115727002,"[26] Marcin Andrychowicz, Bowen Baker, Maciek Chociej, Rafal Józefowicz, Bob McGrew, Jakub Pachocki,
+Arthur Petron, Matthias Plappert, Glenn Powell, Alex Ray, Jonas Schneider, Szymon Sidor, Josh Tobin,
+Peter Welinder, Lilian Weng, and Wojciech Zaremba. Learning dexterous in-hand manipulation. Int.
+J. Robotics Res., 39(1), 2020. doi: 10.1177/0278364919887447. URL https://doi.org/10.1177/
+0278364919887447."
+REFERENCES,0.2166172106824926,"[27] Alejandro Escontrela, George Yu, Peng Xu, Atil Iscen, and Jie Tan. Zero-shot terrain generalization for
+visual locomotion policies. CoRR, abs/2011.05513, 2020. URL https://arxiv.org/abs/2011.05513."
+REFERENCES,0.21810089020771514,"[28] Zac Wellmer and James T. Kwok. Dropout’s dream land: Generalization from learned simulators to reality.
+In Machine Learning and Knowledge Discovery in Databases. Research Track - European Conference,
+ECML PKDD 2021, Bilbao, Spain, September 13-17, 2021, Proceedings, Part I, volume 12975 of Lecture
+Notes in Computer Science, pages 255–270. Springer, 2021. doi: 10.1007/978-3-030-86486-6\_16. URL
+https://doi.org/10.1007/978-3-030-86486-6_16."
+REFERENCES,0.2195845697329377,"[29] Wenshuai Zhao, Jorge Peña Queralta, and Tomi Westerlund. Sim-to-real transfer in deep reinforce-
+ment learning for robotics: a survey.
+In Symposium Series on Computational Intelligence, pages
+737–744. IEEE, 2020. doi: 10.1109/SSCI47803.2020.9308468. URL https://doi.org/10.1109/
+SSCI47803.2020.9308468."
+REFERENCES,0.22106824925816024,"[30] Samuel Kessler, Jack Parker-Holder, Philip J. Ball, Stefan Zohren, and Stephen J. Roberts. Same
+state, different task: Continual reinforcement learning without interference. In Proceedings of the
+AAAI Conference on Artificial Intelligence, pages 7143–7151. AAAI Press, 2022. URL https://
+ojs.aaai.org/index.php/AAAI/article/view/20674."
+REFERENCES,0.22255192878338279,"[31] Ashish Kumar, Zipeng Fu, Deepak Pathak, and Jitendra Malik. RMA: rapid motor adaptation for legged
+robots. In Robotics: Science and Systems XVII, 2021. doi: 10.15607/RSS.2021.XVII.011. URL
+https://doi.org/10.15607/RSS.2021.XVII.011."
+REFERENCES,0.22403560830860533,"[32] Alvaro Sanchez-Gonzalez, Nicolas Heess, Jost Tobias Springenberg, Josh Merel, Martin A. Riedmiller,
+Raia Hadsell, and Peter W. Battaglia. Graph networks as learnable physics engines for inference and
+control. In Proceedings of the 35th International Conference on Machine Learning, pages 4467–4476.
+PMLR, 2018. URL http://proceedings.mlr.press/v80/sanchez-gonzalez18a.html."
+REFERENCES,0.22551928783382788,"[33] Kimin Lee, Younggyo Seo, Seunghyun Lee, Honglak Lee, and Jinwoo Shin.
+Context-aware dy-
+namics model for generalization in model-based reinforcement learning.
+In Proceedings of the
+37th International Conference on Machine Learning, pages 5757–5766. PMLR, 2020. URL http:
+//proceedings.mlr.press/v119/lee20g.html."
+REFERENCES,0.22700296735905046,"[34] Younggyo Seo, Kimin Lee, Ignasi Clavera Gilaberte, Thanard Kurutach, Jinwoo Shin, and Pieter Abbeel.
+Trajectory-wise multiple choice learning for dynamics generalization in reinforcement learning. In
+Advances in Neural Information Processing Systems, 2020. URL https://proceedings.neurips.cc/
+paper/2020/hash/9739efc4f01292e764c86caa59af353e-Abstract.html."
+REFERENCES,0.228486646884273,"[35] Seyed Kamyar Seyed Ghasemipour, Shixiang Gu, and Richard S. Zemel. Smile: Scalable meta inverse
+reinforcement learning through context-conditional policies. In Advances in Neural Information Process-
+ing Systems, pages 7879–7889, 2019. URL https://proceedings.neurips.cc/paper/2019/hash/
+2b8f621e9244cea5007bac8f5d50e476-Abstract.html."
+REFERENCES,0.22997032640949555,"[36] Kate Rakelly, Aurick Zhou, Chelsea Finn, Sergey Levine, and Deirdre Quillen. Efficient off-policy meta-
+reinforcement learning via probabilistic context variables. In Proceedings of the 36th International Confer-
+ence on Machine Learning, pages 5331–5340. PMLR, 2019. URL http://proceedings.mlr.press/
+v97/rakelly19a.html."
+REFERENCES,0.2314540059347181,"[37] Hamid Eghbal-zadeh, Florian Henkel, and Gerhard Widmer. Context-adaptive reinforcement learning
+using unsupervised learning of context variables. In NeurIPS 2020 Workshop on Pre-registration in
+Machine Learning, pages 236–254. PMLR, 11 Dec 2021. URL https://proceedings.mlr.press/
+v148/eghbal-zadeh21a.html."
+REFERENCES,0.23293768545994065,"[38] Yao Mu, Yuzheng Zhuang, Fei Ni, Bin Wang, Jianyu Chen, Jianye Hao, and Ping Luo.
+De-
+composed mutual information optimization for generalized context in meta-reinforcement learning.
+CoRR, abs/2210.04209, 2022. doi: 10.48550/arXiv.2210.04209. URL https://doi.org/10.48550/
+arXiv.2210.04209."
+REFERENCES,0.2344213649851632,"[39] Tuomas Haarnoja, Aurick Zhou, Pieter Abbeel, and Sergey Levine.
+Soft actor-critic: Off-policy
+maximum entropy deep reinforcement learning with a stochastic actor.
+In Proceedings of the
+35th International Conference on Machine Learning, pages 1856–1865. PMLR, 2018. URL http:
+//proceedings.mlr.press/v80/haarnoja18b.html."
+REFERENCES,0.23590504451038577,"[40] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy
+optimization algorithms. CoRR, abs/1707.06347, 2017. URL http://arxiv.org/abs/1707.06347."
+REFERENCES,0.23738872403560832,"[41] André Biedenkapp, David Speck, Silvan Sievers, Frank Hutter, Marius Lindauer, and Jendrik Seipp.
+Learning domain-independent policies for open list selection. 2022."
+REFERENCES,0.23887240356083086,"[42] Matt Peng, Banghua Zhu, and Jiantao Jiao. Linear representation meta-reinforcement learning for instant
+adaptation. CoRR, abs/2101.04750, 2021. URL https://arxiv.org/abs/2101.04750."
+REFERENCES,0.2403560830860534,"[43] Yan Duan, John Schulman, Xi Chen, Peter L. Bartlett, Ilya Sutskever, and Pieter Abbeel. RL2: Fast
+reinforcement learning via slow reinforcement learning. CoRR, abs/1611.02779, 2016. URL http:
+//arxiv.org/abs/1611.02779."
+REFERENCES,0.24183976261127596,"[44] Chelsea Finn, Pieter Abbeel, and Sergey Levine. Model-agnostic meta-learning for fast adaptation of deep
+networks. In Proceedings of the 34th International Conference on Machine Learning, pages 1126–1135.
+PMLR, 2017. URL http://proceedings.mlr.press/v70/finn17a.html."
+REFERENCES,0.2433234421364985,"[45] Ethan Perez, Florian Strub, Harm de Vries, Vincent Dumoulin, and Aaron C. Courville. Film: Visual
+reasoning with a general conditioning layer. In Proceedings of the AAAI Conference on Artificial
+Intelligence, pages 3942–3951. AAAI Press, 2018. URL https://www.aaai.org/ocs/index.php/
+AAAI/AAAI18/paper/view/16528."
+REFERENCES,0.24480712166172106,"[46] Vincent Dumoulin, Ethan Perez, Nathan Schucher, Florian Strub, Harm de Vries, Aaron Courville,
+and Yoshua Bengio.
+Feature-wise transformations.
+Distill, 2018.
+doi: 10.23915/distill.00011.
+https://distill.pub/2018/feature-wise-transformations."
+REFERENCES,0.24629080118694363,"[47] Carolin Benjamins, Theresa Eimer, Frederik Schubert, Aditya Mohan, Sebastian Döhler, André
+Biedenkapp, Bodo Rosenhahn, Frank Hutter, and Marius Lindauer. Contextualize me – the case for
+context in reinforcement learning. Transactions on Machine Learning Research, 2023. ISSN 2835-8856.
+URL https://openreview.net/forum?id=Y42xVBQusn."
+REFERENCES,0.24777448071216618,"[48] Scott Reed, Konrad Zolna, Emilio Parisotto, Sergio Gómez Colmenarejo, Alexander Novikov, Gabriel
+Barth-maron, Mai Giménez, Yury Sulsky, Jackie Kay, Jost Tobias Springenberg, Tom Eccles, Jake
+Bruce, Ali Razavi, Ashley Edwards, Nicolas Heess, Yutian Chen, Raia Hadsell, Oriol Vinyals, Mahyar
+Bordbar, and Nando de Freitas. A generalist agent. Transactions on Machine Learning Research, 2022.
+ISSN 2835-8856. URL https://openreview.net/forum?id=1ikK0kHjvj. Featured Certification,
+Outstanding Certification."
+REFERENCES,0.24925816023738873,"[49] Sherry Yang, Ofir Nachum, Yilun Du, Jason Wei, Pieter Abbeel, and Dale Schuurmans. Foundation
+models for decision making: Problems, methods, and opportunities. CoRR, abs/2303.04129, 2023. doi:
+10.48550/arXiv.2303.04129. URL https://doi.org/10.48550/arXiv.2303.04129."
+REFERENCES,0.2507418397626113,"[50] Konstantinos Bousmalis, Giulia Vezzani, Dushyant Rao, Coline Devin, Alex X. Lee, Maria Bauzá,
+Todor Davchev, Yuxiang Zhou, Agrim Gupta, Akhil Raju, et al. Robocat: A self-improving foundation
+agent for robotic manipulation. CoRR, abs/2306.11706, 2023. doi: 10.48550/arXiv.2306.11706. URL
+https://doi.org/10.48550/arXiv.2306.11706."
+REFERENCES,0.2522255192878338,"[51] Ce Zhou, Qian Li, Chen Li, Jun Yu, Yixin Liu, Guangjing Wang, Kai Zhang, Cheng Ji, Qiben Yan, Lifang
+He, Hao Peng, Jianxin Li, Jia Wu, Ziwei Liu, Pengtao Xie, Caiming Xiong, Jian Pei, Philip S. Yu, and
+Lichao Sun. A comprehensive survey on pretrained foundation models: A history from BERT to chatgpt.
+CoRR, abs/2302.09419, 2023. doi: 10.48550/arXiv.2302.09419. URL https://doi.org/10.48550/
+arXiv.2302.09419."
+REFERENCES,0.25370919881305637,"[52] Amanpreet Singh, Ronghang Hu, Vedanuj Goswami, Guillaume Couairon, Wojciech Galuba, Marcus
+Rohrbach, and Douwe Kiela.
+FLAVA: A foundational language and vision alignment model.
+In
+Conference on Computer Vision and Pattern Recognition, pages 15617–15629. IEEE, 2022. doi: 10.1109/
+CVPR52688.2022.01519. URL https://doi.org/10.1109/CVPR52688.2022.01519."
+REFERENCES,0.2551928783382789,"[53] Agrim Gupta, Linxi Fan, Surya Ganguli, and Li Fei-Fei. Metamorph: Learning universal controllers
+with transformers. In The Tenth International Conference on Learning Representations. OpenReview.net,
+2022. URL https://openreview.net/forum?id=Opmqtk_GvYL."
+REFERENCES,0.25667655786350146,"[54] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz
+Kaiser, and Illia Polosukhin. Attention is all you need. In Advances in Neural Information Processing
+Systems, pages 5998–6008, 2017. URL https://proceedings.neurips.cc/paper/2017/hash/
+3f5ee243547dee91fbd053c1c4a845aa-Abstract.html."
+REFERENCES,0.258160237388724,"[55] Ingmar Schubert, Jingwei Zhang, Jake Bruce, Sarah Bechtle, Emilio Parisotto, Martin A. Riedmiller,
+Jost Tobias Springenberg, Arunkumar Byravan, Leonard Hasenclever, and Nicolas Heess. A generalist
+dynamics model for control. CoRR, abs/2305.10912, 2023. doi: 10.48550/arXiv.2305.10912. URL
+https://doi.org/10.48550/arXiv.2305.10912."
+REFERENCES,0.2596439169139466,"[56] J. Richalet, A. Rault, J. L. Testud, and J. Papon. Model predictive heuristic control: Applications
+to industrial processes. Autom., 14(5):413–428, 1978. doi: 10.1016/0005-1098(78)90001-8. URL
+https://doi.org/10.1016/0005-1098(78)90001-8."
+REFERENCES,0.26112759643916916,"[57] Carlos E. Garcia, David M. Prett, and Manfred Morari. Model predictive control: Theory and practice - A
+survey. Autom., 25(3):335–348, 1989. doi: 10.1016/0005-1098(89)90002-2. URL https://doi.org/
+10.1016/0005-1098(89)90002-2."
+REFERENCES,0.2626112759643917,"[58] Max Schwenzer, Muzaffer Ay, Thomas Bergs, and Dirk Abel. Review on model predictive control: An
+engineering perspective. The International Journal of Advanced Manufacturing Technology, 117(5-6):
+1327–1349, 2021."
+REFERENCES,0.26409495548961426,"[59] Yanchao Sun, Shuang Ma, Ratnesh Madaan, Rogerio Bonatti, Furong Huang, and Ashish Kapoor.
+SMART: self-supervised multi-task pretraining with control transformers. In The Eleventh International
+Conference on Learning Representations. OpenReview.net, 2023. URL https://openreview.net/
+pdf?id=9piH3Hg8QEf."
+REFERENCES,0.2655786350148368,"[60] Jacob Beck, Risto Vuorio, Evan Zheran Liu, Zheng Xiong, Luisa M. Zintgraf, Chelsea Finn, and
+Shimon Whiteson. A survey of meta-reinforcement learning. CoRR, abs/2301.08028, 2023. doi:
+10.48550/arXiv.2301.08028. URL https://doi.org/10.48550/arXiv.2301.08028."
+REFERENCES,0.26706231454005935,"[61] Learning to Learn. Springer, 1998. ISBN 978-1-4613-7527-2. doi: 10.1007/978-1-4615-5529-2. URL"
+REFERENCES,0.2685459940652819,https://doi.org/10.1007/978-1-4615-5529-2.
+REFERENCES,0.27002967359050445,"[62] Jonathan Baxter. Theoretical models of learning to learn. In Learning to Learn, pages 71–94. Springer,
+1998. doi: 10.1007/978-1-4615-5529-2\_4. URL https://doi.org/10.1007/978-1-4615-5529-
+2_4."
+REFERENCES,0.271513353115727,"[63] Nikhil Mishra, Mostafa Rohaninejad, Xi Chen, and Pieter Abbeel. A simple neural attentive meta-
+learner. In 6th International Conference on Learning Representations. OpenReview.net, 2018. URL
+https://openreview.net/forum?id=B1DmUzWAW."
+REFERENCES,0.27299703264094954,"[64] Luisa M. Zintgraf, Kyriacos Shiarlis, Vitaly Kurin, Katja Hofmann, and Shimon Whiteson. Fast context
+adaptation via meta-learning. In Proceedings of the 36th International Conference on Machine Learning,
+pages 7693–7702. PMLR, 2019. URL http://proceedings.mlr.press/v97/zintgraf19a.html."
+REFERENCES,0.2744807121661721,"[65] Anusha Nagabandi, Ignasi Clavera, Simin Liu, Ronald S. Fearing, Pieter Abbeel, Sergey Levine, and
+Chelsea Finn. Learning to adapt in dynamic, real-world environments through meta-reinforcement
+learning. In 7th International Conference on Learning Representations. OpenReview.net, 2019. URL
+https://openreview.net/forum?id=HyztsoC5Y7."
+REFERENCES,0.27596439169139464,"[66] Haozhe Wang, Jiale Zhou, and Xuming He. Learning context-aware task reasoning for efficient meta
+reinforcement learning. In Proceedings of the 19th International Conference on Autonomous Agents and
+Multiagent Systems, pages 1440–1448. International Foundation for Autonomous Agents and Multiagent
+Systems, 2020. URL https://dl.acm.org/doi/abs/10.5555/3398761.3398927."
+REFERENCES,0.2774480712166172,"[67] Richa Upadhyay, Ronald Phlypo, Rajkumar Saini, and Marcus Liwicki. Sharing to learn and learning to
+share - fitting together meta-learning, multi-task learning, and transfer learning: A meta review. CoRR,
+abs/2111.12146, 2021. URL https://arxiv.org/abs/2111.12146."
+REFERENCES,0.2789317507418398,"[68] Jacob Beck, Matthew Thomas Jackson, Risto Vuorio, and Shimon Whiteson. Hypernetworks in meta-
+reinforcement learning. In Conference on Robot Learning, pages 1478–1487. PMLR, 2022. URL
+https://proceedings.mlr.press/v205/beck23a.html."
+REFERENCES,0.28041543026706234,"[69] Elad Sarafian, Shai Keynan, and Sarit Kraus. Recomposing the reinforcement learning building blocks
+with hypernetworks. In Proceedings of the 38th International Conference on Machine Learning, pages
+9301–9312. PMLR, 2021. URL http://proceedings.mlr.press/v139/sarafian21a.html."
+REFERENCES,0.2818991097922849,"[70] Qinyuan Ye and Xiang Ren. Learning to generate task-specific adapters from task description. In
+Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics, pages 646–
+653. Association for Computational Linguistics, 2021. doi: 10.18653/v1/2021.acl-short.82. URL
+https://doi.org/10.18653/v1/2021.acl-short.82."
+REFERENCES,0.28338278931750743,"[71] Jonathan Pilault, Amine El hattami, and Christopher Pal. Conditionally adaptive multi-task learning:
+Improving transfer learning in NLP using fewer parameters & less data. In International Conference on
+Learning Representations, 2021. URL https://openreview.net/forum?id=de11dbHzAMF."
+REFERENCES,0.28486646884273,"[72] Rabeeh Karimi Mahabadi, Sebastian Ruder, Mostafa Dehghani, and James Henderson. Parameter-efficient
+multi-task fine-tuning for transformers via shared hypernetworks. In Proceedings of the 59th Annual
+Meeting of the Association for Computational Linguistics, pages 565–576. Association for Computa-
+tional Linguistics, 2021. doi: 10.18653/v1/2021.acl-long.47. URL https://doi.org/10.18653/v1/
+2021.acl-long.47."
+REFERENCES,0.28635014836795253,"[73] Hamish Ivison and Matthew E. Peters. Hyperdecoders: Instance-specific decoders for multi-task NLP. In
+Findings of the Association for Computational Linguistics, pages 1715–1730. Association for Computa-
+tional Linguistics, 2022. URL https://aclanthology.org/2022.findings-emnlp.124."
+REFERENCES,0.2878338278931751,"[74] Haoxiang Shi, Rongsheng Zhang, Jiaan Wang, Cen Wang, Yinhe Zheng, and Tetsuya Sakai. Layerconnect:
+Hypernetwork-assisted inter-layer connector to enhance parameter efficiency. In Proceedings of the 29th
+International Conference on Computational Linguistics, pages 3120–3126. International Committee on
+Computational Linguistics, 2022. URL https://aclanthology.org/2022.coling-1.276."
+REFERENCES,0.2893175074183976,"[75] Sylvestre-Alvise
+Rebuffi,
+Hakan Bilen,
+and
+Andrea Vedaldi.
+Learning multiple
+visual
+domains
+with
+residual
+adapters.
+In
+Advances
+in
+Neural
+Information
+Processing
+Sys-
+tems, pages 506–516, 2017.
+URL https://proceedings.neurips.cc/paper/2017/hash/
+e7b24b112a44fdd9ee93bdf998c6ca0e-Abstract.html."
+REFERENCES,0.29080118694362017,"[76] Neil Houlsby, Andrei Giurgiu, Stanislaw Jastrzebski, Bruna Morrone, Quentin De Laroussilhe, Andrea
+Gesmundo, Mona Attariyan, and Sylvain Gelly. Parameter-efficient transfer learning for NLP. In
+Proceedings of the 36th International Conference on Machine Learning, pages 2790–2799. PMLR, 09–15
+Jun 2019. URL https://proceedings.mlr.press/v97/houlsby19a.html."
+REFERENCES,0.2922848664688427,"[77] Jonas Pfeiffer, Andreas Rücklé, Clifton Poth, Aishwarya Kamath, Ivan Vulic, Sebastian Ruder, Kyunghyun
+Cho, and Iryna Gurevych. Adapterhub: A framework for adapting transformers. In Proceedings of the
+2020 Conference on Empirical Methods in Natural Language Processing: System Demonstrations, pages
+46–54. Association for Computational Linguistics, 2020. doi: 10.18653/v1/2020.emnlp-demos.7. URL
+https://doi.org/10.18653/v1/2020.emnlp-demos.7."
+REFERENCES,0.29376854599406527,"[78] Jonas Pfeiffer, Ivan Vuli´c, Iryna Gurevych, and Sebastian Ruder.
+MAD-X: An Adapter-Based
+Framework for Multi-Task Cross-Lingual Transfer. In Proceedings of the 2020 Conference on Em-
+pirical Methods in Natural Language Processing (EMNLP), pages 7654–7673, Online, November
+2020. Association for Computational Linguistics.
+doi: 10.18653/v1/2020.emnlp-main.617.
+URL
+https://aclanthology.org/2020.emnlp-main.617."
+REFERENCES,0.2952522255192878,"[79] Hang Le, Juan Miguel Pino, Changhan Wang, Jiatao Gu, Didier Schwab, and Laurent Besacier.
+Lightweight adapter tuning for multilingual speech translation. In Proceedings of the 59th Annual
+Meeting of the Association for Computational Linguistics, pages 817–824. Association for Computa-
+tional Linguistics, 2021. doi: 10.18653/v1/2021.acl-short.103. URL https://doi.org/10.18653/v1/
+2021.acl-short.103."
+REFERENCES,0.29673590504451036,"[80] Chin-Lun Fu, Zih-Ching Chen, Yun-Ru Lee, and Hung-yi Lee. Adapterbias: Parameter-efficient token-
+dependent representation shift for adapters in NLP tasks. In Findings of the Association for Computa-
+tional Linguistics: NAACL 2022, pages 2608–2621. Association for Computational Linguistics, 2022.
+doi: 10.18653/v1/2022.findings-naacl.199. URL https://doi.org/10.18653/v1/2022.findings-
+naacl.199."
+REFERENCES,0.29821958456973297,"[81] Bethan Thomas, Samuel Kessler, and Salah Karout. Efficient adapter transfer of self-supervised speech
+models for automatic speech recognition. In International Conference on Acoustics, Speech and Signal
+Processing, pages 7102–7106. IEEE, 2022. doi: 10.1109/ICASSP43922.2022.9746223. URL https:
+//doi.org/10.1109/ICASSP43922.2022.9746223."
+REFERENCES,0.2997032640949555,"[82] David Ha, Andrew M. Dai, and Quoc V. Le. Hypernetworks. In 5th International Conference on Learning
+Representations. OpenReview.net, 2017. URL https://openreview.net/forum?id=rkpACe1lx."
+REFERENCES,0.30118694362017806,"[83] Andrew William Moore. Efficient memory-based learning for robot control. Technical report, University
+of Cambridge, Computer Laboratory, 1990."
+REFERENCES,0.3026706231454006,"[84] Richard S. Sutton.
+Generalization in reinforcement learning: Successful examples using sparse
+coarse coding.
+In Advances in Neural Information Processing Systems, pages 1038–1044. MIT
+Press, 1995. URL http://papers.nips.cc/paper/1109-generalization-in-reinforcement-
+learning-successful-examples-using-sparse-coarse-coding."
+REFERENCES,0.30415430267062316,"[85] Greg Brockman, Vicki Cheung, Ludwig Pettersson, Jonas Schneider, John Schulman, Jie Tang, and
+Wojciech Zaremba. Openai gym. CoRR, abs/1606.01540, 2016. URL http://arxiv.org/abs/
+1606.01540."
+REFERENCES,0.3056379821958457,"[86] Andrew G. Barto, Richard S. Sutton, and Charles W. Anderson. Neuronlike adaptive elements that can
+solve difficult learning control problems. IEEE Trans. Syst. Man Cybern., 13(5):834–846, 1983. doi:
+10.1109/TSMC.1983.6313077. URL https://doi.org/10.1109/TSMC.1983.6313077."
+REFERENCES,0.30712166172106825,"[87] Amy Zhang, Shagun Sodhani, Khimya Khetarpal, and Joelle Pineau. Learning robust state abstrac-
+tions for hidden-parameter block mdps. In 9th International Conference on Learning Representations.
+OpenReview.net, 2021. URL https://openreview.net/forum?id=fmOOI2a3tQP."
+REFERENCES,0.3086053412462908,"[88] Charles Packer, Katelyn Gao, Jernej Kos, Philipp Krähenbühl, Vladlen Koltun, and Dawn Song. Assessing
+generalization in deep reinforcement learning. CoRR, abs/1810.12282, 2018. URL http://arxiv.org/
+abs/1810.12282."
+REFERENCES,0.31008902077151335,"[89] Emanuel Todorov, Tom Erez, and Yuval Tassa. Mujoco: A physics engine for model-based control.
+In International Conference on Intelligent Robots and Systems, pages 5026–5033. IEEE, 2012. doi:
+10.1109/IROS.2012.6386109. URL https://doi.org/10.1109/IROS.2012.6386109."
+REFERENCES,0.3115727002967359,"[90] John Schulman, Philipp Moritz, Sergey Levine, Michael I. Jordan, and Pieter Abbeel. High-dimensional
+continuous control using generalized advantage estimation. In 4th International Conference on Learning
+Representations, 2016. URL http://arxiv.org/abs/1506.02438."
+REFERENCES,0.31305637982195844,"[91] Ryan Julian, Benjamin Swanson, Gaurav S. Sukhatme, Sergey Levine, Chelsea Finn, and Karol Hausman.
+Never stop learning: The effectiveness of fine-tuning in robotic reinforcement learning. In Conference
+on Robot Learning, pages 2120–2136. PMLR, 2020. URL https://proceedings.mlr.press/v155/
+julian21a.html."
+REFERENCES,0.314540059347181,"[92] Xue Bin Peng, Erwin Coumans, Tingnan Zhang, Tsang-Wei Edward Lee, Jie Tan, and Sergey Levine.
+Learning agile robotic locomotion skills by imitating animals. In Robotics: Science and Systems XVI,
+2020. doi: 10.15607/RSS.2020.XVI.064. URL https://doi.org/10.15607/RSS.2020.XVI.064."
+REFERENCES,0.31602373887240354,"[93] Laura M. Smith, J. Chase Kew, Xue Bin Peng, Sehoon Ha, Jie Tan, and Sergey Levine. Legged robots
+that keep on learning: Fine-tuning locomotion policies in the real world. In International Conference
+on Robotics and Automation, pages 1593–1599. IEEE, 2022. doi: 10.1109/ICRA46639.2022.9812166.
+URL https://doi.org/10.1109/ICRA46639.2022.9812166."
+REFERENCES,0.31750741839762614,"[94] Chelsea Finn, Tianhe Yu, Justin Fu, Pieter Abbeel, and Sergey Levine. Generalizing skills with semi-
+supervised reinforcement learning. In 5th International Conference on Learning Representations. Open-
+Review.net, 2017. URL https://openreview.net/forum?id=ryHlUtqge."
+REFERENCES,0.3189910979228487,"[95] Luisa M. Zintgraf, Kyriacos Shiarlis, Maximilian Igl, Sebastian Schulze, Yarin Gal, Katja Hofmann,
+and Shimon Whiteson. Varibad: A very good method for bayes-adaptive deep RL via meta-learning.
+In 8th International Conference on Learning Representations. OpenReview.net, 2020. URL https:
+//openreview.net/forum?id=Hkl9JlBYvr."
+REFERENCES,0.32047477744807124,"[96] Luisa M. Zintgraf, Leo Feng, Cong Lu, Maximilian Igl, Kristian Hartikainen, Katja Hofmann, and Shimon
+Whiteson. Exploration in approximate hyper-state space for meta reinforcement learning. In Proceedings
+of the 38th International Conference on Machine Learning, pages 12991–13001. PMLR, 2021. URL
+http://proceedings.mlr.press/v139/zintgraf21a.html."
+REFERENCES,0.3219584569732938,"[97] Tao Chen,
+Adithyavairavan Murali,
+and Abhinav Gupta.
+Hardware conditioned policies
+for
+multi-robot
+transfer
+learning.
+In
+Advances
+in
+Neural
+Information
+Processing
+Sys-
+tems, pages 9355–9366, 2018.
+URL https://proceedings.neurips.cc/paper/2018/hash/
+b8cfbf77a3d250a4523ba67a65a7d031-Abstract.html."
+REFERENCES,0.32344213649851633,"[98] Shengyi Huang, Rousslan Fernand Julien Dossa, Chang Ye, Jeff Braga, Dipam Chakraborty, Kinal Mehta,
+and João G.M. Araújo. Cleanrl: High-quality single-file implementations of deep reinforcement learning
+algorithms. Journal of Machine Learning Research, 23(274):1–18, 2022. URL http://jmlr.org/
+papers/v23/21-1342.html."
+REFERENCES,0.3249258160237389,"[99] Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan,
+Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, et al.
+Pytorch: An imperative
+style, high-performance deep learning library.
+In Advances in Neural Information Processing
+Systems, pages 8024–8035, 2019. URL https://proceedings.neurips.cc/paper/2019/hash/
+bdbca288fee7f92f2bfa9f7012727740-Abstract.html."
+REFERENCES,0.3264094955489614,"[100] Minyoung Huh, Hossein Mobahi, Richard Zhang, Brian Cheung, Pulkit Agrawal, and Phillip Isola. The
+low-rank simplicity bias in deep networks. CoRR, abs/2103.10427, 2021. URL https://arxiv.org/
+abs/2103.10427."
+REFERENCES,0.327893175074184,"[101] Maximilian Igl, Kamil Ciosek, Yingzhen Li, Sebastian Tschiatschek, Cheng Zhang, Sam De-
+vlin, and Katja Hofmann.
+Generalization in reinforcement learning with selective noise in-
+jection and information bottleneck.
+In Advances in Neural Information Processing Sys-
+tems, pages 13956–13968, 2019.
+URL https://proceedings.neurips.cc/paper/2019/hash/
+e2ccf95a7f2e1878fcafc8376649b6e8-Abstract.html."
+REFERENCES,0.3293768545994065,"[102] Xingyu Lu, Kimin Lee, Pieter Abbeel, and Stas Tiomkin. Dynamics generalization via information
+bottleneck in deep reinforcement learning. CoRR, abs/2008.00614, 2020. URL https://arxiv.org/
+abs/2008.00614."
+REFERENCES,0.33086053412462907,"[103] Ben Eysenbach, Ruslan Salakhutdinov, and Sergey Levine.
+Robust predictable control.
+In
+Advances in Neural Information Processing Systems,
+pages 27813–27825,
+2021.
+URL
+https://proceedings.neurips.cc/paper/2021/hash/e9f85782949743dcc42079e629332b5f-
+Abstract.html."
+REFERENCES,0.3323442136498516,Appendix
+REFERENCES,0.33382789317507416,"A
+Formalising the Theoretical Foundations"
+REFERENCES,0.3353115727002967,"In this section, we more formally consider our theoretical results from Section 4. We first define
+our problem formulation in Assumption A.1, then state the theorem in Theorem A.5. Finally, we
+prove the theorem at the end of this section."
+REFERENCES,0.3367952522255193,"Assumption A.1. (Problem Formulation): Suppose we have a CMDP where S, A ⊆Rd and γ ∈
+(0, 1). The context c ∈Rd defines a goal location, with a reward function Rc(s, a, s′) = 1 if ||s′ −
+c|| < ¯τ and 0 otherwise. The episode terminates when the reward obtained is 1. Suppose further that
+¯τ = τD, with D ∈R+ being the distance the agent travels in a single step and τ ∈Z+ being the num-
+ber of steps it takes the agent to traverse a distance of ¯τ. Here τ and D are kept fixed across contexts."
+REFERENCES,0.33827893175074186,"Definition A.2. (Context Averaged Value Function): Denote ¯V π
+C (s) = Ec∼C[V π
+c (s)], i.e., the
+expected value of the value function of policy π in state s, over all contexts in the set C. Similarly
+¯V ∗
+C (s) = Ec∼C[V ∗
+c (s)] is the average of the value functions of the optimal policies on each context."
+REFERENCES,0.3397626112759644,"Definition A.3. (Value Function Optimality Ratio): Let 0 ≤απ
+C(s) =
+¯V π
+C (s)
+¯V ∗
+C (s) ≤1 denote how
+close the average value function of policy π is to the optimal context-specific value function. We use
+the optimality ratio instead of the optimality gap [47] because the optimality gap depends heavily on
+the reward scale of the environment, whereas the optimality ratio depends only on the ratios."
+REFERENCES,0.34124629080118696,Definition A.4. (Minimum Inter-context Distance): Let dmin = minci̸=cj∈C⌈||ci−cj||
+REFERENCES,0.3427299703264095,"D
+⌉be the
+minimum number of steps required to travel between any two context centers."
+REFERENCES,0.34421364985163205,"Theorem A.5. Then, in this problem space, we have the following:"
+REFERENCES,0.3456973293768546,"(i) For some set of contexts Cfar with cardinality N, and some state s, all deterministic unaware
+policies π will have:"
+REFERENCES,0.34718100890207715,"απ
+Cfar(s) =
+¯V π
+Cfar(s)
+¯V ∗
+Cfar(s) ≤1"
+REFERENCES,0.3486646884272997,"N
+1 −γNdmin"
+REFERENCES,0.35014836795252224,"1 −γdmin
+(1)"
+REFERENCES,0.3516320474777448,Additionally:
+REFERENCES,0.35311572700296734,"lim
+dmin→∞απ
+Cfar(s) →1 N
+(2)"
+REFERENCES,0.3545994065281899,"i.e., as the contexts within Cfar move further away from each other the agent’s performance
+scales inversely with the number of contexts."
+REFERENCES,0.3560830860534125,"(ii) For some set, Cclose and all states s, at least one deterministic unaware policy πg will have:"
+REFERENCES,0.35756676557863504,"¯V πg
+Cclose(s)
+¯V ∗
+Cclose(s) > γτ
+(3)"
+REFERENCES,0.3590504451038576,regardless of the number of contexts in Cclose.
+REFERENCES,0.36053412462908013,"Proof. (i) Consider a set of contexts Cfar such that for all ci, cj ∈Cfar, i ̸= j, ||ci −cj|| > 4¯τ.
+Consider the state s = 1"
+REFERENCES,0.3620178041543027,"N
+PN
+i=1 ci, i.e., in the middle of all contexts. Now, suppose the optimal policy
+per context would require only β steps to reach the appropriate goal. An unaware policy that reaches
+every goal, by contrast, must travel to each context in sequence. If this policy visits c1, c2, . . . , cN, in
+order, then the value functions for each context would be:"
+REFERENCES,0.36350148367952523,"• V π
+c1(s) = γβ · 1 = V ∗
+c1(s)"
+REFERENCES,0.3649851632047478,"• V π
+c2(s) = γβ+⌈||c1−c2|| D
+⌉"
+REFERENCES,0.3664688427299703,"• V π
+c3(s) = γβ+⌈||c1−c2||"
+REFERENCES,0.36795252225519287,"D
+⌉+⌈||c2−c3|| D
+⌉,"
+REFERENCES,0.3694362017804154,"and so on. Let dmin be the number of steps required to move between the two closest distinct contexts
+in Cfar. Thus, dmin ≥4¯τ−¯τ−¯τ"
+REFERENCES,0.37091988130563797,"D
+= 2τ.6 Then, V π
+ci(s) ≤γβ+(i−1)dmin. Now,"
+REFERENCES,0.3724035608308605,"¯V π
+Cfar(s) = Ec∼Cfar[V π
+c (s)] = 1 N N
+X"
+REFERENCES,0.37388724035608306,"i=1
+V π
+ci(s) ≤1 N N
+X"
+REFERENCES,0.37537091988130566,"i=1
+γβ+(i−1)dmin"
+REFERENCES,0.3768545994065282,"= γβ 1 N N
+X"
+REFERENCES,0.37833827893175076,"i=1
+γ(i−1)dmin"
+REFERENCES,0.3798219584569733,= γβ 1
+REFERENCES,0.38130563798219586,"N
+1 −γNdmin"
+REFERENCES,0.3827893175074184,1 −γdmin
+REFERENCES,0.38427299703264095,"= ¯V ∗
+Cfar(s) 1"
+REFERENCES,0.3857566765578635,"N
+1 −γNdmin"
+REFERENCES,0.38724035608308605,1 −γdmin
+REFERENCES,0.3887240356083086,"Hence, α =
+¯V π
+Cfar (s)
+¯V ∗
+Cfar (s) ≤1"
+REFERENCES,0.39020771513353114,"N
+1−γNdmin"
+REFERENCES,0.3916913946587537,"1−γdmin . Finally, as dmin →∞, γdmin →0 and γNdmin →0. Hence,"
+REFERENCES,0.39317507418397624,limN→∞α = 1 N .
+REFERENCES,0.39465875370919884,"(ii) Consider a set of contexts Cclose such that for all ci, cj ∈Cclose, ||ci −cj|| < ¯τ. Then, consider an
+unaware policy that always travels to the joint intersection point of these contexts. This intersection
+point is at most ¯τ away from the closest context to the agent, therefore the agent will perform at most
+τ unnecessary steps compared to the optimal policy. Hence, its value function has a lower bound of
+V ∗
+ci(s)γτ, and we have
+V ∗
+ci(s) ≥V π
+ci(s) ≥V ∗
+ci(s)γτ"
+REFERENCES,0.3961424332344214,"Therefore,"
+REFERENCES,0.39762611275964393,"¯V π
+Cclose(s) = Ec∼Cclose[V π
+c (s)]"
+REFERENCES,0.3991097922848665,"≥Ec∼Cclose[V ∗
+c (s)γτ]
+= γτEc∼Cclose[V ∗
+c (s)]"
+REFERENCES,0.40059347181008903,"= γτ ¯V ∗
+Cclose(s)"
+REFERENCES,0.4020771513353116,"And we have:
+¯V π
+Cclose(s)
+¯V ∗
+Cclose(s) ≥γτ"
+REFERENCES,0.4035608308605341,"B
+Linking Theory and Practice"
+REFERENCES,0.4050445103857567,"The formulation in Assumption A.1 has consistent dynamics and context-dependent rewards (as
+the context defines the goal location, and the transition dynamics do not depend on the context). This
+is in contrast to the problem we aim to study, which has consistent rewards, but context-dependent
+dynamics; however, we can show that for the environment considered in Appendix A, these two
+are equivalent."
+REFERENCES,0.4065281899109792,"We can obtain the context-dependent dynamics formulation under the assumptions in Section 2, i.e.,
+that only the transition dynamics change, as follows. Suppose the context defines a rotation matrix
+Ci ∈Rd×d, with dynamics equation T(s, a) = s′ = s+Cia and initial state s0 = 0. Here the goal is
+a fixed location g ∈Rd. The episode would terminate with a reward of 1 if ||s′−g|| < ¯τ. We can then
+perform a coordinate transform to obtain C−1
+i
+s′ = C−1
+i
+s + a. The goal would then depend on the
+context gci = C−1
+i
+g and the effect of an action in this new space would be consistent across contexts."
+REFERENCES,0.40801186943620177,"6This is because, while the centers of the circles ci and cj are further than 4¯τ apart, their closest edges are
+only at least 2¯τ apart."
+REFERENCES,0.4094955489614243,"In essence, we change the reference frame to be that of the agent, leading to separate goal locations
+for each context, but consistent dynamics—corresponding to the problem in Assumption A.1."
+REFERENCES,0.41097922848664686,"In the remainder of this section, we link our theoretical and empirical results, showing that the ODE
+(for some context distributions) is an example of a non-overlapping environment, while in CartPole,
+an unaware policy can perform well."
+REFERENCES,0.4124629080118694,"B.1
+ODE"
+REFERENCES,0.413946587537092,"Here we show that, in the ODE domain, the Unaware model can either perform well or poorly,
+depending on the context set it is evaluated on. In particular, we train models on context sets CA
+train =
+{1, 5} and CB
+train = {−5, −1, 1, 5} and evaluate on CA
+test = [0, 10] and CB
+test = [−10, 10]. These
+results are shown in Fig. 7. When only considering the positive contexts (left), the Unaware model
+performs only slightly worse than the Concat model. This corresponds to case (ii) in Theorem A.5,
+where the contexts are similar enough for a single policy to perform well. However, when considering
+both positive and negative contexts (right), the Unaware model fails completely, and performs much
+worse than the context-aware ones. This is because, in the ODE domain, positive and negative
+contexts cannot be solved using the same action. This corresponds to case (i) in Theorem A.5, where
+making progress on one context results in negative progress on another."
+REFERENCES,0.41543026706231456,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0 0 50 100 150 200 AER"
+REFERENCES,0.4169139465875371,Positive
+REFERENCES,0.41839762611275966,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0 1e6"
+REFERENCES,0.4198813056379822,Positive and Negative
+REFERENCES,0.42136498516320475,Training Time (Steps)
+REFERENCES,0.4228486646884273,"Unaware
+Concat
+Adapter"
+REFERENCES,0.42433234421364985,"Figure 7: Here we show results in the ODE domain. On the left, we train on {1, 5} and evaluate on
+[0, 10]. On the right, we consider both negative and positive contexts, training on {−5, −1, 1, 5} and
+evaluating on [−10, 10]. The Unaware model performs much better when only considering positive
+contexts, even though the context-aware models still outperform it."
+REFERENCES,0.4258160237388724,"B.2
+CartPole"
+REFERENCES,0.42729970326409494,"We now investigate CartPole. In particular, we vary only the pole length, and consider the training con-
+texts as {1, 4, 6}, with the evaluation contexts being 301 equally-spaced points between 0.1 and 10."
+REFERENCES,0.4287833827893175,"These results are shown in Fig. 8. While the Unaware model can achieve comparable generalisation
+performance to the context-informed models, it takes significantly longer to do so. In particular, to
+obtain an average reward above 400, the Unaware model must train for more than 600k steps, whereas
+cGate, Concat and our Adapter reach this threshold before 100k steps. This shows that, while context
+is not necessary in this domain, incorporating it may be beneficial and can lead to much more sample-
+efficient generalisation compared to the Unaware model. This is particularly relevant when training
+on multiple training contexts, which seems to cause interference for the Unaware model. The context-
+aware approaches, however, are not as susceptible to this problem, as they are able to distinguish
+experience from different contexts. Furthermore, most of the context-aware models perform similarly
+in this case. In particular, our Adapter, Concat and cGate converge rapidly, while FLAP converges
+slightly slower, but achieves comparable generalisation performance at the end of training."
+REFERENCES,0.43026706231454004,"0
+2
+4
+6
+8
+Training Time (Steps)
+1e5 100 200 300 400 500 AER"
+REFERENCES,0.4317507418397626,"Unaware
+Concat
+Adapter
+cGate
+FLAP"
+REFERENCES,0.4332344213649852,"Figure 8: Showing the average evaluation reward as we increase training time for CartPole. Mean
+performance over seeds is shown and standard deviation is shaded."
+REFERENCES,0.43471810089020774,"0
+20
+40
+60
+80
+100
+Mass 0 50 100 150 200 250"
+REFERENCES,0.4362017804154303,Distance Travelled
+REFERENCES,0.43768545994065283,"Unaware
+Concat
+Adapter"
+REFERENCES,0.4391691394658754,"Figure 9: Mass vs. Distance Travelled (proportional to reward), at the end of training for the Ant
+domain. Red lines are the training contexts. Mean performance is shown, with standard deviation
+over 16 seeds shaded."
+REFERENCES,0.4406528189910979,"B.3
+Ant"
+REFERENCES,0.4421364985163205,"Here we consider the Ant domain, and vary the mass, without any distractor variables. As seen in
+Fig. 9, the Unaware model performs worse than the context-aware ones. This performance gap is due
+to the Unaware model being unable to simultaneously perform well on light and heavy masses, as
+seen in Fig. 9. In contrast, by utilising context, the agent can perform well in both settings despite
+their significant differences."
+REFERENCES,0.443620178041543,"C
+cGate as a Special Case of the Decision Adapter"
+REFERENCES,0.44510385756676557,"As discussed in Section 5, here we show that our architecture is, in fact, a generalisation of another
+network architecture introduced by prior work. Benjamins et al. [13] introduce cGate, which obtains
+an action as follows. It first calculates ϕ(s) ∈Rd using the state encoder ϕ and g(c) ∈Rd using the"
+REFERENCES,0.4465875370919881,"context encoder g. Then, it calculates features h = cGate(s, c) = ϕ(s) ⊙g(c), with ⊙being the
+elementwise product. The action is obtained as a = f(h), where f : Rd →A is the learned policy.
+Here, both the state encoder ϕ and the context encoder g correspond to neural networks that each
+output a d-dimensional vector."
+REFERENCES,0.44807121661721067,"This approach is a specific instantiation of our general adapter architecture, where we have one
+adapter module A = Ai. In particular, the state encoder ϕ corresponds to the partial neural network
+before our adapter module, i.e., layers L1, L2, . . . , Li−1. The policy f corresponds to the layers after
+our adapter module, Li, Li+1, . . . , Ln. Thus, we have that ϕ(s) = Li−1(xi−1) and f(h) = Ln(xn).
+If we define our adapter network A(ϕ(s)|c) = ϕ(s) ⊙g(c), we can recover the same result as cGate.
+This would be possible if we let our adapter consist of one layer without a nonlinearity or a bias
+vector, with its weight matrix being set to W = H(c) = diag(g(c)). This would result in"
+REFERENCES,0.4495548961424332,"A(ϕ(s)|c) = Wϕ(s) = diag(g(c))ϕ(s) = g(c) ⊙ϕ(s) = cGate(s, c),"
+REFERENCES,0.45103857566765576,"where we have used the fact that, for two vectors a, b ∈Rd, the matrix multiplication diag(a)b is the
+same as the elementwise product a ⊙b. This output vector is then passed to the policy network f.
+Our approach, however, is strictly more powerful than a single elementwise product, as our adapter
+can be an entire nonlinear neural network."
+REFERENCES,0.45252225519287836,"D
+Experimental Details"
+REFERENCES,0.4540059347181009,"D.1
+Environments"
+REFERENCES,0.45548961424332346,This section contains more details about the experimental setup of our environments.
+REFERENCES,0.456973293768546,"D.1.1
+Context Normalisation"
+REFERENCES,0.45845697329376855,"Before we pass the ground truth context to the models, we first normalise them to a range between 0
+and 1. In particular, for each context dimension i, we calculate the context to be given to the agents
+cnorm,i as
+cnorm,i =
+ci
+maxi
+,"
+REFERENCES,0.4599406528189911,"where maxi is the largest value for dimension i in the training context set. This results in the largest
+training contexts having values of 1.0. During evaluation, we perform the same normalisation, so
+contexts outside the convex hull of the training set will potentially result in values larger than 1.0."
+REFERENCES,0.46142433234421365,"D.1.2
+ODE"
+REFERENCES,0.4629080118694362,"During training, for each context, we cycle between starting states, with each episode taking a new
+starting state from the set {1.0, 0.5, −0.5, −1.0}. Thus, the agent trains on the first context for 4
+episodes, each with a different initial state. Then it goes on to the second context, and so on. When we
+reach the end of the context list, we simply start at the first context again. We do this to ensure training
+is comparable for each method, and that there is sufficient diversity in the initial state distribution.
+During evaluation, we fix the starting state at x0 = 1.0 to isolate the effect of context."
+REFERENCES,0.46439169139465875,"D.1.3
+CartPole"
+REFERENCES,0.4658753709198813,"Table 1 illustrates the context variables we use in CartPole. While we consider all five variables as
+the context, we varied only the pole length for our experiments. The value for each state variable at
+the start of the episode is randomly sampled from the interval [−0.05, 0.05]."
+REFERENCES,0.46735905044510384,Table 1: The five context variables and their default values.
+REFERENCES,0.4688427299703264,"Name
+Symbol
+Default Value"
+REFERENCES,0.47032640949554894,"Gravity
+g
+9.80
+Cart Mass
+mc
+1.00
+Pole Mass
+mp
+0.10
+Pole Length
+l
+0.50
+Force Magnitude
+˜F
+10.00"
+REFERENCES,0.47181008902077154,"D.2
+Hyperparameters"
+REFERENCES,0.4732937685459941,"We use ReLU for all activation functions. We also aim to have an equal number of learnable parameters
+for each method and adjust the number of hidden nodes to achieve this."
+REFERENCES,0.47477744807121663,"We use Soft-Actor-Critic [39, SAC] for all methods, to isolate and fairly compare the network
+architectures. We use the high-performing and standard implementation of SAC from the CleanRL
+library [98] with neural networks being written in PyTorch [99]. We use the default hyperparameters,
+which are listed in Table 2. SAC learns both an actor and a critic. The actor takes as input the
+state and outputs µ and log(σ), which are used to construct the probability distribution over actions
+N(µ, σ) which is sampled from to obtain an action. The critic receives the performed action a as
+well as the state s, and outputs a single number, representing the approximate action-value ˆq(s, a).
+Fig. 10 illustrates each baseline."
+REFERENCES,0.4762611275964392,Table 2: The default hyperparameters we use in the CleanRL implementation.
+REFERENCES,0.47774480712166173,"Name
+Value"
+REFERENCES,0.4792284866468843,"Buffer Size
+1 000 000
+γ
+0.99
+τ
+0.005
+Batch Size
+256
+Exploration Noise
+0.1
+First Learning Timestep
+5000
+Policy Learning Rate
+0.0003
+Critic Learning Rate
+0.001
+Policy Update Frequency
+2
+Target Network Update Frequency
+1
+Noise Clip
+0.5
+Automatically Tune Entropy
+Yes"
+REFERENCES,0.4807121661721068,"D.3
+Adapter Configuration and Design Decisions"
+REFERENCES,0.4821958456973294,"Now, our method provides a great degree of flexibility in terms of configuration, and we must make
+multiple design decisions to obtain a usable instantiation of the Decision Adapter. In this section,
+we briefly detail the default settings we use and justify why these are reasonable. We empirically
+investigate the merits of these choices and compare them against alternative options in Appendix E."
+REFERENCES,0.4836795252225519,"D.3.1
+Bottleneck Architecture"
+REFERENCES,0.48516320474777447,"We use a bottleneck architecture in our generated adapter modules, as described by Houlsby et al.
+[76]. In essence, we have a down-projection layer that transforms features from di-dimensional to
+p-dimensional, with p < di. Then, the second layer up-projects this back to a di-dimensional vector."
+REFERENCES,0.486646884272997,"The bottleneck architecture is beneficial for two reasons. Firstly, it reduces the number of required
+parameters in our adapter model. For instance, if we have two layers in this bottleneck architecture,
+the number of parameters would differ substantially compared to one layer that transforms the
+di-dimensional features to di dimensions. In the first case, the number of parameters would be on
+the order of O(di × p + p × di), corresponding to a di × p matrix for the down-projection and a
+p × di matrix for the up-projection.7 If we only have one layer, then we have a single di × di matrix.
+Thus, the bottleneck requires O(pdi) parameters, whereas the single layer requires O(d2
+i ). If we, for
+example, have di = 256 and p = 32, the bottleneck architecture has four times fewer parameters
+than the single layer. This, in turn, makes it easier for the adapter hypernetwork to generate useful
+weights."
+REFERENCES,0.48813056379821956,"Secondly, the bottleneck architecture imparts a low-rank inductive bias on the adapter, which may
+prevent it from overfitting [100]. This idea is related to prior work that has shown that, counterintu-
+itively, reducing the capacity of the agent’s neural network can improve generalisation and reduce"
+REFERENCES,0.4896142433234421,"7The bias vectors correspond to an additional p + di parameters, but we omit this term as it is dominated by
+the number of parameters in the weight matrices. s s a σ"
+REFERENCES,0.4910979228486647,"(a) The Unaware Model s c s
+a σ"
+REFERENCES,0.49258160237388726,(b) The Concatenate Model s s c ⊙ σ a
+REFERENCES,0.4940652818991098,"(c) The cGate Model, with ⊙indicating an
+elementwise product s s c · a σ"
+REFERENCES,0.49554896142433236,"(d) The FLAP Model, with · indicat-
+ing a dot product"
+REFERENCES,0.4970326409495549,"Figure 10: Illustrating the architectures of each of our baselines. Here we consider the actor’s
+architecture, with two separate output heads, one predicting the mean action a and the other predicting
+the log of the standard deviation (denoted as σ in this figure). In each plot, the blue nodes represent
+the state inputs whereas the green one represents the context. In general, for the bottom row, the
+network architectures for the context and state encoders are not necessarily the same."
+REFERENCES,0.49851632047477745,"overfitting [101–103]. Although our approach does not incorporate information-bottleneck losses
+like these methods, the observed benefits of reduced capacity provide additional intuition for utilising
+the bottleneck architecture. Finally, despite any possible information loss due to the bottleneck layer,
+the skip connection allows the network to retain any important information from the input."
+REFERENCES,0.5,"D.4
+Compute"
+REFERENCES,0.5014836795252225,"For compute, we used an internal cluster consisting of nodes with NVIDIA RTX 3090 GPUs. For a
+single experiment and a single method, the runs took between 1 and 3 days to complete all seeds."
+REFERENCES,0.5029673590504451,"E
+Adapter Ablations"
+REFERENCES,0.5044510385756676,"Here we experimentally justify some of the adapter-specific design decisions we made for our
+empirical results. The experiments in this section also give us insight into how robust the Decision
+Adapter is to changing its configuration options. We investigate the effects of the following factors,
+with our conclusions listed in bold."
+REFERENCES,0.5059347181008902,"• The network architecture of the Adapter module. We find that Most adapter architectures
+perform well. This result is expanded upon in Appendix E.1.
+• Whether the hypernetwork uses chunking. Hypernetwork chunking outperforms non-
+chunking methods while using significantly fewer parameters (Appendix E.2).
+• Using a skip connection. The Decision Adapter can perform well with or without a skip
+connection (Appendix E.3)."
+REFERENCES,0.5074183976261127,"• The location of the adapter module in the main network. Most locations lead to high
+performance, except if the adapter is at the very start or very end of the network
+(Appendix E.4)."
+REFERENCES,0.5089020771513353,"• Having an activation function before the adapter. Not having an activation function before
+the adapter in the actor model outperforms the alternatives (Appendix E.5)."
+REFERENCES,0.5103857566765578,"For this entire section, we consider the ODE environment and follow the same procedure as in
+Section 7.1. We use the ODE due to its fast training, and the fact that context is necessary, which
+enables us to determine if a particular design choice of the Adapter results in poor use of the context."
+REFERENCES,0.5118694362017804,"E.1
+Adapter Architecture"
+REFERENCES,0.5133531157270029,"Here we examine the effects of changing the Adapter module’s network architecture. We are interested
+in how the architecture impacts performance for two reasons. First, we wish to empirically justify
+our bottleneck architecture. Second, we wish to show that the Adapter performs well with a wide
+variety of network architectures, and is not particularly sensitive to this choice."
+REFERENCES,0.5148367952522255,"0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0
+Training Time (Steps)
+1e5 0 50 100 150 200 AER"
+REFERENCES,0.516320474777448,"Adapter Architecture
+[]
+[8]
+[16]
+[32]
+[64]
+[256]
+[32, 32]"
+REFERENCES,0.5178041543026706,"Figure 11: Evaluating the effect of different adapter architectures. Mean performance is shown, with
+standard deviation shaded."
+REFERENCES,0.5192878338278932,"As discussed in Appendix D.3, we use a bottleneck architecture of size 32. Thus, the 256-dimensional
+features are transformed into 32-dimensional features and then projected back to 256 dimensions.
+We denote this architecture as [32], since the adapter has a single hidden layer of 32 neurons. Fig. 11
+illustrates the performance for various other adapter architectures. Most methods perform comparably,
+but using 8 hidden nodes or not having any hidden layers performs slightly worse than the base
+architecture. A large hidden layer of 256 nodes also does not outperform our bottleneck architecture.
+Finally, there is no particular benefit to having multiple layers in the adapter module."
+REFERENCES,0.5207715133531158,"E.2
+Hypernetwork Chunking"
+REFERENCES,0.5222551928783383,"Next, we compare our default architecture choice, which uses hypernetwork chunking, against
+non-chunking settings. We do this because hypernetwork chunking allows us to have significantly
+fewer learnable parameters (resulting in faster training) compared to the alternative of predicting the
+entire weight vector in one forward pass. Thus, if our approach performs comparably or better than
+non-chunking settings, then the chunking architecture is justified."
+REFERENCES,0.5237388724035609,"0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0
+Training Time (Steps)
+1e5 0 25 50 75 100 125 150 175 200 AER"
+REFERENCES,0.5252225519287834,"Hypernetwork Architecture
+Base
+[]
+[100,100]
+[100,100,100]
+Chunked [66, 66]"
+REFERENCES,0.526706231454006,"Figure 12: Comparing hypernetwork chunking (Base) compared to various non-chunking configura-
+tions as well as using larger chunks (Chunked[66, 66]). Mean performance is shown, with standard
+deviation shaded. Here, the values in the brackets represent the number of hidden nodes per layer,
+with [ ] corresponding to a hypernetwork that has no hidden layers."
+REFERENCES,0.5281899109792285,"We consider a non-chunking hypernetwork architecture of no hidden layers, as well as 2 and 3 hidden
+layers of size 100, respectively. Our final option is a chunked hypernetwork, with chunks of size
+660, and two hidden layers of size 66 each (this is roughly twice as large as our default configuration
+option discussed in Appendix D.3). These results are shown in Fig. 12. We find that both chunking
+configurations perform the best. The non-chunking approaches perform slightly worse, particularly if
+the hypernetwork has no hidden layers."
+REFERENCES,0.5296735905044511,"These non-chunking configurations also have significantly more learnable parameters than the default.
+For instance, the base setting results in the actor’s hypernetwork having around 16k parameters,
+whereas the [100, 100], non-chunking setting corresponds to roughly 1.7M parameters. In summary,
+by using hypernetwork chunking, we can obtain high performance while using a very small number
+of learnable parameters."
+REFERENCES,0.5311572700296736,"E.3
+Skip Connection"
+REFERENCES,0.5326409495548962,"Here we investigate whether a skip connection is beneficial or not. As mentioned in Section 5,
+the skip connection sets the updated x as x = A(x) + x, whereas if we remove it, the function
+becomes just x = A(x). In Fig. 13, we can see that using a skip connection performs similarly to the
+alternative. This shows that the Decision Adapter is robust to this parameter, and can perform well
+with or without a skip connection."
+REFERENCES,0.5341246290801187,"0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0
+Training Time (Steps)
+1e5 0 25 50 75 100 125 150 175 200 AER"
+REFERENCES,0.5356083086053413,"Skip Connection
+No Skip Connection"
+REFERENCES,0.5370919881305638,"Figure 13: Evaluating the effect of using a skip connection. Mean performance is shown, with
+standard deviation shaded. a s s"
+REFERENCES,0.5385756676557863,"A
+B
+C
+D"
+REFERENCES,0.5400593471810089,"Figure 14: Showing the base network architecture, with letters indicating adapter positions. For
+instance, an adapter placed at location (D) receives the action as input and returns a modified one."
+REFERENCES,0.5415430267062314,"E.4
+Adapter Location"
+REFERENCES,0.543026706231454,"We next examine the effects of changing the location of the adapter module in our network, and what
+happens if we have multiple modules. This information would be useful when using our method in
+practice, and deciding where and how many modules to place. There are generally many options
+regarding the location, as an adapter module can be placed between any two layers of the primary
+network."
+REFERENCES,0.5445103857566765,"As described in Section 5, our actor network consists of a “trunk”, containing one hidden layer, which
+maps the state to a 256-dimensional feature vector, and a one-layer action head, directly mapping the
+trunk features to an action. Here we consider the following locations for the adapter in both the actor
+and critic networks:"
+REFERENCES,0.5459940652818991,"Base The standard adapter used in the rest of this chapter, which is placed before the action head’s
+layer. In the critic, the adapter is placed before the last layer. This corresponds to location
+(C) in Fig. 14.
+BaseF Placing the adapter in the actor network before the final layer of the trunk, leaving the critic
+unchanged (location B).
+Start The adapter here is at the start of both networks, i.e., the adapter module receives the state as
+input (location A).
+End Here, we place the adapter at the very end. Thus, the adapter takes in the predicted action and
+outputs a modified one. The critic’s adapter is also placed at the end. This corresponds to
+location (D) in Fig. 14.
+AllF Three adapter modules, one at the start of the trunk, one before and one after its final layer. The
+critic also has three adapters, one at the start, one before the last layer and one after the last
+layer. The actor has adapters in locations (A), (B) and (C)."
+REFERENCES,0.5474777448071216,"In all cases, to ensure comparability against the base model, there is no activation function after the
+trunk in the actor model. These results are illustrated in Fig. 15. Overall, the base model performs the
+best. The adapter in the trunk performs slightly worse and the performance is quite poor if we put the
+adapter modules at the start of the networks. If we have three adapter modules, the performance is
+similar to only having one before the final layer. Finally, when adapting only the final action, the
+performance is also poor. Overall, the performance is low if we have the adapter only at the very"
+REFERENCES,0.5489614243323442,"start or end of the network. Within a range of locations in the “middle” of the network, however, the
+performance is high and only slightly worse than the default setting."
+REFERENCES,0.5504451038575667,"0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0
+Training Time (Steps)
+1e5 0 25 50 75 100 125 150 175 200 AER"
+REFERENCES,0.5519287833827893,"Base
+BaseF
+Start
+End
+AllF"
+REFERENCES,0.5534124629080118,"Figure 15: Evaluating the effect of the adapter module’s location. Mean performance is shown, with
+standard deviation shaded."
+REFERENCES,0.5548961424332344,"E.5
+Activation Function Before Adapter"
+REFERENCES,0.5563798219584569,"Our final ablation considers the benefits of not having an activation function before the adapter
+module inside the actor network. We perform this experiment to determine if our choice of not having
+an activation function before the adapter in the actor is justified, and if it is necessary to do the same
+for the critic."
+REFERENCES,0.5578635014836796,"0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0
+Training Time (Steps)
+1e5 0 25 50 75 100 125 150 175 200 AER"
+REFERENCES,0.5593471810089021,"No Activation
+No Activation (Critic)
+Activation
+Only log( ) Activation"
+REFERENCES,0.5608308605341247,"Figure 16: Comparing the effect of having an activation function before the adapter vs. not. The blue,
+green and red lines alter the actor’s architecture, whereas orange changes the critic. Blue corresponds
+to the base choice outlined in Appendix D.3. Mean performance is shown, with standard deviation
+shaded."
+REFERENCES,0.5623145400593472,"Here we consider four options: (1) not having an activation function after the trunk; (2) having one;
+(3) having an activation function after the trunk, but only for the standard deviation head; and (4)
+not having an activation before the adapter in the critic. Option (1) corresponds to the default choice.
+These results are shown in Fig. 16. Not having an activation function outperforms having one, and
+having an activation for only the standard deviation head is similar to not having one. Thus, not
+having an activation function before the adapter inside the critic network performs as well as the base
+option, which has this activation. Overall, this result justifies our design choice by showing that it
+performs comparably to or better than the alternatives."
+REFERENCES,0.5637982195845698,"F
+Additional Results"
+REFERENCES,0.5652818991097923,This section contains some additional results that we refer to in the main text.
+REFERENCES,0.5667655786350149,"F.1
+Single Dimension Interpolation, Train & Extrapolation"
+REFERENCES,0.5682492581602374,"See Fig. 17 for the performance of each model on the ODE on the particular context sets, Interpolation,
+Training and Extrapolation. These plots therefore correspond to subsets of the evaluation range in the
+left pane of Fig. 3."
+REFERENCES,0.56973293768546,"0
+1
+2
+3
+4
+5 0 50 100 150 200 AER Train"
+REFERENCES,0.5712166172106825,"0
+1
+2
+3
+4
+5
+Training Time (Steps)"
+REFERENCES,0.5727002967359051,Interpolation
+REFERENCES,0.5741839762611276,"0
+1
+2
+3
+4
+5
+1e5"
+REFERENCES,0.5756676557863502,Extrapolation
+REFERENCES,0.5771513353115727,"Unaware
+Concat
+Adapter
+cGate
+FLAP"
+REFERENCES,0.5786350148367952,"Figure 17: Showing the performance of each method in three different evaluation regimes, (left) the
+training contexts, (center) interpolation and (right) extrapolation. Mean performance is shown, with
+standard deviation shaded."
+REFERENCES,0.5801186943620178,"F.2
+Multiple Dimension Heatmaps"
+REFERENCES,0.5816023738872403,"Fig. 18 illustrates the granular performance of each method in the ODE domain, corresponding to
+the right pane of Fig. 3. Our Decision Adapter outperforms all baselines and, as can be seen in
+Figs. 18a and 18b, generalises further away from the training contexts than the Concat model. In
+particular, these heatmaps show that both models perform well on the training contexts (the blue
+squares). However, the Adapter generalises much better, especially to contexts far outside the training
+range. For example, when |c1| ∈[8, 10] (corresponding to the far left and far right of the heatmaps),
+the Adapter’s rewards are higher than the Concat model’s. The Adapter obtains between 50 and 150
+more reward than the Concat model – which is a substantial difference, as the maximum reward in
+this environment is 200. This region of context-space is far outside of the convex hull of the training
+range, which contains values of |c1| only up to 5.0. Closer to the training range; for instance, around
+the boundary of the green square, the Adapter still outperforms the Concat model, but the difference
+is less pronounced."
+REFERENCES,0.5830860534124629,"FLAP and cGate perform poorly, even though they obtain near-perfect rewards on the training
+contexts. There may be several reasons for this. First, here we train on 16 relatively sparsely
+distributed contexts, with 300k steps in total, resulting in fewer episodes in each context compared to
+Section 7.1. Second, with two dimensions, the interpolation range makes up a smaller proportion
+of the evaluation range compared to the one-dimensional case. This is because, in one dimension,
+the range [−5, 5] makes up half of the [−10, 10] evaluation range. In two dimensions, however,
+the interpolation range makes up only a quarter of the evaluation set. Thus, the overall average
+performance in Fig. 3 is more skewed towards extrapolation. This, coupled with the fact that
+both cGate and FLAP perform poorly on extrapolation (Fig. 17, right), may explain why they
+underperform in this case. Lastly, it is generally easier to generalise in the one-dimensional ODE, as
+the optimal action depends mainly on the signs of the context and state variables. By contrast, the
+multidimensional case is more difficult, as the dynamics equation includes a nonlinear action term.
+This is also why, for instance, our Decision Adapter performs worse in this case (around 160 overall
+evaluation reward) compared to the one-dimensional ODE (around 190)."
+REFERENCES,0.5845697329376854,"-10
+-9
+-8
+-7
+-6
+-5
+-4
+-3
+-2
+-1
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+avg
+c1"
+REFERENCES,0.586053412462908,"-10
+-9
+-8
+-7
+-6
+-5
+-4
+-3
+-2
+-1
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+avg
+c0"
+REFERENCES,0.5875370919881305,"22
+29
+53
+92
+104
+89
+66
+40
+45
+149 144 116
+28
+41
+51
+42
+76
+74
+37
+15
+7
+63"
+REFERENCES,0.5890207715133531,"18
+26
+61
+101 116 106
+84
+64
+54
+143 178 104
+31
+21
+55
+77
+98
+90
+35
+10
+8
+70"
+REFERENCES,0.5905044510385756,"50
+39
+69
+118 140 119 117
+78
+59
+157 187
+56
+22
+26
+70
+102 131 102
+42
+14
+11
+81"
+REFERENCES,0.5919881305637982,"53
+38
+69
+142 179 174 129 103
+74
+142 198
+28
+15
+46
+98
+130 167 128
+57
+20
+36
+96"
+REFERENCES,0.5934718100890207,"42
+61
+79
+153 192 198 157 110
+83
+143 198
+28
+26
+81
+114 189 185 133
+82
+62
+38
+112"
+REFERENCES,0.5949554896142433,"35
+66
+78
+146 179 199 187 113
+85
+131 199
+18
+45
+85
+174 199 177 132
+93
+49
+32
+115"
+REFERENCES,0.5964391691394659,"52
+76
+69
+134 165 196 195 138 123 114 189
+47
+79
+111 192 190 144
+85
+62
+47
+42
+117"
+REFERENCES,0.5979228486646885,"35
+48
+85
+141 162 175 169 139 158 133 190
+77
+134 150 177 166 128 111 100
+70
+56
+124"
+REFERENCES,0.599406528189911,"29
+52
+76
+127 149 146 148 137 166 141 190
+98
+140 149 168 172 169 155 116
+87
+39
+126"
+REFERENCES,0.6008902077151336,"32
+46
+79
+151 184 194 162 137 142 199 191 199 115 147 178 195 177 148 108
+60
+23
+137"
+REFERENCES,0.6023738872403561,"18
+43
+70
+138 190 199 183 152 188 199
+10
+199 140 133 179 199 180 145 117
+64
+59
+134"
+REFERENCES,0.6038575667655787,"33
+38
+74
+154 177 197 192 136 133 199 191 199 165 160 184 199 155 155
+98
+48
+44
+140"
+REFERENCES,0.6053412462908012,"17
+52
+75
+153 180 185 166 139 172 147 196 162 179 158 179 180 149 121
+91
+57
+44
+133"
+REFERENCES,0.6068249258160238,"10
+27
+58
+144 166 179 181 115 119
+75
+197
+76
+166 160 166 182 125 100
+95
+65
+52
+117"
+REFERENCES,0.6083086053412463,"22
+33
+64
+144 180 198 187 111 102
+83
+198
+30
+157 144 196 190 149
+99
+61
+49
+35
+116"
+REFERENCES,0.6097922848664689,"14
+12
+44
+162 196 199 186 109 111 113 199
+29
+109 156 192 199 166 129
+78
+54
+39
+119"
+REFERENCES,0.6112759643916914,"21
+27
+59
+176 197 199 142 100
+38
+132 199
+16
+68
+128 172 199 185 113
+88
+54
+26
+111"
+REFERENCES,0.612759643916914,"8
+17
+81
+178 192 161 124
+90
+33
+120 192
+19
+33
+106 143 184 180 105
+71
+50
+30
+101"
+REFERENCES,0.6142433234421365,"8
+38
+73
+165 163 119 102
+78
+41
+123 198 102
+50
+93
+141 155 183 110
+87
+47
+32
+100"
+REFERENCES,0.615727002967359,"53
+25
+95
+135 137 102
+87
+34
+65
+136 153 121
+42
+86
+123 127 164 136
+88
+56
+20
+95"
+REFERENCES,0.6172106824925816,"30
+36
+78
+118 115
+77
+75
+20
+67
+137 150 131
+29
+79
+103 119 149 118
+83
+49
+42
+86"
+REFERENCES,0.6186943620178041,"29
+39
+71
+142 165 162 145 102
+98
+139 178
+88
+84
+108 145 162 154 119
+80
+49
+34
+109"
+REFERENCES,0.6201780415430267,Average = 109.0
+REFERENCES,0.6216617210682492,(a) Concat
+REFERENCES,0.6231454005934718,"-10
+-9
+-8
+-7
+-6
+-5
+-4
+-3
+-2
+-1
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+avg
+c1"
+REFERENCES,0.6246290801186943,"-10
+-9
+-8
+-7
+-6
+-5
+-4
+-3
+-2
+-1
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+avg
+c0"
+REFERENCES,0.6261127596439169,"147 186 171 171 138 118 114
+88
+106 167 186 179
+85
+76
+87
+110 126 144 127 129 108 132"
+REFERENCES,0.6275964391691394,"152 188 177 174 180 130 103
+97
+102 185 192 178
+84
+82
+93
+127 158 165 135 126 126 141"
+REFERENCES,0.629080118694362,"145 174 183 185 183 169 112
+94
+94
+187 198 144
+86
+82
+109 147 183 176 140 136 123 145"
+REFERENCES,0.6305637982195845,"143 192 185 186 187 187 160
+84
+64
+180 198 112
+86
+91
+139 175 197 195 163 137 124 152"
+REFERENCES,0.6320474777448071,"148 182 185 186 187 187 180 104
+82
+186 198
+99
+76
+121 173 198 199 197 165 137 133 158"
+REFERENCES,0.6335311572700296,"151 180 186 186 187 187 187 140
+90
+175 198
+99
+75
+141 199 199 199 197 174 163 137 164"
+REFERENCES,0.6350148367952523,158 183 186 196 187 187 187 161 123 167 198 103 145 163 198 199 198 186 178 170 128 171
+REFERENCES,0.6364985163204748,148 183 190 185 192 187 187 162 191 139 197 118 193 177 182 184 186 182 165 147 126 172
+REFERENCES,0.6379821958456974,158 180 189 192 199 199 198 187 198 133 195 163 198 190 199 198 182 177 162 131 112 178
+REFERENCES,0.6394658753709199,147 174 182 184 199 199 199 186 197 199 191 199 198 178 199 199 192 187 146 152 119 182
+REFERENCES,0.6409495548961425,"144 161 177 177 192 193 199 175 198 199
+10
+199 197 174 196 199 193 180 171 134 135 172"
+REFERENCES,0.642433234421365,131 159 172 198 199 199 198 175 196 199 191 199 191 168 199 199 194 187 165 147 130 181
+REFERENCES,0.6439169139465876,136 180 186 185 185 182 162 166 198 150 195 123 198 168 184 182 190 197 177 160 133 173
+REFERENCES,0.6454005934718101,"122 148 176 170 164 175 186 168 189 111 197
+45
+131 129 170 183 172 164 146 136 107 152"
+REFERENCES,0.6468842729970327,"130 148 167 179 198 199 198 166 126 137 198
+27
+114 157 198 199 198 191 160 141 105 159"
+REFERENCES,0.6483679525222552,"131 141 188 198 199 199 192 129 100 150 198
+17
+77
+158 199 199 199 198 191 149 111 158"
+REFERENCES,0.6498516320474778,"127 154 177 198 199 199 183 113 110 150 198
+27
+45
+112 186 199 198 198 198 170 120 155"
+REFERENCES,0.6513353115727003,"133 167 184 197 187 177 140
+89
+122 198 198
+62
+47
+87
+171 191 195 194 194 168 140 154"
+REFERENCES,0.6528189910979229,"143 161 184 181 175 163 126
+89
+140 198 198 173
+54
+56
+122 188 187 194 181 170 141 154"
+REFERENCES,0.6543026706231454,"130 159 172 171 161 143 112
+99
+149 192 198 188
+53
+57
+103 141 183 180 170 170 143 146"
+REFERENCES,0.655786350148368,"132 141 164 158 150 128
+72
+118 130 189 195 182
+68
+70
+78
+123 158 172 157 155 153 138"
+REFERENCES,0.6572700296735905,141 169 180 184 183 177 162 133 138 171 187 126 114 126 161 178 185 184 165 149 126 159
+REFERENCES,0.658753709198813,Average = 159.0
+REFERENCES,0.6602373887240356,(b) Adapter
+REFERENCES,0.6617210682492581,"-10
+-9
+-8
+-7
+-6
+-5
+-4
+-3
+-2
+-1
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+avg
+c1"
+REFERENCES,0.6632047477744807,"-10
+-9
+-8
+-7
+-6
+-5
+-4
+-3
+-2
+-1
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+avg
+c0"
+REFERENCES,0.6646884272997032,"7
+14
+18
+22
+19
+37
+36
+49
+56
+88
+108
+88
+53
+40
+15
+15
+17
+32
+28
+25
+16
+37"
+REFERENCES,0.6661721068249258,"5
+12
+15
+70
+68
+28
+45
+39
+59
+102 130 104
+53
+51
+25
+22
+45
+28
+39
+35
+31
+48"
+REFERENCES,0.6676557863501483,"16
+20
+43
+59
+70
+56
+45
+50
+81
+134 140 104
+57
+25
+43
+42
+61
+39
+43
+52
+36
+58"
+REFERENCES,0.6691394658753709,"21
+29
+42
+65
+101
+92
+59
+57
+76
+146 184 112
+51
+29
+75
+88
+101
+97
+39
+49
+25
+73"
+REFERENCES,0.6706231454005934,"25
+20
+36
+67
+108 136
+78
+58
+95
+186 198
+96
+45
+51
+102 148 115
+84
+40
+35
+44
+84"
+REFERENCES,0.672106824925816,"19
+25
+49
+65
+112 153
+84
+54
+110 193 198
+62
+62
+73
+111 198
+98
+61
+45
+65
+67
+91"
+REFERENCES,0.6735905044510386,"21
+38
+27
+48
+113 144
+92
+105 102 199 197
+71
+63
+90
+112 164
+81
+44
+76
+67
+42
+90"
+REFERENCES,0.6750741839762612,"26
+35
+48
+53
+91
+114
+98
+140 162 172 196
+64
+114 172 125 105
+93
+78
+50
+59
+59
+98"
+REFERENCES,0.6765578635014837,"11
+33
+27
+60
+102 118 100 140 178 127 195
+89
+197 127 137 142
+98
+77
+85
+66
+63
+103"
+REFERENCES,0.6780415430267063,"13
+25
+51
+83
+140 150
+99
+143 190 199 188 199 166 130 123 167 155
+89
+102
+69
+74
+122"
+REFERENCES,0.6795252225519288,"24
+14
+20
+62
+147 139 137 129 187 199
+10
+199 182 128 152 198 162 114 100
+41
+51
+114"
+REFERENCES,0.6810089020771514,"12
+21
+46
+66
+158 144 122 137 159 199 188 199 136 127 159 188 130 113 105
+55
+43
+119"
+REFERENCES,0.6824925816023739,"8
+8
+50
+96
+137 128 104 147 195 150 195 168 198 128 179 169 108 133
+90
+75
+58
+120"
+REFERENCES,0.6839762611275965,"8
+16
+34
+79
+130 127 108 154 161 151 196
+86
+191 149 139 168 131 124
+76
+62
+55
+112"
+REFERENCES,0.685459940652819,"22
+17
+23
+56
+107 135 108 109
+94
+159 197
+77
+103 121 143 182 172 121
+60
+76
+53
+102"
+REFERENCES,0.6869436201780416,"6
+9
+33
+51
+132 184
+90
+72
+95
+184 198
+74
+70
+88
+151 199 133
+83
+69
+57
+51
+97"
+REFERENCES,0.6884272997032641,"20
+9
+13
+63
+137 146
+75
+53
+78
+180 198
+55
+44
+51
+139 172 149 105
+72
+65
+41
+89"
+REFERENCES,0.6899109792284867,"4
+9
+29
+63
+75
+103
+44
+52
+66
+168 174
+66
+38
+45
+122 121 132 100
+63
+58
+53
+75"
+REFERENCES,0.6913946587537092,"9
+12
+14
+37
+49
+59
+49
+35
+85
+124 130
+99
+21
+36
+60
+89
+86
+68
+74
+39
+54
+59"
+REFERENCES,0.6928783382789317,"6
+27
+14
+34
+36
+43
+45
+42
+69
+90
+84
+93
+26
+27
+42
+53
+74
+70
+58
+33
+28
+47"
+REFERENCES,0.6943620178041543,"7
+11
+35
+36
+27
+43
+42
+34
+53
+82
+72
+72
+22
+29
+30
+59
+50
+55
+44
+44
+48
+43"
+REFERENCES,0.6958456973293768,"14
+19
+32
+59
+98
+109
+79
+86
+112 154 161 104
+90
+82
+104 128 104
+82
+65
+54
+47
+85"
+REFERENCES,0.6973293768545994,Average = 85.0
+REFERENCES,0.6988130563798219,(c) cGate
+REFERENCES,0.7002967359050445,"-10
+-9
+-8
+-7
+-6
+-5
+-4
+-3
+-2
+-1
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+avg
+c1"
+REFERENCES,0.701780415430267,"-10
+-9
+-8
+-7
+-6
+-5
+-4
+-3
+-2
+-1
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+avg
+c0"
+REFERENCES,0.7032640949554896,"10
+6
+5
+6
+15
+11
+13
+22
+9
+54
+68
+104
+44
+24
+22
+41
+21
+19
+33
+11
+17
+26"
+REFERENCES,0.7047477744807121,"10
+21
+15
+7
+19
+22
+17
+18
+14
+77
+101 118
+27
+27
+25
+22
+19
+25
+18
+27
+25
+31"
+REFERENCES,0.7062314540059347,"10
+25
+17
+16
+48
+24
+17
+17
+31
+107 111 126
+19
+25
+46
+27
+26
+43
+30
+7
+12
+37"
+REFERENCES,0.7077151335311572,"11
+23
+37
+29
+73
+41
+30
+28
+37
+99
+124 129
+22
+13
+32
+51
+49
+55
+9
+16
+29
+45"
+REFERENCES,0.7091988130563798,"9
+5
+30
+57
+102 108
+73
+27
+24
+65
+185 135
+9
+16
+45
+119
+97
+31
+36
+34
+17
+58"
+REFERENCES,0.7106824925816023,"27
+31
+19
+42
+72
+184
+68
+45
+47
+61
+197 151
+21
+38
+109 179 100
+17
+14
+24
+15
+70"
+REFERENCES,0.712166172106825,"28
+27
+17
+50
+56
+77
+62
+61
+69
+69
+197 122
+59
+66
+75
+130
+55
+31
+40
+24
+16
+63"
+REFERENCES,0.7136498516320475,"24
+26
+29
+53
+43
+40
+63
+125
+96
+76
+196
+66
+121
+77
+49
+46
+52
+38
+44
+20
+16
+62"
+REFERENCES,0.7151335311572701,"26
+51
+53
+80
+72
+35
+48
+82
+157
+94
+194 112 170
+96
+48
+53
+79
+54
+30
+29
+33
+76"
+REFERENCES,0.7166172106824926,"13
+12
+35
+81
+101 107
+80
+36
+90
+197 190 199 117
+98
+64
+124
+87
+38
+23
+11
+25
+82"
+REFERENCES,0.7181008902077152,"16
+29
+40
+66
+124 188 114
+79
+137 197
+10
+199 135
+75
+142 195
+84
+49
+47
+21
+27
+94"
+REFERENCES,0.7195845697329377,"23
+43
+33
+58
+98
+137
+59
+67
+102 197 190 199 105
+57
+75
+106
+45
+41
+10
+46
+38
+82"
+REFERENCES,0.7210682492581603,"24
+36
+28
+50
+80
+87
+33
+48
+169 118 195 105 138
+63
+54
+64
+88
+36
+16
+41
+29
+72"
+REFERENCES,0.7225519287833828,"25
+24
+37
+56
+53
+59
+60
+95
+117
+83
+196 107 137
+87
+53
+60
+47
+57
+15
+31
+39
+68"
+REFERENCES,0.7240356083086054,"36
+24
+44
+51
+45
+122 116
+85
+51
+71
+197 158
+55
+50
+73
+107
+48
+36
+16
+29
+28
+69"
+REFERENCES,0.7255192878338279,"27
+23
+27
+38
+108 179
+62
+44
+48
+86
+197 147
+33
+43
+63
+173
+68
+18
+14
+28
+32
+69"
+REFERENCES,0.7270029673590505,"15
+23
+26
+94
+129 109
+57
+23
+43
+77
+198 136
+33
+7
+30
+120 101
+51
+39
+13
+8
+63"
+REFERENCES,0.728486646884273,"9
+31
+44
+70
+83
+41
+36
+29
+64
+103 163 156
+36
+19
+36
+95
+80
+36
+14
+25
+20
+57"
+REFERENCES,0.7299703264094956,"19
+38
+42
+48
+75
+44
+30
+59
+63
+106 124 132
+26
+9
+24
+43
+58
+54
+14
+15
+7
+49"
+REFERENCES,0.7314540059347181,"14
+24
+32
+25
+26
+27
+37
+51
+41
+111 114 104
+31
+24
+21
+29
+37
+56
+29
+5
+5
+40"
+REFERENCES,0.7329376854599406,"11
+11
+22
+28
+28
+24
+38
+30
+46
+110
+86
+92
+44
+27
+20
+24
+13
+45
+44
+10
+10
+36"
+REFERENCES,0.7344213649851632,"18
+25
+30
+48
+69
+79
+53
+51
+69
+103 154 133
+66
+45
+53
+86
+60
+40
+25
+22
+21
+60"
+REFERENCES,0.7359050445103857,Average = 60.0
+REFERENCES,0.7373887240356083,(d) FLAP
+REFERENCES,0.7388724035608308,"Figure 18: Multidimensional contexts in the ODE domain for (a) Concat, (b) Adapter, (c) cGate
+and (d) FLAP. Heatmap Performance for (a) cGate and (b) FLAP. Each cell represents the reward
+obtained when evaluated in the corresponding context, averaged over 16 seeds. The blue squares
+indicate the specific training contexts, whereas the green square represents the convex hull of training
+contexts. For the heatmaps, the last rows and columns, labelled avg, represent the average reward
+over the particular column or row, respectively."
+REFERENCES,0.7403560830860534,"F.3
+Additional Baselines"
+REFERENCES,0.7418397626112759,"We consider two ablations as additional baselines. The first, called AdapterNoHnet, is based on our
+adapter module, but there is no hypernetwork involved. The adapter’s architecture and location are
+the same, but it is now a single MLP that takes in the concatenation of the state-based features and
+the raw context (as the model has to be context-conditioned, and must also process the state-based
+features). The second baseline, termed cGateEveryLayer, uses the same elementwise operation as
+cGate, but this happens at every hidden layer except at only one. Fig. 19 illustrate these results on
+the 1D and 2D ODE domains respectively, with the Adapter, Concat and cGate models there for
+reference. Overall, cGateEveryLayer does not outperform cGate, and AdapterNoHnet performs
+much worse than our hypernetwork-based adapter."
+REFERENCES,0.7433234421364985,"0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0 0 50 100 150 200"
+D CONTEXT,0.744807121661721,1D Context
+D CONTEXT,0.7462908011869436,"0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0 1e5"
+D CONTEXT,0.7477744807121661,2D Context AER
+D CONTEXT,0.7492581602373887,Training Time (Steps)
+D CONTEXT,0.7507418397626113,"Concat
+Adapter
+cGate
+cGateEveryLayer
+AdapterNoHnet
+Optimal"
+D CONTEXT,0.7522255192878339,"Figure 19: The performance on the 1D and 2D ODE domains (i.e., similar to Fig. 3) of the additional
+baselines. The mean and standard deviation over 16 seeds are shown."
+D CONTEXT,0.7537091988130564,"F.4
+AER Metric"
+D CONTEXT,0.755192878338279,"Fig. 20 illustrates the difference between using the AER metric as defined in Section 6.1 (correspond-
+ing to Fig. 20a) and only considering the testing contexts (corresponding to Fig. 20b). Overall, the
+performance of each model is very similar; this is because the training contexts make up a small
+proportion of the entire evaluation range."
+D CONTEXT,0.7566765578635015,"0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0 0 50 100 150 200 AER"
+D CONTEXT,0.7581602373887241,1D Context
+D CONTEXT,0.7596439169139466,"0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0 1e5"
+D CONTEXT,0.7611275964391692,2D Context
+D CONTEXT,0.7626112759643917,Training Time (Steps)
+D CONTEXT,0.7640949554896143,"Unaware
+Concat
+Adapter
+cGate
+FLAP
+Optimal"
+D CONTEXT,0.7655786350148368,(a) Training and Testing Contexts
+D CONTEXT,0.7670623145400594,"0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0 0 50 100 150 200"
+D CONTEXT,0.7685459940652819,AER Only Test
+D CONTEXT,0.7700296735905044,1D Context
+D CONTEXT,0.771513353115727,"0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0 1e5"
+D CONTEXT,0.7729970326409495,2D Context
+D CONTEXT,0.7744807121661721,Training Time (Steps)
+D CONTEXT,0.7759643916913946,"Unaware
+Concat
+Adapter
+cGate
+FLAP
+Optimal"
+D CONTEXT,0.7774480712166172,(b) Only Testing Contexts.
+D CONTEXT,0.7789317507418397,"Figure 20: Comparing (a) averaging performance over all contexts and (b) restricting the AER metric
+to only unseen testing contexts."
+D CONTEXT,0.7804154302670623,"F.5
+Distractors"
+D CONTEXT,0.7818991097922848,"The ODE domain displays similar distractor results to our other environments (see Section 7.2). In
+particular, Fig. 21 shows that the Adapter is robust to adding more irrelevant distractor variables,
+whereas Concat and cGate are not."
+D CONTEXT,0.7833827893175074,"0
+1
+2
+3 0 50 100 150 200 AER"
+D CONTEXT,0.7848664688427299,Concat
+D CONTEXT,0.7863501483679525,"0
+1
+2
+3"
+D CONTEXT,0.787833827893175,Adapter
+D CONTEXT,0.7893175074183977,"0
+1
+2
+3
+1e5 cGate"
+D CONTEXT,0.7908011869436202,Training Time (Steps)
+D CONTEXT,0.7922848664688428,"Number of distractor dimensions
+0
+1
+20
+100"
+D CONTEXT,0.7937685459940653,"Figure 21: Showing the sensitivity of the (left) Concat, (middle) Adapter and (right) cGate models
+to fixed distractor context variables on the ODE. The mean and standard deviation over 16 seeds are
+shown."
+D CONTEXT,0.7952522255192879,"F.6
+Gaussian Distractor Experiments"
+D CONTEXT,0.7967359050445104,"This section expands upon the results in Section 7.2 and contains additional results where the distractor
+variables are not fixed."
+D CONTEXT,0.798219584569733,"F.6.1
+Difference between training and testing"
+D CONTEXT,0.7997032640949555,"Fig. 5 contains the results on CartPole, and the ODE results are shown in Fig. 22. For both domains,
+the conclusion is similar in that the Adapter is still more robust to changing distractor variables
+compared to either Concat or cGate."
+D CONTEXT,0.8011869436201781,"0
+1
+2
+3 0 50 100 150 200 AER"
+D CONTEXT,0.8026706231454006,Concat
+D CONTEXT,0.8041543026706232,"0
+1
+2
+3"
+D CONTEXT,0.8056379821958457,Adapter
+D CONTEXT,0.8071216617210683,"0
+1
+2
+3
+1e5 cGate"
+D CONTEXT,0.8086053412462908,Training Time (Steps)
+D CONTEXT,0.8100890207715133,"Number of distractor dimensions
+0
+1
+20
+100"
+D CONTEXT,0.8115727002967359,"Figure 22: The Gaussian distractor variable results. This corresponds to using a mean of 1 during
+training and a mean of 0 during testing. We use a consistent σ = 0.2. These results are for the ODE
+domain, showing the mean and standard over 16 seeds."
+D CONTEXT,0.8130563798219584,"F.6.2
+Keeping the training and testing distractor distributions the same"
+D CONTEXT,0.814540059347181,"Next, we consider a similar case, but the means of the Gaussians are the same across training
+and testing. Overall, the results for the ODE and CartPole (with a mean of 0 during both training
+and testing) are shown in Fig. 23. For the ODE, while the Adapter is insensitive to adding more
+distractor dimensions, both cGate and the Concat perform worse as we add more irrelevant distractor
+dimensions to the context. However, the difference is much less pronounced than in the case where
+the means are different between training and testing. Surprisingly, in the ODE, cGate performs
+slightly better with 20 distractor variables than with 0. These variables may effectively act as an
+additional, noisy, bias term that the model can utilise. For CartPole, the Concat and cGate models
+perform much worse with 100 distractor dimensions compared to none. The Adapter displays some
+noise, indicating that some seeds performed poorly while others performed well. This is similar to
+the results we observed in Appendix G.1—too much noise leads to unstable training."
+D CONTEXT,0.8160237388724035,"Finally, we consider using a mean of 1 during both training and testing in Fig. 24. For the ODE, each
+model performs similarly regardless of the number of distractor variables. In CartPole there is not a 0 100 200 ODE"
+D CONTEXT,0.8175074183976261,"Concat
+Adapter
+cGate"
+D CONTEXT,0.8189910979228486,"0
+1
+2
+3 0 200 400"
+D CONTEXT,0.8204747774480712,CartPole
+D CONTEXT,0.8219584569732937,"0
+1
+2
+3
+0
+1
+2
+3
+1e5
+Training Time (Steps) AER"
+D CONTEXT,0.8234421364985163,"Number of distractor dimensions
+0
+1
+20
+100
+Optimal Reward"
+D CONTEXT,0.8249258160237388,"Figure 23: The Gaussian distractor variable results, using a consistent mean of 0 during training and
+testing, with σ = 0.2. These results are for the (top) ODE and (bottom) CartPole domains, showing
+the mean and standard over 16 seeds. 0 100 200 ODE"
+D CONTEXT,0.8264094955489614,"Concat
+Adapter
+cGate"
+D CONTEXT,0.827893175074184,"0
+1
+2
+3 200 400"
+D CONTEXT,0.8293768545994066,CartPole
+D CONTEXT,0.8308605341246291,"0
+1
+2
+3
+0
+1
+2
+3
+1e5
+Training Time (Steps) AER"
+D CONTEXT,0.8323442136498517,"Number of distractor dimensions
+0
+1
+20
+100
+Optimal Reward"
+D CONTEXT,0.8338278931750742,"Figure 24: The Gaussian distractor variable results, using a consistent mean of 1 during training and
+testing, with σ = 0.2. These results are for the (top) ODE and (bottom) CartPole domains, showing
+the mean and standard over 16 seeds."
+D CONTEXT,0.8353115727002968,"large difference between the various models when the mean of the distractor variables is 1 during
+both training and testing."
+D CONTEXT,0.8367952522255193,"F.6.3
+Summary"
+D CONTEXT,0.8382789317507419,"Overall, The Adapter is significantly less susceptible to overfitting to irrelevant distractors compared
+to the Concat model and cGate. However, if these distractors remain the same during training and
+testing (which may not be particularly likely), it matters less whether the model overfits or not, and
+all models are less affected by adding more distractors."
+D CONTEXT,0.8397626112759644,"G
+Limitations"
+D CONTEXT,0.841246290801187,"This section expands upon the limitations of our approach, outlined in Section 8."
+D CONTEXT,0.8427299703264095,"G.1
+Noisy Contexts"
+D CONTEXT,0.844213649851632,"Now, while we use the ground truth context to isolate the effect of the network architecture on
+generalisation performance, this is not always available [12, 18]. A common approach is to learn
+a context encoder that uses experience in the environment to infer an approximation to the context,
+which is then used to act [18, 87]. This encoded context, however, may not always be entirely
+accurate. Thus, in this experiment, we examine how sensitive each context-aware model is to
+receiving noisy contexts during evaluation. We consider two cases; the first is where the models
+received the uncorrupted context during training, and the second is where the models also encountered
+noise during training. The first case could reasonably occur in reality, since we may have access to
+the ground truth context during training, but not evaluation [14]. The second case, where we train
+with noise, could correspond to training the RL policy alongside the context encoder, leading to
+some noise during training. This case additionally allows us to examine whether training with noise
+increases the models’ robustness to context noise during evaluation."
+D CONTEXT,0.8456973293768546,"We take the models trained during the primary CartPole experiments, in Appendix B.2, where we
+varied the pole length. We use the model checkpoints that were trained for 600k timesteps, as both
+the Concat and Adapter models did not improve much by training for longer than this (see Fig. 8).
+The noise we add here, corresponding to normally distributed noise with varying standard deviations,
+was added to each context dimension instead of just the one representing pole length. We experiment
+with a standard deviation σ ∈{0, 0.05, 0.1, 0.2, 0.5, 1}. The noise was added after normalising the
+contexts such that the largest training context had a value of 1.0. Thus, a standard deviation of
+1.0 represents a substantial amount of noise. In addition to the models trained without noise, we"
+D CONTEXT,0.8471810089020771,"additionally train models that encountered noise during training. In particular, we consider standard
+deviations σ ∈{0.1, 0.5}, and change no other aspect of training."
+D CONTEXT,0.8486646884272997,"The results are illustrated in Fig. 25. The left pane shows the performance of the models trained
+without noise. Overall, these results show that the Concat model is more susceptible to noisy contexts
+than our Adapter, bolstering the argument that treating context as a state dimension is not ideal [13].
+Both models, however, generalise worse as the context becomes more inaccurate. This is in contrast
+to the Unaware model, which performs equally well regardless of the level of context noise. The
+Adapter still outperforms the Unaware model until the noise level reaches around σ = 0.5. This noise
+level, however, is very large, and σ = 0.5 corresponds to a pole length of 3 meters. The default pole
+length is 0.5 meters, and the largest training length is 6 meters."
+D CONTEXT,0.8501483679525222,"When training with a small amount of noise (Fig. 25, middle) both models perform similarly to
+training without noise. However, when training with a large amount of noise, corresponding to the
+right pane of Fig. 25, the Concat model becomes more robust to noisy contexts, but the Adapter
+performs worse. In particular, the Adapter model exhibits a large amount of variation across seeds,
+indicating that some seeds performed badly. On average, the Adapter performs similarly to the
+Unaware model until the level of context noise increases beyond the training noise of σ = 0.5."
+D CONTEXT,0.8516320474777448,"0.0
+0.5
+1.0
+200 300 400 500 AER"
+D CONTEXT,0.8531157270029673,Train Without Noise
+D CONTEXT,0.8545994065281899,"0.0
+0.5
+1.0
+Level of Context Noise During Evaluation ( )"
+D CONTEXT,0.8560830860534124,"Train With 
+= 0.1"
+D CONTEXT,0.857566765578635,"0.0
+0.5
+1.0"
+D CONTEXT,0.8590504451038575,"Train With 
+= 0.5"
+D CONTEXT,0.8605341246290801,"Unaware
+Concat
+Adapter"
+D CONTEXT,0.8620178041543026,"Figure 25: Comparing the average evaluation reward (after 600k steps) as a function of the standard
+deviation σ of the Gaussian noise added to the context during evaluation. In the left pane, the models
+trained without noise are shown. The middle pane corresponds to training with σ = 0.1 and the
+right pane shows the results when training with σ = 0.5. Mean performance is shown, with standard
+deviation over 16 seeds shaded."
+D CONTEXT,0.8635014836795252,"G.2
+Suboptimal Context Normalisations"
+D CONTEXT,0.8649851632047477,"G.2.1
+ODE"
+D CONTEXT,0.8664688427299704,"As discussed in the main text, we first normalise the context before passing it to the agents. This
+is generally done by using the largest absolute value encountered during training. For instance, for
+the one-dimensional ODE experiment, we used cnorm = c−0"
+D CONTEXT,0.8679525222551929,"5
+as the normalisation function. Here
+we determine how sensitive the Decision Adapter is to changes in this procedure. This is useful as
+we may often need to choose the normalisation factor without knowing exactly which variations we
+will encounter during evaluation. To do this, we run four additional experiments, with normalisation
+values of 0.1, 1.0, 2.0 and 15.0, respectively. We train the agents for only 300k steps, as after training
+for this number of steps, most models performed similarly to their final performance. The results
+are shown in Fig. 26, and we can see that the Concat and Adapter models are both robust to the
+normalisation value. Our Decision Adapter loses less performance than the Concat model as we
+change the normalisation value. Despite losing some performance as the context normalisation value
+increases, both context-aware models still outperform the Unaware model."
+D CONTEXT,0.8694362017804155,"G.2.2
+CartPole"
+D CONTEXT,0.870919881305638,"We now consider a similar setup in CartPole. In particular, we train on a Pole Mass of 0.1. We choose
+this variable as some of our experiments showed that the Unaware model generalises equally well
+regardless of the training contexts. We consider two scenarios: In the first, we normalise with respect
+to the Small setting (i.e. cnorm =
+c
+0.01). Thus, during training, the normalised context had a value"
+D CONTEXT,0.8724035608308606,"0
+2
+4
+6
+8
+10
+12
+14
+Context Normalisation 40 60 80 100 120 140 160 180 200 AER"
+D CONTEXT,0.8738872403560831,"Unaware
+Concat
+Adapter"
+D CONTEXT,0.8753709198813057,"Figure 26: Showing the overall performance (y-axis) of each context-aware model after 300k steps
+as we change the context normalisation value (x-axis). Mean performance is shown, with standard
+deviation shaded."
+D CONTEXT,0.8768545994065282,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+0 100 200 300 400 500 AER"
+D CONTEXT,0.8783382789317508,Normalisation = 0.01
+D CONTEXT,0.8798219584569733,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0 1e5"
+D CONTEXT,0.8813056379821959,Normalisation = 1
+D CONTEXT,0.8827893175074184,Training Time (Steps)
+D CONTEXT,0.884272997032641,"Unaware
+Concat
+Adapter
+Optimal"
+D CONTEXT,0.8857566765578635,"Figure 27: Performance when evaluating on changing Pole Mass when normalising with respect to
+(left) Mass = 0.01 and (right) Mass = 1.0. In both plots, the models trained on Mass = 0.01. Mean
+performance is shown, with standard deviation shaded."
+D CONTEXT,0.887240356083086,"of 1.0; during evaluation, it was nearly always larger than 1.0. In the second case, we normalise
+with respect to the X-Large setting (corresponding to cnorm = c"
+D CONTEXT,0.8887240356083086,"1). We trained on the Small pole
+length for both settings. Fig. 27 shows the results for this experiment. When normalising with
+respect to the Small setting, the Concat model fails to generalise at all, and the Adapter performs
+worse than Unaware. When changing the normalisation, however, the context-aware models perform
+significantly better."
+D CONTEXT,0.8902077151335311,"G.2.3
+Summary"
+D CONTEXT,0.8916913946587537,"Thus, the Decision Adapter is relatively robust to small changes in context normalisations. However,
+when encountering evaluation contexts that are 100 times larger than during training, appropriate"
+D CONTEXT,0.8931750741839762,"normalisation is crucial and can make a drastic difference – even when training on the exact same
+contexts. As seen in the ODE, having a normalisation value that is slightly too large does not cause
+significant performance penalties. Thus, normalising the contexts with a larger value than expected
+during training is a good heuristic."
+D CONTEXT,0.8946587537091988,"G.3
+Narrow Context Range"
+D CONTEXT,0.8961424332344213,"We next consider the effect of changing the set of training contexts. Here we aim to briefly illustrate
+that the training context range can have a large effect on the performance of the agents. In particular,
+we consider the ODE domain and 8 separate sets of training contexts. In all of these cases, we keep
+the normalisation consistent at cnorm = c"
+D CONTEXT,0.8976261127596439,"5 to ensure comparability. The results when training on
+each context set are shown in Fig. 28. Overall, when we have a single positive and negative training
+context, performance is poor when this context is very small (a), and increases as it becomes larger (d
+and f). When we have multiple contexts, but insufficient variation (b, c, e), then performance is also
+suboptimal. For instance, in (b), the training contexts cover only the small region [−1, 1]. In (c), the
+training set of contexts does not contain any negative contexts, leading to poor generalisation. Finally,
+if contexts are varied, but spread out too far (g), the performance also suffers."
+D CONTEXT,0.8991097922848664,"(a): {±0.1}
+0 50 100 150 200"
+D CONTEXT,0.900593471810089,"(b): {±0.1, ± 1.0}
+(c): {1, 5}
+(d): {±5}"
+D CONTEXT,0.9020771513353115,"0
+1
+2
+3
+(e): {±4, ± 5} 0 50 100 150 200"
+D CONTEXT,0.9035608308605341,"0
+1
+2
+3
+(f): {±7.5}"
+D CONTEXT,0.9050445103857567,"0
+1
+2
+3
+(g): {±0.1, ± 7.5}"
+D CONTEXT,0.9065281899109793,"0
+1
+2
+3
+(h): {±1, ± 5}
+1e5"
+D CONTEXT,0.9080118694362018,Training Time (Steps) AER
+D CONTEXT,0.9094955489614244,"Concat
+Adapter"
+D CONTEXT,0.9109792284866469,"Figure 28: Here we examine the performance when training on different sets of contexts. The text
+beneath each plot indicates the training context set, with ±c indicating that both c and −c are in the
+context set. For instance, in (a), the models were trained on a context set of Ctrain = {−0.1, 0.1}.
+Mean performance is shown, with standard deviation shaded."
+D CONTEXT,0.9124629080118695,"G.3.1
+Overfitting"
+D CONTEXT,0.913946587537092,"Another potential issue we may encounter is overfitting, which can occur when the training range is
+not diverse enough. To illustrate this problem, we conduct an experiment in the multidimensional
+ODE setting using the following set of training contexts:"
+D CONTEXT,0.9154302670623146,"{(1, 1), (1, −1), (1, 0), (−1, 1), (−1, −1), (−1, 0), (0, 1), (0, −1)}"
+D CONTEXT,0.9169139465875371,"The results, presented in Fig. 29, demonstrate that the Decision Adapter performs well initially but
+its generalisation performance suffers as training progresses. Specifically, as shown in Fig. 29b
+and Fig. 29c, our model exhibits worse extrapolation performance due to overfitting on the narrow
+training contexts."
+D CONTEXT,0.9183976261127597,"0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0
+Training Time (Steps)
+1e5 0 20 40 60 80 100 120 140 AER"
+D CONTEXT,0.9198813056379822,"Unaware
+Concat
+Adapter (a)"
+D CONTEXT,0.9213649851632048,"-10
+-9
+-8
+-7
+-6
+-5
+-4
+-3
+-2
+-1
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+avg
+c1"
+D CONTEXT,0.9228486646884273,"-10
+-9
+-8
+-7
+-6
+-5
+-4
+-3
+-2
+-1
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+avg
+c0"
+D CONTEXT,0.9243323442136498,"60
+64
+79
+95
+95
+114 135 110 117 114 120 133 132 111 109
+93
+108 109 108 113 111 106"
+D CONTEXT,0.9258160237388724,"59
+63
+55
+70
+99
+124 120 135 132 123 119 123 130 112 110 108 106 113 132 127 126 109"
+D CONTEXT,0.9272997032640949,"69
+70
+58
+81
+93
+121 128 157 142 135 129 127 127 122 124 115 112 117 125 132 129 115"
+D CONTEXT,0.9287833827893175,"88
+82
+52
+52
+72
+111 110 153 139 126 128 134 140 138 115 118 123 144 142 136 123 116"
+D CONTEXT,0.93026706231454,"93
+91
+73
+76
+76
+87
+115 142 141 134 130 138 140 139 118 142 137 121 116 127 130 117"
+D CONTEXT,0.9317507418397626,"88
+98
+89
+77
+90
+120 142 147 146 151 140 150 151 142 138 131 127 128 121 119 115 124"
+D CONTEXT,0.9332344213649851,"75
+82
+80
+92
+95
+124 136 159 151 138 167 173 176 171 150 146 128 130 121 116 122 130"
+D CONTEXT,0.9347181008902077,"81
+83
+85
+72
+78
+105 148 161 156 158 170 169 172 168 150 146 122 126 118 101
+99
+127"
+D CONTEXT,0.9362017804154302,"56
+60
+65
+71
+105
+88
+110 160 158 172 159 158 166 165 164 122 104 125 131 124 119 123"
+D CONTEXT,0.9376854599406528,"82
+80
+86
+72
+77
+98
+134 119 139 160 119 135 158 167 164 131 130 127 127 109
+94
+119"
+D CONTEXT,0.9391691394658753,"83
+84
+85
+86
+91
+107 120 167 159 110
+10
+119 159 172 172 147 127 117
+92
+54
+32
+109"
+D CONTEXT,0.9406528189910979,"82
+85
+82
+90
+83
+92
+102
+97
+143 160 119 135 160 162 165 156 142 116 110
+79
+54
+115"
+D CONTEXT,0.9421364985163204,"65
+86
+84
+89
+82
+98
+138 182 180 173 160 158 166 172 174 167 151 133 114 107
+68
+131"
+D CONTEXT,0.9436201780415431,"59
+72
+77
+100 105 140 175 179 178 176 173 171 172 169 170 170 154 128
+99
+98
+84
+136"
+D CONTEXT,0.9451038575667656,"80
+87
+92
+89
+102 152 173 176 180 176 174 178 176 172 173 172 167 129 102
+92
+82
+139"
+D CONTEXT,0.9465875370919882,"81
+93
+89
+97
+137 155 165 170 175 180 177 168 176 170 171 170 169 134 105 101
+80
+141"
+D CONTEXT,0.9480712166172107,"83
+88
+81
+123 144 155 168 164 176 167 153 138 174 173 168 166 138 122 115
+90
+85
+137"
+D CONTEXT,0.9495548961424333,"76
+80
+117 122 138 159 156 160 143 141 153 131 155 158 149 143 135 130 105
+77
+70
+128"
+D CONTEXT,0.9510385756676558,"86
+107 126 132 139 157 153 157 134 133 146 131 130 152 142 140 123 107 100
+82
+72
+126"
+D CONTEXT,0.9525222551928784,"102 119 124 130 131 137 144 130 132 132 134 125 126 115 136 133 118 101
+93
+99
+74
+121"
+D CONTEXT,0.9540059347181009,"109 119 118 126 134 136 151 120 113 128 131 129 106
+95
+129 128 105
+91
+94
+97
+99
+117"
+D CONTEXT,0.9554896142433235,"79
+85
+86
+92
+103 123 139 150 149 147 139 144 152 150 147 140 130 121 113 104
+94
+123"
+D CONTEXT,0.956973293768546,Average = 123.0
+D CONTEXT,0.9584569732937686,(b) 50k steps
+D CONTEXT,0.9599406528189911,"-10
+-9
+-8
+-7
+-6
+-5
+-4
+-3
+-2
+-1
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+avg
+c1"
+D CONTEXT,0.9614243323442137,"-10
+-9
+-8
+-7
+-6
+-5
+-4
+-3
+-2
+-1
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+avg
+c0"
+D CONTEXT,0.9629080118694362,"55
+39
+46
+35
+37
+53
+49
+51
+52
+63
+65
+75
+77
+98
+67
+54
+54
+51
+51
+53
+56
+56"
+D CONTEXT,0.9643916913946587,"54
+53
+34
+33
+36
+44
+46
+51
+48
+65
+66
+61
+80
+96
+69
+54
+57
+52
+54
+56
+56
+55"
+D CONTEXT,0.9658753709198813,"47
+54
+51
+44
+36
+41
+44
+62
+56
+69
+67
+62
+86
+97
+72
+70
+54
+54
+57
+77
+61
+60"
+D CONTEXT,0.9673590504451038,"41
+43
+55
+47
+35
+38
+51
+36
+65
+72
+70
+90
+106
+99
+91
+82
+56
+56
+43
+60
+57
+62"
+D CONTEXT,0.9688427299703264,"42
+43
+42
+49
+48
+39
+40
+64
+73
+79
+76
+93
+111 107
+83
+80
+58
+43
+83
+81
+64
+67"
+D CONTEXT,0.9703264094955489,"34
+35
+40
+37
+48
+46
+39
+63
+87
+85
+112
+92
+113 115
+96
+77
+54
+62
+92
+75
+75
+70"
+D CONTEXT,0.9718100890207715,"33
+30
+33
+35
+40
+55
+55
+45
+100 119 137 118 124 124
+87
+84
+104 111
+92
+71
+72
+79"
+D CONTEXT,0.973293768545994,"23
+26
+24
+24
+30
+22
+47
+56
+107 150 141 144 137 115 106 110 111
+76
+71
+77
+72
+79"
+D CONTEXT,0.9747774480712166,"21
+19
+24
+20
+24
+32
+16
+56
+117 173 160 157 147 119 111
+92
+73
+74
+74
+75
+72
+79"
+D CONTEXT,0.9762611275964391,"20
+15
+15
+20
+24
+20
+20
+38
+128 160 120 136 160
+99
+90
+89
+72
+69
+68
+71
+37
+70"
+D CONTEXT,0.9777448071216617,"8
+8
+8
+9
+16
+10
+14
+49
+121 120
+10
+120 160 128
+94
+94
+70
+60
+61
+53
+47
+60"
+D CONTEXT,0.9792284866468842,"9
+8
+8
+10
+10
+31
+37
+73
+113 160 120 136 160 124
+97
+80
+81
+69
+65
+57
+56
+72"
+D CONTEXT,0.9807121661721068,"10
+10
+10
+10
+29
+38
+46
+69
+153 153 160 151 166 131 115 101
+81
+71
+71
+60
+50
+80"
+D CONTEXT,0.9821958456973294,"10
+10
+10
+30
+36
+45
+65
+98
+108 115 130 138 136 117 104 101
+79
+73
+74
+72
+71
+77"
+D CONTEXT,0.983679525222552,"10
+31
+31
+31
+45
+57
+80
+103
+83
+75
+110 109 112
+99
+96
+86
+85
+73
+73
+73
+72
+73"
+D CONTEXT,0.9851632047477745,"31
+31
+31
+56
+59
+58
+100
+89
+57
+56
+75
+70
+96
+75
+70
+75
+73
+55
+35
+34
+29
+60"
+D CONTEXT,0.9866468842729971,"36
+46
+54
+58
+58
+59
+52
+60
+59
+55
+76
+47
+75
+100
+48
+44
+40
+58
+57
+55
+50
+57"
+D CONTEXT,0.9881305637982196,"48
+59
+61
+60
+43
+53
+59
+59
+61
+75
+70
+50
+76
+60
+51
+43
+38
+58
+58
+53
+51
+56"
+D CONTEXT,0.9896142433234422,"60
+61
+49
+62
+33
+57
+52
+59
+62
+75
+70
+47
+70
+76
+43
+44
+37
+47
+62
+53
+53
+56"
+D CONTEXT,0.9910979228486647,"46
+47
+62
+49
+36
+52
+52
+59
+59
+69
+70
+31
+70
+46
+60
+47
+42
+41
+52
+56
+54
+52"
+D CONTEXT,0.9925816023738873,"41
+54
+31
+36
+52
+52
+51
+57
+76
+70
+71
+46
+48
+58
+77
+42
+40
+36
+41
+53
+48
+51"
+D CONTEXT,0.9940652818991098,"32
+34
+34
+36
+37
+43
+48
+62
+85
+98
+94
+94
+110
+99
+82
+74
+65
+61
+64
+63
+57
+65"
+D CONTEXT,0.9955489614243324,Average = 65.0
+D CONTEXT,0.9970326409495549,(c) 300k steps
+D CONTEXT,0.9985163204747775,"Figure 29: Showing (a) the overall performance over time on the entire evaluation range. In (b)
+and (c) we show the performance of the Adapter at two points in training. In (a), we plot mean
+performance and shade the standard deviation; for (b) and (c), we show only the mean over the seeds."

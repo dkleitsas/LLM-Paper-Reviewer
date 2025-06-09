@@ -1,0 +1,3076 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.0013386880856760374,"We propose a relative entropy gradient sampler (REGS) for sampling from unnor-
+malized distributions. REGS is a particle method that seeks a sequence of simple
+nonlinear transforms iteratively pushing the initial samples from a reference dis-
+tribution into the samples from an unnormalized target distribution. To determine
+the nonlinear transforms at each iteration, we consider the Wasserstein gradient
+ﬂow of relative entropy. This gradient ﬂow determines a path of probability dis-
+tributions that interpolates the reference distribution and the target distribution. It
+is characterized by an ODE system with velocity ﬁelds depending on the density
+ratios of the density of evolving particles and the unnormalized target density. To
+sample with REGS, we need to estimate the density ratios and simulate the ODE
+system with particle evolution. We propose a novel nonparametric approach to esti-
+mating the logarithmic density ratio using neural networks. Extensive simulation
+studies on challenging multimodal 1D and 2D mixture distributions and Bayesian
+logistic regression on real datasets demonstrate that the REGS outperforms the
+state-of-the-art sampling methods included in the comparison."
+INTRODUCTION,0.002677376171352075,"1
+INTRODUCTION"
+INTRODUCTION,0.004016064257028112,"Sampling from unnormalized distributions plays a fundamental role in statistical inference and
+machine learning. This problem is frequently encountered in Bayesian statistics. Conducting
+Bayesian analysis requires evaluation of multi-dimensional integrals where analytical expressions for
+unnormalized posterior distributions are usually not available. Consequently, sampling is necessary
+for Monte Carlo approximation of these integrals. In this work, we propose a general purpose
+sampling algorithm for unnormalized distributions."
+INTRODUCTION,0.00535475234270415,"Markov chain Monte Carlo (MCMC) methods (Andrieu et al., 2003; Brooks et al., 2011) are widely
+used to sample from unnormalized distributions. Sampling with MCMC relies on deﬁning an
+appropriate transition kernel to construct a Markov chain whose equilibrium distribution is precisely
+the target distribution. Based on rejection sampling, the Metropolis–Hastings algorithm (Metropolis
+et al., 1953; Hastings, 1970; Tierney, 1994; Dunson & Johndrow, 2019) provides a ﬂexible framework
+for general MCMC sampling. To implement a Metropolis–Hastings algorithm, one needs to specify a
+proposal density and an acceptance policy. However, without a careful design of these two aspects,
+the Metropolis–Hastings algorithm can be inefﬁcient due to strong correlations, slow mixing, or low
+acceptance rates, especially in the large-scale and high-dimensional settings. Moreover, proposals
+through discretizing some continuous processes like Langevin diffusion and Hamiltonian dynamics
+are introduced (Roberts & Tweedie, 1996; Roberts & Stramer, 2002; Duane et al., 1987; Neal, 2011;
+Hoffman & Gelman, 2014) and further enhanced by stochastic gradient estimation (Welling & Teh,
+2011; Chen et al., 2014)."
+INTRODUCTION,0.006693440428380187,"Variational Bayesian inference (Beal, 2003), often simply referred to as variational inference (VI)
+(Wainwright & Jordan, 2008; Blei et al., 2017), is another prominent approach to sampling from
+unnormalized distributions. VI approximates the unnormalized posterior distribution with a restricted
+parametric variational posterior distribution by minimizing the Kullback-Leibler (KL) divergence
+between them. Since the true posterior distribution is intractable, VI turns to maximize a surrogate
+variational objective called the evidence lower bound (ELBO). However, one is required to trade off
+the parameterization ﬂexibility of variational posteriors against the optimization complexity of ELBO
+in practice."
+INTRODUCTION,0.008032128514056224,Under review as a conference paper at ICLR 2022
+INTRODUCTION,0.009370816599732263,"1
+4
+7
+10
+Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12 0.14 0.16"
+INTRODUCTION,0.0107095046854083,Proportion of particles
+INTRODUCTION,0.012048192771084338,(a) 9 Gaussians
+INTRODUCTION,0.013386880856760375,"1
+6
+11
+16
+21
+26
+Mode 0.00 0.01 0.02 0.03 0.04 0.05 0.06"
+INTRODUCTION,0.014725568942436412,Proportion of particles
+INTRODUCTION,0.01606425702811245,(b) 25 Gaussians
+INTRODUCTION,0.01740294511378849,"1
+8
+15
+22
+29
+36
+43
+50
+Mode 0.000 0.005 0.010 0.015 0.020 0.025 0.030"
+INTRODUCTION,0.018741633199464525,Proportion of particles
+INTRODUCTION,0.020080321285140562,(c) 49 Gaussians
+INTRODUCTION,0.0214190093708166,"1
+10
+19
+28
+37
+46
+55
+64
+73
+82
+Mode"
+INTRODUCTION,0.022757697456492636,0.0000
+INTRODUCTION,0.024096385542168676,0.0025
+INTRODUCTION,0.025435073627844713,0.0050
+INTRODUCTION,0.02677376171352075,0.0075
+INTRODUCTION,0.028112449799196786,0.0100
+INTRODUCTION,0.029451137884872823,0.0125
+INTRODUCTION,0.030789825970548863,0.0150
+INTRODUCTION,0.0321285140562249,0.0175
+INTRODUCTION,0.03346720214190094,Proportion of particles
+INTRODUCTION,0.03480589022757698,(d) 81 Gaussians
+INTRODUCTION,0.03614457831325301,"Figure 1: Scatter plots of generated samples and histograms of generated sample counts according to
+the nearest neighbor mode by REGS for mixtures of 9, 25, 49, and 81 Gaussians with equal weights.
+As the plots indicate, generated samples by REGS cover every component of the mixture distributions
+and are nearly equally allocated to all components."
+INTRODUCTION,0.03748326639892905,"In the spirit of VI, particle-based variational inference (ParVI) (Liu & Wang, 2016; Chen et al.,
+2018; Zhu et al., 2020) iteratively optimizes a set of particles to mimic a functional gradient descent
+for minimizing the KL divergence. ParVI seeks to move a variational distribution towards the
+unnormalized target distribution, along a steepest descent direction of the KL divergence. In a
+continuous view, these movements of variational distributions can be understood as a gradient ﬂow in
+probability measure spaces (Liu et al., 2019a;b). A key part of ParVI is how to estimate the desired
+steepest descent direction (i.e., functional gradient) from the evolving random particles. An elegant
+approach is the Stein variational gradient descent (SVGD) Liu & Wang (2016). In SVGD , the
+functional gradient descent is embedded in a reproducing kernel Hilbert space (RKHS), which is
+further recognized as a gradient ﬂow under the Stein geometry (Liu, 2017; Lu et al., 2019; Duncan
+et al., 2019). A drawback of SVGD is that it tends to collapse at part of the modes of the target, due
+to a negative correlation between the data dimensionality and the repulsive force in the RKHS (Zhuo
+et al., 2018)."
+INTRODUCTION,0.038821954484605084,"In this work, we propose a relative entropy gradient sampler (REGS) for sampling from unnormalized
+target distributions. To approximate a target distribution, we consider the Wasserstein gradient ﬂow
+of relative entropy (or KL divergence), named relative entropy gradient ﬂow. The relative entropy
+gradient ﬂow represents a path of probability distributions that follows the functional gradient descent
+direction of relative entropy. There exists an ODE system of random particles that uniquely determines
+the spatial and temporal dynamics of the relative entropy gradient ﬂow. Therefore, to sample with
+REGS, we only need to simulate the ODE system with particle evolution. Evaluating the velocity
+ﬁelds of this ODE system can be transformed into estimating the logarithmic density ratio between
+the density of evolving particles and the unnormalized target density. Based on this observation,
+we propose a novel logarithmic density ratio estimation method for unnormalized distributions. By
+alternating between particle evolution and velocity ﬁeld estimation, we can collect a set of stable
+particles which are approximately distributed as the target distribution. Our contributions can be
+summarized as follows:"
+INTRODUCTION,0.040160642570281124,"(1) Building upon the relative entropy gradient ﬂow, we propose the relative entropy gradient sampler
+(REGS) for unnormalized target distributions. REGS preserves high efﬁciency and strong stability
+with respect to increasing singularity in mixtures of Gaussians, when the number of components
+increases (as shown in Figure 1), the variance of each component decreases, and the distance
+between any two components increases."
+INTRODUCTION,0.041499330655957165,"(2) We propose to directly estimate velocity ﬁelds of the relative entropy gradient ﬂow as gradients
+of logarithmic density ratios, that is computationally stable and efﬁcient."
+INTRODUCTION,0.0428380187416332,"(3) We develop a nonparametric approach to estimating the density ratio between an unnormalized
+density and an underlying density represented by samples, which is of independent interest."
+INTRODUCTION,0.04417670682730924,"(4) We present experimental comparisons on varieties of multi-mode synthetic data and benchmark
+data and demonstrate that REGS is a more accurate sampler than the popular samplers including
+ULA, MALA and SVGD."
+INTRODUCTION,0.04551539491298527,"Related work The proposed REGS is most related to sampling methods based on the relative entropy
+gradient ﬂow, in particular, the recently proposed SVGD (Liu & Wang, 2016; Liu, 2017), which
+estimates the velocity ﬁelds of the relative entropy gradient ﬂow in a reproducing kernel Hilbert space.
+See also Korba et al. (2020); Salim et al. (2021; 2020) for theoretical analysis of SVGD. In contrast,
+REGS approximates the velocity ﬁelds based on a novel logarithmic density ratio estimation approach
+with deep neural networks. The undesirable mode collapse feature of SVGD is not inevitable for"
+INTRODUCTION,0.04685408299866131,Under review as a conference paper at ICLR 2022
+INTRODUCTION,0.04819277108433735,"REGS since the approximation and expressive powers of deep neural networks is known to surpass
+those of kernel methods."
+INTRODUCTION,0.049531459170013385,"MCMC algorithms constructed from overdamped Langevin diffusion can be studied as discretization
+of the relative entropy gradient ﬂow (Jordan et al., 1998). Based on the Euler-Maruyama discretization
+of overdamped Langevin diffusion, unadjusted Langevin algorithm (ULA) (Roberts & Tweedie, 1996)
+aims at generating samples from an approximation of the unnormalized target, but is biased for ﬁxed
+step size. When a Metropolis-Hastings step is included, Metropolis-adjusted Langevin algorithm
+(MALA) (Roberts & Tweedie, 1996) is capable of correcting the bias, but leaves a large number of
+intermediate samples rejected. In REGS, one only needs to estimate the deterministic velocity ﬁelds
+of the relative entropy gradient ﬂow, which differs from running ULA and MALA with randomness
+from diffusion processes. All particles produced by REGS are generated from an approximation of
+the target distribution."
+INTRODUCTION,0.050870147255689425,"Another line of work (Gao et al., 2019; 2021) uses Wasserstein gradient ﬂows of f-divergences for
+generative learning with samples from the underlying target distribution. In their work, evaluating
+velocity ﬁelds of gradient ﬂows also boils down to estimating density ratios. However, our current
+problem is to sample from an unnormalized target density. Furthermore, we propose a novel density
+ratio estimation procedure when the target distribution is only known up to a normalizing constant."
+INTRODUCTION,0.05220883534136546,"Notation Let P2(X) be the space of Borel probability measures on a support space X ⊂Rd with
+a ﬁnite second moment, and let Pa
+2 (X) be a subspace of P2(X) whose measures are absolutely
+continuous w.r.t. the Lebesgue measure. All probability measures we considered thereinafter are
+assumed to belong to Pa
+2 (X). To ease the notation, we use probability density functions such as
+q(x), p(x), x ∈X to express probability distributions in Pa
+2 (X). Let (Pa
+2 (X), W2) denote the metric
+space Pa
+2 (X) endowed with the 2-Wasserstein distance W2, which is referred to as the quadratic
+Wasserstein space. We use ∇and Div to denote the gradient operator and the divergence operator,
+respectively."
+PROBLEM FORMULATION,0.0535475234270415,"2
+PROBLEM FORMULATION"
+PROBLEM FORMULATION,0.05488621151271754,"Consider an unnormalized probability density function u : X →[0, ∞), where X ⊆Rd is the
+support of u. Suppose u has an intractable normalizing constant Z =
+R"
+PROBLEM FORMULATION,0.05622489959839357,"X u(x)dx < ∞. Our goal is
+to generate random samples from the underlying distribution p ∈Pa
+2 (X), whose probability density
+function is only known up to proportionality, i.e., p(x) = u(x)/Z, x ∈X. The basic idea is to
+gradually optimize samples from a given distribution q ∈Pa
+2 (X) to approximate samples from p,
+where it is easy to sample from q. Optimizing samples leads to functional optimization of distributions.
+We then introduce the classical relative entropy as the functional optimization objective. The relative
+entropy, a.k.a., the Kullback–Leibler divergence, for q, p ∈Pa
+2 (X) is the average logarithmic density
+ratio, which is deﬁned as"
+PROBLEM FORMULATION,0.05756358768406961,"Dre(q∥p) =
+Z"
+PROBLEM FORMULATION,0.058902275769745646,"X
+q(x) log
+q(x) p(x)"
+PROBLEM FORMULATION,0.060240963855421686,"
+dx.
+(1)"
+PROBLEM FORMULATION,0.06157965194109773,"It holds that Dre(q∥p) ≥0 and Dre(q∥p) = 0 iff q(x) = p(x) a.e. x ∈X. Moreover, we denote the
+relative entropy functional as"
+PROBLEM FORMULATION,0.06291834002677377,"F[·] := Dre(·∥p) : Pa
+2 (X) →[0, ∞].
+(2)"
+PROBLEM FORMULATION,0.0642570281124498,"To sample from the unnormalized density u = pZ, we consider the functional minimization problem"
+PROBLEM FORMULATION,0.06559571619812583,"min
+q∈Pa
+2 (X) F[q],
+(3)"
+PROBLEM FORMULATION,0.06693440428380187,"where F[q] is always minimized at the underlying target distribution p, i.e., q(x) = p(x) a.e. x ∈X.
+In a nutshell, problem (3) is an energy functional minimization problem in a metric space. To
+minimize the energy functional F, it sufﬁces to move along the corresponding gradient ﬂow in a
+metric space until the ﬂow converges. For example, a gradient ﬂow in the Euclidean space refers to a
+curve whose tangent space contains the steepest descent direction of a given function. Analogously, a
+gradient ﬂow in the space of probability measures means a curve that points in the steepest descent
+direction of a given energy functional. When equipped with the 2-Wasserstein distance, minimization
+of the energy functional F naturally corresponds to a continuous path on the quadratic Wasserstein
+space of distributions, which is commonly known as a Wasserstein gradient ﬂow of the relative
+entropy. We call this ﬂow a relative entropy gradient ﬂow for briefness."
+PROBLEM FORMULATION,0.06827309236947791,Under review as a conference paper at ICLR 2022
+RELATIVE ENTROPY GRADIENT FLOW,0.06961178045515395,"3
+RELATIVE ENTROPY GRADIENT FLOW"
+RELATIVE ENTROPY GRADIENT FLOW,0.07095046854082998,"In this section, we brieﬂy review the formulation of relative entropy gradient ﬂow and its connections
+to differential equations. We consider the properties of gradient ﬂows in the quadratic Wasserstein
+space (Pa
+2 (X), W2). Recall that F in (2) is the relative entropy functional deﬁned on (Pa
+2 (X), W2).
+One can show that a curve {qt}t≥0 in (Pa
+2 (X), W2) is a relative entropy gradient ﬂow of F if it
+satisﬁes the continuity equation (Ambrosio et al. (2008), page 295 and Villani (2008), page 631),"
+RELATIVE ENTROPY GRADIENT FLOW,0.07228915662650602,"∂tqt = Div
+
+qt∇δF[qt] δqt"
+RELATIVE ENTROPY GRADIENT FLOW,0.07362784471218206,"
+,
+(4)"
+RELATIVE ENTROPY GRADIENT FLOW,0.0749665327978581,"where qt(x) = q(t, x) evolves over time, δF[qt]"
+RELATIVE ENTROPY GRADIENT FLOW,0.07630522088353414,"δqt
+= log qt"
+RELATIVE ENTROPY GRADIENT FLOW,0.07764390896921017,p is the ﬁrst variation of the energy functional
+RELATIVE ENTROPY GRADIENT FLOW,0.07898259705488621,"F at qt, and ∇δF[qt]"
+RELATIVE ENTROPY GRADIENT FLOW,0.08032128514056225,"δqt
+is the Euclidean gradient of δF[qt]"
+RELATIVE ENTROPY GRADIENT FLOW,0.08165997322623829,"δqt . Here, we identify the gradient as the relative
+entropy gradient, which is deﬁned by"
+RELATIVE ENTROPY GRADIENT FLOW,0.08299866131191433,∇W2F[qt] := ∇δF[qt]
+RELATIVE ENTROPY GRADIENT FLOW,0.08433734939759036,"δqt
+= ∇log qt"
+RELATIVE ENTROPY GRADIENT FLOW,0.0856760374832664,"p .
+(5)"
+RELATIVE ENTROPY GRADIENT FLOW,0.08701472556894244,"Moreover, the relative entropy F dissipates along the relative entropy gradient ﬂow {qt}t≥0 at the
+rate (Ambrosio et al. (2008), page 295)"
+RELATIVE ENTROPY GRADIENT FLOW,0.08835341365461848,"∂tF[qt] = −Eqt[∥∇W2F[qt]∥2].
+(6)"
+RELATIVE ENTROPY GRADIENT FLOW,0.08969210174029452,"Therefore, the relative entropy gradient ﬂow {qt}t≥0 eventually converges to the target distribution p
+as t →∞. As pointed out in Ambrosio et al. (2008) (Page 175), under mild conditions the continuity
+equation (4) concerning {qt}t≥0 determines a time-inhomogeneous Markov process {Xt}t≥0 that
+starts at a random particle X0 ∼q0 and follows the particle evolution dynamics dXt"
+RELATIVE ENTROPY GRADIENT FLOW,0.09103078982597054,"dt
+= vt(Xt), Xt ∼qt, t ≥0.
+(7)"
+RELATIVE ENTROPY GRADIENT FLOW,0.09236947791164658,Note that the velocity ﬁelds
+RELATIVE ENTROPY GRADIENT FLOW,0.09370816599732262,vt = −∇W2F[qt] = ∇log p
+RELATIVE ENTROPY GRADIENT FLOW,0.09504685408299866,"qt
+, t ≥0
+(8)"
+RELATIVE ENTROPY GRADIENT FLOW,0.0963855421686747,"drive the evolution of the particle Xt in the Euclidian space, which results in the transport of qt in
+(Pa
+2 (X), W2). An important observation is that"
+RELATIVE ENTROPY GRADIENT FLOW,0.09772423025435073,vt = ∇log p
+RELATIVE ENTROPY GRADIENT FLOW,0.09906291834002677,"qt
+= ∇log u"
+RELATIVE ENTROPY GRADIENT FLOW,0.10040160642570281,"qt
+, t ≥0.
+(9)"
+RELATIVE ENTROPY GRADIENT FLOW,0.10174029451137885,"Therefore, the velocity ﬁelds do not involve the unknown normalizing constant Z. This is the key
+motivation for us to use the relative entropy gradient ﬂow in the proposed method."
+SAMPLING AS PARTICLE EVOLUTION,0.10307898259705489,"4
+SAMPLING AS PARTICLE EVOLUTION"
+SAMPLING AS PARTICLE EVOLUTION,0.10441767068273092,"As indicated by the energy dissipation of relative entropy F in (6), running the relative entropy
+gradient ﬂow {qt}t≥0 dynamics can provide a nice approximate solution to the functional minimiza-
+tion problem (3) when time t is large enough. Therefore, to sample from the target distribution p,
+it is appropriate to simulate the relative entropy gradient ﬂow {qt}t∈[0,T ] with the time horizon T
+sufﬁciently large. A natural strategy is to discretize the particle evolution form of relative entropy
+gradient ﬂow in (7) with forward Euler iterations (LeVeque, 2007) as follows,"
+SAMPLING AS PARTICLE EVOLUTION,0.10575635876840696,"Xk+1 = Xk + svk(Xk), X0 ∼q0, k = 0, 1, . . . , K −1,
+(10)"
+SAMPLING AS PARTICLE EVOLUTION,0.107095046854083,with the velocity ﬁeld at step k
+SAMPLING AS PARTICLE EVOLUTION,0.10843373493975904,vk = −∇W2F[qk] = ∇log p
+SAMPLING AS PARTICLE EVOLUTION,0.10977242302543508,"qk
+,
+(11)"
+SAMPLING AS PARTICLE EVOLUTION,0.1111111111111111,"where s > 0 is a tunable small step size, K = ⌊T/s⌋is the number of iterations and qk is the
+corresponding discretized gradient ﬂow at step k, i.e., Xk ∼qk. Combining the expressions in (10)
+and (11), we have that the iterations progress according to"
+SAMPLING AS PARTICLE EVOLUTION,0.11244979919678715,Xk+1 = Xk + s∇log p
+SAMPLING AS PARTICLE EVOLUTION,0.11378848728246319,"qk
+, X0 ∼q0, k = 0, 1, . . . , K −1.
+(12)"
+SAMPLING AS PARTICLE EVOLUTION,0.11512717536813923,Under review as a conference paper at ICLR 2022
+SAMPLING AS PARTICLE EVOLUTION,0.11646586345381527,"In principle, it is necessary to evaluate the velocity ﬁeld vk = ∇log(p/qk) each iteration in (12). By
+(9), the velocity ﬁeld of the relative entropy gradient ﬂow can be simpliﬁed to"
+SAMPLING AS PARTICLE EVOLUTION,0.11780455153949129,vk = ∇log p
+SAMPLING AS PARTICLE EVOLUTION,0.11914323962516733,"qk
+= ∇log u"
+SAMPLING AS PARTICLE EVOLUTION,0.12048192771084337,"qk
+, k = 0, 1, . . . , K −1,
+(13)"
+SAMPLING AS PARTICLE EVOLUTION,0.12182061579651941,"where u = Zp is the given unnormalized density of the target distribution p. Then only the density
+qk remains unknown for evaluating the velocity ﬁeld. Ideally, qk can be estimated by evolving a
+large number of particles {Xi
+k}N
+i=1. However, direct estimation of qk is difﬁcult due to the curse
+of dimensionality and the potential expensive computation cost for different ks. Our solution is to
+approximate the velocity ﬁeld (13) as a whole."
+SAMPLING AS PARTICLE EVOLUTION,0.12315930388219545,"Assuming a nice approximation bvk of the velocity ﬁeld (13) is provided, then one can implement the
+following iterations for approximately sampling from qK with no effort,"
+SAMPLING AS PARTICLE EVOLUTION,0.12449799196787148,"e
+Xk+1 = e
+Xk + sbvk( e
+Xk), e
+X0 ∼q0, k = 0, 1, . . . , K −1.
+(14)"
+SAMPLING AS PARTICLE EVOLUTION,0.12583668005354753,"Through the iterations above, we can collect e
+Xk ∼˜qk ≈qk, k = 1, 2, . . . , K. We will discuss
+approximation of the velocity ﬁeld vk = ∇log(u/qk) from the perspective of estimating the
+logarithmic density ratio log(u/qk) in the next section."
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.12717536813922356,"5
+LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER"
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.1285140562248996,"In this section, we ﬁrst propose a novel estimation procedure of the logarithmic density ratio log(u/q)
+based on an unnormalized density u and random samples from q."
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.12985274431057564,"We use a model ratio R : X →[0, ∞) to ﬁt the true ratio R⋆
+uq = u/q between a density q and
+an unnormalized density u. Let g : R →R be a differentiable and strictly convex function. A
+Bregman score (Dawid, 2007; Gneiting & Raftery, 2007; Kanamori & Sugiyama, 2014) with the
+base probability measure q ∈Pa
+2 (X) to measure the discrepancy between R and R⋆
+uq is deﬁned by"
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.13119143239625167,B(R) = EX∼q[g′(R(X))R(X) −g(R(X))] −EX∼w
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.13253012048192772, u(X)
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.13386880856760375,"w(X)g′(R(X))
+
+,"
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.13520749665327977,"where w ∈Pa
+2 (X) is an introduced and reference distribution for calculating the integral involving
+u. It should be easy to sample from w and the support of u should be included in the support of w.
+Additionally, B(R) ≥B(R⋆
+uq), where the equality holds iff R(x) = R⋆
+uq(x) (q, u)-a.e. x ∈X."
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.13654618473895583,"In this work, we take g(x) = x log(x) −x. We use this function for two reasons: (a) convexity, this
+is to satisfy the basic requirement of the Bregman score; (b) cancellation of the unknown normalizing
+constant Z of u. Simple calculation shows that B(R) can be written as"
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.13788487282463185,B(R) = EX∼q[R(X)] −EX∼w
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.1392235609103079, u(X)
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.14056224899598393,"w(X) log(R(X))
+
+.
+(15)"
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.14190093708165996,"Recall that the true density ratio R⋆
+uq can be factorized as R⋆
+uq = u/q = Z(p/q). Thus the numerical
+scale of the true density ratio R⋆
+uq hinges on two factors, i.e., the normalizing constant Z of u and
+the standard density ratio p/q. Since numerical scales of these factors are difﬁcult to determine in
+applications, the induced numerical instability can deteriorate the density ratio estimate. In order
+to prevent the density ratio estimation from such instability, we consider the model ratio R on the
+logarithmic scale. This will also release the nonnegative constraint on R as a byproduct."
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.14323962516733602,"From now on, we denote D⋆
+uq = log(R⋆
+uq), D = log(R) : X →R. Then B(D) can be rewritten as"
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.14457831325301204,B(D) = EX∼q[exp(D(X))] −EX∼w
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.1459170013386881, u(X)
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.14725568942436412,"w(X)D(X)
+
+.
+(16)"
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.14859437751004015,"It can be shown that the logarithmic density ratio D⋆
+uq is identiﬁable at the population level by
+minimizing (16) with respect to D.
+Theorem 1. For B(D) deﬁned in (16), we have D⋆
+uq ∈arg minD B(D). In addition, for any D with"
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.1499330655957162,"EX∼w
+h
+u(X)
+w(X)D(X)
+i
+< ∞, B(D) ≥B(D⋆
+uq), with equality iff D(x) = D⋆
+uq(x) (q, u)-a.e. x ∈X."
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.15127175368139223,Under review as a conference paper at ICLR 2022
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.15261044176706828,Algorithm 1: REGS: Relative entropy gradient sampler
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.1539491298527443,"Input: u = Zp
+// unnormalized target density
+step size s > 0, an integer K > 0,
+// step size, maximum loop count
+e
+Xi
+0 ∼q0, i = 1, 2, . . . , n
+// initial particles
+w ∈Pa
+2 (X)
+// reference distribution
+k ←0
+while k < K do"
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.15528781793842034,"Y i
+k ∼w, i = 1, 2, . . . , n
+// reference samples
+bDφk ∈arg minDφ
+1
+n
+Pn
+i=1
+h
+exp(Dφ( e
+Xi
+k)) −
+u(Y i
+k )
+w(Y i
+k )Dφ(Y i
+k)
+i"
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.1566265060240964,// log density ratio
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.15796519410977242,"bvk(x) = ∇bDφk(x)
+// velocity field
+e
+Xi
+k+1 = e
+Xi
+k + sbvk( e
+Xi
+k), i = 1, 2, . . . , n
+// update particles
+k ←k + 1
+end
+Output: e
+Xi
+K ∼˜qK ≈p, i = 1, 2, . . . , n
+// output particles"
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.15930388219544847,"Based on Theorem 1, we can estimate the unknown logarithmic density ratio D⋆
+uqk = log(u/qk) with
+a deep neural network Dφ with parameter φ through the sample version of (16). Let { e
+Xi
+k}n
+i=1 be i.i.d.
+samples from ˜qk ≈qk and {Y i
+k}n
+i=1 be i.i.d. samples from a reference distribution w. We solve the
+following deep nonparametric estimation problem via stochastic gradient descent (SGD) for bDφk"
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.1606425702811245,"bDφk ∈arg min
+Dφ
+bB(Dφ) = 1 n n
+X i=1"
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.16198125836680052,"
+exp(Dφ( e
+Xi
+k)) −u(Y i
+k)
+w(Y i
+k)Dφ(Y i
+k)
+
+.
+(17)"
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.16331994645247658,"With the logarithmic density ratio estimator bDφk, the velocity ﬁeld vk in (13) can be approximately
+computed by bvk = ∇bDφk. By considering sampling as a particle evolution process discussed in
+Section 4, REGS updates the initial particles { e
+Xi
+0}n
+i=1 with iterations in (14) as follows:"
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.1646586345381526,"e
+Xi
+k+1 = e
+Xi
+k + sbvk( e
+Xi
+k),
+e
+Xi
+0 ∼q0, i = 1, 2, . . . , n, k = 0, 1, . . . , K −1.
+(18)"
+"LOGARITHMIC DENSITY RATIO ESTIMATION AND THE RELATIVE ENTROPY
+GRADIENT SAMPLER",0.16599732262382866,We summarize the proposed REGS for sampling from an unnormalized density in Algorithm 1.
+NUMERICAL EXPERIMENTS,0.16733601070950468,"6
+NUMERICAL EXPERIMENTS"
+NUMERICAL EXPERIMENTS,0.1686746987951807,"We evaluate REGS on a large number of 1D and 2D mixture distributions and test its stability in the
+high-dimensional setting with multivariate Gaussian distributions. We also use REGS to perform
+Bayesian logistic regression on benchmark datasets. For comparison, we consider three existing
+methods including SVGD (Liu & Wang, 2016), ULA (Roberts & Tweedie, 1996) and MALA (Roberts
+& Tweedie, 1996). All experiments are done using a NVIDIA Tesla K80 GPU and common CPU
+computing resources. The neural network architecture, hyperparameter values, dataset descriptions,
+and additional experimental results are given in the appendix. The python code of REGS is available
+at https://github.com/anonymous/REGS."
+MIXTURE DISTRIBUTIONS,0.17001338688085676,"6.1
+MIXTURE DISTRIBUTIONS"
+MIXTURE DISTRIBUTIONS,0.1713520749665328,"We run REGS and SVGD, ULA and MALA to generate 2000 particles for mixtures of 2, 8 and 9
+Gaussians (see Scenarios 4, 5, 6 in Appendix B), and 5000 particles for a mixture of 25 Gaussians
+(see Scenario 9 in Appendix B). The sampling qualities of these algorithms are compared by scatter
+plots with density contours of target mixture distributions. We classify all scatter points with labels
+according to the nearest mode, and plot the histograms of the label counts."
+MIXTURE DISTRIBUTIONS,0.17269076305220885,Under review as a conference paper at ICLR 2022
+MIXTURE DISTRIBUTIONS,0.17402945113788487,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.1753681392235609,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.17670682730923695,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.17804551539491298,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.17938420348058903,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.18072289156626506,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.18206157965194109,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.18340026773761714,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.18473895582329317,(a) REGS
+MIXTURE DISTRIBUTIONS,0.18607764390896922,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.18741633199464525,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.18875502008032127,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.19009370816599733,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.19143239625167335,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.1927710843373494,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.19410977242302543,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.19544846050870146,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.19678714859437751,(b) SVGD
+MIXTURE DISTRIBUTIONS,0.19812583668005354,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.1994645247657296,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.20080321285140562,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.20214190093708165,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.2034805890227577,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.20481927710843373,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.20615796519410978,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.2074966532797858,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.20883534136546184,(c) ULA with 50 chains
+MIXTURE DISTRIBUTIONS,0.2101740294511379,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.21151271753681392,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.21285140562248997,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.214190093708166,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.21552878179384202,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.21686746987951808,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.2182061579651941,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.21954484605087016,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.22088353413654618,(d) MALA with 50 chains
+MIXTURE DISTRIBUTIONS,0.2222222222222222,"Figure 2: Mixtures of 8 Gaussians with equal weights: scatter plots and histograms of generated
+samples by (a) REGS, (b) SVGD, (c) ULA with 50 chains, and (d) MALA with 50 chains. From left
+to right in each subﬁgure, the variance of Gaussians varies from σ2 = 0.2 (ﬁrst column), σ2 = 0.1
+(second column), σ2 = 0.05 (third column), to σ2 = 0.03 (fourth column)."
+MIXTURE DISTRIBUTIONS,0.22356091030789826,"Gaussian mixtures with equal weights Figure 2 shows the scatter plots and histograms of samples
+generated by (a) REGS, (b) SVGD, (c) ULA with 50 chains, and (d) MALA with 50 chains from
+mixtures of 8 Gaussians with equal weights. It shows that REGS is able to explore all the components
+in the mixture distribution nearly equally. However, SVGD is only able to ﬁnd part of the modes, as
+indicated in Figures 2(b). Figures 2(c) and 2(d) show that MALA and ULA with 50 chains ﬁnd all
+modes but with unequal weights, especially as the variance of each component decreases."
+MIXTURE DISTRIBUTIONS,0.2248995983935743,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.22623828647925034,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.22757697456492637,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.2289156626506024,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.23025435073627845,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.23159303882195448,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.23293172690763053,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.23427041499330656,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.23560910307898258,(a) REGS
+MIXTURE DISTRIBUTIONS,0.23694779116465864,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.23828647925033467,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.23962516733601072,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.24096385542168675,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.24230254350736277,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.24364123159303883,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.24497991967871485,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.2463186077643909,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.24765729585006693,(b) SVGD
+MIXTURE DISTRIBUTIONS,0.24899598393574296,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.250334672021419,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.25167336010709507,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.25301204819277107,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.2543507362784471,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.2556894243641232,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.2570281124497992,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.2583668005354752,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.2597054886211513,(c) ULA with 50 chains
+MIXTURE DISTRIBUTIONS,0.26104417670682734,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.26238286479250333,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.2637215528781794,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.26506024096385544,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.26639892904953144,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.2677376171352075,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.26907630522088355,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+MIXTURE DISTRIBUTIONS,0.27041499330655955,Proportion of particles
+MIXTURE DISTRIBUTIONS,0.2717536813922356,(d) MALA with 50 chains
+MIXTURE DISTRIBUTIONS,0.27309236947791166,"Figure 3: Mixtures of 8 Gaussians with unequal weights: scatter plots and histograms of generated
+samples by (a) REGS, (b) SVGD, (c) ULA with 50 chains, and (d) MALA with 50 chains. From left
+to right in each subﬁgure, the variance of Gaussians varies from σ2 = 0.2 (ﬁrst column), σ2 = 0.1
+(second column), σ2 = 0.05 (third column), to σ2 = 0.03 (fourth column)."
+MIXTURE DISTRIBUTIONS,0.2744310575635877,"Gaussian mixtures with unequal weights Figure 3 shows the scatter plots and histograms of
+samples generated by (a) REGS, (b) SVGD, (c) ULA with 50 chains, and (d) MALA with 50 chains
+from mixtures of 8 Gaussians with unequal weights (1, 1, 1, 1, 3, 3, 3, 3)/16. Figure 3(a) shows that
+the samples generated by REGS have the correct weights. Figures 3(c) and 3(d) indicate that ULA"
+MIXTURE DISTRIBUTIONS,0.2757697456492637,Under review as a conference paper at ICLR 2022
+MIXTURE DISTRIBUTIONS,0.27710843373493976,"0
+50
+100
+150
+200
+250
+300
+Dimension d 4 6 8 10 12 14 16 18"
+MIXTURE DISTRIBUTIONS,0.2784471218206158,Evaluation of E[h(X)]
+MIXTURE DISTRIBUTIONS,0.2797858099062918,"true
+REGS
+SVGD
+ULA_1
+MALA_1
+ULA_50
+MALA_50"
+MIXTURE DISTRIBUTIONS,0.28112449799196787,"0
+50
+100
+150
+200
+250
+300
+Dimension d 0 50 100 150 200 250 300"
+MIXTURE DISTRIBUTIONS,0.2824631860776439,Evaluation of E[h(X)]
+MIXTURE DISTRIBUTIONS,0.2838018741633199,"true
+REGS
+SVGD
+ULA_1
+MALA_1
+ULA_50
+MALA_50"
+MIXTURE DISTRIBUTIONS,0.285140562248996,"0
+50
+100
+150
+200
+250
+300
+Dimension d 4 6 8 10 12 14 16 18 20"
+MIXTURE DISTRIBUTIONS,0.28647925033467203,Evaluation of log(E[h(X)])
+MIXTURE DISTRIBUTIONS,0.2878179384203481,"true
+REGS
+SVGD
+ULA_1
+MALA_1
+ULA_50
+MALA_50"
+MIXTURE DISTRIBUTIONS,0.2891566265060241,"0
+50
+100
+150
+200
+250
+300
+Dimension d 3 2 1 0 1 2"
+MIXTURE DISTRIBUTIONS,0.29049531459170014,Evaluation of E[h(X)]
+MIXTURE DISTRIBUTIONS,0.2918340026773762,"true
+REGS
+SVGD
+ULA_1
+MALA_1
+ULA_50
+MALA_50"
+MIXTURE DISTRIBUTIONS,0.2931726907630522,"Figure 4: Monte Carlo estimates of E[h(X)] versus d for d-dimensional multivariate Gaussian
+distributions of X, For d increasing from 10 to 300 with lag 10. From left to right, h(x) = αTx,
+(αTx)2, exp(αTx), and 10 cos(αTx + 1/2) with α ∈Rd, ∥α∥2 = 1. The curves represent the
+estimates using the target samples (""true"", blue solid line) and the generated samples by REGS (red
+solid line), SVGD (green dash line), ULA_1: gray dotted line, MALA_1: pink dotted line, ULA_50:
+oringe dotted line, and MALA_50: orchid dotted line."
+MIXTURE DISTRIBUTIONS,0.29451137884872824,"and MALA assign particles to modes with incorrect weights. Moreover, the quality of the samples
+generated by SVGD, ULA and MALA deteriorates as the number of modes increases, while the
+performance of REGS remains stable. We also included the results from ULA and MALA with a
+single chain in Figures 7 and 10 in Appendix D, which show that these samplers have difﬁculty with
+multimodal distributions if only a single chain is used."
+MIXTURE DISTRIBUTIONS,0.2958500669344043,"To further analyze the performance, we report the Monte Carlo estimates of E[h(X)] using a test
+function h in Table 1, where h(x) = αTx, (αTx)2, and 10 cos(αTx + 1/2) with α ∈R2, ∥α∥2 = 1,
+and X is distributed as various Gaussian mixtures with unequal weights. By comparing the Monte
+Carlo estimates of E[h(X)] using the samplers with the values based on target samples, we see
+that REGS performs better and is more stable than SVGD, ULA and MALA, especially when
+h(x) = 10 cos(αTx + 1/2). We include additional numerical results including more scatter plots and
+histograms (Figure 6-10) and Monte Carlo estimates with equal wieights (Table 6) in Appendix D."
+MIXTURE DISTRIBUTIONS,0.2971887550200803,"Table 1: Monte Carlo estimates of E[h(X)] with four samplers for 2D mixtures of Gaussians random
+vectors X with unequal weights. “Target"" denotes the Monte Carlo estimate with target samples.
+ULA_k and MALA_k denote the ULA and MALA with k chains, respectively."
+MIXTURE DISTRIBUTIONS,0.29852744310575635,"Distributions σ2
+h(x) = αTx
+h(x) = (αTx)2
+h(x) = 10 cos(αTx + 1/2)
+Target REGS
+SVGD
+ULA_1 MALA_1 ULA_50
+MALA_50
+Target
+REGS
+SVGD ULA_1
+MALA_1
+ULA_50
+MALA_50
+Target REGS SVGD
+ULA_1
+MALA_1
+ULA_50
+MALA_50
+2gaussian
+0.2
+-0.71
+-0.61
+-0.05
+-2.86
+-2.85
+0.46
+0.00
+2.20
+2.20
+32.40
+8.39
+8.35
+8.16
+8.24
+3.39
+3.08
+-7.92
+-6.42
+-6.29
+-7.73
+-7.43
+0.1
+-0.71
+-0.47
+-0.07
+-2.83
+-2.82
+0.45
+0.00
+2.12
+2.10
+32.20
+8.11
+8.09
+8.10
+8.13
+3.49
+2.80
+-8.11
+-6.54
+-6.39
+-8.10
+-7.81
+0.05
+-0.71
+-0.48
+-0.03
+-2.84
+-2.84
+0.45
+-0.00
+2.07
+2.05
+32.10
+8.10
+8.15
+8.05
+8.10
+3.58
+2.91
+-8.16
+-6.75
+-6.60
+-8.32
+-7.94
+0.03
+-0.70
+-0.52
+0.03
+-2.82
+-2.83
+0.45
+-
+2.03
+2.03
+31.90
+7.98
+8.18
+8.04
+-
+3.69
+3.08
+-8.25
+-6.70
+-6.29
+-8.40
+-"
+GAUSSIAN,0.2998661311914324,"8gaussian
+0.2
+-1.20
+-1.20
+-0.06
+-0.49
+-1.72
+0.09
+-1.30
+8.23
+8.20
+8.05
+9.93
+8.63
+7.56
+8.54
+-3.16
+-3.16
+1.46
+-5.24
+-5.70
+-2.71
+-3.48
+0.1
+-1.21
+-1.15
+-0.02
+0.00
+-0.68
+0.40
+-0.22
+8.11
+8.08
+8.30
+0.10
+2.08
+7.94
+8.63
+-3.31
+-3.30
+1.33
+8.35
+4.63
+-3.30
+-3.29
+0.05
+-1.21
+-1.12
+-0.01
+0.00
+-2.83
+0.50
+-0.27
+8.06
+8.01
+8.09
+0.05
+8.09
+8.05
+8.24
+-3.41
+-3.35
+1.45
+8.54
+-6.53
+-3.56
+-2.43
+0.03
+-1.21
+-1.12
+-0.03
+0.00
+-2.66
+0.50
+-0.28
+8.05
+8.00
+8.10
+0.03
+7.95
+8.03
+8.55
+-3.46
+-3.40
+1.41
+8.64
+-5.22
+-3.59
+-3.14"
+GAUSSIAN,0.30120481927710846,"25gaussian
+0.2
+1.00
+1.00
+1.64
+1.17
+0.94
+0.90
+0.92
+8.05
+8.04
+9.43
+68.02
+48.48
+7.62
+7.88
+0.21
+0.17
+0.12
+0.74
+0.33
+0.27
+0.22
+0.1
+1.00
+1.00
+0.04
+2.11
+0.91
+0.98
+0.85
+7.97
+7.94
+2.04
+53.03
+51.55
+7.29
+7.79
+0.18
+0.18
+3.56
+-1.41
+-0.28
+0.52
+0.33
+0.05
+1.00
+0.91
+0.07
+1.42
+1.16
+-0.03
+0.46
+7.90
+7.83
+1.07
+13.69
+47.61
+4.79
+7.82
+0.19
+0.17
+5.07
+-3.30
+-0.08
+0.53
+0.41
+0.03
+1.00
+0.81
+-0.02
+0.00
+0.27
+-0.11
+0.27
+7.87
+7.70
+0.96
+0.20
+53.18
+4.75
+7.43
+0.17
+0.16
+5.68
+8.64
+-0.02
+0.08
+-0.01"
+MULTIVARIATE GAUSSIAN DISTRIBUTION,0.30254350736278446,"6.2
+MULTIVARIATE GAUSSIAN DISTRIBUTION"
+MULTIVARIATE GAUSSIAN DISTRIBUTION,0.3038821954484605,"Let the target distribution be a d-dimensional Gaussian distribution with mean µ = (1, 1, · · · , 1) ∈Rd"
+MULTIVARIATE GAUSSIAN DISTRIBUTION,0.30522088353413657,"and covariance matrix Σ ∈Rd×d, Σi,j = ρ|i−j| with ρ = 0.7. We consider four test functions h(x),
+i.e., h(x) = αTx (the ﬁrst moment), h(x) = (αTx)2 (the second moment), h(x) = exp(αTx) (the
+moment generating function), and h(x) = 10 cos(αTx + 1/2) with α ∈Rd satisfying ∥α∥2 = 1.
+For reference, we provide the Monte Carlo estimates of E[h(X)] using target samples. We compare
+REGS with SVGD, ULA_1, MALA_1, ULA_50, MALA_50 in Figure 4, the number of particles
+is 5000 for each sampler, where ULA_k and MALA_k denote the ULA and MALA with k chians.
+For ULA and MALA, because of large variations of the estimates, we repeat the process 10 times
+and compute the average as the ﬁnal estimate. Figure 4 presents these Monte Carlo estimates as d
+increases from 10 to 300 with step size 10. The logarithm of the estimated E[exp(αTX)] is shown. As
+shown in Figure 4, the estimates using REGS and SVGD have smaller ﬂuctuations than those using
+ULA and MALA, although all four methods can estimate E[αTX] and E[(αTX)2] well. Moreover,
+the third and the fourth panels in Figure 4 show that REGS outperforms SVGD, ULA and MALA
+when h(x) = exp(αTx) or 10 cos(αTx + 1/2)."
+MULTIVARIATE GAUSSIAN DISTRIBUTION,0.30655957161981257,Under review as a conference paper at ICLR 2022
+BAYESIAN LOGISTIC REGRESSION,0.3078982597054886,"6.3
+BAYESIAN LOGISTIC REGRESSION"
+BAYESIAN LOGISTIC REGRESSION,0.3092369477911647,"We apply REGS to Bayesian logistic regression for binary classiﬁcation on ﬁve datasets, including
+Banana, German, Image, Ringnorm, and Covertype. These datasets were analyzed in Liu & Wang
+(2016) and the ﬁrst four datasets had been analyzed in Gershman et al. (2012). We consider a
+similar setting to that in (Liu & Wang, 2016; Gershman et al., 2012), which assigns a Gaussian
+prior π(β|α) = N(0, α−1I) to the regression coefﬁcient β (including the intercept). We specify the
+prior of α as π(α) = Gamma(1, 0.01). For comparison, we consider SVGD, ULA and MALA. The
+inference is based on the posterior π(β|data)."
+BAYESIAN LOGISTIC REGRESSION,0.31057563587684067,"These datasets are partitioned randomly into two parts, the training sets (80%) and the test sets (20%).
+We repeats the random partition 10 times. We evaluate the classiﬁcation accuracy on test data with
+5000 particles from the posterior. Table 2 lists the averages and standard errors (in parenhteses) of
+test accuracy. From Table 2 we can see that REGS is comparable with SVGD, ULA and MALA. For
+the Covertype dataset, MALA failed to converge, so no results from it are included in Table 2."
+BAYESIAN LOGISTIC REGRESSION,0.3119143239625167,"Table 2: Averages and standard errors (in parenhteses) of classiﬁcation accuracy on test data from
+ﬁve datasets, d: number of features, N : sample size."
+BAYESIAN LOGISTIC REGRESSION,0.3132530120481928,"datasets
+d
+N
+Averages of Accuracy (%)
+REGS
+SVGD
+ULA_1
+MALA_1
+ULA_50
+MALA_50
+Banana
+2
+5300
+54.1 (3.1)
+55.5 (2.9)
+55.1 (1.9)
+55.2 (1.9)
+55.1 (1.9)
+55.2 (1.9)
+German
+20
+1000
+77.2 (2.2)
+75.6 (1.2)
+76.5 (1.8)
+76.6 (2.2)
+76.6 (2.0)
+76.6 (2.1)
+Image
+18
+2086
+83.4 (1.5)
+82.8 (1.7)
+82.7 (2.3)
+82.9 (2.3)
+82.8 (2.3)
+82.8 (2.3)
+Ringnorm
+20
+7400
+76.3 (0.9)
+75.9 (1.0)
+75.7 (1.4)
+75.7 (1.4)
+75.7 (1.4)
+75.2 (1.4)
+Covertype
+54
+581012
+75.0 (1.2)
+75.6 (0.8)
+74.1 (0.3)
+–
+74.2 (0.4)
+–"
+DISCUSSION OF THE EXPERIMENTAL RESULTS,0.31459170013386883,"6.4
+DISCUSSION OF THE EXPERIMENTAL RESULTS"
+DISCUSSION OF THE EXPERIMENTAL RESULTS,0.31593038821954483,"The experimental results reported above and in the appendix indicate that REGS is capable of
+generating better quality samples than SVGD, ULA and MALA from Gaussian mixture distributions.
+Also, the results suggest that particles generated by REGS can cross valleys in the landscape of a
+multimodal distribution even if they are initialized in a different regions. An intuitive explanation is
+as follows. The movement of the REGS particles is determined by the velocity ﬁeld. If the velocity
+ﬁeld is not zero at a particle, the particle will continue to evolve towards the target distribution.
+Moreover, all particles interact with each other through the velocity ﬁeld, which is beneﬁcial in
+sampling from multimodal distributions. For ULA and MALA, there are no interactions among
+particles or incentives for particles to cross valleys between two modes, thus it is more difﬁcult for
+these methods to sample from multimodal distributions. A possible remedy is to use multiple chains
+as we did in the above experiments. To some extend, this alleviates the problem encountered in
+sampling from multimodal distributions. However, the success of this strategy depends on the initial
+samples being near the modes as well as having the correct proportions of the initial samples being
+close to each mode. In comparison, REGS uses a principled way to move particles from an initial
+reference distribution to a multimodal distribution, albeit with a higher computational cost."
+CONCLUSION,0.3172690763052209,"7
+CONCLUSION"
+CONCLUSION,0.31860776439089694,"We have introduced REGS, a novel gradient ﬂow based method for sampling from unnormalized
+distributions. Extensive numerical experiments demonstrate that REGS performs better than several
+existing popular sampling methods in the setting of challenging multimodal mixture distributions.
+In future work, we hope to establish the convergence properties of REGS generated sampling
+distributions as the numbers of iterations and particles increase."
+CONCLUSION,0.31994645247657294,"As with any sampling algorithms, there is a trade-off between sampling quality and computational
+efﬁciency. On one hand, as our numerical experiments demonstrate, REGS can generate samples
+with better quality than the three existing methods we considered in the challenging mixture model
+settings. On the other hand, REGS is computationally more expensive, as it involves neural network
+training in the iterations, compared with existing methods such as ULA and MALA that can be
+implemented more quickly. As computational power continues to increase rapidly, REGS can be a
+useful addition to the toolkit of sampling methods for multimodal distributions."
+CONCLUSION,0.321285140562249,Under review as a conference paper at ICLR 2022
+REFERENCES,0.32262382864792505,REFERENCES
+REFERENCES,0.32396251673360105,"Luigi Ambrosio, Nicola Gigli, and Giuseppe Savaré. Gradient Flows: in Metric Spaces and in the
+Space of Probability Measures. Springer Science & Business Media, 2008."
+REFERENCES,0.3253012048192771,"Christophe Andrieu, Nando de Freitas, Arnaud Doucet, and Michael I. Jordan. An introduction to
+MCMC for machine learning. Machine Learning, 50(1):5–43, 2003."
+REFERENCES,0.32663989290495316,"Matthew J Beal. Variational Algorithms for Approximate Bayesian Inference. PhD thesis, University
+College London, 2003."
+REFERENCES,0.3279785809906292,"David M. Blei, Alp Kucukelbir, and Jon D. McAuliffe. Variational inference: A review for statisticians.
+Journal of the American Statistical Association, 112(518):859–877, 2017."
+REFERENCES,0.3293172690763052,"Steve Brooks, Andrew Gelman, Galin L. Jones, and Xiao-Li Meng. Handbook of Markov Chain
+Monte Carlo. CRC Press, 2011."
+REFERENCES,0.33065595716198126,"Changyou Chen, Ruiyi Zhang, Wenlin Wang, Bai Li, and Liqun Chen. A uniﬁed particle-optimization
+framework for scalable bayesian sampling. In UAI, 2018."
+REFERENCES,0.3319946452476573,"Tianqi Chen, Emily Fox, and Carlos Guestrin. Stochastic gradient Hamiltonian Monte Carlo. In
+Eric P. Xing and Tony Jebara (eds.), Proceedings of the 31st International Conference on Machine
+Learning, volume 32 of Proceedings of Machine Learning Research, pp. 1683–1691. PMLR,
+22–24 Jun 2014."
+REFERENCES,0.3333333333333333,"A Philip Dawid.
+The geometry of proper scoring rules.
+Annals of the Institute of Statistical
+Mathematics, 59(1):77–93, 2007."
+REFERENCES,0.33467202141900937,"Simon Duane, A.D. Kennedy, Brian J. Pendleton, and Duncan Roweth. Hybrid Monte Carlo. Physics
+Letters B, 195(2):216–222, 1987."
+REFERENCES,0.3360107095046854,"Andrew Duncan, Nikolas Nüsken, and Lukasz Szpruch. On the geometry of Stein variational gradient
+descent. arXiv preprint arXiv:1912.00894, 2019."
+REFERENCES,0.3373493975903614,"D B Dunson and J E Johndrow. The Hastings algorithm at ﬁfty. Biometrika, 107(1):1–23, 2019."
+REFERENCES,0.3386880856760375,"Yuan Gao, Yuling Jiao, Yang Wang, Yao Wang, Can Yang, and Shunkang Zhang. Deep generative
+learning via variational gradient ﬂow. In Kamalika Chaudhuri and Ruslan Salakhutdinov (eds.),
+Proceedings of the 36th International Conference on Machine Learning, volume 97 of Proceedings
+of Machine Learning Research, pp. 2093–2101. PMLR, 09–15 Jun 2019."
+REFERENCES,0.34002677376171353,"Yuan Gao, Jian Huang, Yuling Jiao, Jin Liu, Xiliang Lu, and Zhijian Yang. Deep generative learning
+with Euler particle transport. In Proceedings of Machine Learning Research vol 145:1-33, 2021
+2nd Annual Conference on Mathematical and Scientiﬁc Machine Learning, 2021."
+REFERENCES,0.3413654618473896,"S. Gershman, M. Hoffman, and D. Blei. Nonparametric variational inference. ICML, 2012."
+REFERENCES,0.3427041499330656,"Tilmann Gneiting and Adrian E Raftery. Strictly proper scoring rules, prediction, and estimation.
+Journal of the American statistical Association, 102(477):359–378, 2007."
+REFERENCES,0.34404283801874164,"W. Keith Hastings. Monte Carlo sampling methods using Markov chains and their applications.
+Biometrika, 57(1):97–109, 1970."
+REFERENCES,0.3453815261044177,"Matthew D. Hoffman and Andrew Gelman. The No-U-Turn Sampler: Adaptively setting path lengths
+in Hamiltonian Monte Carlo. Journal of Machine Learning Research, 15(47):1593–1623, 2014."
+REFERENCES,0.3467202141900937,"Richard Jordan, David Kinderlehrer, and Felix Otto. The variational formulation of the Fokker–Planck
+equation. SIAM Journal on Mathematical Analysis, 29(1):1–17, 1998."
+REFERENCES,0.34805890227576974,"Takafumi Kanamori and Masashi Sugiyama. Statistical analysis of distance estimators with density
+differences and density ratios. Entropy, 16(2):921–942, 2014."
+REFERENCES,0.3493975903614458,"Anna Korba, Adil Salim, Michael Arbel, Giulia Luise, and Arthur Gretton. A non-asymptotic analysis
+for stein variational gradient descent. Advances in Neural Information Processing Systems, 33,
+2020."
+REFERENCES,0.3507362784471218,Under review as a conference paper at ICLR 2022
+REFERENCES,0.35207496653279785,"Randall J LeVeque. Finite Difference Methods for Ordinary and Partial Differential Equations:
+Steady-state and Time-dependent Problems, volume 98. SIAM, 2007."
+REFERENCES,0.3534136546184739,"Chang Liu, Jingwei Zhuo, Pengyu Cheng, Ruiyi Zhang, and Jun Zhu. Understanding and accelerating
+particle-based variational inference. In Kamalika Chaudhuri and Ruslan Salakhutdinov (eds.),
+Proceedings of the 36th International Conference on Machine Learning, volume 97 of Proceedings
+of Machine Learning Research, pp. 4082–4092. PMLR, 09–15 Jun 2019a."
+REFERENCES,0.35475234270414996,"Chang Liu, Jingwei Zhuo, and Jun Zhu. Understanding MCMC dynamics as ﬂows on the Wasser-
+stein space. In Kamalika Chaudhuri and Ruslan Salakhutdinov (eds.), Proceedings of the 36th
+International Conference on Machine Learning, volume 97 of Proceedings of Machine Learning
+Research, pp. 4093–4103. PMLR, 09–15 Jun 2019b."
+REFERENCES,0.35609103078982596,"Qiang Liu. Stein variational gradient descent as gradient ﬂow. In I. Guyon, U. V. Luxburg, S. Bengio,
+H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett (eds.), Advances in Neural Information
+Processing Systems, volume 30. Curran Associates, Inc., 2017."
+REFERENCES,0.357429718875502,"Qiang Liu and Dilin Wang. Stein variational gradient descent: A general purpose bayesian inference
+algorithm. In D. Lee, M. Sugiyama, U. Luxburg, I. Guyon, and R. Garnett (eds.), Advances in
+Neural Information Processing Systems, volume 29. Curran Associates, Inc., 2016."
+REFERENCES,0.35876840696117807,"Jianfeng Lu, Yulong Lu, and James Nolen. Scaling limit of the Stein variational gradient descent:
+The mean ﬁeld regime. SIAM Journal on Mathematical Analysis, 51(2):648–671, 2019."
+REFERENCES,0.36010709504685406,"Nicholas Metropolis, Arianna W Rosenbluth, Marshall N Rosenbluth, Augusta H Teller, and Edward
+Teller. Equation of state calculations by fast computing machines. The journal of Chemical Physics,
+21(6):1087–1092, 1953."
+REFERENCES,0.3614457831325301,"Radford M. Neal. MCMC Using Hamiltonian Dynamics, chapter 5. CRC Press, 2011."
+REFERENCES,0.3627844712182062,"Gareth O Roberts and Osnat Stramer. Langevin diffusions and Metropolis-Hastings algorithms.
+Methodology and computing in applied probability, 4(4):337–357, 2002."
+REFERENCES,0.36412315930388217,"Gareth O. Roberts and Richard L. Tweedie. Exponential convergence of Langevin distributions and
+their discrete approximations. Bernoulli, 2(4):341 – 363, 1996."
+REFERENCES,0.3654618473895582,"Adil Salim, Anna Korba, and Giulia Luise. The wasserstein proximal gradient algorithm. arXiv
+preprint arXiv:2002.03035, 2020."
+REFERENCES,0.3668005354752343,"Adil Salim, Lukang Sun, and Peter Richtárik. Complexity analysis of stein variational gradient
+descent under talagrand’s inequality t1. arXiv preprint arXiv:2106.03076, 2021."
+REFERENCES,0.36813922356091033,"Luke Tierney. Markov Chains for exploring posterior distributions. The Annals of Statistics, 22(4):
+1701–1728, 1994."
+REFERENCES,0.36947791164658633,"Cédric Villani. Optimal Transport: Old and New, volume 338. Springer Science & Business Media,
+2008."
+REFERENCES,0.3708165997322624,"Martin J. Wainwright and Michael I. Jordan. Graphical models, exponential families, and variational
+inference. Foundations and Trends in Machine Learning, 1(1):1–305, 2008."
+REFERENCES,0.37215528781793844,"Max Welling and Yee Whye Teh. Bayesian learning via stochastic gradient Langevin dynamics. In
+Proceedings of the 28th international conference on machine learning, ICML’11, pp. 681–688.
+ACM, 2011."
+REFERENCES,0.37349397590361444,"Michael Zhu, Chang Liu, and Jun Zhu. Variance reduction and quasi-Newton for particle-based
+variational inference. In Hal Daumé III and Aarti Singh (eds.), Proceedings of the 37th International
+Conference on Machine Learning, volume 119 of Proceedings of Machine Learning Research, pp.
+11576–11587. PMLR, 13–18 Jul 2020."
+REFERENCES,0.3748326639892905,"Jingwei Zhuo, Chang Liu, Jiaxin Shi, Jun Zhu, Ning Chen, and Bo Zhang. Message passing Stein
+variational gradient descent. In Jennifer Dy and Andreas Krause (eds.), Proceedings of the 35th
+International Conference on Machine Learning, volume 80 of Proceedings of Machine Learning
+Research, pp. 6018–6027. PMLR, 10–15 Jul 2018."
+REFERENCES,0.37617135207496655,Under review as a conference paper at ICLR 2022
+REFERENCES,0.37751004016064255,"A
+APPENDIX"
+REFERENCES,0.3788487282463186,"In this appendix, we prove Theorem 1, give a detailed description of the models in the numerical
+experiments, the neural network architecture used in implementing REGS, and additional numerical
+results."
+REFERENCES,0.38018741633199465,"B
+PROOF OF THEOREM 1"
+REFERENCES,0.3815261044176707,"Proof. By the deﬁnition of Bregman score B(R) between u and q, it is easy to check"
+REFERENCES,0.3828647925033467,"R⋆
+uq ∈arg min
+R B(R),"
+REFERENCES,0.38420348058902276,"B(R) ≥B(R⋆
+uq) with equality iff R(x) = R⋆
+uq(x) (q, u)-a.e. x ∈X."
+REFERENCES,0.3855421686746988,"Since D⋆
+uq = log(R⋆
+uq), D = log(R), B(R) = B(D), when EX∼w
+h
+u(X)
+w(X)D(X)
+i
+< ∞, we have"
+REFERENCES,0.3868808567603748,"D⋆
+uq ∈arg min
+D B(D),"
+REFERENCES,0.38821954484605087,"B(D) ≥B(D⋆
+uq) with equality iff D(x) = D⋆
+uq(x) (q, u)-a.e. x ∈X.
+■"
+REFERENCES,0.3895582329317269,"C
+GAUSSIAN MIXTURE DISTRIBUTIONS"
+REFERENCES,0.3908969210174029,"Let the density of a d-dimensional multivariate Gaussian distribution with mean µ ∈Rd and
+covariance matrix Σ ∈Rd×d be"
+REFERENCES,0.392235609103079,"f(x; µ, Σ) =
+1"
+REFERENCES,0.39357429718875503,"(2π)
+d
+2 p"
+REFERENCES,0.3949129852744311,"det(Σ)
+exp
+
+−1"
+REFERENCES,0.3962516733601071,"2(x −µ)TΣ−1(x −µ)
+
+."
+REFERENCES,0.39759036144578314,We consider several scenarios below for the unnormalized density function u(x).
+REFERENCES,0.3989290495314592,"Scenario 1. 2Gaussians_1d1. One-dimensional mixture of 2 Gaussians,"
+REFERENCES,0.4002677376171352,u(x) = 1
+REFERENCES,0.40160642570281124,"3f(x; µ1, σ2
+1) + 2"
+REFERENCES,0.4029451137884873,"3f(x; µ2, σ2
+2),"
+REFERENCES,0.4042838018741633,"where µ1 = 1, µ2 = −2, and σ2
+1 = 0.25, σ2
+2 = 2;"
+REFERENCES,0.40562248995983935,"Scenario 2. 2Gaussians_1d2. One-dimensional mixture of 2 Gaussians,"
+REFERENCES,0.4069611780455154,u(x) = 1
+REFERENCES,0.40829986613119146,"3f(x; µ1, σ2
+1) + 2"
+REFERENCES,0.40963855421686746,"3f(x; µ2, σ2
+2),"
+REFERENCES,0.4109772423025435,"where µ1 = 3, µ2 = −3, and σ2
+1 = 0.25, σ2
+2 = 2;"
+REFERENCES,0.41231593038821956,"Scenario 3. 2Gaussians_1d3. One-dimensional mixture of 2 Gaussians,"
+REFERENCES,0.41365461847389556,u(x) = 1
+REFERENCES,0.4149933065595716,"3f(x; µ1, σ2
+1) + 2"
+REFERENCES,0.41633199464524767,"3f(x; µ2, σ2
+2),"
+REFERENCES,0.41767068273092367,"where µ1 = 3, µ2 = −3, and σ2
+1 = 0.03, σ2
+2 = 0.03;"
+REFERENCES,0.4190093708165997,"Scenario 4. 2Gaussians. Two-dimensional mixture of 2 Gaussians,"
+REFERENCES,0.4203480589022758,"u(x) = f(x; µ1, Σ1) + f(x; µ2, Σ2),"
+REFERENCES,0.42168674698795183,"where µ1 = (r, 0)T, µ2 = (−r, 0)T, and Σ1 = Σ2 = σ2I."
+REFERENCES,0.42302543507362783,"Scenario 5. 8Gaussians. Two-dimensional mixture of 8 Gaussians,"
+REFERENCES,0.4243641231593039,u(x) =
+X,0.42570281124497994,"8
+X"
+X,0.42704149933065594,"j=1
+f(x; µj, Σj),"
+X,0.428380187416332,"where µj = r(sin(2(j −1)π/8), cos(2(j −1)π/8))T, and Σj = σ2I for j = 1, · · · , 8."
+X,0.42971887550200805,Under review as a conference paper at ICLR 2022
+X,0.43105756358768405,"Scenario 6. 9Gaussians. Two-dimensional mixture of 9 Gaussians,"
+X,0.4323962516733601,u(x) =
+X,0.43373493975903615,"3
+X j=1"
+X,0.4350736278447122,"3
+X"
+X,0.4364123159303882,"k=1
+f(x; µjk, Σjk),"
+X,0.43775100401606426,"where µjk = 4(j −2, k −2)T, Σjk = σ2I for j = 1, 2, 3 and k = 1, 2, 3.
+Scenario 7. 16Gaussians_1c. Two-dimensional mixture of 16 Gaussians,"
+X,0.4390896921017403,u(x) =
+X,0.4404283801874163,"16
+X"
+X,0.44176706827309237,"j=1
+f(x; µj, Σj),"
+X,0.4431057563587684,"where µj = 4(sin(2(j −1)π/16), cos(2(j −1)π/16))T, and Σj = 0.03I for j =
+1, · · · , 16.
+Scenario 8. 16Gaussians_2c. Two-dimensional mixture of 16 Gaussians,"
+X,0.4444444444444444,u(x) =
+X,0.4457831325301205,"8
+X"
+X,0.44712182061579653,"j=1
+f(x; µj, Σj) +"
+X,0.4484605087014726,"8
+X"
+X,0.4497991967871486,"k=1
+f(x; µk, Σk),"
+X,0.45113788487282463,"where µj
+=
+4(sin(2(j −1)π/8), cos(2(j −1)π/8))T, µk
+=
+2(sin(2(j −
+1)π/8), cos(2(j −1)π/8))T, and Σj = Σk = 0.03I for j = 1, · · · , 8 and k = 1, · · · , 8.
+Scenario 9. 25Gaussians. Two-dimensional mixture of 25 Gaussians,"
+X,0.4524765729585007,u(x) =
+X,0.4538152610441767,"5
+X j=1"
+X,0.45515394912985274,"5
+X"
+X,0.4564926372155288,"k=1
+f(x; µjk, Σjk),"
+X,0.4578313253012048,"where µjk = 2(j −3, k −3)T, Σjk = σ2I for j = 1, · · · , 5 and k = 1, · · · , 5.
+Scenario 10. 49Gaussians. Two-dimensional mixture of 49 Gaussians,"
+X,0.45917001338688085,u(x) =
+X,0.4605087014725569,"7
+X j=1"
+X,0.46184738955823296,"7
+X"
+X,0.46318607764390896,"k=1
+f(x; µjk, Σjk),"
+X,0.464524765729585,where µjk = 3
+X,0.46586345381526106,"2(j −4, k −4)T, Σjk = 0.03I for j = 1, · · · , 7 and k = 1, · · · , 7.
+Scenario 11. 81Gaussians. Two-dimensional mixture of 81 Gaussians,"
+X,0.46720214190093706,u(x) =
+X,0.4685408299866131,"9
+X j=1"
+X,0.46987951807228917,"9
+X"
+X,0.47121820615796517,"k=1
+f(x; µjk, Σjk),"
+X,0.4725568942436412,where µjk = 3
+X,0.4738955823293173,"2(j −5, k −5)T, Σjk = 0.03I for j = 1, · · · , 9 and k = 1, · · · , 9."
+X,0.47523427041499333,"Scenario 12. 1circle. Let µi = 4(cos(2iπ/N), sin(2iπ/N))T, i = 0, 1, · · · , N −1 with N = 400.
+Consider three noise to be added to each point µi, including the uniform distribu-
+tion U(µi, 1/30) on a disc with center at µi and radius 1/30, Gaussian distribution
+N(µi, 0.03I), and mixed these two distributions.
+Scenario 13. 2circles.
+Let
+µ1i
+=
+2(cos(2iπ/N), sin(2iπ/N))T
+and
+µ2i
+=
+4(cos(2iπ/N), sin(2iπ/N))T, i = 0, 1, · · · , N −1 with N
+= 200.
+Consider
+three noise to be added to each point µki including uniform distribution U(µki, 1/30)
+on a disc with center at µki and radius 1/30, Gaussian distribution N(µki, 0.03I), and
+mixed these two distributions, k = 1, 2.
+Scenario 14. 1spiral. Let µi = 4iπ"
+X,0.47657295850066933,"N cos(4iπ/N), sin(4iπ/N))T, i = 0, 1, · · · , N −1 with N = 400.
+Consider three noise to be added to each point µi, including the uniform distribu-
+tion U(µi, 1/30) on a disc with center at µi and radius 1/30, Gaussian distribution
+N(µi, 0.03I), and mixed these two distributions."
+X,0.4779116465863454,"Scenario 15. 2spirals.
+Let
+µ1i
+=
+3iπ"
+X,0.47925033467202144,"N (cos(3iπ/N), sin(3iπ/N))T
+and
+µ2i
+=
+−3iπ"
+X,0.48058902275769744,"N (cos(3iπ/N), sin(3iπ/N))T, i = 0, 1, · · · , N −1 with N
+= 200.
+Con-
+sider three noise to be added to each point µki including uniform distribution
+U(µki, 1/30) on a disc with center at µki and radius 1/30, Gaussian distribution
+N(µki, 0.03I), and mixed these two distributions, k = 1, 2."
+X,0.4819277108433735,Under review as a conference paper at ICLR 2022
+X,0.48326639892904955,"Scenario 16. moons. Let µ1i = (8i/N −6, 4 sin(iπ/N))T and µ2i = (8i/N −2, 4 sin(iπ/N))T,
+i = 0, 1, · · · , N −1 with N = 200. Consider three noise to be added to each point µki
+including uniform distribution U(µki, 1/30) on a disc with center at µki and radius 1/30,
+Gaussian distribution N(µki, 0.03I), and mixed these two distributions, k = 1, 2."
+X,0.48460508701472554,"D
+EXPERIMENTAL SETTING"
+X,0.4859437751004016,"D.1
+HYPERPARAMETER"
+X,0.48728246318607765,"We burn in the ﬁrst 1000 particles for ULA and MALA in all experiments. We initialize the particles
+in SVGD, ULA and MALA as zeros or random samples from Gaussians. We provide the step size
+settings in Table 3. For SVGD, we use RBF kernel k(x, x′) = exp(−1"
+X,0.4886211512717537,"h∥x −x′∥2
+2) and set the
+bandwidth as h = med2/ log n, where med is the median of pairwise distances between the particles
+{xi}n
+i=1. We set the learning rate of neural networks as 5e-4 for density ratio estimation in REGS.
+The network structures are presented in Table 4. The initial particles in REGS are sampled from
+Gaussian distributions."
+X,0.4899598393574297,"Table 3: Step size settings for REGS, SVGD, ULA and MALA. ""BGIR"" denotes four datasets
+including Banana, German, Image and Ringnorm."
+X,0.49129852744310576,"Methods
+2Gaussians
+8Gaussians
+9Gaussians
+25Gaussians
+BGIR
+Covertype"
+X,0.4926372155287818,"REGS
+5e-4
+5e-4
+5e-4
+5e-4
+2e-3
+2e-3"
+X,0.4939759036144578,"SVGD
+2e-2
+2e-2
+2e-2
+2e-2
+5e-2
+5e-2"
+X,0.49531459170013387,"ULA
+2e-2
+5e-2
+1e-1
+5e-2
+1e-3
+1e-4"
+X,0.4966532797858099,"MALA
+5e-2
+2e-1
+5e-1
+5e-1
+1e-3
+–"
+X,0.4979919678714859,"D.2
+NEURAL NETWORK ARCHITECTURE"
+X,0.499330655957162,"Table 4: Neural network architecture for log-density ratio estimation: feedforward neural networks
+with equal-width hidden layers and Leaky ReLU activation. Depth ℓ= 3 for 2Gaussians_1d1,
+2Gaussians_1d2, 2Gaussians_1d3, and 2Gaussians. ℓ= 4 for 8Gaussians, 9Gaussians, 1circle,
+2circles, 1spiral, 2spirals, and moons. ℓ= 6 for 16Gaussians_1c, 16Gaussians_2c, 25Gaussians,
+49Gaussians, and 81Gaussians."
+X,0.500669344042838,"Layer
+Details
+Output size"
+X,0.5020080321285141,"{i}ℓ−1
+i=1
+Linear, LeakyReLU (0.2)
+128"
+X,0.5033467202141901,"ℓ
+Linear
+1"
+X,0.5046854082998661,"D.3
+DATASETS"
+X,0.5060240963855421,"Covertype:
+https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/
+binary.html Banana, German, Image, Ringnorm: http://theoval.cmp.uea.ac.uk/
+matlab/default.html"
+X,0.5073627844712182,"E
+ADDITIONAL NUMERICAL RESULTS"
+X,0.5087014725568942,Under review as a conference paper at ICLR 2022
+X,0.5100401606425703,"Table 5: Monte Carlo estimates of E[h(X)]. Here h(x) = αTx, (αTx)2, and 10 cos(αTx + 1/2) with
+α ∈R2, ∥α∥2 = 1. ""true"" denotes the Monte Carlo estimate with target samples."
+X,0.5113788487282463,"Distributions
+h(x) = αTx
+h(x) = (αTx)2
+h(x) = 10 cos(αTx + 1/2)
+true
+REGS
+true
+REGS
+true
+REGS
+2Gaussians_1d1
+-0.9886
+-0.9887
+3.7105
+3.7093
+0.46838
+0.5418
+2Gaussians_1d2
+-0.9972
+-1.1630
+9.0032
+9.0297
+-8.3053
+-8.2956
+2Gaussians_1d3
+-0.9602
+-0.728
+9.8727
+9.8016
+-6.3785
+-6.1266
+2Gaussians
+-0.0019
+0.0448
+8.0243
+8.0225
+-8.2351
+-8.2513
+8Gaussians
+-0.0021
+-0.021
+8.0118
+8.0276
+-3.3925
+-3.3727
+9Gaussians
+0.0003
+0.0100
+10.6771
+10.8063
+0.7773
+0.7532
+16Gaussians_1c
+-0.0008
+-0.0077
+8.0269
+8.02889
+-3.4393
+-3.4325
+16Gaussians_2c
+-0.0006
+-0.0060
+5.3544
+5.2780
+-1.4260
+-1.3877
+25Gaussians
+0.0013
+-0.0141
+8.0276
+8.0227
+0.1248
+0.1189
+49Gaussians
+0.0006
+0.0001
+9.0285
+9.0215
+0.2043
+0.1990
+81Gaussians
+-0.0011
+-0.0009
+15.0280
+15.0261
+0.4126
+0.4196
+8Gaussians r=5
+-0.0011
+-0.0037
+12.5291
+12.5356
+-1.2160
+-1.2214
+8Gaussians r=10
+0.0021
+-0.0030
+50.0278
+49.4783
+3.3872
+3.4238
+8Gaussians r=15
+0.0003
+-0.0306
+112.5023
+111.4456
+-1.1116
+-1.0930
+2Gaussians σ2 = 0.01
+-0.0022
+-0.0009
+0.5119
+0.5082
+6.6390
+6.6504
+2Gaussians σ2 = 0.005
+-0.0012
+0.0027
+0.5019
+0.4976
+6.6694
+6.6718
+2Gaussians σ2 = 0.0001
+0.0005
+0.0034
+0.5043
+0.5049
+6.6558
+6.6406"
+X,0.5127175368139224,"Table 6: Monte Carlo estimates of E[h(X)] by four samplers for 2D mixtures of Gaussians of X
+with equal weights. Here h(x) = αTx, (αTx)2 or 10 cos(αTx + 1/2) with α ∈R2, ∥α∥2 = 1. ""true""
+denotes the Monte Carlo estimate with target samples. ""ULA_k"" and ""MALA_k"" denote the ULA
+and MALA with k chains, respectively."
+X,0.5140562248995983,"Distributions σ2
+h(x) = αTx
+h(x) = (αTx)2
+h(x) = 10 cos(αTx + 1/2)
+true
+REGS SVGD ULA_1
+MALA_1
+ULA_50
+MALA_50
+true
+REGS SVGD ULA_1
+MALA_1
+ULA_50
+MALA_50
+true
+REGS SVGD ULA_1
+MALA_1
+ULA_50
+MALA_50
+2gaussian
+0.2
+0.02
+0.00
+-0.01
+-1.45
+0.66
+0.11
+-0.34
+2.56
+2.50
+2.50
+2.62
+2.27
+8.24
+8.25
+0.97
+1.06
+1.09
+4.54
+-0.43
+-7.64
+-7.30
+0.1
+-0.00
+-0.03
+0.04
+1.37
+-1.38
+0.11
+-0.23
+2.20
+2.20
+2.20
+2.06
+2.12
+8.10
+8.15
+1.23
+1.33
+1.12
+-2.62
+5.71
+-7.99
+-7.71
+0.05
+0.00
+0.02
+0.06
+1.42
+-1.44
+0.11
+-0.23
+2.10
+2.10
+2.12
+2.10
+2.19
+8.04
+8.10
+1.30
+1.23
+1.05
+-3.22
+5.57
+-8.20
+-7.83
+0.03
+-0.01
+0.02
+0.10
+-1.41
+1.42
+0.11
+-0.23
+2.02
+2.05
+2.01
+2.04
+2.10
+8.03
+8.18
+1.42
+1.28
+1.12
+5.98
+-3.36
+-8.29
+-7.53"
+GAUSSIAN,0.5153949129852744,"8gaussian
+0.2
+0.00
+-0.01
+0.00
+-3.46
+3.00
+0.14
+0.35
+8.20
+8.20
+7.98
+12.81
+10.20
+7.87
+8.05
+-3.05
+-3.09
+1.41
+-7.20
+-5.41
+-2.95
+-2.71
+0.1
+-0.01
+-0.02
+0.02
+2.83
+2.84
+-0.66
+-0.02
+8.11
+8.12
+8.12
+8.11
+8.23
+8.09
+8.52
+-3.23
+-3.26
+1.51
+-9.35
+-9.11
+-3.54
+-3.71
+0.05
+-0.01
+-0.00
+0.02
+2.83
+-2.83
+-0.41
+0.04
+8.06
+8.06
+8.31
+8.05
+8.08
+8.21
+9.02
+-3.33
+-3.34
+1.36
+-9.58
+-6.51
+-2.83
+-4.37
+0.03
+0.00
+-0.00
+-0.01
+-0.00
+1.96
+-0.41
+0.18
+8.04
+8.05
+8.05
+0.02
+6.19
+8.19
+8.40
+-3.35
+-3.35
+1.57
+8.68
+-2.38
+-2.86
+-3.86"
+GAUSSIAN,0.5167336010709505,"25gaussian
+0.2
+-0.00
+0.00
+-0.44
+0.22
+-0.45
+0.02
+0.02
+8.18
+8.20
+9.46
+8.02
+7.96
+8.31
+8.10
+0.10
+0.11
+0.75
+0.53
+0.15
+0.05
+0.13
+0.1
+0.00
+0.00
+0.04
+0.15
+0.59
+-0.05
+-0.05
+8.11
+8.09
+2.11
+7.42
+8.09
+8.19
+7.97
+0.10
+0.11
+3.44
+0.99
+-0.15
+0.12
+0.12
+0.05
+-0.00
+-0.01
+-0.00
+0.36
+-1.50
+-0.33
+-0.15
+8.06
+7.62
+1.07
+4.40
+6.17
+5.48
+8.04
+0.12
+0.10
+5.37
+0.95
+0.71
+0.30
+0.34
+0.03
+-0.00
+-0.02
+-0.01
+0.14
+-0.08
+0.14
+-0.04
+8.04
+7.58
+0.98
+8.11
+6.97
+2.95
+7.41
+0.11
+0.09
+5.56
+-2.40
+-0.91
+1.62
+0.08"
+GAUSSIAN,0.5180722891566265,Under review as a conference paper at ICLR 2022
+GAUSSIAN,0.5194109772423026,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5207496653279786,Proportion of particles
+GAUSSIAN,0.5220883534136547,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5234270414993306,Proportion of particles
+GAUSSIAN,0.5247657295850067,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5261044176706827,Proportion of particles
+GAUSSIAN,0.5274431057563588,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5287817938420348,Proportion of particles
+GAUSSIAN,0.5301204819277109,(a) REGS
+GAUSSIAN,0.5314591700133868,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5327978580990629,Proportion of particles
+GAUSSIAN,0.5341365461847389,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.535475234270415,Proportion of particles
+GAUSSIAN,0.536813922356091,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5381526104417671,Proportion of particles
+GAUSSIAN,0.5394912985274432,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5408299866131191,Proportion of particles
+GAUSSIAN,0.5421686746987951,(b) SVGD
+GAUSSIAN,0.5435073627844712,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5448460508701473,Proportion of particles
+GAUSSIAN,0.5461847389558233,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5475234270414994,Proportion of particles
+GAUSSIAN,0.5488621151271754,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5502008032128514,Proportion of particles
+GAUSSIAN,0.5515394912985274,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5528781793842035,Proportion of particles
+GAUSSIAN,0.5542168674698795,(c) ULA with one chain
+GAUSSIAN,0.5555555555555556,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5568942436412316,Proportion of particles
+GAUSSIAN,0.5582329317269076,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5595716198125836,Proportion of particles
+GAUSSIAN,0.5609103078982597,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5622489959839357,Proportion of particles
+GAUSSIAN,0.5635876840696118,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5649263721552878,Proportion of particles
+GAUSSIAN,0.5662650602409639,(d) MALA with one chain
+GAUSSIAN,0.5676037483266398,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5689424364123159,Proportion of particles
+GAUSSIAN,0.570281124497992,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.571619812583668,Proportion of particles
+GAUSSIAN,0.5729585006693441,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5742971887550201,Proportion of particles
+GAUSSIAN,0.5756358768406962,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5769745649263721,Proportion of particles
+GAUSSIAN,0.5783132530120482,(e) ULA with 50 chains
+GAUSSIAN,0.5796519410977242,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5809906291834003,Proportion of particles
+GAUSSIAN,0.5823293172690763,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5836680053547524,Proportion of particles
+GAUSSIAN,0.5850066934404283,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5863453815261044,Proportion of particles
+GAUSSIAN,0.5876840696117804,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.5890227576974565,Proportion of particles
+GAUSSIAN,0.5903614457831325,(f) MALA with 50 chains
+GAUSSIAN,0.5917001338688086,"Figure 5: Scatter plots with contours of 1000 generated samples from unnormalized mixtures of 2
+Gaussians with equal weights by (a) REGS, (b) SVGD, (c) ULA and (d) MALA with one chain, (e)
+ULA and (f) MALA with 50 chains. From left to right in each subﬁgure, the variance of Gaussians
+varies from σ2 = 0.2 (ﬁrst column), σ2 = 0.1 (second column), σ2 = 0.05 (third column), to
+σ2 = 0.03 (fourth column)."
+GAUSSIAN,0.5930388219544847,Under review as a conference paper at ICLR 2022
+GAUSSIAN,0.5943775100401606,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.5957161981258366,Proportion of particles
+GAUSSIAN,0.5970548862115127,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.5983935742971888,Proportion of particles
+GAUSSIAN,0.5997322623828648,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6010709504685409,Proportion of particles
+GAUSSIAN,0.6024096385542169,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6037483266398929,Proportion of particles
+GAUSSIAN,0.6050870147255689,(a) REGS
+GAUSSIAN,0.606425702811245,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.607764390896921,Proportion of particles
+GAUSSIAN,0.6091030789825971,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6104417670682731,Proportion of particles
+GAUSSIAN,0.6117804551539491,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6131191432396251,Proportion of particles
+GAUSSIAN,0.6144578313253012,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6157965194109772,Proportion of particles
+GAUSSIAN,0.6171352074966533,(b) SVGD
+GAUSSIAN,0.6184738955823293,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6198125836680054,Proportion of particles
+GAUSSIAN,0.6211512717536813,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6224899598393574,Proportion of particles
+GAUSSIAN,0.6238286479250335,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6251673360107095,Proportion of particles
+GAUSSIAN,0.6265060240963856,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6278447121820616,Proportion of particles
+GAUSSIAN,0.6291834002677377,(c) ULA with one chain
+GAUSSIAN,0.6305220883534136,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6318607764390897,Proportion of particles
+GAUSSIAN,0.6331994645247657,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6345381526104418,Proportion of particles
+GAUSSIAN,0.6358768406961178,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6372155287817939,Proportion of particles
+GAUSSIAN,0.6385542168674698,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6398929049531459,Proportion of particles
+GAUSSIAN,0.6412315930388219,(d) MALA with one chain
+GAUSSIAN,0.642570281124498,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.643908969210174,Proportion of particles
+GAUSSIAN,0.6452476572958501,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6465863453815262,Proportion of particles
+GAUSSIAN,0.6479250334672021,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6492637215528781,Proportion of particles
+GAUSSIAN,0.6506024096385542,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6519410977242303,Proportion of particles
+GAUSSIAN,0.6532797858099063,(e) ULA with 50 chains
+GAUSSIAN,0.6546184738955824,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6559571619812584,Proportion of particles
+GAUSSIAN,0.6572958500669344,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6586345381526104,Proportion of particles
+GAUSSIAN,0.6599732262382865,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6613119143239625,Proportion of particles
+GAUSSIAN,0.6626506024096386,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.6639892904953146,Proportion of particles
+GAUSSIAN,0.6653279785809906,(f) MALA with 50 chains
+GAUSSIAN,0.6666666666666666,"Figure 6: Scatter plots with contours of 2000 generated samples from unnormalized mixtures of 8
+Gaussians with equal weights by (a) REGS, (b) SVGD, (c) ULA and (d) MALA with one chain, (e)
+ULA and (f) MALA with 50 chains. From left to right in each subﬁgure, the variance of Gaussians
+varies from σ2 = 0.2 (ﬁrst column), σ2 = 0.1 (second column), σ2 = 0.05 (third column), to
+σ2 = 0.03 (fourth column)."
+GAUSSIAN,0.6680053547523427,Under review as a conference paper at ICLR 2022
+GAUSSIAN,0.6693440428380187,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.6706827309236948,Proportion of particles
+GAUSSIAN,0.6720214190093708,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.6733601070950469,Proportion of particles
+GAUSSIAN,0.6746987951807228,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.6760374832663989,Proportion of particles
+GAUSSIAN,0.677376171352075,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.678714859437751,Proportion of particles
+GAUSSIAN,0.6800535475234271,(a) REGS
+GAUSSIAN,0.6813922356091031,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.6827309236947792,Proportion of particles
+GAUSSIAN,0.6840696117804551,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.6854082998661312,Proportion of particles
+GAUSSIAN,0.6867469879518072,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.6880856760374833,Proportion of particles
+GAUSSIAN,0.6894243641231593,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.6907630522088354,Proportion of particles
+GAUSSIAN,0.6921017402945113,(b) SVGD
+GAUSSIAN,0.6934404283801874,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.6947791164658634,Proportion of particles
+GAUSSIAN,0.6961178045515395,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.6974564926372155,Proportion of particles
+GAUSSIAN,0.6987951807228916,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.7001338688085676,Proportion of particles
+GAUSSIAN,0.7014725568942436,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.7028112449799196,Proportion of particles
+GAUSSIAN,0.7041499330655957,(c) ULA with one chain
+GAUSSIAN,0.7054886211512718,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.7068273092369478,Proportion of particles
+GAUSSIAN,0.7081659973226239,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.7095046854082999,Proportion of particles
+GAUSSIAN,0.7108433734939759,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.7121820615796519,Proportion of particles
+GAUSSIAN,0.713520749665328,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.714859437751004,Proportion of particles
+GAUSSIAN,0.7161981258366801,(d) MALA with one chain
+GAUSSIAN,0.7175368139223561,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.7188755020080321,Proportion of particles
+GAUSSIAN,0.7202141900937081,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.7215528781793842,Proportion of particles
+GAUSSIAN,0.7228915662650602,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.7242302543507363,Proportion of particles
+GAUSSIAN,0.7255689424364123,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.7269076305220884,Proportion of particles
+GAUSSIAN,0.7282463186077643,(e) ULA with 50 chains
+GAUSSIAN,0.7295850066934404,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.7309236947791165,Proportion of particles
+GAUSSIAN,0.7322623828647925,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.7336010709504686,Proportion of particles
+GAUSSIAN,0.7349397590361446,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.7362784471218207,Proportion of particles
+GAUSSIAN,0.7376171352074966,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.7389558232931727,Proportion of particles
+GAUSSIAN,0.7402945113788487,(f) MALA with 50 chains
+GAUSSIAN,0.7416331994645248,"Figure 7: Scatter plots with contours of 5000 generated samples from unnormalized mixtures of 25
+Gaussians with equal weights by (a) REGS, (b) SVGD, (c) ULA and (d) MALA with one chain, (e)
+ULA and (f) MALA with 50 chains. From left to right in each subﬁgure, the variance of Gaussians
+varies from σ2 = 0.2 (ﬁrst column), σ2 = 0.1 (second column), σ2 = 0.05 (third column), to
+σ2 = 0.03 (fourth column)."
+GAUSSIAN,0.7429718875502008,Under review as a conference paper at ICLR 2022
+GAUSSIAN,0.7443105756358769,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.7456492637215528,Proportion of particles
+GAUSSIAN,0.7469879518072289,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.7483266398929049,Proportion of particles
+GAUSSIAN,0.749665327978581,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.751004016064257,Proportion of particles
+GAUSSIAN,0.7523427041499331,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.7536813922356091,Proportion of particles
+GAUSSIAN,0.7550200803212851,(a) REGS
+GAUSSIAN,0.7563587684069611,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.7576974564926372,Proportion of particles
+GAUSSIAN,0.7590361445783133,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.7603748326639893,Proportion of particles
+GAUSSIAN,0.7617135207496654,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.7630522088353414,Proportion of particles
+GAUSSIAN,0.7643908969210174,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.7657295850066934,Proportion of particles
+GAUSSIAN,0.7670682730923695,(b) SVGD
+GAUSSIAN,0.7684069611780455,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.7697456492637216,Proportion of particles
+GAUSSIAN,0.7710843373493976,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.7724230254350736,Proportion of particles
+GAUSSIAN,0.7737617135207496,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.7751004016064257,Proportion of particles
+GAUSSIAN,0.7764390896921017,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.7777777777777778,Proportion of particles
+GAUSSIAN,0.7791164658634538,(c) ULA with one chain
+GAUSSIAN,0.7804551539491299,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.7817938420348058,Proportion of particles
+GAUSSIAN,0.7831325301204819,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.784471218206158,Proportion of particles
+GAUSSIAN,0.785809906291834,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.7871485943775101,Proportion of particles
+GAUSSIAN,0.7884872824631861,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.7898259705488622,Proportion of particles
+GAUSSIAN,0.7911646586345381,(d) MALA with one chain
+GAUSSIAN,0.7925033467202142,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.7938420348058902,Proportion of particles
+GAUSSIAN,0.7951807228915663,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.7965194109772423,Proportion of particles
+GAUSSIAN,0.7978580990629184,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.7991967871485943,Proportion of particles
+GAUSSIAN,0.8005354752342704,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.8018741633199464,Proportion of particles
+GAUSSIAN,0.8032128514056225,(e) ULA with 50 chains
+GAUSSIAN,0.8045515394912985,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.8058902275769746,Proportion of particles
+GAUSSIAN,0.8072289156626506,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.8085676037483266,Proportion of particles
+GAUSSIAN,0.8099062918340026,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.8112449799196787,Proportion of particles
+GAUSSIAN,0.8125836680053548,"1
+2
+Mode 0.0 0.2 0.4 0.6 0.8 1.0 1.2 1.4"
+GAUSSIAN,0.8139223560910308,Proportion of particles
+GAUSSIAN,0.8152610441767069,(f) MALA with 50 chains
+GAUSSIAN,0.8165997322623829,"Figure 8: Scatter plots with contours of 1000 generated samples from unnormalized mixtures of
+2 Gaussians with unequal weights (0.75, 0.25) by (a) REGS, (b) SVGD, (c) ULA and (d) MALA
+with one chain, (e) ULA and (f) MALA with 50 chains. From left to right in each subﬁgure, the
+variance of Gaussians varies from σ2 = 0.2 (ﬁrst column), σ2 = 0.1 (second column), σ2 = 0.05
+(third column), to σ2 = 0.03 (fourth column)."
+GAUSSIAN,0.8179384203480589,Under review as a conference paper at ICLR 2022
+GAUSSIAN,0.8192771084337349,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.820615796519411,Proportion of particles
+GAUSSIAN,0.821954484605087,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8232931726907631,Proportion of particles
+GAUSSIAN,0.8246318607764391,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8259705488621151,Proportion of particles
+GAUSSIAN,0.8273092369477911,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8286479250334672,Proportion of particles
+GAUSSIAN,0.8299866131191432,(a) REGS
+GAUSSIAN,0.8313253012048193,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8326639892904953,Proportion of particles
+GAUSSIAN,0.8340026773761714,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8353413654618473,Proportion of particles
+GAUSSIAN,0.8366800535475234,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8380187416331994,Proportion of particles
+GAUSSIAN,0.8393574297188755,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8406961178045516,Proportion of particles
+GAUSSIAN,0.8420348058902276,(b) SVGD
+GAUSSIAN,0.8433734939759037,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8447121820615796,Proportion of particles
+GAUSSIAN,0.8460508701472557,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8473895582329317,Proportion of particles
+GAUSSIAN,0.8487282463186078,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8500669344042838,Proportion of particles
+GAUSSIAN,0.8514056224899599,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8527443105756358,Proportion of particles
+GAUSSIAN,0.8540829986613119,(c) ULA with one chain
+GAUSSIAN,0.8554216867469879,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.856760374832664,Proportion of particles
+GAUSSIAN,0.85809906291834,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8594377510040161,Proportion of particles
+GAUSSIAN,0.8607764390896921,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8621151271753681,Proportion of particles
+GAUSSIAN,0.8634538152610441,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8647925033467202,Proportion of particles
+GAUSSIAN,0.8661311914323963,(d) MALA with one chain
+GAUSSIAN,0.8674698795180723,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8688085676037484,Proportion of particles
+GAUSSIAN,0.8701472556894244,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8714859437751004,Proportion of particles
+GAUSSIAN,0.8728246318607764,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8741633199464525,Proportion of particles
+GAUSSIAN,0.8755020080321285,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8768406961178046,Proportion of particles
+GAUSSIAN,0.8781793842034806,(e) ULA with 50 chains
+GAUSSIAN,0.8795180722891566,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8808567603748326,Proportion of particles
+GAUSSIAN,0.8821954484605087,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8835341365461847,Proportion of particles
+GAUSSIAN,0.8848728246318608,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8862115127175368,Proportion of particles
+GAUSSIAN,0.8875502008032129,"1
+2
+3
+4
+5
+6
+7
+8
+Mode 0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.8888888888888888,Proportion of particles
+GAUSSIAN,0.8902275769745649,(f) MALA with 50 chains
+GAUSSIAN,0.891566265060241,"Figure 9: Scatter plots with contours of 2000 generated samples from unnormalized mixtures of 8
+Gaussians with unequal weights (1, 1, 1, 1, 3, 3, 3, 3)/16 by (a) REGS, (b) SVGD, (c) ULA and (d)
+MALA with one chain, (e) ULA and (f) MALA with 50 chains. From left to right in each subﬁgure,
+the variance of Gaussians varies from σ2 = 0.2 (ﬁrst column), σ2 = 0.1 (second column), σ2 = 0.05
+(third column), to σ2 = 0.03 (fourth column)."
+GAUSSIAN,0.892904953145917,Under review as a conference paper at ICLR 2022
+GAUSSIAN,0.8942436412315931,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.8955823293172691,Proportion of particles
+GAUSSIAN,0.8969210174029452,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.8982597054886211,Proportion of particles
+GAUSSIAN,0.8995983935742972,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9009370816599732,Proportion of particles
+GAUSSIAN,0.9022757697456493,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9036144578313253,Proportion of particles
+GAUSSIAN,0.9049531459170014,(a) REGS
+GAUSSIAN,0.9062918340026773,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9076305220883534,Proportion of particles
+GAUSSIAN,0.9089692101740294,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9103078982597055,Proportion of particles
+GAUSSIAN,0.9116465863453815,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9129852744310576,Proportion of particles
+GAUSSIAN,0.9143239625167336,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9156626506024096,Proportion of particles
+GAUSSIAN,0.9170013386880856,(b) SVGD
+GAUSSIAN,0.9183400267737617,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9196787148594378,Proportion of particles
+GAUSSIAN,0.9210174029451138,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9223560910307899,Proportion of particles
+GAUSSIAN,0.9236947791164659,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9250334672021419,Proportion of particles
+GAUSSIAN,0.9263721552878179,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.927710843373494,Proportion of particles
+GAUSSIAN,0.92904953145917,(c) ULA with one chain
+GAUSSIAN,0.9303882195448461,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9317269076305221,Proportion of particles
+GAUSSIAN,0.9330655957161981,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9344042838018741,Proportion of particles
+GAUSSIAN,0.9357429718875502,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9370816599732262,Proportion of particles
+GAUSSIAN,0.9384203480589023,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9397590361445783,Proportion of particles
+GAUSSIAN,0.9410977242302544,(d) MALA with one chain
+GAUSSIAN,0.9424364123159303,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9437751004016064,Proportion of particles
+GAUSSIAN,0.9451137884872824,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9464524765729585,Proportion of particles
+GAUSSIAN,0.9477911646586346,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9491298527443106,Proportion of particles
+GAUSSIAN,0.9504685408299867,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9518072289156626,Proportion of particles
+GAUSSIAN,0.9531459170013387,(e) ULA with 50 chains
+GAUSSIAN,0.9544846050870147,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9558232931726908,Proportion of particles
+GAUSSIAN,0.9571619812583668,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9585006693440429,Proportion of particles
+GAUSSIAN,0.9598393574297188,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.9611780455153949,Proportion of particles
+GAUSSIAN,0.9625167336010709,1 2 3 4 5 6 7 8 9 10111213141516171819202122232425 Mode 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+GAUSSIAN,0.963855421686747,Proportion of particles
+GAUSSIAN,0.965194109772423,(f) MALA with 50 chains
+GAUSSIAN,0.9665327978580991,"Figure 10: Scatter plots with contours of 5000 generated samples from unnormalized mixtures of 25
+Gaussians with unequal weight by (a) REGS, (b) SVGD, (c) ULA and (d) MALA with one chain, (e)
+ULA and (f) MALA with 50 chains, where each of the ﬁrst 12 components has weight 1/51, and
+each of the rest has weight 3/51. From left to right in each subﬁgure, the variance of Gaussians varies
+from σ2 = 0.2 (ﬁrst column), σ2 = 0.1 (second column), σ2 = 0.05 (third column), to σ2 = 0.03
+(fourth column)."
+GAUSSIAN,0.9678714859437751,"4
+8
+0.0 0.1 0.2 0.3 0.4 0.5 0.6"
+GAUSSIAN,0.9692101740294511,Density
+GAUSSIAN,0.9705488621151271,"Target
+Generated"
+GAUSSIAN,0.9718875502008032,"5
+9
+0.00 0.05 0.10 0.15 0.20 0.25 0.30 0.35"
+GAUSSIAN,0.9732262382864793,Density
+GAUSSIAN,0.9745649263721553,"Target
+Generated"
+GAUSSIAN,0.9759036144578314,"5
+5
+0.0 0.1 0.2 0.3 0.4"
+GAUSSIAN,0.9772423025435074,Density
+GAUSSIAN,0.9785809906291834,"Target
+Generated"
+GAUSSIAN,0.9799196787148594,"Figure 11: KDE plots for 1D mixtures of 2 Gaussians. Green lines stand for target samples and
+pink areas represent generated samples by REGS. From left to right, the means and variances of the
+components changed and the unnormalized densities are given in Scenarios 1, 2, 3 in Appendix B."
+GAUSSIAN,0.9812583668005355,"Under review as a conference paper at ICLR 2022 5
+5
+5 5 5
+5 5 5 5
+5 5 5 5
+5
+5 5 5
+5 5 5 5
+5 5 5"
+GAUSSIAN,0.9825970548862115,"Figure 12: KDE plots of target samples (ﬁrst row) and generated samples (second row) for two-
+dimensional mixtures of Gaussians with variance 0.03. The target samples are from unnormalized
+density functions u(x) of mixtures of 2 Gaussians in Scenario 4, 8 Gaussians in Scenario 5 and 9
+Gaussians in Scenario 6. 5
+5 5 5 5
+5 5 5 5
+5 5 5 5
+5 5 5 5
+5 5 5 5
+5 5 5"
+GAUSSIAN,0.9839357429718876,"Figure 13: KDE plots of target samples (ﬁrst row) and generated samples (second row) for 2D
+mixtures of Gaussians with component variance 0.03. The corresponding unnormalized densities are
+presented in Scenarios 7, 8, 9 in Appendix B."
+GAUSSIAN,0.9852744310575636,"Under review as a conference paper at ICLR 2022 3
+3
+3 3 3
+3
+3 3 3
+3
+3 3 3
+3
+3 3 3
+3
+3 3 3
+3
+3 3 3
+3
+3 3 3
+3
+3 3 3
+3
+3 3"
+GAUSSIAN,0.9866131191432396,"Figure 14: Scatter plots of initial samples (ﬁrst row), generated samples (second row) for two-
+dimensional mixtures of 2 Gaussians, and scatter plots of target samples (last row). The target
+samples are from unnormalized density functions u(x) of mixtures of 2 Gaussians with variance
+σ2 = 0.01 (left column), σ2 = 0.005 (middle column) and σ2 = 0.001 (right column)."
+GAUSSIAN,0.9879518072289156,Under review as a conference paper at ICLR 2022
+GAUSSIAN,0.9892904953145917,"Figure 15: Scatter plots of initial samples (ﬁrst row), generated samples (second row) for two-
+dimensional mixtures of multiple Gaussians with variance σ2 = 0.03, and scatter plots of target
+samples (last row). The target samples are from unnormalized density functions u(x) of mixtures of
+25 Gaussians (left column), 49 Gaussians (middle column) and 81 Gaussians (right column)."
+GAUSSIAN,0.9906291834002677,Under review as a conference paper at ICLR 2022
+GAUSSIAN,0.9919678714859438,"Figure 16: Scatter plots of initial samples (ﬁrst row), generated samples (second row) for two-
+dimensional mixtures of 8 Gaussians with variance σ2 = 0.03 and varying radius, and scatter plots
+of target samples (last row). The target samples are from unnormalized density functions u(x) of
+mixtures of Gaussians with radius being 5 (left column), 10 (middle column) and 15 (right column)."
+GAUSSIAN,0.9933065595716198,Under review as a conference paper at ICLR 2022
+GAUSSIAN,0.9946452476572959,(a) Target samples (ﬁrst row) and generated samples (second row) from the uniform distribution
+GAUSSIAN,0.9959839357429718,(b) Target samples (ﬁrst row) and generated samples (second row) from Gaussian distribution
+GAUSSIAN,0.9973226238286479,(c) Target samples (ﬁrst row) and generated samples (second row) from mixed Gaussian and uniform distributions
+GAUSSIAN,0.998661311914324,"Figure 17: Scatter plots from left to right are one circle (1circle, Scenario 12), two circles (2circles,
+Scenario 13), one spiral (1spiral, Scenario 14), two spirals (2spirals, Scenario 15), and moons (moons,
+Scenario 16)."

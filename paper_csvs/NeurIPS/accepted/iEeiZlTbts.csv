@@ -1,0 +1,3390 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,Abstract
+ABSTRACT,0.0014124293785310734,"What data or environments to use for training to improve downstream performance
+is a longstanding and very topical question in reinforcement learning. In particular,
+Unsupervised Environment Design (UED) methods have gained recent attention
+as their adaptive curricula promise to enable agents to be robust to in- and out-
+of-distribution tasks. This work investigates how existing UED methods select
+training environments, focusing on task prioritisation metrics. Surprisingly, despite
+methods aiming to maximise regret in theory, the practical approximations do not
+correlate with regret but with success rate. As a result, a significant portion of an
+agent’s experience comes from environments it has already mastered, offering little
+to no contribution toward enhancing its abilities. Put differently, current methods
+fail to predict intuitive measures of “learnability.” Specifically, they are unable to
+consistently identify those scenarios that the agent can sometimes solve, but not
+always. Based on our analysis, we develop a method that directly trains on scenarios
+with high learnability. This simple and intuitive approach outperforms existing
+UED methods in several binary-outcome environments, including the standard
+domain of Minigrid and a novel setting closely inspired by a real-world robotics
+problem. We further introduce a new adversarial evaluation procedure for directly
+measuring robustness, closely mirroring the conditional value at risk (CVaR).
+We open-source all our code and present visualisations of final policies here:
+https://github.com/amacrutherford/sampling-for-learnability."
+INTRODUCTION,0.002824858757062147,"1
+Introduction"
+INTRODUCTION,0.00423728813559322,"Curriculum discovery—automatically generating environments for reinforcement learning (RL)
+agents to train on—remains a longstanding and active area of research [1, 2]. Automated curricu-
+lum learning (ACL) methods offer the potential to generate diverse environments, leading to the
+development of more general and robust agents. Recently, a class of methods under the umbrella of
+Unsupervised Environment Design (UED) has gained popularity, owing to their theoretical guarantees
+of robustness and empirical improvements in out-of-distribution generalisation [3–5]."
+INTRODUCTION,0.005649717514124294,"Currently, the most popular and empirically successful subfield of UED develops methods that aim to
+maximise regret—the difference in performance between an optimal agent and the current agent [3–8].
+However, computing regret is intractable in all but the simplest tasks, forcing practical methods to
+instead approximate it [4, 9]. While the prevailing assumption has been that these approximations
+are faithful, we investigate this further and find that this is not the case: specifically, these scoring
+functions correlate with success rate rather than regret. This means that these methods tend to
+prioritise tasks that the agent can already solve, leading to much of the collected experience not
+contributing to learning an improved policy."
+INTRODUCTION,0.007062146892655367,∗Equal Contribution. Correspondence to arutherford@robots.ox.ac.uk.
+INTRODUCTION,0.00847457627118644,"While we find that regret performs well in settings where we can compute it—confirming that the
+underlying theory is sound—we show that the common approximations are unreliable. Therefore, we
+focus on a different scoring mechanism which instead prioritises levels that provide a clear learning
+signal to the agent. More specifically, these levels are those where the agent’s success rate is neither
+100% nor 0%, i.e., levels that are neither too difficult nor too easy [1, 10]."
+INTRODUCTION,0.009887005649717515,"Using this scoring function, we develop Sampling For Learnability (SFL), a method that estimates
+learnability by rolling out the current policy on randomly sampled levels and selecting those that the
+agent solves sometimes, but not always. We find that this simple and intuitive approach outperforms
+DR [11], Prioritised Level Replay [4, 9] and ACCEL [5] on four challenging environments, including
+our novel single- and multi-agent robotic navigation domain, Xland-Minigrid [12] and Minigrid [13]."
+INTRODUCTION,0.011299435028248588,"To truly put our method to the test, we develop a new, more rigorous robustness evaluation protocol for
+ACL, and demonstrate that SFL significantly outperforms all other methods. Rather than evaluating
+on a set of arbitrary hand-designed environment configurations, our protocol computes a risk metric
+on the performance of the method, by evaluating its performance in the worst α% of a newly sampled
+set of environments."
+INTRODUCTION,0.012711864406779662,Our contributions are as follows:
+INTRODUCTION,0.014124293785310734,"1. We illustrate the inefficacy of current UED methods on several domains, including a novel
+robot navigation environment."
+INTRODUCTION,0.015536723163841809,2. We identify the reason for this observation: current UED regret approximations are flawed.
+INTRODUCTION,0.01694915254237288,"3. We present Sampling For Learnability (SFL), a simple algorithm that trains on environment
+configurations that have a positive, but not perfect, solve rate, and show that it significantly
+outperforms current UED approaches on four domains."
+INTRODUCTION,0.018361581920903956,"4. We introduce a new evaluation protocol: the conditional value at risk (CVaR) of success of a
+trained agent on a set of sampled levels. This metric specifically measures the risk of poor
+generalisation, quantifying robustness in the ACL setting."
+BACKGROUND,0.01977401129943503,"2
+Background"
+REINFORCEMENT LEARNING & UPOMDPS,0.0211864406779661,"2.1
+Reinforcement Learning & UPOMDPs"
+REINFORCEMENT LEARNING & UPOMDPS,0.022598870056497175,"We model the reinforcement learning problem as an underspecified partially observable Markov
+decision process (UPOMDP) [3], denoted by M = ⟨A, O, Θ, S, T , I, R, γ⟩. Here, A, S, and O
+represent the action, state, and observation spaces, respectively. The agent receives an observation o
+(without directly knowing the true state s) and selects an action, which results in a transition to a new
+state, a new observation, and an associated reward. Θ represents the set of possible parameters, where
+each θ ∈Θ defines a specific level. Each θ corresponds to a particular instantiation of the POMDP,
+with an associated transition function Pθ : S × A →∆(S) and an observation function Iθ : S →O."
+REINFORCEMENT LEARNING & UPOMDPS,0.02401129943502825,"In a multi-agent setting, n agents make decisions simultaneously. At each step, agent i chooses an
+action ai, forming a joint action a = {a1, . . . , an} that transitions the environment according to Pθ.
+Each agent then receives a reward based on the reward function R : S →R, which may be shared
+among all agents or be agent-specific."
+REINFORCEMENT LEARNING & UPOMDPS,0.025423728813559324,"2.2
+Unsupervised Environment Design (UED)"
+REINFORCEMENT LEARNING & UPOMDPS,0.026836158192090395,"UED is an autocurricula paradigm that frames curriculum design as a two-player zero-sum game
+between a level-generating adversary and an agent. The agent seeks to maximise its expected return in
+the standard RL manner, while the adversary can pursue various objectives. Domain Randomisation
+(DR) fits within this framework by assigning a constant utility to each level, reducing level generation
+to mere random sampling [11]. Worst-case methods, on the other hand, incentivise the adversary to
+minimise the agent’s reward, aiming to enhance performance on the most challenging levels [14].
+However, this approach often results in the generation of unsolvable levels [3]."
+REINFORCEMENT LEARNING & UPOMDPS,0.02824858757062147,"Regret-based UED methods offer an alternative by generating levels that maximise the agent’s regret.
+Here, the regret of a policy π on a level θ is defined as the difference between the policy’s discounted
+return on θ and the optimal return achievable on that level, expressed as U(π⋆
+θ) −U(π), where U"
+REINFORCEMENT LEARNING & UPOMDPS,0.029661016949152543,"denotes the policy’s discounted return and π⋆
+θ is the optimal policy on θ. This approach deprioritises
+unsolvable levels and should, in theory, generate levels on which the agent can continue to improve.
+Moreover, using regret as the adversary’s objective provides additional theoretical benefits. At the
+convergence of the two-player zero-sum game, the agent’s policy enjoys minimax regret robustness,
+meaning that the maximum regret over the entire level space Θ is bounded [3]."
+REINFORCEMENT LEARNING & UPOMDPS,0.031073446327683617,"However, computing regret in complex settings is intractable because it requires access to the optimal
+policy for each level. As a result, current UED methods rely on heuristic score functions that aim
+to approximate regret. The two most commonly used heuristic approaches are Positive Value Loss
+(PVL) and Maximum Monte Carlo (MaxMC)."
+REINFORCEMENT LEARNING & UPOMDPS,0.03248587570621469,"Positive Value Loss (PVL). PVL approximates regret as the average of the value loss across all
+timesteps where it is positive. When using GAE [15] (as in PPO [16]), PVL can be written as follows:"
+REINFORCEMENT LEARNING & UPOMDPS,0.03389830508474576,"PVL ˙= 1 T T
+X"
+REINFORCEMENT LEARNING & UPOMDPS,0.03531073446327684,"t=0
+max T
+X"
+REINFORCEMENT LEARNING & UPOMDPS,0.03672316384180791,"k=t
+(γλ)k−tδk, 0 ! ,"
+REINFORCEMENT LEARNING & UPOMDPS,0.038135593220338986,"where γ is the discount factor, λ is the GAE coefficient and T is the length of the episode. δt is the
+TD-error at timestep t, defined as δt ˙=Rt + γV (ot+1) −V (ot), with V denoting the agent’s value
+function, corresponding to the discounted return by following π from ot."
+REINFORCEMENT LEARNING & UPOMDPS,0.03954802259887006,"Maximum Monte Carlo (MaxMC). Instead of using the bootstrapped value target, MaxMC instead
+uses the highest return obtained on a particular level:"
+REINFORCEMENT LEARNING & UPOMDPS,0.04096045197740113,"MaxMC ˙= 1 T T
+X"
+REINFORCEMENT LEARNING & UPOMDPS,0.0423728813559322,"t=0
+(Rmax −V (ot)) ."
+CURRENT UED METHODS,0.043785310734463276,"2.2.1
+Current UED Methods"
+CURRENT UED METHODS,0.04519774011299435,"Prioritised Level Replay (PLR) [4, 9] involves two key steps: generating random levels and replaying
+levels from a buffer. Initially, random levels are created, and the agent is evaluated on them, with
+each level being assigned a score. High-scoring levels are then added to a buffer. Subsequently, levels
+are sampled from this buffer based on their score and the time elapsed since their last selection, and
+the agent is trained on these sampled levels. PLR has two variants: standard PLR and Robust PLR. In
+standard PLR, the agent’s policy is updated using rollouts from the randomly generated environments,
+whereas in Robust PLR, the policy is not updated during this phase. ACCEL [5] extends the PLR
+framework by incorporating a mechanism that randomly mutates previously high-scoring levels,
+generating new levels that push the agent to the edge of its capabilities. For additional methods, see
+Section 8, and for a more detailed introduction to ACL, refer to Appendix E.2."
+JAXNAV,0.046610169491525424,"3
+JaxNav"
+JAXNAV,0.0480225988700565,"(a) Minigrid
+(b) JaxNav
+(c) Real World (Source: [17])"
+JAXNAV,0.04943502824858757,"Figure 1: JaxNAV (b) brings UED, often tested on Minigrid (a), closer to the real world (c)"
+JAXNAV,0.05084745762711865,"In this section, we first touch on hardware-accelerated environments, and robotic navigation. We
+then go on to introduce JaxNav, a hardware-accelerated, single and multi-agent robotic navigation
+environment. While similar on a surface level to Minigrid, JaxNav has several additions that make it
+closer to real-world robotics environments."
+HARDWARE ACCELERATED ENVIRONMENTS,0.052259887005649715,"3.1
+Hardware Accelerated Environments"
+HARDWARE ACCELERATED ENVIRONMENTS,0.05367231638418079,"Recently, Bradbury et al. [18] released JAX, a Python numpy-like library that allows computations to
+run natively on accelerators (such as GPUs and TPUs). This has led to an explosion in reinforcement-
+learning environments being implemented in JAX, leading to the time it takes to train an RL agent
+being reduced by hundreds or thousands of times [12, 19–21]. This has enabled researchers to run
+experiments that used to take weeks in a few hours [22, 23]. One side effect of this, however, is that
+current UED libraries are written in JAX, meaning they are primarily compatible with the (relatively
+small) set of JAX environments."
+ROBOT NAVIGATION,0.05508474576271186,"3.2
+Robot Navigation"
+ROBOT NAVIGATION,0.05649717514124294,"Motion planning is a fundamental problem for mobile robotics. The general aim is to find a collision-
+free path from a starting location to a goal region in two or three dimensions. We focus specifically on
+the popular setting of 2D navigation problems for differential drive robots using 2D LiDAR readings
+as the sensory input for their navigation policies. Given range readings, the robot’s current velocity
+and the direction of its goal, the navigation policy must produce velocity commands to move the
+robot to its goal location while avoiding static and dynamic obstacles."
+ENVIRONMENT DESCRIPTION,0.05790960451977401,"3.3
+Environment Description"
+ENVIRONMENT DESCRIPTION,0.059322033898305086,"The observation space of JaxNav is highly partially observable and is based on LiDAR readings,
+depicted by the blue dots in Figure 1b. This is in contrast to Minigrid, which provides a top-down,
+ego-centric, image-like observation, as shown by the highlighted region in Figure 1a. Additionally,
+while Minigrid features discrete forward and turn actions, the robots in JaxNav operate in continuous
+space using differential drive dynamics. Similar to Minigrid, agents in JaxNav must navigate from a
+starting location to a goal region, with the goal centre represented by the green cross in Figure 1b."
+ENVIRONMENT DESCRIPTION,0.06073446327683616,"These design choices make JaxNav a close approximation of many real-world robotic navigation
+tasks [24, 25], including the ICRA BARN Challenge [26], which is depicted in Figure 1c. This
+challenge, which has run annually since 2022, aims to benchmark single-robot navigation policies in
+constrained environments for differential drive robots using 2D LiDAR as sensory input. Even with a
+cell size of 1.0 m, JaxNav offers a similar clearance between robots and obstacles as the test maps
+used in the BARN Challenge, underscoring its relevance not only for evaluating UED methods but
+also for advancing robotics research. Our environment’s full design is outlined in Appendix A."
+UNDERSTANDING AND IMPROVING LEVEL SELECTION IN GOAL DIRECTED DOMAINS,0.062146892655367235,"4
+Understanding and Improving Level Selection in Goal Directed Domains"
+UNDERSTANDING AND IMPROVING LEVEL SELECTION IN GOAL DIRECTED DOMAINS,0.0635593220338983,"In this section, we examine current UED methods, and investigate how they select levels to train on.
+In particular, we investigate how well currently-used score functions correlate with (a) success rate
+(i.e., the fraction of times the agent solves the level); and (b) learnability (defined below). We then
+develop a method which directly samples levels according to their learnability potential, with the
+following sections detailing our experimental setup and results."
+DEFINING LEARNABILITY,0.06497175141242938,"4.1
+Defining Learnability"
+DEFINING LEARNABILITY,0.06638418079096045,"Similarly to the Goals of Intermediate Difficulty objective proposed by Florensa et al. [1] and the
+ProCuRL curriculum strategy proposed by Tzannetos et al. [10], we desire agents to learn on levels
+that they can solve sometimes but have not yet mastered. Such levels hold the greatest source of
+possible improvement for an agent’s policy and so a successful autocurricula method must be able to
+find these. Indeed, given a success rate (i.e., the fraction of times the agent solves the level) of p on a
+given level, we follow Tzannetos et al. [10] and define learnability to be p · (1 −p). In a goal-based
+setting where there is only a nonzero reward for reaching the goal, we justify this definition as follows:"
+DEFINING LEARNABILITY,0.06779661016949153,"1. p represents how likely the agent is to obtain positive learning experiences from a level,
+while 1 −p represents the maximum potential improvement the agent can make on that
+level. Multiplying these yields (probability of improvement) · (improvement potential), i.e.,
+expected improvement."
+DEFINING LEARNABILITY,0.0692090395480226,"2. Tzannetos et al. [10] derive this definition for two specific, simple, learning settings and
+show that at each training step, selecting for the highest learnability is equivalent to greedily
+optimising the agent’s expected improvement in its training objective."
+DEFINING LEARNABILITY,0.07062146892655367,"3. p · (1 −p) can also be seen as the variance of a Bernoulli distribution with parameter p, i.e.,
+how inconsistent the agent’s performance is."
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.07203389830508475,"4.2
+Analysing Regret Approximations used by UED Methods"
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.07344632768361582,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Mean Success Rate by Level 0.5 0.0 0.5 1.0 1.5 2.0 2.5 3.0"
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.0748587570621469,MaxMC Score by Level
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.07627118644067797,"r=0.61, p=1e-251 0 200 400 0
+500"
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.07768361581920905,(a) MaxMC
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.07909604519774012,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Mean Success Rate by Level 0.00 0.05 0.10 0.15 0.20 0.25 0.30"
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.08050847457627118,PVL Score by Level
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.08192090395480225,"r=0.51, p=2.9e-165 0 200 400 0
+500"
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.08333333333333333,(b) Positive Value Loss
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.0847457627118644,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Mean Success Rate by Level 0.00 0.05 0.10 0.15 0.20 0.25"
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.08615819209039548,"Learnability Score by Level 0 200 400 0
+500"
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.08757062146892655,(c) Learnability (ours)
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.08898305084745763,Figure 2: Our analysis of UED score functions shows that they are not predictive of “learnability”.
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.0903954802259887,"Having defined learnability, we now turn our attention to the current UED score functions. As
+demonstrated in Section 7, the latest state-of-the-art UED methods fail to outperform Domain
+Randomisation (DR) in the multi-agent JaxNav environment. To highlight the limitations of these
+approaches, we examine whether their score functions can reliably identify the frontier of learning,
+i.e., levels that agents can only sometimes solve."
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.09180790960451977,"We focus on the single-agent version of JaxNav and conduct rollouts using the top-performing seed
+for PLR-MaxMC on randomly sampled levels over 5000 timesteps. From these rollouts, we compile
+a set of 2500 levels, evenly distributed into 10 bins based on mean success rate values ranging from 0
+to 1. We then perform additional rollouts on this collected set, running for 512 environment timesteps
+(the same number as used during training) across 10 parallel workers, and average the results. In
+Figure 2, we plot the mean MaxMC, PVL and Learnability scores against the mean success rate for
+each level. We additionally report the Pearson correlation coefficient, r, and p-value for the linear
+relationship between the success rate and the regret score."
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.09322033898305085,"Our analysis reveals no correlation between MaxMC and learnability, and MaxMC instead shows a
+slight correlation with success rate. While PVL has a weak correlation with learnability, the high vari-
+ance causes already-solved maps to be prioritised alongside those with high learnability. These plots
+contrast heavily with that of our learnability metric, which directly prioritises levels with the greatest
+expected improvement. We hypothesise that the root cause of this issue is the agent’s poor value
+estimation. In a highly partially observable environment, the agent struggles to accurately estimate
+the value of a state, leading to noisy MaxMC and PVL scores, which in turn hinder UED methods
+from effectively identifying the learning frontier. Given that reward is strongly correlated with success
+rate, these findings also apply when comparing scores against reward, as detailed in Appendix F."
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.09463276836158192,"4.3
+Sampling For Learnability: Our Simple and Intuitive Fix"
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.096045197740113,"Following on from our analysis, we now present Sampling For Learnability (SFL), a simple approach
+that directly chooses levels that optimise learnability. Our approach maintains a buffer of levels with
+high learnability and trains on a set of levels drawn from this buffer alongside randomly generated
+levels. Algorithm 1 outlines the overall approach for SFL and illustrates the relative simplicity of
+our method compared to SoTA UED approaches. The policy’s weights ϕ are updated using any
+RL algorithm; we use PPO [16] for all of our experiments. Meanwhile, our method for collecting
+learnable levels is detailed in Algorithm 2. We find that the default values of T = 50, ρ = 0.5,
+NL = 256, L = 2000, N = 5000 and K = 1000 work well across domains. However, the"
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.09745762711864407,"per-environment hyperparameters we use are listed in Appendix C, and Appendix I contains plots
+showing the effect of changing each of these hyperparameters."
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.09887005649717515,Algorithm 1 Sampling For Learnability
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.10028248587570622,"Initialize: policy πϕ, level buffer D
+while not converged do"
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.1016949152542373,"D ←collect_learnable_levels(πϕ) Using Alg. 2
+for t = 1, . . . , T do"
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.10310734463276836,"Dt ←ρ · NL levels sampled uniformly from D
+Dt ←Dt ∪(1−ρ)·NL randomly generated levels
+Collect π’s trajectory on Dt and update ϕ
+end for
+end while"
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.10451977401129943,Algorithm 2 Collect learnable levels
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.1059322033898305,"Input: policy π
+B ←N random levels
+Rollout π for L steps for all θ ∈B"
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.10734463276836158,"p ←success rate for each rollout
+Learnability ←p · (1 −p)
+return Top K levels in B ranked by
+Learnability"
+ANALYSING REGRET APPROXIMATIONS USED BY UED METHODS,0.10875706214689265,"While a key limitation of this approach is the additional timesteps required to form the learnability
+buffer, we find that due to the speed of forward rollouts on JAX-based environments, this does not
+dramatically increase our overall compute time, see Appendix H for a more detailed discussion."
+EXPERIMENTAL SETUP,0.11016949152542373,"5
+Experimental Setup"
+EXPERIMENTAL SETUP,0.1115819209039548,"We now outline the domains used along with our adversarial evaluation protocol. Rather than taking
+the common approach of reporting average performance on a set of hand designed levels (which
+by their very nature are arbitrary), we sample a large set of levels and examine each method’s
+performance on their worst-case levels. This directly targets the tails of the level distribution and as
+such is a superior measure of robustness. We further report the comparative performance of methods
+on the sampled set to determine the degree to which one method dominates another."
+EXPERIMENTAL SETUP,0.11299435028248588,"We use four domains for our experiments, JaxNav in single-agent mode, JaxNav in multi-agent
+mode, the common UED domain Minigrid [13] and XLand-Minigrid [12]. See Appendix B for more
+details about the environments. We use 10 seeds for Minigrid and single-agent JaxNav, and 5 seeds
+for multi-agent JaxNav and XLand-Minigrid. In all of our plots, we report mean and standard error."
+EXPERIMENTAL SETUP,0.11440677966101695,"Since SFL performs more environment rollouts, we perform fewer PPO updates in single-agent
+JaxNav and XLand-Minigrid to ensure that SFL uses as much compute time as ACCEL. In Minigrid,
+the additional environment interactions take a negligible amount of time, so we run the same number
+of PPO updates for all methods. For multi-agent JaxNav, we compare each method using the same
+number of PPO updates. See Appendix H for more information on the relative speed of each method,
+and how many updates we run for each method. Generally, the additional SFL rollouts take much less
+time than the updates themselves, due to the massive parallelisation afforded by hardware-accelerated
+environments. Additionally, recent work suggests that world-models could also allow more samples to
+be taken than the base environment allows [27–30], highlighting the future potential of this approach."
+EXPERIMENTAL SETUP,0.11581920903954802,"We compare against several state-of-the-art UED methods as baselines, implemented with
+JaxUED [22]. We use ACCEL, with the MaxMC score function, where the agent trains on ran-
+domly generated, mutated and curated levels. We also include a “robust” version [4], where no
+gradient updates are performed on the former two sets of levels. This uses three times as many
+environment interactions and is roughly twice as slow as SFL for single-agent JaxNav. We use PLR
+with both the PVL and MaxMC score functions. We also include a robust version of PLR which only
+performs gradient updates on the curated levels; this uses twice as many environment interactions and
+is 80% slower than SFL on single-agent JaxNav. We also use Domain Randomisation (DR), which
+trains only on randomly generated levels, with no curation or prioritisation."
+A RISK-BASED EVALUATION PROTOCOL,0.1172316384180791,"6
+A Risk-Based Evaluation Protocol"
+A RISK-BASED EVALUATION PROTOCOL,0.11864406779661017,"The standard approach to evaluating UED agents is to test them on a set of hand-designed holdout
+levels [3–5]. Whilst this evaluation approach illustrates the performance of agents on human-relevant
+tasks, we believe it has several limitations. First, the hand-designed levels are arbitrary, so performance
+on them is not representative of general performance; second, it does not test a central claim of UED:
+that it trains agents which are robust to worst-case (yet solvable) environments. To address this, we"
+A RISK-BASED EVALUATION PROTOCOL,0.12005649717514125,"propose a novel evaluation protocol that rectifies both of these problems: measuring the conditional
+value at risk (CVaR) of the success of the trained agent on a set of sampled levels."
+A RISK-BASED EVALUATION PROTOCOL,0.12146892655367232,"To calculate the CVaR we sample N (10, 000 in practice) random, but solvable,2 levels and rollout the
+agent policy for 10 episodes on each level. We then find the α% of levels on which the agent performs
+worst. To mitigate bias, we rollout the agent again on these levels, and report the average success
+rate on this α% subset, i.e., the CVaR at level α. This metric directly quantifies the performance of a
+training method on its own worst-case levels, which measures its ability to produce robust agents. We
+perform this computation for each seed, and report the mean and standard error over seeds, at various
+α levels. We further use the N sampled levels to calculate the following metrics."
+A RISK-BASED EVALUATION PROTOCOL,0.1228813559322034,"Mean Success Rate We average the success of each method over all N levels and then report
+this as the mean success rate and its standard error over multiple independent seeds. Due to space
+requirements, these results are included in Appendix G."
+A RISK-BASED EVALUATION PROTOCOL,0.12429378531073447,"Domination Comparison To identify the degree to which one method dominates another, we obtain
+the average solve rate of each method (averaging over seeds) per environment. We then plot a
+heatmap, where cell (x, y) contains the number of levels method A solves x% of the time while
+method B solves them y% of the time. This metric measures how many environments one method
+strictly solves more often than another."
+RESULTS,0.12570621468926554,"7
+Results"
+SINGLE-AGENT JAXNAV,0.1271186440677966,"7.1
+Single-Agent JaxNav"
+SINGLE-AGENT JAXNAV,0.1285310734463277,"Figure 3a shows the CVaR results on single-agent JaxNav. We find that optimising for learnability—
+as our method does—results in superior robustness over a wide range of α values, despite all methods
+performing similarly with α = 100% (which amounts to expected success rate over the entire
+distribution). In this plot, we also plot the results of an oracle method named Perfect Regret. This uses
+the same procedure as SFL but with the score function: 1 −p(success). Importantly (and different
+to all other methods), this method only samples solvable levels, so this metric corresponds closely
+to regret. While not shown here, using the same metric with unrestricted level sampling—which is
+a more realistic setting—performs poorly due to it prioritising unsolvable levels. In Figure 4, we
+perform pairwise comparisons of each baseline against our approach. We find that there are a large
+number of environments that all methods solve (the bright top-right corner). However, the bottom-
+right is generally brighter than the top-left, indicating that SFL performs better in general. Overall,
+SFL’s superiority, and Perfect Regret’s strong performance, indicates that the flawed approximations
+of regret are responsible for UED’s lack of performance. We provide further evidence for this claim
+in Appendix I.2, where we use learnability as a score function within PLR and ACCEL."
+SINGLE-AGENT JAXNAV,0.12994350282485875,"1%
+10%
+100% 0 20 40 60 80 100"
+SINGLE-AGENT JAXNAV,0.13135593220338984,Avg Win Rate % on worst-case % level
+SINGLE-AGENT JAXNAV,0.1327683615819209,"SFL
+Perfect Regret (Oracle)
+DR
+ACCEL-MaxMC
+PLR-PVL
+PLR-MaxMC
+PLR-L1VL
+RobustPLR
+RobustACCEL"
+SINGLE-AGENT JAXNAV,0.134180790960452,(a) CVaR of success at α level.
+SINGLE-AGENT JAXNAV,0.13559322033898305,"0
+500
+1000
+1500
+2000
+PPO Update Step 0.0 0.2 0.4 0.6 0.8 1.0"
+SINGLE-AGENT JAXNAV,0.1370056497175141,Mean Success Rate on Evaluation Set
+SINGLE-AGENT JAXNAV,0.1384180790960452,(b) Performance on hand-designed test set.
+SINGLE-AGENT JAXNAV,0.13983050847457626,"Figure 3: Single-agent JaxNav performance on (a) α-worst levels and (b) a challenging hand-designed
+test set. Only Perfect (Oracle) Regret matches SFL across both metrics."
+SINGLE-AGENT JAXNAV,0.14124293785310735,"2Solvable means that the goal state can be reached in a particular level, i.e., it is not impossible to complete."
+SINGLE-AGENT JAXNAV,0.1426553672316384,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+SFL 0.0 0.2 0.4 0.6 0.8 1.0"
+SINGLE-AGENT JAXNAV,0.1440677966101695,Perfect Regret (Oracle)
+SINGLE-AGENT JAXNAV,0.14548022598870056,"1
+0
+0
+0
+0
+0
+0
+0
+0
+36"
+SINGLE-AGENT JAXNAV,0.14689265536723164,"0
+0
+0
+0
+0
+0
+0
+0
+0
+18"
+SINGLE-AGENT JAXNAV,0.1483050847457627,"0
+0
+0
+0
+1
+0
+0
+0
+0
+5"
+SINGLE-AGENT JAXNAV,0.1497175141242938,"0
+0
+0
+0
+0
+0
+0
+0
+1
+9"
+SINGLE-AGENT JAXNAV,0.15112994350282485,"0
+0
+0
+0
+0
+0
+0
+0
+0
+6"
+SINGLE-AGENT JAXNAV,0.15254237288135594,"0
+0
+0
+0
+0
+0
+0
+0
+0
+12"
+SINGLE-AGENT JAXNAV,0.153954802259887,"0
+0
+0
+0
+0
+0
+0
+0
+0
+17"
+SINGLE-AGENT JAXNAV,0.1553672316384181,"0
+0
+0
+0
+0
+0
+0
+0
+0
+19"
+SINGLE-AGENT JAXNAV,0.15677966101694915,"0
+0
+0
+0
+0
+0
+0
+0
+1
+39"
+SINGLE-AGENT JAXNAV,0.15819209039548024,"27
+5
+6
+12
+18
+12
+12
+22
+85
+9636"
+SINGLE-AGENT JAXNAV,0.1596045197740113,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+SFL 0.0 0.2 0.4 0.6 0.8 1.0 DR"
+SINGLE-AGENT JAXNAV,0.16101694915254236,"27
+4
+4
+10
+12
+10
+6
+8
+28
+70"
+SINGLE-AGENT JAXNAV,0.16242937853107345,"0
+1
+1
+0
+2
+0
+0
+4
+3
+27"
+SINGLE-AGENT JAXNAV,0.1638418079096045,"0
+0
+0
+0
+2
+1
+0
+2
+6
+28"
+SINGLE-AGENT JAXNAV,0.1652542372881356,"0
+0
+0
+1
+0
+0
+0
+2
+0
+32"
+SINGLE-AGENT JAXNAV,0.16666666666666666,"0
+0
+0
+0
+1
+0
+1
+1
+6
+27"
+SINGLE-AGENT JAXNAV,0.16807909604519775,"1
+0
+0
+0
+0
+0
+0
+0
+3
+34"
+SINGLE-AGENT JAXNAV,0.1694915254237288,"0
+0
+1
+0
+0
+0
+2
+2
+4
+39"
+SINGLE-AGENT JAXNAV,0.1709039548022599,"0
+0
+0
+1
+1
+0
+1
+0
+4
+75"
+SINGLE-AGENT JAXNAV,0.17231638418079095,"0
+0
+0
+0
+0
+1
+2
+0
+6
+110"
+SINGLE-AGENT JAXNAV,0.17372881355932204,"0
+0
+0
+0
+1
+0
+0
+3
+27
+9355"
+SINGLE-AGENT JAXNAV,0.1751412429378531,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+SFL 0.0 0.2 0.4 0.6 0.8 1.0"
+SINGLE-AGENT JAXNAV,0.1765536723163842,ACCEL-MaxMC
+SINGLE-AGENT JAXNAV,0.17796610169491525,"25
+4
+2
+8
+10
+7
+4
+4
+9
+12"
+SINGLE-AGENT JAXNAV,0.17937853107344634,"0
+1
+2
+1
+2
+3
+1
+4
+5
+13"
+SINGLE-AGENT JAXNAV,0.1807909604519774,"1
+0
+1
+1
+1
+1
+0
+2
+7
+8"
+SINGLE-AGENT JAXNAV,0.18220338983050846,"1
+0
+0
+1
+2
+1
+2
+1
+7
+9"
+SINGLE-AGENT JAXNAV,0.18361581920903955,"1
+0
+0
+0
+1
+0
+0
+3
+2
+17"
+SINGLE-AGENT JAXNAV,0.1850282485875706,"0
+0
+0
+0
+0
+0
+0
+1
+5
+28"
+SINGLE-AGENT JAXNAV,0.1864406779661017,"0
+0
+0
+0
+0
+0
+3
+3
+7
+42"
+SINGLE-AGENT JAXNAV,0.18785310734463276,"0
+0
+0
+1
+1
+0
+0
+0
+8
+61"
+SINGLE-AGENT JAXNAV,0.18926553672316385,"0
+0
+1
+0
+2
+0
+2
+1
+14
+174"
+SINGLE-AGENT JAXNAV,0.1906779661016949,"0
+0
+0
+0
+0
+0
+0
+3
+23
+9433"
+SINGLE-AGENT JAXNAV,0.192090395480226,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+SFL 0.0 0.2 0.4 0.6 0.8 1.0"
+SINGLE-AGENT JAXNAV,0.19350282485875706,PLR-MaxMC
+SINGLE-AGENT JAXNAV,0.19491525423728814,"26
+4
+2
+9
+11
+9
+5
+2
+10
+13"
+SINGLE-AGENT JAXNAV,0.1963276836158192,"0
+0
+2
+0
+1
+1
+1
+4
+2
+11"
+SINGLE-AGENT JAXNAV,0.1977401129943503,"0
+0
+1
+1
+2
+1
+0
+2
+7
+6"
+SINGLE-AGENT JAXNAV,0.19915254237288135,"2
+1
+0
+0
+2
+0
+0
+5
+5
+6"
+SINGLE-AGENT JAXNAV,0.20056497175141244,"0
+0
+0
+0
+0
+0
+0
+0
+1
+10"
+SINGLE-AGENT JAXNAV,0.2019774011299435,"0
+0
+1
+1
+0
+0
+2
+1
+4
+15"
+SINGLE-AGENT JAXNAV,0.2033898305084746,"0
+0
+0
+0
+0
+0
+0
+1
+5
+20"
+SINGLE-AGENT JAXNAV,0.20480225988700565,"0
+0
+0
+0
+0
+1
+3
+2
+9
+41"
+SINGLE-AGENT JAXNAV,0.2062146892655367,"0
+0
+0
+1
+2
+0
+1
+3
+13
+84"
+SINGLE-AGENT JAXNAV,0.2076271186440678,"0
+0
+0
+0
+1
+0
+0
+2
+31
+9591"
+SINGLE-AGENT JAXNAV,0.20903954802259886,"Figure 4: Single-agent JaxNav comparison results. For each figure, cell (x, y) indicates how many
+environments have method X solving them x% of the time and method Y solving them y% of the
+time. The density below the diagonal indicates that SFL is more robust than DR, ACCEL and PLR."
+MULTI-AGENT JAXNAV,0.21045197740112995,"7.2
+Multi-Agent JaxNav"
+MULTI-AGENT JAXNAV,0.211864406779661,"Figures 5 and 6 illustrate the performance of all methods on multi-agent JaxNav throughout training.
+We train with 4 agents and report performance over both a hand designed test set and a randomly
+sampled set of 100 maps. The levels used in the hand designed set are given in Appendix D and
+feature cases with 1, 2, 4 and 10 agents. The levels in the sampled set all feature 4 agents and
+solvability is checked for each agent’s individual path. As we train with IPPO, regret scores are
+calculated on a per-agent basis and the score of a level is computed as the mean across individual
+agent scores. For n agents, learnability is computed as Pn
+i=1(pi · (1 −pi)), where pi is the success
+rate for agent i on on a given level. We find that JaxNav significantly outperforms all UED methods."
+MULTI-AGENT JAXNAV,0.2132768361581921,"1%
+10%
+100% 0 20 40 60 80"
+MULTI-AGENT JAXNAV,0.21468926553672316,Avg Win Rate % on worst-case % level
+MULTI-AGENT JAXNAV,0.21610169491525424,"SFL
+DR
+ACCEL-MaxMC
+PLR-PVL
+PLR-MaxMC"
+MULTI-AGENT JAXNAV,0.2175141242937853,(a) CVaR of success at α level.
+MULTI-AGENT JAXNAV,0.2189265536723164,"0
+5000
+10000
+15000
+20000
+PPO Update Step 0.0 0.2 0.4 0.6 0.8 1.0"
+MULTI-AGENT JAXNAV,0.22033898305084745,Mean Success Rate on Evaluation Set
+MULTI-AGENT JAXNAV,0.22175141242937854,"SFL
+DR
+ACCEL-MaxMC
+PLR-PVL
+PLR-MaxMC"
+MULTI-AGENT JAXNAV,0.2231638418079096,(b) Success on hand-designed test set
+MULTI-AGENT JAXNAV,0.2245762711864407,"0
+5000
+10000
+15000
+20000
+PPO Update Step 0.0 0.2 0.4 0.6 0.8 1.0"
+MULTI-AGENT JAXNAV,0.22598870056497175,Mean Success Rate on Sampled Set
+MULTI-AGENT JAXNAV,0.2274011299435028,"SFL
+DR
+ACCEL-MaxMC
+PLR-PVL
+PLR-MaxMC"
+MULTI-AGENT JAXNAV,0.2288135593220339,(c) Success on Sampled Test Set
+MULTI-AGENT JAXNAV,0.23022598870056496,"0
+5000
+10000
+15000
+20000
+PPO Update Step 12 10 8 6 4 2 0 2"
+MULTI-AGENT JAXNAV,0.23163841807909605,Mean Return on Sampled Set
+MULTI-AGENT JAXNAV,0.2330508474576271,"SFL
+DR
+ACCEL-MaxMC
+PLR-PVL
+PLR-MaxMC"
+MULTI-AGENT JAXNAV,0.2344632768361582,(d) Reward on Sampled Test Set
+MULTI-AGENT JAXNAV,0.23587570621468926,"Figure 5: Performance of Multi-Agent Policies over 5 seeds. SFL outperforms all UED baselines in
+each of these. We do not include oracle regret, since it cannot be easily measured in this setting."
+MINIGRID,0.23728813559322035,"7.3
+Minigrid"
+MINIGRID,0.2387005649717514,"We next move on to the standard domain of Minigrid (see Figure 7). Here we find that most methods
+perform similarly on the hand-designed test set; however, SFL significantly outperforms all other
+methods on the adversarial evaluation, indicating it results in more robust policies."
+MINIGRID,0.2401129943502825,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+SFL 0.0 0.2 0.4 0.6 0.8 1.0 DR"
+MINIGRID,0.24152542372881355,"1
+2
+1
+1
+0
+0
+1
+0
+0
+0"
+MINIGRID,0.24293785310734464,"0
+0
+1
+0
+1
+0
+1
+0
+0
+0"
+MINIGRID,0.2443502824858757,"0
+0
+9
+17
+12
+18
+12
+3
+2
+0"
+MINIGRID,0.2457627118644068,"0
+0
+0
+2
+16
+15
+12
+9
+4
+2"
+MINIGRID,0.24717514124293785,"0
+0
+0
+2
+7
+35
+26
+20
+12
+5"
+MINIGRID,0.24858757062146894,"0
+0
+0
+0
+4
+145
+91
+115
+83
+53"
+MINIGRID,0.25,"0
+0
+0
+0
+1
+8
+36
+70
+75
+81"
+MINIGRID,0.2514124293785311,"0
+0
+0
+0
+0
+0
+12
+328
+371
+560"
+MINIGRID,0.2528248587570621,"0
+0
+0
+0
+0
+0
+0
+14
+73
+535"
+MINIGRID,0.2542372881355932,"0
+0
+0
+0
+0
+0
+0
+6
+42
+7048"
+MINIGRID,0.2556497175141243,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+SFL 0.0 0.2 0.4 0.6 0.8 1.0"
+MINIGRID,0.2570621468926554,ACCEL-MaxMC
+MINIGRID,0.2584745762711864,"1
+1
+2
+0
+3
+0
+4
+2
+0
+2"
+MINIGRID,0.2598870056497175,"0
+1
+1
+4
+5
+3
+4
+3
+4
+1"
+MINIGRID,0.2612994350282486,"0
+0
+7
+14
+15
+28
+25
+13
+16
+11"
+MINIGRID,0.2627118644067797,"0
+0
+1
+4
+11
+28
+22
+33
+26
+36"
+MINIGRID,0.2641242937853107,"0
+0
+0
+0
+5
+44
+59
+69
+79
+80"
+MINIGRID,0.2655367231638418,"0
+0
+0
+0
+2
+117
+70
+142
+133
+271"
+MINIGRID,0.2669491525423729,"0
+0
+0
+0
+0
+1
+6
+113
+144
+462"
+MINIGRID,0.268361581920904,"0
+0
+0
+0
+0
+0
+1
+189
+235 1004"
+MINIGRID,0.269774011299435,"0
+0
+0
+0
+0
+0
+0
+1
+18
+1481"
+MINIGRID,0.2711864406779661,"0
+0
+0
+0
+0
+0
+0
+0
+7
+4936"
+MINIGRID,0.2725988700564972,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+SFL 0.0 0.2 0.4 0.6 0.8 1.0"
+MINIGRID,0.2740112994350282,PLR-PVL
+MINIGRID,0.2754237288135593,"1
+1
+1
+1
+1
+0
+1
+0
+0
+0"
+MINIGRID,0.2768361581920904,"0
+1
+2
+1
+1
+0
+0
+1
+3
+0"
+MINIGRID,0.2782485875706215,"0
+0
+8
+13
+14
+20
+17
+6
+0
+7"
+MINIGRID,0.2796610169491525,"0
+0
+0
+6
+13
+21
+15
+18
+10
+5"
+MINIGRID,0.2810734463276836,"0
+0
+0
+1
+8
+32
+39
+33
+28
+20"
+MINIGRID,0.2824858757062147,"0
+0
+0
+0
+4
+145
+89
+117
+92
+94"
+MINIGRID,0.2838983050847458,"0
+0
+0
+0
+0
+3
+22
+90
+101
+159"
+MINIGRID,0.2853107344632768,"0
+0
+0
+0
+0
+0
+6
+289
+334
+708"
+MINIGRID,0.2867231638418079,"0
+0
+0
+0
+0
+0
+2
+10
+78
+801"
+MINIGRID,0.288135593220339,"0
+0
+0
+0
+0
+0
+0
+1
+16
+6490"
+MINIGRID,0.2895480225988701,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+SFL 0.0 0.2 0.4 0.6 0.8 1.0"
+MINIGRID,0.2909604519774011,PLR-MaxMC
+MINIGRID,0.2923728813559322,"1
+1
+1
+2
+1
+0
+0
+0
+0
+0"
+MINIGRID,0.2937853107344633,"0
+0
+1
+1
+2
+0
+0
+1
+0
+0"
+MINIGRID,0.2951977401129944,"0
+1
+9
+13
+6
+7
+10
+3
+1
+2"
+MINIGRID,0.2966101694915254,"0
+0
+0
+4
+11
+22
+11
+11
+2
+6"
+MINIGRID,0.2980225988700565,"0
+0
+0
+2
+19
+38
+35
+28
+16
+9"
+MINIGRID,0.2994350282485876,"0
+0
+0
+0
+2
+144
+94
+108
+88
+63"
+MINIGRID,0.3008474576271186,"0
+0
+0
+0
+0
+9
+30
+107
+86
+140"
+MINIGRID,0.3022598870056497,"0
+0
+0
+0
+0
+1
+11
+271
+331
+397"
+MINIGRID,0.3036723163841808,"0
+0
+0
+0
+0
+0
+0
+33
+110
+855"
+MINIGRID,0.3050847457627119,"0
+0
+0
+0
+0
+0
+0
+3
+28
+6812"
+MINIGRID,0.3064971751412429,"Figure 6: Multi-agent heatmap results. The bright areas toward the right of the plots indicate that
+SFL outperforms the baselines we compare against."
+MINIGRID,0.307909604519774,"0.1%
+1%
+10%
+100% 20 40 60 80 100"
+MINIGRID,0.3093220338983051,Avg Win Rate % on worst-case % level
+MINIGRID,0.3107344632768362,"SFL
+DR
+ACCEL-MaxMC
+PLR-MaxMC
+RobustPLR
+RobustACCEL"
+MINIGRID,0.3121468926553672,(a) CVaR of success at α level.
+MINIGRID,0.3135593220338983,"0
+1000
+2000
+3000
+4000
+PPO Update Step 0.0 0.2 0.4 0.6 0.8 1.0"
+MINIGRID,0.3149717514124294,Mean Success Rate on Evaluation Set
+MINIGRID,0.3163841807909605,(b) Performance on a hand-designed test set.
+MINIGRID,0.3177966101694915,"Figure 7: Minigrid performance on (a) α worst-case and (b) holdout levels. SFL is more robust than
+the baselines on worst-case levels."
+XLAND-MINIGRID,0.3192090395480226,"7.4
+XLand-Minigrid"
+XLAND-MINIGRID,0.3206214689265537,"Our final evaluation domain is XLand-Minigrid’s [12] meta-RL task using their high-3m benchmark.
+We report performance using our CVaR evaluation procedure and, in line with [12], as the mean return
+on an evaluation set during training. Our results are presented in Figure 8, with SFL outperforming
+both PLR and DR. During evaluation each ruleset was rolled out for 10 episodes. Due to the large
+number of levels being rolled out to fill SFL’s buffer, SFL was slower than DR and PLR. As such, we
+report results for SFL compute-time matched to PLR."
+XLAND-MINIGRID,0.3220338983050847,"1%
+10%
+100% 0 5 10 15 20 25"
+XLAND-MINIGRID,0.3234463276836158,Avg Win Rate % on worst-case % level
+XLAND-MINIGRID,0.3248587570621469,"SFL
+PLR
+DR"
+XLAND-MINIGRID,0.326271186440678,(a) CVaR of success at α level.
+XLAND-MINIGRID,0.327683615819209,"0
+50
+100
+150
+200
+250
+300
+Meta-RL Update Step 0.25 0.50 0.75 1.00 1.25 1.50 1.75"
+XLAND-MINIGRID,0.3290960451977401,Mean Return on Evaluation Set
+XLAND-MINIGRID,0.3305084745762712,"SFL
+PLR
+DR"
+XLAND-MINIGRID,0.3319209039548023,(b) Mean return on evaluation set.
+XLAND-MINIGRID,0.3333333333333333,"Figure 8: XLand-Minigrid performance over five seeds on (a) α worst-case and (b) the evaluation set.
+SFL outperforms both PLR and DR."
+RELATED WORK,0.3347457627118644,"8
+Related Work"
+RELATED WORK,0.3361581920903955,"Unsupervised Environment Design (UED) has emerged as a prominent method in the ACL field,
+promising robust agent training through adaptive curricula. Early works focused on learning potential,
+where the improvement in an agent’s performance determined the choice of training levels [1, 2, 31,
+32]. However, robustness-oriented methods such as adversarial minimax introduced the notion of
+training on levels that minimise agent performance, though these often resulted in infeasible scenarios
+offering no learning benefits [3, 14, 33]. Minimax regret (MMR), a more refined robustness approach,
+alleviates some of these issues by ensuring the chosen levels are learnable [3–5]. However, recent
+work [8] demonstrated that even true regret does not always correspond to learnability, and this
+mismatch can lead to stagnation during training. Our work extends this line of research by utilising a
+scoring mechanism that estimates expected improvement, targeting environments with a positive but
+not perfect solve rate. Unlike existing MMR methods, our approach directly optimises for learnability,
+instead of using an imperfect proxy for regret, leading to more effective training on our domains."
+RELATED WORK,0.3375706214689266,"Relatedly, Tzannetos et al. [10] introduce ProCuRL, which uses a similar learnability score as SFL
+(and further introduce an approximation to the solve rate p using the agent’s value function). However,
+their problem setting is distinct from ours as they assume only a limited fixed pool of tasks are utilised
+during training, with the goal of improving an agent’s performance over a uniform distribution
+over this pool. We, instead, consider the standard UED setting where we can sample an effectively
+unbounded number of tasks from some large distribution Θ, with the goal of achieving an agent
+that is robust to worst-case settings and can generalise to unseen problems. Following on from this,
+Tzannetos et al. [34] extend ProCuRL to the setting where the target distribution of tasks is given,
+and they take into account both how learnable the selected task is, as well as how correlated it is with
+learnable tasks from the target distribution. While this approach outperforms the original method, it
+tackles a different problem to SFL and UED in general, i.e., where the target distribution is known."
+RELATED WORK,0.3389830508474576,"Finally, robust RL methods have the goal of improving an agent’s robustness to environmental
+disturbances, and worst-case environment dynamics [35–47]. However, these methods generally
+consider continuous perturbations instead of a mix of discrete and continuous environment settings.
+Furthermore, these methods tend to be overly conservative and prioritise unsolvable levels."
+DISCUSSION AND LIMITATIONS,0.3403954802259887,"9
+Discussion and Limitations"
+DISCUSSION AND LIMITATIONS,0.3418079096045198,"In this work we only consider deterministic, binary outcome domains and due to the nature of the learn-
+ability score, SFL is only applicable to such settings. In other domains, we could potentially reuse the
+intuition that p(1−p) is the variance of a Bernoulli distribution; in a continuous domain, an analogous
+metric would be the variance of rewards obtained by playing the same level multiple times. Further-
+more, our implementation of SFL is in JAX but the method is general. However, one must take the cost
+of SFL’s additional environment rollouts into account when considering implementing our algorithm;
+we chose JAX because its speed and parallelisation significantly alleviates this constraint. Next, while
+most current SoTA UED methods, including SFL, randomly generate and curate levels, this approach
+may become infeasible when the environment space is vast, as random generation may have a very
+low likelihood of generating valid levels. Finally, while JaxNav does have deterministic dynamics,
+Fan et al. [48] successfully transferred an RL-based multi-robot navigation policy from a simulator
+of identical fidelity to the real world, suggesting this should be equally possible with JaxNav."
+CONCLUSION,0.3432203389830508,"10
+Conclusion"
+CONCLUSION,0.3446327683615819,"In this paper, we investigate the scoring functions used by current regret-based UED methods
+and analyse whether they can accurately approximate regret. We find that this is not the case and
+that these prioritisation metrics instead correlate with success rate, leading to a large amount of
+experience not contributing to learning an improved policy. Inspired by this analysis, we develop
+a method based on an intuitive notion of learnability and find that this improves the robustness of
+the final policies. We also introduce a new robustness-measuring evaluation protocol, reporting a
+risk measure on performance over the α% worst-case (but solvable) levels for each method. We hope
+that our findings inspire future work on more general, domain-agnostic scoring functions, and we
+open-source all of our code to facilitate this process. Ultimately, we believe this work is a stepping
+stone towards bridging the gap between popular testbeds for UED and real-world applications."
+CONCLUSION,0.346045197740113,Acknowledgements
+CONCLUSION,0.3474576271186441,"This work received funding from the EPSRC Programme Grant “From Sensing to Collaboration”
+(EP/V000748/1). MB is funded by the Rhodes Trust. JF is partially funded by the UKI grant
+EP/Y028481/1 (originally selected for funding by the ERC). JF is also supported by the JPMC
+Research Award and the Amazon Research Award."
+REFERENCES,0.3488700564971751,References
+REFERENCES,0.3502824858757062,"[1] Carlos Florensa, David Held, Xinyang Geng, and Pieter Abbeel. Automatic goal generation for reinforce-
+ment learning agents. In Proceedings of the 35th International Conference on Machine Learning, ICML
+2018, Stockholmsmässan, Stockholm, Sweden, July 10-15, 2018, volume 80 of Proceedings of Machine
+Learning Research, pages 1514–1523. PMLR, 2018. URL http://proceedings.mlr.press/v80/
+florensa18a.html."
+REFERENCES,0.3516949152542373,"[2] Rémy Portelas, Cédric Colas, Katja Hofmann, and Pierre-Yves Oudeyer. Teacher algorithms for curriculum
+learning of deep RL in continuously parameterized environments. In 3rd Annual Conference on Robot
+Learning, CoRL 2019, Osaka, Japan, October 30 - November 1, 2019, Proceedings, volume 100 of
+Proceedings of Machine Learning Research, pages 835–853. PMLR, 2019. URL http://proceedings.
+mlr.press/v100/portelas20a.html."
+REFERENCES,0.3531073446327684,"[3] Michael Dennis, Natasha Jaques, Eugene Vinitsky, Alexandre M. Bayen, Stuart Russell, Andrew Critch,
+and Sergey Levine. Emergent complexity and zero-shot transfer via unsupervised environment design. In
+Advances in Neural Information Processing Systems, 2020. URL https://proceedings.neurips.cc/
+paper/2020/hash/985e9a46e10005356bbaf194249f6856-Abstract.html."
+REFERENCES,0.3545197740112994,"[4] Minqi Jiang, Michael Dennis, Jack Parker-Holder, Jakob N. Foerster, Edward Grefenstette, and Tim
+Rocktäschel. Replay-guided adversarial environment design. In Advances in Neural Information Processing
+Systems, pages 1884–1897, 2021. URL https://proceedings.neurips.cc/paper/2021/hash/
+0e915db6326b6fb6a3c56546980a8c93-Abstract.html."
+REFERENCES,0.3559322033898305,"[5] Jack Parker-Holder, Minqi Jiang, Michael Dennis, Mikayel Samvelyan, Jakob Foerster, Edward Grefen-
+stette, and Tim Rocktäschel. Evolving curricula with regret-based environment design. In Proceed-
+ings of the International Conference on Machine Learning, pages 17473–17498. PMLR, 2022. URL
+https://proceedings.mlr.press/v162/parker-holder22a.html."
+REFERENCES,0.3573446327683616,"[6] Mikayel Samvelyan, Akbir Khan, Michael Dennis, Minqi Jiang, Jack Parker-Holder, Jakob Nicolaus
+Foerster, Roberta Raileanu, and Tim Rocktäschel. MAESTRO: open-ended environment design for multi-
+agent reinforcement learning. In The Eleventh International Conference on Learning Representations,
+ICLR 2023, Kigali, Rwanda, May 1-5, 2023. OpenReview.net, 2023. URL https://openreview.net/
+pdf?id=sKWlRDzPfd7."
+REFERENCES,0.3587570621468927,"[7] Ishita Mediratta, Minqi Jiang, Jack Parker-Holder, Michael Dennis, Eugene Vinitsky, and Tim Rocktäschel.
+Stabilizing unsupervised environment design with a learned adversary. In Conference on Lifelong Learning
+Agents, pages 270–291, 2023."
+REFERENCES,0.3601694915254237,"[8] Michael Beukman, Samuel Coward, Michael Matthews, Mattie Fellows, Minqi Jiang, Michael Dennis, and
+Jakob Foerster. Refining minimax regret for unsupervised environment design. In ICML, 2024."
+REFERENCES,0.3615819209039548,"[9] Minqi Jiang, Edward Grefenstette, and Tim Rocktäschel. Prioritized level replay. In Proceedings of the
+38th International Conference on Machine Learning, volume 139, pages 4940–4950. PMLR, 2021. URL
+http://proceedings.mlr.press/v139/jiang21b.html."
+REFERENCES,0.3629943502824859,"[10] Georgios Tzannetos, Bárbara Gomes Ribeiro, Parameswaran Kamalaruban, and Adish Singla. Proximal
+Curriculum for Reinforcement Learning Agents. Transactions of Machine Learning Research (TMLR),
+2023."
+REFERENCES,0.3644067796610169,"[11] Josh Tobin, Rachel Fong, Alex Ray, Jonas Schneider, Wojciech Zaremba, and Pieter Abbeel. Domain
+randomization for transferring deep neural networks from simulation to the real world. In International
+Conference on Intelligent Robots and Systems, pages 23–30. IEEE, 2017. doi: 10.1109/IROS.2017.8202133.
+URL https://doi.org/10.1109/IROS.2017.8202133."
+REFERENCES,0.365819209039548,"[12] Alexander Nikulin, Vladislav Kurenkov, Ilya Zisman, Viacheslav Sinii, Artem Agarkov, and Sergey
+Kolesnikov. XLand-minigrid: Scalable meta-reinforcement learning environments in JAX. In Intrinsically-
+Motivated and Open-Ended Learning Workshop, NeurIPS2023, 2023. URL https://openreview.net/
+forum?id=xALDC4aHGz."
+REFERENCES,0.3672316384180791,"[13] Maxime Chevalier-Boisvert, Bolun Dai, Mark Towers, Rodrigo de Lazcano, Lucas Willems, Salem Lahlou,
+Suman Pal, Pablo Samuel Castro, and Jordan Terry. Minigrid & miniworld: Modular & customizable
+reinforcement learning environments for goal-oriented tasks. CoRR, abs/2306.13831, 2023. doi: 10.48550/
+ARXIV.2306.13831. URL https://doi.org/10.48550/arXiv.2306.13831."
+REFERENCES,0.3686440677966102,"[14] Lerrel Pinto, James Davidson, Rahul Sukthankar, and Abhinav Gupta. Robust adversarial reinforcement
+learning. In Proceedings of the 34th International Conference on Machine Learning, volume 70 of
+Proceedings of Machine Learning Research, pages 2817–2826. PMLR, 06–11 Aug 2017. URL https:
+//proceedings.mlr.press/v70/pinto17a.html."
+REFERENCES,0.3700564971751412,"[15] John Schulman, Philipp Moritz, Sergey Levine, Michael I. Jordan, and Pieter Abbeel. High-dimensional
+continuous control using generalized advantage estimation. In 4th International Conference on Learning
+Representations, 2016. URL http://arxiv.org/abs/1506.02438."
+REFERENCES,0.3714689265536723,"[16] John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy
+optimization algorithms. CoRR, abs/1707.06347, 2017. URL http://arxiv.org/abs/1707.06347."
+REFERENCES,0.3728813559322034,"[17] Zhanteng Xie and Philip Dames. Drl-vo: Learning to navigate through crowded dynamic scenes using
+velocity obstacles. IEEE Transactions on Robotics, 2023."
+REFERENCES,0.3742937853107345,"[18] James Bradbury, Roy Frostig, Peter Hawkins, Matthew James Johnson, Chris Leary, Dougal Maclaurin,
+George Necula, Adam Paszke, Jake VanderPlas, Skye Wanderman-Milne, and Qiao Zhang. JAX: compos-
+able transformations of Python+NumPy programs, 2018. URL http://github.com/google/jax."
+REFERENCES,0.3757062146892655,"[19] Chris Lu, Jakub Kuba, Alistair Letcher, Luke Metz, Christian Schroeder de Witt, and Jakob Foerster.
+Discovered policy optimisation. Advances in Neural Information Processing Systems, 35:16455–16468,
+2022."
+REFERENCES,0.3771186440677966,"[20] Alexander Rutherford, Benjamin Ellis, Matteo Gallici, Jonathan Cook, Andrei Lupu, Gardar Ingvarsson,
+Timon Willi, Akbir Khan, Christian Schroeder de Witt, Alexandra Souly, et al. Jaxmarl: Multi-agent rl
+environments in jax. arXiv preprint arXiv:2311.10090, 2023."
+REFERENCES,0.3785310734463277,"[21] Michael Matthews, Michael Beukman, Benjamin Ellis, Mikayel Samvelyan, Matthew Jackson, Samuel
+Coward, and Jakob Foerster. Craftax: A lightning-fast benchmark for open-ended reinforcement learning.
+In ICML, 2024."
+REFERENCES,0.3799435028248588,"[22] Samuel Coward, Michael Beukman, and Jakob Foerster. Jaxued: A simple and useable ued library in jax.
+arXiv preprint, 2024."
+REFERENCES,0.3813559322033898,"[23] Minqi Jiang, Michael Dennis, Edward Grefenstette, and Tim Rocktäschel. minimax: Efficient baselines for
+autocurricula in jax. In Agent Learning in Open-Endedness Workshop at NeurIPS, 2023."
+REFERENCES,0.3827683615819209,"[24] Xuesu Xiao, Bo Liu, Garrett Warnell, and Peter Stone. Motion planning and control for mobile robot
+navigation using machine learning: a survey. Autonomous Robots, 46(5):569–597, 2022."
+REFERENCES,0.384180790960452,"[25] Zifan Xu, Bo Liu, Xuesu Xiao, Anirudh Nair, and Peter Stone. Benchmarking reinforcement learning
+techniques for autonomous navigation. In 2023 IEEE International Conference on Robotics and Automation
+(ICRA), pages 9224–9230. IEEE, 2023."
+REFERENCES,0.3855932203389831,"[26] Xuesu Xiao, Zifan Xu, Zizhao Wang, Yunlong Song, Garrett Warnell, Peter Stone, Tingnan Zhang, Shravan
+Ravi, Gary Wang, Haresh Karnan, et al. Autonomous ground navigation in highly constrained spaces:
+Lessons learned from the benchmark autonomous robot navigation challenge at icra 2022 [competitions].
+IEEE Robotics & Automation Magazine, 29(4):148–156, 2022."
+REFERENCES,0.3870056497175141,"[27] Danijar Hafner, Timothy P. Lillicrap, Jimmy Ba, and Mohammad Norouzi. Dream to control: Learning
+behaviors by latent imagination. In 8th International Conference on Learning Representations. OpenRe-
+view.net, 2020. URL https://openreview.net/forum?id=S1lOTC4tDS."
+REFERENCES,0.3884180790960452,"[28] Danijar Hafner, Timothy P. Lillicrap, Mohammad Norouzi, and Jimmy Ba. Mastering atari with discrete
+world models. In 9th International Conference on Learning Representations. OpenReview.net, 2021. URL
+https://openreview.net/forum?id=0oabwyZbOu."
+REFERENCES,0.3898305084745763,"[29] Danijar Hafner, Jurgis Pasukonis, Jimmy Ba, and Timothy P. Lillicrap. Mastering diverse domains
+through world models. CoRR, abs/2301.04104, 2023. doi: 10.48550/ARXIV.2301.04104. URL https:
+//doi.org/10.48550/arXiv.2301.04104."
+REFERENCES,0.3912429378531073,"[30] Marc Rigter, Minqi Jiang, and Ingmar Posner. Reward-free curricula for training robust world models.
+CoRR, abs/2306.09205, 2023. doi: 10.48550/ARXIV.2306.09205. URL https://doi.org/10.48550/
+arXiv.2306.09205."
+REFERENCES,0.3926553672316384,"[31] Pierre-Yves Oudeyer, Frdric Kaplan, and Verena V Hafner. Intrinsic motivation systems for autonomous
+mental development. IEEE transactions on evolutionary computation, 11(2):265–286, 2007."
+REFERENCES,0.3940677966101695,"[32] Tambet Matiisen, Avital Oliver, Taco Cohen, and John Schulman. Teacher-student curriculum learning.
+volume 31, pages 3732–3740, 2020. doi: 10.1109/TNNLS.2019.2934906. URL https://doi.org/10.
+1109/TNNLS.2019.2934906."
+REFERENCES,0.3954802259887006,"[33] Rui Wang, Joel Lehman, Jeff Clune, and Kenneth O. Stanley. Paired Open-Ended Trailblazer (POET):
+Endlessly generating increasingly complex and diverse learning environments and their solutions. CoRR,
+abs/1901.01753, 2019. URL http://arxiv.org/abs/1901.01753."
+REFERENCES,0.3968926553672316,"[34] Georgios Tzannetos, Parameswaran Kamalaruban, and Adish Singla. Proximal curriculum with task
+correlations for deep reinforcement learning. In Kate Larson, editor, Proceedings of the Thirty-Third
+International Joint Conference on Artificial Intelligence, IJCAI-24, pages 5027–5036. International Joint
+Conferences on Artificial Intelligence Organization, 8 2024. doi: 10.24963/ijcai.2024/556. URL https:
+//doi.org/10.24963/ijcai.2024/556."
+REFERENCES,0.3983050847457627,"[35] Garud N Iyengar. Robust dynamic programming. Mathematics of Operations Research, 30(2):257–280,
+2005."
+REFERENCES,0.3997175141242938,"[36] Laurent El Ghaoui and Arnab Nilim. Robust solutions to markov decision problems with uncertain
+transition matrices. Operations Research, 53(5):780–798, 2005."
+REFERENCES,0.4011299435028249,"[37] Huan
+Xu
+and
+Shie
+Mannor.
+Distributionally
+robust
+markov
+decision
+processes.
+In
+Advances
+in
+Neural
+Information
+Processing
+Systems,
+pages
+2505–2513.
+Curran
+As-
+sociates,
+Inc.,
+2010.
+URL
+https://proceedings.neurips.cc/paper/2010/hash/
+19f3cd308f1455b3fa09a282e0d496f4-Abstract.html."
+REFERENCES,0.4025423728813559,"[38] Wolfram Wiesemann, Daniel Kuhn, and Berç Rustem. Robust markov decision processes. Mathematics of
+Operations Research, 38(1):153–183, 2013."
+REFERENCES,0.403954802259887,"[39] Shiau Hong Lim, Huan Xu, and Shie Mannor. Reinforcement learning in robust markov decision processes.
+Advances in Neural Information Processing Systems, 26, 2013."
+REFERENCES,0.4053672316384181,"[40] Vineet Goyal and Julien Grand-Clément. Robust markov decision processes: Beyond rectangularity. Math.
+Oper. Res., 48(1):203–226, 2023. doi: 10.1287/MOOR.2022.1259. URL https://doi.org/10.1287/
+moor.2022.1259."
+REFERENCES,0.4067796610169492,"[41] Hideaki Nakao, Ruiwei Jiang, and Siqian Shen. Distributionally robust partially observable markov decision
+process with moment-based ambiguity. SIAM J. Optim., 31(1):461–488, 2021. doi: 10.1137/19M1268410.
+URL https://doi.org/10.1137/19M1268410."
+REFERENCES,0.4081920903954802,"[42] Qianli Shen, Yan Li, Haoming Jiang, Zhaoran Wang, and Tuo Zhao. Deep reinforcement learning with
+robust and smooth policy. In Proceedings of the 37th International Conference on Machine Learning,
+ICML 2020, 13-18 July 2020, Virtual Event, volume 119 of Proceedings of Machine Learning Research,
+pages 8707–8718. PMLR, 2020. URL http://proceedings.mlr.press/v119/shen20b.html."
+REFERENCES,0.4096045197740113,"[43] Rui Yang, Chenjia Bai, Xiaoteng Ma, Zhaoran Wang, Chongjie Zhang, and Lei Han. RORL: robust offline
+reinforcement learning via conservative smoothing. In Advances in Neural Information Processing Systems
+35: Annual Conference on Neural Information Processing Systems 2022, NeurIPS 2022, New Orleans, LA,
+USA, November 28 - December 9, 2022, 2022. URL http://papers.nips.cc/paper_files/paper/
+2022/hash/96bbdd0ed2a9e7cd2fb7caf2fae15f3d-Abstract-Conference.html."
+REFERENCES,0.4110169491525424,"[44] Nicole Bäuerle and Alexander Glauner. Distributionally robust markov decision processes and their
+connection to risk measures. Math. Oper. Res., 47(3):1757–1780, 2022. doi: 10.1287/MOOR.2021.1187.
+URL https://doi.org/10.1287/moor.2021.1187."
+REFERENCES,0.4124293785310734,"[45] Shengbo Wang, Nian Si, Jose H. Blanchet, and Zhengyuan Zhou. On the foundation of distributionally
+robust reinforcement learning. CoRR, abs/2311.09018, 2023. doi: 10.48550/ARXIV.2311.09018. URL
+https://doi.org/10.48550/arXiv.2311.09018."
+REFERENCES,0.4138418079096045,"[46] Mohak Bhardwaj,
+Tengyang Xie,
+Byron Boots,
+Nan Jiang,
+and Ching-An Cheng.
+Ad-
+versarial
+model
+for
+offline
+reinforcement
+learning.
+In
+Advances
+in
+Neural
+Information
+Processing Systems, 2023.
+URL http://papers.nips.cc/paper_files/paper/2023/hash/
+0429ececfb199efc93182990169e73bb-Abstract-Conference.html."
+REFERENCES,0.4152542372881356,"[47] Chenlu Ye,
+Rui Yang,
+Quanquan Gu,
+and Tong Zhang.
+Corruption-robust offline rein-
+forcement learning with general function approximation.
+In Advances in Neural Information
+Processing Systems, 2023.
+URL http://papers.nips.cc/paper_files/paper/2023/hash/
+71b52a5b3fe2e9303433a174b60e160d-Abstract-Conference.html."
+REFERENCES,0.4166666666666667,"[48] Tingxiang Fan, Pinxin Long, Wenxi Liu, and Jia Pan. Distributed multi-robot collision avoidance via
+deep reinforcement learning for navigation in complex scenarios. The International Journal of Robotics
+Research, 39(7):856–892, 2020."
+REFERENCES,0.4180790960451977,"[49] Gregor Klancar, Andrej Zdesar, Saso Blazic, and Igor Skrjanc. Wheeled mobile robotics: from fundamentals
+towards autonomous systems. Butterworth-Heinemann, 2017."
+REFERENCES,0.4194915254237288,"[50] Pinxin Long, Tingxiang Fan, Xinyi Liao, Wenxi Liu, Hao Zhang, and Jia Pan. Towards optimally
+decentralized multi-robot collision avoidance via deep reinforcement learning. In 2018 IEEE international
+conference on robotics and automation (ICRA), pages 6252–6259. IEEE, 2018."
+REFERENCES,0.4209039548022599,"[51] Roni Stern, Nathan Sturtevant, Ariel Felner, Sven Koenig, Hang Ma, Thayne Walker, Jiaoyang Li, Dor
+Atzmon, Liron Cohen, TK Kumar, et al. Multi-agent pathfinding: Definitions, variants, and benchmarks. In
+Proceedings of the International Symposium on Combinatorial Search, volume 10, pages 151–158, 2019."
+REFERENCES,0.422316384180791,"[52] Peter R Wurman, Raffaello D’Andrea, and Mick Mountz. Coordinating hundreds of cooperative, au-
+tonomous vehicles in warehouses. AI magazine, 29(1):9–9, 2008."
+REFERENCES,0.423728813559322,"[53] Paolo Fiorini and Zvi Shiller. Motion planning in dynamic environments using velocity obstacles. The
+international journal of robotics research, 17(7):760–772, 1998."
+REFERENCES,0.4251412429378531,"[54] Jur Van Den Berg, Stephen J Guy, Ming Lin, and Dinesh Manocha. Reciprocal n-body collision avoidance.
+In Robotics Research: The 14th International Symposium ISRR, pages 3–19. Springer, 2011."
+REFERENCES,0.4265536723163842,"[55] Michael Everett, Yu Fan Chen, and Jonathan P How. Collision avoidance in pedestrian-rich environments
+with deep reinforcement learning. IEEE Access, 9:10357–10377, 2021."
+REFERENCES,0.4279661016949153,"[56] Qingyang Tan, Tingxiang Fan, Jia Pan, and Dinesh Manocha. Deepmnavigate: Deep reinforced multi-robot
+navigation unifying local & global collision avoidance. In 2020 IEEE/RSJ International Conference on
+Intelligent Robots and Systems (IROS), pages 6952–6959. IEEE, 2020."
+REFERENCES,0.4293785310734463,"[57] Ruihua Han, Shengduo Chen, Shuaijun Wang, Zeqing Zhang, Rui Gao, Qi Hao, and Jia Pan. Reinforcement
+learned distributed multi-robot navigation with reciprocal velocity obstacle shaped rewards. IEEE Robotics
+and Automation Letters, 7(3):5896–5903, 2022."
+REFERENCES,0.4307909604519774,"[58] Jin-Soo Park, Xuesu Xiao, Garrett Warnell, Harel Yedidsion, and Peter Stone. Learning perceptual
+hallucination for multi-robot navigation in narrow hallways. In 2023 IEEE International Conference on
+Robotics and Automation (ICRA), pages 10033–10039. IEEE, 2023."
+REFERENCES,0.4322033898305085,"[59] Rémy Portelas, Cédric Colas, Lilian Weng, Katja Hofmann, and Pierre-Yves Oudeyer.
+Automatic
+curriculum learning for deep RL: A short survey. In Proceedings of the Twenty-Ninth International Joint
+Conference on Artificial Intelligence, IJCAI 2020, pages 4819–4825. ijcai.org, 2020. doi: 10.24963/IJCAI.
+2020/671. URL https://doi.org/10.24963/ijcai.2020/671."
+REFERENCES,0.4336158192090395,"[60] Sanmit Narvekar, Bei Peng, Matteo Leonetti, Jivko Sinapov, Matthew E. Taylor, and Peter Stone. Cur-
+riculum learning for reinforcement learning domains: A framework and survey. J. Mach. Learn. Res., 21:
+181:1–181:50, 2020. URL http://jmlr.org/papers/v21/20-212.html."
+REFERENCES,0.4350282485875706,"[61] Lev Vygotsky et al. Interaction between learning and development. Linköpings universitet, 2011."
+REFERENCES,0.4364406779661017,"[62] Samuel Garcin, James Doran, Shangmin Guo, Christopher G. Lucas, and Stefano V. Albrecht. Dred:
+Zero-shot transfer in reinforcement learning via data-regularised environment design.
+2024.
+URL
+https://doi.org/10.48550/arXiv.2402.03479."
+REFERENCES,0.4378531073446328,Appendix
+REFERENCES,0.4392655367231638,"We structure the appendix as follows. Appendix A includes more details about JaxNav, and Ap-
+pendix B describes the other environments we use. The hyperparameters we use and the hand-
+designed test sets can be seen in Appendices C and D, respectively. Appendix E discusses multi-robot
+navigation and automated curriculum learning in more detail."
+REFERENCES,0.4406779661016949,"We next provide more results, including more analysis on the UED score functions in Appendix F,
+additional general results in Appendix G and compute-time analysis in Appendix H. Finally, we
+thoroughly ablate SFL in Appendix I."
+REFERENCES,0.442090395480226,"A
+JaxNav Specification"
+REFERENCES,0.4435028248587571,"The environment is designed as follows, with full parameters listed in Appendix C."
+REFERENCES,0.4449152542372881,"Observations
+The robot’s observation at a given timestep t is ot = [lt, dt, vt] containing the
+current LiDAR range readings (lt), the direction to the robot’s goal (dt), and the robot’s current linear
+and angular velocities (vt). The LiDAR range readings lt is a vector containing the 100 most recent
+LiDAR range readings from a 360◦arc centred on the robot’s forward axis, the LiDAR’s max range
+Dlidar is set to 6 m. Given the robot’s current position pt and the goal position g, the robot’s goal
+direction dt is defined as: dt ="
+REFERENCES,0.4463276836158192,"(
+polar (g −pt)
+if ||g −pt|| ≤Dlidar
+polar
+
+g−pt
+||g−pt|| · Dlidar
+
+otherwise
+,
+(1)"
+REFERENCES,0.4477401129943503,"where polar converts a Cartesian vector to its polar representation. All observation entries are
+normalised using their maximum possible values."
+REFERENCES,0.4491525423728814,"Actions
+The policy selects a two-dimensional continuous action at = [vx
+t , wz
+t ] representing a target
+linear (vx
+t ) and angular velocity (wz
+t ). The possible linear and angular velocities are limited to a set
+range, with actions outside these ranges clipped to be within."
+REFERENCES,0.4505649717514124,"Dynamics
+The action at is translated into movement in the x-y plane using a differential drive
+kinematics model [49] which includes limits on linear and angular acceleration."
+REFERENCES,0.4519774011299435,"Rewards
+Our reward function is inspired by Long et al. [50] and aims to avoid collisions while
+minimising the expected arrival time. Due to the difficulty of the task we include shaping terms which
+give a small dense reward at each timestep. The reward r received at timestep t is defined as the sum:
+rt = rg
+t + rc
+t + Rtime, where rg
+t rewards the robot for reaching the goal, rc
+t penalises collisions, and
+Rtime is a small penalty at each timestep equal to −0.01. The goal reaching term rg
+t is defined as:"
+REFERENCES,0.4533898305084746,"rg
+t =
+Rgoal
+if ||pt −g|| < Dgoal
+wg(||pt −g|| −||pt−1 −g||)
+otherwise
+,
+(2)"
+REFERENCES,0.4548022598870056,"where Rgoal = 4.0, Dgoal = 0.3 and wg = 0.25. This term rewards the agent for reaching the goal,
+and provides a small dense reward if the agent moves closer to the goal. Meanwhile, the collision
+penalty term rt
+c is defined:"
+REFERENCES,0.4562146892655367,"rt
+c = 
+ "
+REFERENCES,0.4576271186440678,"Rcollision
+if collision
+Rclose
+if min(lu
+t ) ≤Dclose
+0
+otherwise
+,
+(3)"
+REFERENCES,0.4590395480225989,"where lu
+t are the un-normalised LiDAR readings at timestep t, Rcollision = −4, Rclose = −0.1, and
+Dclose = 0.4m. This term avoids collisions and provides a small dense penalty when the agent is
+close to obstacles, this encourages safe behaviour."
+REFERENCES,0.4604519774011299,"Multi-Agent Reward
+In the multi-agent version of JaxNav, the reward for each agent i is defined
+as λri + (1 −λi) Pn
+j rj, i.e., it shares its own reward, as well as the team reward. We use λ = 0.5."
+REFERENCES,0.461864406779661,"B
+Environment Description"
+REFERENCES,0.4632768361581921,"Here we describe the other environments we use, with environment parameters listed in Tables 1 to 3."
+REFERENCES,0.4646892655367232,"Table 1: JaxNav Parameters
+Parameter
+Value"
+REFERENCES,0.4661016949152542,"Num Agents
+1 (4 for multi-agent)
+Square agent width
+0.5 m
+Grid cell size
+1.0 m
+Dynamics
+Goal Radius, Dgoal
+0.3 m
+Min linear velocity
+0.0 m/s
+Max linear velocity
+1.0 m/s
+Max linear acceleration
+1.0 m/s2
+Min angular velocity
+-0.6 rad/s
+Max angular velocity
+0.6 rad/s
+Max angular acceleration
+1.0 rad/s2
+Timestep length
+0.1 s
+Number of LiDAR beams
+200
+LiDAR range resolution
+0.05 m
+LiDAR max range, Dlidar
+6 m
+LiDAR min range
+0 m
+Map size
+11 × 11 m
+Maximum wall fill %
+60%
+Reward Signal
+Goal reaching reward, Rgoal
+4.0
+Distance change weight, wg
+0.25
+Collision penalty, Rcollision
+-4.0
+LiDAR threshold, Dclose
+0.4 m
+LiDAR penalty, Rclose
+-0.1
+Timestep penalty, Rtime
+-0.01"
+REFERENCES,0.4675141242937853,Table 2: Minigrid Parameters
+REFERENCES,0.4689265536723164,"Parameter
+Value"
+REFERENCES,0.4703389830508475,"Number of walls
+60
+Agent view size
+5"
+REFERENCES,0.4717514124293785,Table 3: XLand-Minigrid Parameters
+REFERENCES,0.4731638418079096,"Parameter
+Value"
+REFERENCES,0.4745762711864407,"Ruleset benchmark
+high-3m
+Environment ID
+R4-13x13
+Image observations
+False"
+REFERENCES,0.4759887005649718,"B.1
+Minigrid"
+REFERENCES,0.4774011299435028,"Minigrid is a goal-oriented grid world where a triangle-like agent must navigate a 2D maze. As
+illustrated in Figure 1a, the agent only observes a small region in front of where it is facing and must
+explore the world to move to a goal location."
+REFERENCES,0.4788135593220339,"B.2
+XLand-Minigrid"
+REFERENCES,0.480225988700565,"This domain combines an XLand-inspired system of extensible rules and goals with a Minigrid-
+inspired goal-oriented grid world to create a domain with a diverse distribution of tasks. Each task
+is specified by a ruleset, which combines rules for environment interactions with a goal, and [12]
+provide a database of presampled rulesets for use during training. Following [12], we use a 13x13 grid
+with 4 rooms and sample rulesets from their high diversity benchmark with 3 million unique tasks.
+As training involves sampling from a database of precomputed rulesets, ACCEL is not applicable.
+PLR and SFL select rulesets for each meta-RL step to maximise return on a held-out set of evaluation
+rulesets."
+REFERENCES,0.481638418079096,"C
+Hyperparameters"
+REFERENCES,0.4830508474576271,"Table 4 contains the hyperparameters we use, with their selection process for each domain outlined
+below. We tuned PPO for DR for each domain and then used these same PPO parameters for all
+methods, tuning only UED-specific parameters."
+REFERENCES,0.4844632768361582,Table 4: Learning Hyperparameters.
+REFERENCES,0.4858757062146893,"Parameter
+JaxNav
+JaxNav
+Minigrid
+XLand
+Single-Agent
+Multi-Agent"
+REFERENCES,0.4872881355932203,"PPO
+Number of Updates
+2250
+22850
+4500
+-
+Number of Meta-Steps
+-
+-
+-
+298
+# of PPO Updates per Meta-Step
+-
+-
+-
+128
+γ
+0.99
+λGAE
+0.95
+PPO number of steps
+512
+256
+32
+PPO epochs
+4
+1
+PPO minibatches per epoch
+4
+16
+PPO clip range
+0.04
+0.2
+PPO # parallel environments
+256
+8192
+Adam learning rate
+2.4e-4
+1e-3
+Anneal LR
+yes
+Adam ϵ
+1e-5
+1e-8
+PPO max gradient norm
+0.5
+PPO value clipping
+yes
+return normalisation
+no
+value loss coefficient
+0.5
+entropy coefficient
+0.0
+0.01
+Fully-connected dimension size
+512
+[16, 256]
+Hidden dimension size
+512
+1024
+PLR
+Replay rate, p
+0.5
+0.95
+Buffer size, K
+1000
+8000
+40000
+Scoring function
+MaxMC
+Prioritisation
+Top K
+Rank
+Rank
+Temperature, β
+-
+1.0
+1.0
+k
+32
+-
+-
+staleness coefficient
+0.3
+Duplicate check
+no
+ACCEL
+Number of Edits
+5
+20
+-
+Buffer size, K
+8000
+-
+Prioritisation
+Rank
+-
+Temperature, β
+1.0
+-
+SFL
+Batch Size N
+5000
+25000
+40000
+Rollout Length L
+2000
+5070
+Update Period T
+50
+50
+100
+4
+Buffer Size K
+100
+100
+1000
+8192
+Sample Ratio ρ
+1.0
+1.0
+0.5
+1.0"
+REFERENCES,0.4887005649717514,"C.1
+JaxNav"
+REFERENCES,0.4901129943502825,"For PPO, we conducted an extensive sweep on the JaxNav environment ensuring robust DR perfor-
+mance. We only tuned hyperparameters for single-agent JaxNav, and used the best hyperparameters
+for multi-agent JaxNav. JaxNav hyperparameter searches were done over 3 seeds."
+REFERENCES,0.4915254237288136,"For PLR, we performed a grid search, over replay probabilities {0.5, 0.8}, buffer capacity
+{1000, 4000, 8000}, prioritisation {rank, topk}, temperature {0.3, 1.0}, and k {1, 32, 128}. For
+ACCEL, we searched over the same set and additionally included the number of edits, where we
+considered values of {5, 20, 50}."
+REFERENCES,0.4929378531073446,"For SFL, we performed line searches over N of {500, 5000, 25000}, L {1000, 2000, 4000}, K of
+{100, 1000, 5000}, T of {10, 50, 500, 1000, 2000} and ρ of {0.25, 0.5, 0.75, 1.0}."
+REFERENCES,0.4943502824858757,"Since this is a line search and not a grid search, the total number of tuning runs (and total compute) is
+less than for PLR and ACCEL (60 runs for SFL vs 90 for PLR and 270 for ACCEL)."
+REFERENCES,0.4957627118644068,"C.2
+Minigrid"
+REFERENCES,0.4971751412429379,"For Minigrid, our JaxNav PPO parameters performed similarly to those given in the JaxUED
+implementation but allowed us to use 256 environment rollouts in parallel during training compared
+to JaxUED’s 32. For the UED-specific parameters we used the same sweep settings as for JaxNav,
+again conducting the search over 3 seeds."
+REFERENCES,0.4985875706214689,"C.3
+XLand-Minigrid"
+REFERENCES,0.5,"For PPO, we used the default parameters provided by [12] and the search for UED parameters was
+conducted over 1 seed. For PLR, we conducted a grid search over replay probabilities {0.5, 0.95},
+buffer capacity {20000, 40000}, prioritisation {rank, topk}, temperature {0.3, 1.0}, score function
+{MaxMC, PVL}. For SFL, initial experiments illustrated that, due to the number of environment
+rollouts used to fill the buffer, it was slower than PLR and DR. To use a similar compute budget as
+PLR, we conducted the sweep over only 70B timesteps. For SFL, we performed a grid search over N
+of {40000, 30000}, L {5070, 7650}, K of {8192}, T of {1, 2, 3, 4} and ρ of {0.75, 1.0}."
+REFERENCES,0.501412429378531,"D
+Hand Designed Test Sets"
+REFERENCES,0.5028248587570622,"The hand-designed levels used for evaluating policy performance throughout training are illustrated
+in Figures 9 and 10. The set used for multi-agent policies also includes the first 3 maps in Figure 9.
+Minigrid’s levels are shown in Figure 11 and are the same as those used by JaxUED."
+REFERENCES,0.5042372881355932,Figure 9: Hand-Designed Test Set for Single Agent JaxNav Policies.
+REFERENCES,0.5056497175141242,Figure 10: Hand-Designed Test Set for Multi Agent JaxNav Policies.
+REFERENCES,0.5070621468926554,"SixteenRooms
+SixteenRooms2
+Labyrinth
+LabyrinthFlipped"
+REFERENCES,0.5084745762711864,"Labyrinth2
+StandardMaze
+StandardMaze2
+StandardMaze3"
+REFERENCES,0.5098870056497176,"Figure 11: Hand-designed Minigrid Levels [3, 22, 23]."
+REFERENCES,0.5112994350282486,"E
+Additional Background Related Work"
+REFERENCES,0.5127118644067796,"E.1
+Literature Review of Multi-Robot Navigation"
+REFERENCES,0.5141242937853108,"Multi-robot path planning presents unique challenges due to the need for coordination among robots
+to avoid deadlocks in dynamic environments. Traditional methods often discretise the environment,
+turning the problem into a multi-agent pathfinding task managed by a central planner [51, 52]. While
+effective at scale, these approaches rely heavily on communication infrastructure, making them
+impractical in scenarios with unreliable connectivity or third-party obstacles. In contrast, our method
+leverages decentralised learning approaches without relying on centralised communication, making it
+more robust in partially observable and communication-limited settings."
+REFERENCES,0.5155367231638418,"Decentralised approaches like velocity obstacles [53] and ORCA [54] offer a solution by mapping
+environmental constraints into the robot’s velocity space. However, these methods are susceptible
+to measurement errors and often exhibit short-sighted behavior, limiting their real-world applicabil-
+ity [17]. Our method, by comparison, incorporates a broader evaluation framework that assesses
+performance in adversarial and challenging environments, ensuring robustness beyond simple dy-
+namic obstacle avoidance."
+REFERENCES,0.5169491525423728,"Recent advancements leverage machine learning to overcome these limitations. CADRL [55] uses RL
+to address short-sightedness, but its state-based representation limits its adaptability. Our approach,
+instead, employs lidar-based observations to model a more realistic and complex navigation task,
+which allows for better generalisation to real-world scenarios."
+REFERENCES,0.518361581920904,"More sophisticated RL-based approaches, such as those by Long et al. [50] and Tan et al. [56],
+demonstrate improved performance in open spaces but struggle in constrained settings. Our method
+specifically addresses this by focusing on environments that are solved intermittently, thereby enhanc-
+ing the agent’s ability to learn in varied and complex settings."
+REFERENCES,0.519774011299435,"Hybrid methods, combining RL with conventional planning [48], show promise but do not fully
+address these challenges. In contrast, our method integrates an adaptive curriculum that dynamically
+adjusts based on the agent’s performance, leading to sustained learning improvements even in diverse
+and adversarial environments."
+REFERENCES,0.5211864406779662,"The design of reward functions is critical in RL-based navigation. Enhancements using velocity obsta-
+cles [17, 57] improve performance but still face challenges in real-world transferability. Techniques
+like perceptual hallucination [58] further enhance robustness by reducing multi-robot planning to
+static obstacle avoidance, though they typically consider simple scenarios and do not account for
+dynamic third-party obstacles. Our method, however, introduces a novel evaluation protocol that
+rigorously tests the robustness of learned policies in a variety of adversarially generated environments,
+ensuring better real-world applicability."
+REFERENCES,0.5225988700564972,"E.2
+Background on Automated Curriculum Learning"
+REFERENCES,0.5240112994350282,"Automated Curriculum Learning (ACL) is a subfield of RL where agents are presented with increas-
+ingly challenging tasks that are adapted to the agent’s current progress [59, 60]. One common idea
+idea is to train the agent on tasks that are neither too easy nor too hard, such that it achieves maximum
+learning potential [1, 61]. Autocurricula methods have various aims, such as improving learning
+speed on a set of target environments [62] or increasing robustness to unknown environment config-
+urations [3, 4]. Unsupervised environment design (UED) focuses on the latter. One commonality
+between autocurricula methods is that the environment generator controls aspects of the environment,
+such as the transition dynamics, state and observation spaces, goals, and so on [1, 3]. Each of these
+environment configurations is commonly referred to as a level [3]."
+REFERENCES,0.5254237288135594,"Methods also differ in how they generate these environment configurations. One class of methods uses
+generative models, such as Gaussian Mixture Models (GMMs) [2]. While this approach generally
+makes the problem theoretically tractable, GMMs are limited to continuous-valued parameter settings.
+More recently, other generative models, such as Variational Autoencoders, have been used [62].
+However, these models often require data to train, which may be unavailable or bias the learning
+process. Other methods use an RL-based level generator, where the generator’s objective is based on
+how the agent performs on the generated level [3]. This approach has been surpassed by the more
+recent technique of randomly generating and curating levels [4, 5, 9]."
+REFERENCES,0.5268361581920904,"F
+Extended analysis of UED Score Functions"
+REFERENCES,0.5282485875706214,"An extension of Section 4.2, Figure 12 illustrates the correlation between mean reward and the
+two most popular regret scores, MaxMC and PVL. These graphs illustrate that the trends seen for
+success rate also hold for episodic reward, this is expected for our environment as the two are strongly
+correlated. In Figure 13 we conduct the same analysis for the L1 Loss Score [9], defined as:"
+REFERENCES,0.5296610169491526,"L1 Loss ˙= 1 T T
+X t=0  T
+X"
+REFERENCES,0.5310734463276836,"k=t
+(γλ)k−tδk ."
+REFERENCES,0.5324858757062146,"12.5
+10.0
+7.5
+5.0
+2.5
+0.0
+2.5
+5.0
+Mean Episode Return by Level 0.5 0.0 0.5 1.0 1.5 2.0 2.5 3.0"
+REFERENCES,0.5338983050847458,MaxMC Score by Level
+REFERENCES,0.5353107344632768,"r=0.61, p=6.2e-250 0 200 0
+500"
+REFERENCES,0.536723163841808,(a) MaxMC
+REFERENCES,0.538135593220339,"12.5
+10.0
+7.5
+5.0
+2.5
+0.0
+2.5
+5.0
+Mean Episode Return by Level 0.00 0.05 0.10 0.15 0.20 0.25 0.30"
+REFERENCES,0.53954802259887,PVL Score by Level
+REFERENCES,0.5409604519774012,"r=0.42, p=3.2e-107 0 200 0
+500"
+REFERENCES,0.5423728813559322,(b) Positive Value Loss
+REFERENCES,0.5437853107344632,"12.5
+10.0
+7.5
+5.0
+2.5
+0.0
+2.5
+5.0
+Mean Episode Return by Level 0.00 0.05 0.10 0.15 0.20 0.25"
+REFERENCES,0.5451977401129944,"Learnability Score by Level 0 200 0
+500"
+REFERENCES,0.5466101694915254,(c) Learnability (ours)
+REFERENCES,0.5480225988700564,Figure 12: Analysis of UED and Learnability Score Functions Against Reward
+REFERENCES,0.5494350282485876,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Mean Success Rate by Level 0.0 0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0"
+REFERENCES,0.5508474576271186,L1 Score by Level
+REFERENCES,0.5522598870056498,"r=0.07, p=0.0002 0 200 400 0
+250"
+REFERENCES,0.5536723163841808,(a) L1 Loss against Success Rate
+REFERENCES,0.5550847457627118,"12.5
+10.0
+7.5
+5.0
+2.5
+0.0
+2.5
+5.0
+Mean Episode Return by Level 0.0 0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0"
+REFERENCES,0.556497175141243,L1 Score by Level
+REFERENCES,0.557909604519774,"r=0.07, p=0.0006 0 200 0
+250"
+REFERENCES,0.559322033898305,(b) L1 Loss against Reward
+REFERENCES,0.5607344632768362,Figure 13: Analysis of L1 Loss score function
+REFERENCES,0.5621468926553672,"G
+Additional Results"
+REFERENCES,0.5635593220338984,"Figure 14 shows each method’s overall solve rate on the set of 10000 sampled solvable levels on a
+log scale. We find that while all methods solve the vast majority of levels, SFL slightly outperforms
+all the baseline methods. Figure 15 reports the pairwise comparisons of each base against SFL for
+Minigrid. While, again, most methods solve most levels, SFL has a slight advantage. Group"
+REFERENCES,0.5649717514124294,9.6 × 101
+REFERENCES,0.5663841807909604,9.65 × 101
+REFERENCES,0.5677966101694916,9.7 × 101
+REFERENCES,0.5692090395480226,9.75 × 101
+REFERENCES,0.5706214689265536,9.8 × 101
+REFERENCES,0.5720338983050848,9.85 × 101
+REFERENCES,0.5734463276836158,9.9 × 101
+REFERENCES,0.5748587570621468,Win Rate
+REFERENCES,0.576271186440678,"SFL
+Perfect Regret (Oracle)
+DR
+ACCEL-MaxMC
+PLR-PVL
+PLR-MaxMC
+PLR-L1VL
+RobustPLR
+RobustACCEL (a) Group"
+REFERENCES,0.577683615819209,9.92 × 101
+REFERENCES,0.5790960451977402,9.93 × 101
+REFERENCES,0.5805084745762712,9.94 × 101
+REFERENCES,0.5819209039548022,9.95 × 101
+REFERENCES,0.5833333333333334,9.96 × 101
+REFERENCES,0.5847457627118644,9.97 × 101
+REFERENCES,0.5861581920903954,9.98 × 101
+REFERENCES,0.5875706214689266,Win Rate
+REFERENCES,0.5889830508474576,"SFL
+DR
+ACCEL-MaxMC
+PLR-MaxMC
+RobustPLR
+RobustACCEL (b) Group"
+REFERENCES,0.5903954802259888,8.2 × 101
+REFERENCES,0.5918079096045198,8.4 × 101
+REFERENCES,0.5932203389830508,8.6 × 101
+REFERENCES,0.594632768361582,8.8 × 101
+REFERENCES,0.596045197740113,9 × 101
+REFERENCES,0.597457627118644,9.2 × 101
+REFERENCES,0.5988700564971752,9.4 × 101
+REFERENCES,0.6002824858757062,Win Rate
+REFERENCES,0.6016949152542372,"SFL
+DR
+ACCEL-MaxMC
+PLR-PVL
+PLR-MaxMC (c)"
+REFERENCES,0.6031073446327684,"Figure 14: Overall solve rate on 10000 sampled levels on (a) Single-agent JaxNav (b) Minigrid and
+(c) Multi-agent JaxNav."
+REFERENCES,0.6045197740112994,"0.00
+0.25
+0.50
+0.75
+1.00
+SFL 0.0 0.2 0.4 0.6 0.8 1.0 DR"
+REFERENCES,0.6059322033898306,"0
+0
+0
+0
+0
+0
+0
+0
+1
+0"
+REFERENCES,0.6073446327683616,"0
+0
+0
+0
+0
+2
+0
+0
+0
+0"
+REFERENCES,0.6087570621468926,"1
+0
+0
+0
+1
+1
+0
+0
+2
+0"
+REFERENCES,0.6101694915254238,"0
+0
+1
+0
+0
+0
+1
+1
+2
+0"
+REFERENCES,0.6115819209039548,"0
+0
+0
+1
+1
+0
+1
+1
+2
+2"
+REFERENCES,0.6129943502824858,"0
+0
+0
+1
+0
+1
+2
+2
+2
+11"
+REFERENCES,0.614406779661017,"0
+0
+0
+1
+0
+1
+3
+5
+3
+31"
+REFERENCES,0.615819209039548,"0
+0
+0
+0
+1
+0
+2
+7
+17
+51"
+REFERENCES,0.617231638418079,"0
+0
+0
+0
+0
+1
+3
+5
+27
+159"
+REFERENCES,0.6186440677966102,"0
+0
+0
+0
+0
+0
+1
+9
+23 9610"
+REFERENCES,0.6200564971751412,"0.00
+0.25
+0.50
+0.75
+1.00
+SFL 0.0 0.2 0.4 0.6 0.8 1.0"
+REFERENCES,0.6214689265536724,ACCEL-MaxMC
+REFERENCES,0.6228813559322034,"0
+0
+0
+0
+0
+1
+0
+0
+0
+0"
+REFERENCES,0.6242937853107344,"0
+0
+0
+1
+0
+0
+0
+0
+0
+0"
+REFERENCES,0.6257062146892656,"0
+0
+0
+0
+0
+0
+0
+0
+0
+0"
+REFERENCES,0.6271186440677966,"0
+0
+0
+0
+0
+1
+0
+0
+0
+0"
+REFERENCES,0.6285310734463276,"0
+0
+0
+1
+0
+1
+0
+0
+0
+0"
+REFERENCES,0.6299435028248588,"0
+0
+1
+1
+1
+1
+1
+2
+1
+1"
+REFERENCES,0.6313559322033898,"1
+0
+0
+0
+1
+0
+2
+2
+6
+5"
+REFERENCES,0.632768361581921,"0
+0
+0
+0
+0
+1
+2
+3
+7
+14"
+REFERENCES,0.634180790960452,"0
+0
+0
+0
+0
+0
+4
+7
+20
+75"
+REFERENCES,0.635593220338983,"0
+0
+0
+0
+1
+1
+4
+16
+45 9769"
+REFERENCES,0.6370056497175142,"0.00
+0.25
+0.50
+0.75
+1.00
+SFL 0.0 0.2 0.4 0.6 0.8 1.0"
+REFERENCES,0.6384180790960452,PLR-MaxMC
+REFERENCES,0.6398305084745762,"0
+0
+0
+0
+0
+1
+0
+0
+0
+0"
+REFERENCES,0.6412429378531074,"0
+0
+0
+0
+0
+0
+0
+0
+0
+0"
+REFERENCES,0.6426553672316384,"0
+0
+0
+0
+0
+0
+0
+0
+1
+0"
+REFERENCES,0.6440677966101694,"0
+0
+0
+0
+0
+0
+0
+0
+0
+0"
+REFERENCES,0.6454802259887006,"0
+0
+1
+2
+2
+1
+0
+0
+0
+1"
+REFERENCES,0.6468926553672316,"0
+0
+0
+1
+0
+2
+0
+0
+2
+0"
+REFERENCES,0.6483050847457628,"1
+0
+0
+0
+0
+0
+1
+1
+2
+3"
+REFERENCES,0.6497175141242938,"0
+0
+0
+0
+1
+1
+3
+7
+7
+25"
+REFERENCES,0.6511299435028248,"0
+0
+0
+0
+0
+1
+4
+8
+20
+81"
+REFERENCES,0.652542372881356,"0
+0
+0
+0
+0
+0
+5
+14
+47 9754"
+REFERENCES,0.653954802259887,"0.00
+0.25
+0.50
+0.75
+1.00
+SFL 0.0 0.2 0.4 0.6 0.8 1.0"
+REFERENCES,0.655367231638418,RobustPLR
+REFERENCES,0.6567796610169492,"0
+0
+1
+0
+0
+0
+0
+0
+0
+0"
+REFERENCES,0.6581920903954802,"0
+0
+0
+0
+0
+0
+0
+0
+0
+0"
+REFERENCES,0.6596045197740112,"0
+0
+0
+2
+0
+2
+0
+0
+0
+0"
+REFERENCES,0.6610169491525424,"0
+0
+0
+0
+0
+0
+0
+1
+0
+0"
+REFERENCES,0.6624293785310734,"0
+0
+0
+0
+0
+0
+1
+1
+0
+1"
+REFERENCES,0.6638418079096046,"0
+0
+0
+1
+1
+0
+1
+1
+3
+0"
+REFERENCES,0.6652542372881356,"1
+0
+0
+0
+0
+3
+0
+0
+4
+7"
+REFERENCES,0.6666666666666666,"0
+0
+0
+0
+1
+0
+1
+6
+12
+22"
+REFERENCES,0.6680790960451978,"0
+0
+0
+0
+1
+0
+2
+3
+9
+64"
+REFERENCES,0.6694915254237288,"0
+0
+0
+0
+0
+1
+8
+18
+51 9770"
+REFERENCES,0.6709039548022598,"0.00
+0.25
+0.50
+0.75
+1.00
+SFL 0.0 0.2 0.4 0.6 0.8 1.0"
+REFERENCES,0.672316384180791,RobustACCEL
+REFERENCES,0.673728813559322,"0
+0
+0
+0
+0
+1
+0
+0
+0
+0"
+REFERENCES,0.6751412429378532,"0
+0
+0
+0
+0
+0
+0
+0
+0
+0"
+REFERENCES,0.6765536723163842,"0
+0
+1
+0
+0
+0
+0
+0
+1
+0"
+REFERENCES,0.6779661016949152,"0
+0
+0
+0
+1
+0
+0
+0
+0
+0"
+REFERENCES,0.6793785310734464,"0
+0
+0
+1
+0
+1
+0
+2
+1
+0"
+REFERENCES,0.6807909604519774,"1
+0
+0
+1
+0
+1
+1
+0
+1
+1"
+REFERENCES,0.6822033898305084,"0
+0
+0
+0
+0
+1
+0
+1
+3
+6"
+REFERENCES,0.6836158192090396,"0
+0
+0
+1
+1
+0
+1
+2
+8
+15"
+REFERENCES,0.6850282485875706,"0
+0
+0
+0
+1
+1
+2
+11
+16
+75"
+REFERENCES,0.6864406779661016,"0
+0
+0
+0
+0
+1
+9
+14
+49 9767"
+REFERENCES,0.6878531073446328,"Figure 15: Minigrid results. For each figure, cell (x, y) indicates how many environments have
+method X solving them x% of the time and method Y solving them y of the time. In each plot we
+compare a different baseline to our learnability measure."
+REFERENCES,0.6892655367231638,"G.1
+Episodic Return Plots"
+REFERENCES,0.690677966101695,"Figure 16 shows episodic return and success rate plots for single-agent JaxNav and Minigrid. We find
+that the episodic return is very strongly correlated with the success rate, which is why we primarily
+show the latter in the main text."
+REFERENCES,0.692090395480226,"G.2
+Easy Level Analysis"
+REFERENCES,0.693502824858757,"To assess performance on easy levels we have run our evaluation procedure over 10,000 uniformly
+sampled levels with fewer obstacles than usual. For JaxNav, we used a maximum fill % of ≤30%,
+half of the standard 60%. Meanwhile, for Minigrid, we use a maximum number of 30 walls instead
+of 60. These levels, therefore, are generally easier than the levels we evaluated on in the main paper.
+Results are reported in Figure 17"
+REFERENCES,0.6949152542372882,"On JaxNav, SFL still demonstrates a significant performance increase while on Minigrid all methods
+are very similar (with the robust methods performing slightly better for low values of α). Due to the
+challenging dynamics of JaxNav, even levels with a small number of obstacles can present difficult
+control and navigation problems meaning ACL methods (such as SFL) still lead to a performance
+differential over DR. Meanwhile, in Minigrid, due to its deterministic dynamics, difficulty is heavily
+linked to the obstacle count as this allows for more complex mazes. As such, DR is competitive to
+ACL methods in settings with fewer obstacles."
+REFERENCES,0.6963276836158192,"G.3
+Analysing the Learnability of Levels"
+REFERENCES,0.6977401129943502,"Table 5 shows the mean and median of learnability and success rate for a variety of methods. We find
+that the average learnability of levels in the PLR/ACCEL buffers is very low. While not shown"
+REFERENCES,0.6991525423728814,"0
+500
+1000
+1500
+2000
+PPO Update Step 6 4 2 0 2 4"
+REFERENCES,0.7005649717514124,Mean Success Rate on Evaluation Set
+REFERENCES,0.7019774011299436,"SFL
+Perfect Regret (Oracle)
+DR
+ACCEL-MaxMC
+PLR-PVL
+PLR-MaxMC
+PLR-L1VL
+RobustPLR
+RobustACCEL"
+REFERENCES,0.7033898305084746,(a) Return for JaxNav
+REFERENCES,0.7048022598870056,"0
+1000
+2000
+3000
+4000
+PPO Update Step 0.0 0.1 0.2 0.3 0.4 0.5"
+REFERENCES,0.7062146892655368,Mean Success Rate on Evaluation Set
+REFERENCES,0.7076271186440678,"SFL
+DR
+ACCEL-MaxMC
+PLR-MaxMC
+RobustPLR
+RobustACCEL"
+REFERENCES,0.7090395480225988,(b) Return for Minigrid
+REFERENCES,0.71045197740113,"0
+500
+1000
+1500
+2000
+PPO Update Step 0.0 0.2 0.4 0.6 0.8 1.0"
+REFERENCES,0.711864406779661,Mean Return on Evaluation Set
+REFERENCES,0.713276836158192,(c) Success rate for JaxNav
+REFERENCES,0.7146892655367232,"0
+1000
+2000
+3000
+4000
+PPO Update Step 0.0 0.2 0.4 0.6 0.8 1.0"
+REFERENCES,0.7161016949152542,Mean Success Rate on Evaluation Set
+REFERENCES,0.7175141242937854,(d) Success rate for Minigrid
+REFERENCES,0.7189265536723164,Figure 16: Episodic return (top) and success rate (bottom) plots for Jaxnav (left) and Minigrid (right).
+REFERENCES,0.7203389830508474,"1%
+10%
+100% 0 20 40 60 80 100"
+REFERENCES,0.7217514124293786,Avg Win Rate % on worst-case % level
+REFERENCES,0.7231638418079096,"SFL
+Perfect Regret (Oracle)
+DR
+ACCEL-MaxMC
+PLR-MaxMC
+RobustPLR
+RobustACCEL"
+REFERENCES,0.7245762711864406,(a) Evaluation on easy JaxNav levels.
+REFERENCES,0.7259887005649718,"0.1%
+1%
+10%
+100% 50 60 70 80 90 100"
+REFERENCES,0.7274011299435028,Avg Win Rate % on worst-case % level
+REFERENCES,0.7288135593220338,"SFL
+DR
+ACCEL-MaxMC
+PLR-MaxMC
+RobustPLR
+RobustACCEL"
+REFERENCES,0.730225988700565,(b) Evaluation on easy Minigrid levels.
+REFERENCES,0.731638418079096,Figure 17: CVaR evaluation on easy levels for single-agent JaxNav and Minigrid.
+REFERENCES,0.7330508474576272,"here, this is also true when selecting only the levels with the top 50 PVL/MaxMC scores. We also find
+no statistically significant correlation between the learnability of these levels and the PVL/MaxMC
+scores. We further note that most of the levels in UED buffers can already be solved by the agent."
+REFERENCES,0.7344632768361582,"By contrast, the levels that SFL selects have a high learnability (note that 0.25 is the maximum
+learnability value), and a solve rate around 50%. This shows that SFL indeed selects levels with high
+learnability."
+REFERENCES,0.7358757062146892,"Table 5: The learnability and success rates for levels within the PLR/ACCEL/SFL buffers averaged
+over training. At each evaluation step, the average and median values for the entire buffer are
+calculated and then averaged over training. The mean and standard deviation across three different
+seeds are reported."
+REFERENCES,0.7372881355932204,"Method
+Learnability (Mean)
+Learnability (Median)
+Success (Mean)
+Success (Median)"
+REFERENCES,0.7387005649717514,"PLR(PVL)
+0.01 (0.00)
+0.00 (0.00)
+0.85 (0.04)
+0.96 (0.05)
+PLR(MaxMC)
+0.02 (0.00)
+0.00 (0.00)
+0.84 (0.03)
+0.98 (0.01)
+ACCEL(MaxMC)
+0.01 (0.00)
+0.00 (0.00)
+0.97 (0.01)
+1.00 (0.01)
+ACCEL(PVL)
+0.01 (0.00)
+0.00 (0.00)
+0.94 (0.04)
+0.95 (0.05)
+SFL (All Sampled)
+0.01 (0.00)
+0.00 (0.00)
+0.69 (0.01)
+0.99 (0.02)
+SFL (Selected)
+0.22 (0.01)
+0.22 (0.01)
+0.59 (0.02)
+0.61 (0.03)"
+REFERENCES,0.7401129943502824,"G.4
+Environment Metrics"
+REFERENCES,0.7415254237288136,"For single-agent JaxNav, we plot the shortest path length, number of walls and the solvability of
+levels in the PLR/SFL buffers in Figure 18. We find that SFL has marginally longer shortest paths
+and marginally fewer walls. The SFL levels are also considerably more solvable."
+REFERENCES,0.7429378531073446,"Aside from solvability, there is not a large difference in these metrics between PLR and SFL,
+despite SFL significantly outperforming PLR. Qualitatively, we find that in JaxNav, levels with high
+learnability tend to involve a lot of turning and intricate obstacle avoidance (as opposed to long paths).
+As such, the number of walls and shortest path length do not fully capture a level’s difficulty."
+REFERENCES,0.7443502824858758,"0
+1
+2
+3
+Environment Step
+1e8 2 4 6 8 10"
+REFERENCES,0.7457627118644068,Shortest Path
+REFERENCES,0.7471751412429378,Shortest Path
+REFERENCES,0.748587570621469,"SFL
+PLR-MaxMC
+PLR-PVL
+DR"
+REFERENCES,0.75,"0
+1
+2
+3
+Environment Step
+1e8 10.0 12.5 15.0 17.5 20.0 22.5 25.0 27.5"
+REFERENCES,0.751412429378531,Number of Walls
+REFERENCES,0.7528248587570622,Number of Walls
+REFERENCES,0.7542372881355932,"0
+1
+2
+3
+Environment Step
+1e8 0.75 0.80 0.85 0.90 0.95 1.00"
+REFERENCES,0.7556497175141242,Solvability
+REFERENCES,0.7570621468926554,Solvability
+REFERENCES,0.7584745762711864,"Figure 18: Environment Metrics for single-agent JaxNav for SFL, PLR and DR."
+REFERENCES,0.7598870056497176,"For XLand-Minigrid, we report the mean number of rules for the PLR/SFL buffer rulesets in Figure 19,
+which illustrates a significant difference in the rulesets seen by the different agents. SFL samples
+well below the mean value throughout training, whereas PLR starts on par with DR before tending
+easier as training progresses. This result, coupled with the performance difference, illustrates how
+SFL’s learnability score allows it to find the frontier of learning, leading to more robust agents."
+REFERENCES,0.7612994350282486,"0
+50
+100
+150
+200
+250
+300
+Meta-RL Update Step 5.0 5.2 5.4 5.6 5.8 6.0"
+REFERENCES,0.7627118644067796,Mean Number of Rules in Ruleset
+REFERENCES,0.7641242937853108,"SFL
+PLR
+DR"
+REFERENCES,0.7655367231638418,Figure 19: Environment Metrics for XLand-Minigrid.
+REFERENCES,0.7669491525423728,"G.5
+Level Plots"
+REFERENCES,0.768361581920904,"Here we plot some generated levels for single-agent JaxNav in Figure 20, multi-agent JaxNav in
+Figure 21 and Minigrid in Figure 22. Overall, ACCEL tends to have the most walls, since its mutation
+operator is able to add more walls over time. Despite this, the levels do not involve a large amount
+of complicated turning and maneuvering. The levels selected by SFL, on the other hand, tend to
+involve going around many corners, which is an important part of JaxNav. In multi-agent JaxNav,
+SFL occasionally generates levels where not all of the agents can reach their goals; however, these
+are still useful to learn on, as the other agents can complete their tasks."
+REFERENCES,0.769774011299435,"For completeness, we include levels from XLand in Figure 23 but, unlike the other domains, it is
+difficult to assess a level’s difficulty solely from a render."
+REFERENCES,0.7711864406779662,"ACCEL
+PLR"
+REFERENCES,0.7725988700564972,"DR
+SFL"
+REFERENCES,0.7740112994350282,Figure 20: Levels in single-agent JaxNav generated by each method.
+REFERENCES,0.7754237288135594,"ACCEL
+PLR"
+REFERENCES,0.7768361581920904,"DR
+SFL"
+REFERENCES,0.7782485875706214,Figure 21: Levels in multi-agent JaxNav generated by each method.
+REFERENCES,0.7796610169491526,"ACCEL
+PLR"
+REFERENCES,0.7810734463276836,"DR
+SFL"
+REFERENCES,0.7824858757062146,Figure 22: Levels in Minigrid generated by each method.
+REFERENCES,0.7838983050847458,"DR
+PLR SFL"
+REFERENCES,0.7853107344632768,Figure 23: Levels in Xland-Minigrid generated by each method.
+REFERENCES,0.786723163841808,"H
+Timing Results and Speed Analysis"
+REFERENCES,0.788135593220339,"Tables 6 and 7 report compute time for all methods on single-agent JaxNav and Minigrid, respectively.
+Each individual seed was each run on 1 Nvidia L40s using a server which has 8 NVIDIA L40s’,
+two AMD EPYC 9554 processors (128 cores in total) and 768GB of RAM. These times are without
+logging, and we find that with logging, SFL is around 6% slower than ACCEL on single-agent
+JaxNav. Therefore, for the results in Figure 17b, we use 6% fewer environment steps for SFL to
+ensure a fair comparison. For Minigrid, SFL is as fast or slightly faster than the other methods.
+As this is surprising (since SFL performs significantly more environment rollouts), we investigate
+this further. In Table 8, we compare the time it takes for a single iteration (including training and
+evaluation) in Minigrid on an L40s GPU."
+REFERENCES,0.78954802259887,We note that the SFL rollouts are fast for two reasons:
+REFERENCES,0.7909604519774012,"1. We aggressively parallelise them, running up to 25, 000 environments in parallel, which
+takes about the same time as running only hundreds in parallel."
+REFERENCES,0.7923728813559322,2. We do not compute any gradients for these transitions.
+REFERENCES,0.7937853107344632,"The effect of this is that these additional rollouts take significantly less time than the actual training
+step. Furthermore, UED’s training step is more complex than SFL’s, since it must maintain a buffer
+of levels, compute the scores during training, and potentially update the buffer."
+REFERENCES,0.7951977401129944,"The multi-agent results were run on a variety of machines, including the aforementioned L40s system,
+a similar system featuring NVIDIA A40’s and a workstation containing 2 RTX 4090’s. On a 4090, a
+SFL run takes 1d 1h 13m 54s while ACCEL takes 18h 17m 26s."
+REFERENCES,0.7966101694915254,"All XLand-Minigrid experiments were run on 1 Nvidia L40s, with the same server specification as
+mentioned above. Table 9 reports the compute time for all methods; these times are with logging
+where each method logs the same data. Note that SFL was compute-time matched to PLR for this
+environment."
+REFERENCES,0.7980225988700564,"Table 6: Mean and standard deviation of time
+taken for single-agent JaxNav over 3 seeds."
+REFERENCES,0.7994350282485876,"Method
+Compute Time"
+REFERENCES,0.8008474576271186,"DR
+0:41:33 (0:00:27)
+RobustACCEL
+1:37:59 (0:00:30)
+RobustPLR
+1:23:48 (0:00:26)
+ACCEL
+0:42:09 (0:00:18)
+PLR
+0:41:48 (0:00:25)
+SFL
+0:45:45 (0:00:00)"
+REFERENCES,0.8022598870056498,"Table 7: Mean and standard deviation of time
+taken for Minigrid over 3 seeds."
+REFERENCES,0.8036723163841808,"Method
+Compute Time"
+REFERENCES,0.8050847457627118,"DR
+0:28:11 (0:00:00)
+RobustPLR
+0:39:17 (0:00:04)
+RobustACCEL
+0:33:39 (0:00:04)
+PLR
+0:29:19 (0:00:00)
+ACCEL
+0:29:28 (0:00:00)
+SFL
+0:28:32 (0:00:00)"
+REFERENCES,0.806497175141243,"Table 8: PLR and SFL timings for a single
+minigrid iteration"
+REFERENCES,0.807909604519774,"PLR
+SFL"
+REFERENCES,0.809322033898305,"Train Step
+37.5s
+35s
+Get Learnable Levels
+0
+2.2s
+Eval Step
+0.7s
+0.7s"
+REFERENCES,0.8107344632768362,"Total
+38.2s
+37.9s"
+REFERENCES,0.8121468926553672,"Table 9: Mean and standard deviation of time
+taken for XLand-Minigrid over 5 seeds."
+REFERENCES,0.8135593220338984,"Method
+Compute Time"
+REFERENCES,0.8149717514124294,"DR
+4:43:06 (0:00:20)
+PLR
+4:51:47 (0:00:32)
+SFL
+4:51:16 (0:00:20)"
+REFERENCES,0.8163841807909604,"I
+Ablations"
+REFERENCES,0.8177966101694916,"This section of our appendix focuses on running ablations for SFL, investigating the effect of
+hyperparameters in Appendix I.1, using learnability as a score function in UED in Appendix I.2, and
+other definitions of learnability in Appendix I.3"
+REFERENCES,0.8192090395480226,"I.1
+SFL Hyperparameters"
+REFERENCES,0.8206214689265536,"In this section we investigate the effects of SFL’s hyperparameters. For computational reasons, we
+run these ablation experiments over three seeds; furthermore, we consider only JaxNav’s single agent
+setting. Our results, for single-agent JaxNav and Minigrid, respectively, are shown in Figures 24
+and 25, with the effects of the hyperparameters as follows:"
+REFERENCES,0.8220338983050848,"Number of Sampled Levels N Sampling more levels results in improved performance, but in-
+creases computation time."
+REFERENCES,0.8234463276836158,"Rollout Length L For JaxNav, there is a small reduction in performance by using a rollout length
+of 1000, but no gain from using 4000 compared to 2000. In Minigrid, all values perform
+roughly the same, possibly due to the shorter episodes."
+REFERENCES,0.8248587570621468,"Buffer Size K In JaxNav, a smaller buffer outperforms larger ones, whereas in Minigrid, there is no
+significant difference between K = 100 and K = 1000. This could relate to how easy the
+environment is (corresponding to how long it takes to learn a particular level). As JaxNav is
+harder than Minigrid (as it also involves low-level continuous control obstacle avoidance in
+addition to maze solving), it may be that training on each level more times is beneficial."
+REFERENCES,0.826271186440678,"Buffer Update Period T Increasing the time between updating the set of training levels reduces
+performance. However, sampling more often increases the computational load of the
+additional SFL rollouts."
+REFERENCES,0.827683615819209,"Sampled Ratio ρ In JaxNav, a higher sampling ratio seems preferable, similarly to the “robust”
+version of PLR [4]. In Minigrid, however, using ρ = 0.5 performs slightly better than ρ = 1."
+REFERENCES,0.8290960451977402,"Sampling in decreasing order of learnability For JaxNav, we trialled selecting levels in decreas-
+ing order of learnability rather than randomly among the top K. This performs better, and
+has roughly the same effect as reducing the buffer size. This makes sense, as by reducing
+the buffer size or selecting in decreasing order, we are restricting the range of levels that can
+be chosen to only the highest-learnability ones."
+REFERENCES,0.8305084745762712,"1%
+10%
+100% 0 20 40 60 80 100"
+REFERENCES,0.8319209039548022,Avg Win Rate % on
+REFERENCES,0.8333333333333334,worst-case % levels
+REFERENCES,0.8347457627118644,Number of levels to sample
+REFERENCES,0.8361581920903954,"N=500
+N=5000
+N=25000"
+REFERENCES,0.8375706214689266,"1%
+10%
+100%"
+REFERENCES,0.8389830508474576,Rollout Length
+REFERENCES,0.8403954802259888,"L=1000
+L=2000
+L=4000"
+REFERENCES,0.8418079096045198,"1%
+10%
+100%"
+REFERENCES,0.8432203389830508,Buffer Size
+REFERENCES,0.844632768361582,"K=100
+K=1000
+K=5000"
+REFERENCES,0.846045197740113,"1%
+10%
+100%"
+REFERENCES,0.847457627118644,Buffer Update Period
+REFERENCES,0.8488700564971752,"T=10
+T=50
+T=500
+T=1000
+T=2000"
+REFERENCES,0.8502824858757062,"1%
+10%
+100%"
+REFERENCES,0.8516949152542372,Sampled Environments Ratio
+REFERENCES,0.8531073446327684,"=0.25
+=0.5
+=0.75
+=1"
+REFERENCES,0.8545197740112994,"1%
+10%
+100%"
+REFERENCES,0.8559322033898306,Buffer Sampling Strategy
+REFERENCES,0.8573446327683616,"Uniform
+Decreasing"
+REFERENCES,0.8587570621468926,"Figure 24: Analysing the effect of hyperparameters on single-agent JaxNav. Hyperparameters
+not mentioned in each plot use the default configuration’s values: N = 5000, T = 50, ρ = 0.5,
+K = 1000, L = 2000."
+REFERENCES,0.8601694915254238,"1%
+10%
+100% 40 60 80 100"
+REFERENCES,0.8615819209039548,Avg Win Rate % on
+REFERENCES,0.8629943502824858,worst-case % levels
+REFERENCES,0.864406779661017,Number of levels to sample
+REFERENCES,0.865819209039548,"N=500
+N=5000
+N=25000"
+REFERENCES,0.867231638418079,"1%
+10%
+100%"
+REFERENCES,0.8686440677966102,Rollout Length
+REFERENCES,0.8700564971751412,"L=1000
+L=2000
+L=4000"
+REFERENCES,0.8714689265536724,"1%
+10%
+100%"
+REFERENCES,0.8728813559322034,Buffer Size
+REFERENCES,0.8742937853107344,"K=100
+K=1000
+K=2000
+K=5000"
+REFERENCES,0.8757062146892656,"1%
+10%
+100%"
+REFERENCES,0.8771186440677966,Buffer Update Period
+REFERENCES,0.8785310734463276,"T=10
+T=50
+T=100
+T=200
+T=500
+T=1000"
+REFERENCES,0.8799435028248588,"1%
+10%
+100%"
+REFERENCES,0.8813559322033898,Sampled Environments Ratio
+REFERENCES,0.882768361581921,"=0.25
+=0.5
+=0.75
+=1"
+REFERENCES,0.884180790960452,"Figure 25: Analysing the effect of hyperparameters on Minigrid. Hyperparameters not mentioned
+in each plot use the default configuration’s values: N = 5000, T = 100, ρ = 0.5, K = 1000,
+L = 2000."
+REFERENCES,0.885593220338983,"I.2
+UED with learnability as a score function"
+REFERENCES,0.8870056497175142,"We now apply our learnability metric as a score function for UED. In particular, when performing
+our DR rollouts, we compute the learnability as in Section 4.3 and use that as the score function.
+Figure 26 shows these results; Learnability improves performance compared to MaxMC, supporting
+our claim that the score function is the primary limitation of current UED methods."
+REFERENCES,0.8884180790960452,"1%
+10%
+100% 0 20 40 60 80 100"
+REFERENCES,0.8898305084745762,Avg Win Rate % on worst-case % level
+REFERENCES,0.8912429378531074,"SFL (Learnability, small buffer)
+SFL (Learnability, large buffer)
+SFL (PVL, small buffer)
+SFL (PVL, large buffer)
+SFL (MaxMC, small buffer)
+SFL (MaxMC, large buffer)"
+REFERENCES,0.8926553672316384,"(a) PVL as SFL’s score
+function in JaxNav."
+REFERENCES,0.8940677966101694,"1%
+10%
+100% 0 20 40 60 80 100"
+REFERENCES,0.8954802259887006,Avg Win Rate % on worst-case % level
+REFERENCES,0.8968926553672316,"SFL
+ACCEL-MaxMC
+PLR-MaxMC
+ACCEL-Learn
+PLR-Learn"
+REFERENCES,0.8983050847457628,"(b) Learnability as UED’s
+score function in JaxNav."
+REFERENCES,0.8997175141242938,"0.1%
+1%
+10%
+100% 0 20 40 60 80 100"
+REFERENCES,0.9011299435028248,Avg Win Rate % on worst-case % level
+REFERENCES,0.902542372881356,"SFL (Learnability, small buffer)
+SFL (Learnability, large buffer)
+SFL (PVL, small buffer)
+SFL (PVL, large buffer)
+SFL (MaxMC, small buffer)
+SFL (MaxMC, large buffer)"
+REFERENCES,0.903954802259887,"(c) PVL as SFL’s score
+function in Minigrid."
+REFERENCES,0.905367231638418,"0.1%
+1%
+10%
+100% 0 20 40 60 80 100"
+REFERENCES,0.9067796610169492,Avg Win Rate % on worst-case % level
+REFERENCES,0.9081920903954802,"SFL
+ACCEL-MaxMC
+PLR-MaxMC
+ACCEL-Learn
+PLR-Learn"
+REFERENCES,0.9096045197740112,"(d) Learnability as UED’s
+score function in Minigrid."
+REFERENCES,0.9110169491525424,"Figure 26: Comparing SFL as a score function for UED and vice-versa (for single-agent JaxNav and
+Minigrid). In Figures (a, c), the large buffer is of size 1000 while the small is of size 100. We find
+that SFL with learnability outperforms all other combinations."
+REFERENCES,0.9124293785310734,"I.3
+Different Definitions of Learnability"
+REFERENCES,0.9138418079096046,"In this section, we investigate alternative definitions of learnability. All of the following functions
+have a learnability value of 0 for a success rate of 0.0 and 1.0, but differ in how scores are assigned to
+intermediate success rates p. We aim to assess whether our learnability score’s main contribution is,
+in fact, just excluding unsolvable and perfected levels; our analysis indicates that this is not the case."
+REFERENCES,0.9152542372881356,"First, on JaxNav, we investigate the case where the peak learnability is not at p = 0.5, but at other
+values. To do this, we represent the learnability function as a piecewise quadratic, see Figure 27a for
+an illustration. During this test, the peak learnability value remained at 0.25 but we varied the success
+rate at which the peak occurs. The results are in Figure 27b, and we find that a peak of 0.6 performs
+the best, and that performance slightly degrades as the peak moves towards higher success rates. In
+particular, performance is poor when the peak is at p = 0.99."
+REFERENCES,0.9166666666666666,"In Figures 27c and 27d, we consider other definitions of learnability on JaxNav and XLand. We keep
+the restriction that learnability equals zero when p = 0 or p = 1. The first is Uniform, where all
+levels with success rates 0 < p < 1 are assigned an equal score. Linear(0) has learnability linearly
+increasing from 1.0 to 0.0, and Linear(1) has learnability linearly increasing from 0.0 to 1.0."
+REFERENCES,0.9180790960451978,"We find that Linear(0) (which is an approximation of true regret) performs similarly to the default
+definition of learnability on JaxNav but struggles on XLand. Meanwhile, Uniform sampling performs
+worse than our approach but still outperforms all UED methods on JaxNav and XLand (albeit by
+a smaller margin than SFL). Finally, Linear(1) performs significantly worse on JaxNav but is the
+closest to SFL’s performance on XLand. These results indicate that our chosen definition of the
+learnability score function is more robust than these alternatives across different domains."
+REFERENCES,0.9194915254237288,"0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Success Rate (p) 0.00 0.05 0.10 0.15 0.20 0.25"
+REFERENCES,0.9209039548022598,Learnability
+REFERENCES,0.922316384180791,"Peak=0.2
+Peak=0.4
+Peak=0.5
+Peak=0.6
+Peak=0.8
+Peak=0.9
+Peak=0.99"
+REFERENCES,0.923728813559322,(a) Learnability Curves
+REFERENCES,0.9251412429378532,"1%
+10%
+100% 0 20 40 60 80 100"
+REFERENCES,0.9265536723163842,Avg Win Rate % on worst-case % level
+REFERENCES,0.9279661016949152,"Learnability(Peak=0.5)
+Learnability(Peak=0.99)
+Learnability(Peak=0.9)
+Learnability(Peak=0.8)
+Learnability(Peak=0.6)
+Learnability(Peak=0.4)
+Learnability(Peak=0.2)"
+REFERENCES,0.9293785310734464,(b) JaxNav: Different Peaks
+REFERENCES,0.9307909604519774,"1%
+10%
+100% 0 20 40 60 80 100"
+REFERENCES,0.9322033898305084,Avg Win Rate % on worst-case % level
+REFERENCES,0.9336158192090396,"SFL
+Linear(0)
+Linear(1)
+Uniform"
+REFERENCES,0.9350282485875706,(c) JaxNav: Other Definitions.
+REFERENCES,0.9364406779661016,"1%
+10%
+100% 0 5 10 15 20 25"
+REFERENCES,0.9378531073446328,Avg Win Rate % on worst-case % level
+REFERENCES,0.9392655367231638,"SFL
+Linear(0)
+Linear(1)
+Uniform"
+REFERENCES,0.940677966101695,(d) XLand: Other Definitions.
+REFERENCES,0.942090395480226,Figure 27: Other learnability definitions.
+REFERENCES,0.943502824858757,NeurIPS Paper Checklist
+CLAIMS,0.9449152542372882,1. Claims
+CLAIMS,0.9463276836158192,"Question: Do the main claims made in the abstract and introduction accurately reflect the
+paper’s contributions and scope?"
+CLAIMS,0.9477401129943502,Answer: [Yes]
+CLAIMS,0.9491525423728814,"Justification: The contributions we list in the introduction are in our paper’s analysis and
+experimental section."
+LIMITATIONS,0.9505649717514124,2. Limitations
+LIMITATIONS,0.9519774011299436,Question: Does the paper discuss the limitations of the work performed by the authors?
+LIMITATIONS,0.9533898305084746,Answer: [Yes]
+LIMITATIONS,0.9548022598870056,Justification: We discuss the limitations of our work in Section 9
+THEORY ASSUMPTIONS AND PROOFS,0.9562146892655368,3. Theory Assumptions and Proofs
+THEORY ASSUMPTIONS AND PROOFS,0.9576271186440678,"Question: For each theoretical result, does the paper provide the full set of assumptions and
+a complete (and correct) proof?"
+THEORY ASSUMPTIONS AND PROOFS,0.9590395480225988,Answer: [NA]
+THEORY ASSUMPTIONS AND PROOFS,0.96045197740113,Justification: The paper contains no theoretical results.
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.961864406779661,4. Experimental Result Reproducibility
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.963276836158192,"Question: Does the paper fully disclose all the information needed to reproduce the main ex-
+perimental results of the paper to the extent that it affects the main claims and/or conclusions
+of the paper (regardless of whether the code and data are provided or not)?"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.9646892655367232,Answer: [Yes]
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.9661016949152542,"Justification: Our introduced domain is fully detailed in Section 3 while all hyperparmeters
+used are provided in the Appendix."
+OPEN ACCESS TO DATA AND CODE,0.9675141242937854,5. Open access to data and code
+OPEN ACCESS TO DATA AND CODE,0.9689265536723164,"Question: Does the paper provide open access to the data and code, with sufficient instruc-
+tions to faithfully reproduce the main experimental results, as described in supplemental
+material?"
+OPEN ACCESS TO DATA AND CODE,0.9703389830508474,Answer: [Yes]
+OPEN ACCESS TO DATA AND CODE,0.9717514124293786,"Justification: Several of the results use already open-sourced codebases and the remainder
+of the code will be released on GitHub shortly after this submssion."
+OPEN ACCESS TO DATA AND CODE,0.9731638418079096,6. Experimental Setting/Details
+OPEN ACCESS TO DATA AND CODE,0.9745762711864406,"Question: Does the paper specify all the training and test details (e.g., data splits, hyper-
+parameters, how they were chosen, type of optimizer, etc.) necessary to understand the
+results?"
+OPEN ACCESS TO DATA AND CODE,0.9759887005649718,Answer: [Yes]
+OPEN ACCESS TO DATA AND CODE,0.9774011299435028,"Justification: This information where not stated in the experiments section is included in the
+Appendix."
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.9788135593220338,7. Experiment Statistical Significance
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.980225988700565,"Question: Does the paper report error bars suitably and correctly defined or other appropriate
+information about the statistical significance of the experiments?"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.981638418079096,Answer: [Yes]
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.9830508474576272,Justification: All results are run over multiple seeds with error bars reported.
+EXPERIMENTS COMPUTE RESOURCES,0.9844632768361582,8. Experiments Compute Resources
+EXPERIMENTS COMPUTE RESOURCES,0.9858757062146892,"Question: For each experiment, does the paper provide sufficient information on the com-
+puter resources (type of compute workers, memory, time of execution) needed to reproduce
+the experiments?"
+EXPERIMENTS COMPUTE RESOURCES,0.9872881355932204,Answer: [Yes]
+EXPERIMENTS COMPUTE RESOURCES,0.9887005649717514,"Justification: We include a comparison of compute time for the single-agent JaxNav, and
+list the rough resources used for the multi-agent experiments in Appendix G.
+9. Code Of Ethics"
+EXPERIMENTS COMPUTE RESOURCES,0.9901129943502824,"Question: Does the research conducted in the paper conform, in every respect, with the
+NeurIPS Code of Ethics https://neurips.cc/public/EthicsGuidelines?
+Answer: [Yes]
+Justification: We have ensured that our research conforms to the code of ethics.
+10. Broader Impacts"
+EXPERIMENTS COMPUTE RESOURCES,0.9915254237288136,"Question: Does the paper discuss both potential positive societal impacts and negative
+societal impacts of the work performed?
+Answer: [NA]"
+EXPERIMENTS COMPUTE RESOURCES,0.9929378531073446,"Justification: There are no societal impacts of this work as references foundational research
+and the real world application is it is tied to (robotic navigation) is not linked to societal
+harm.
+11. Safeguards"
+EXPERIMENTS COMPUTE RESOURCES,0.9943502824858758,"Question: Does the paper describe safeguards that have been put in place for responsible
+release of data or models that have a high risk for misuse (e.g., pretrained language models,
+image generators, or scraped datasets)?
+Answer: [NA]
+Justification: Our paper does not pose such a risk.
+12. Licenses for existing assets"
+EXPERIMENTS COMPUTE RESOURCES,0.9957627118644068,"Question: Are the creators or original owners of assets (e.g., code, data, models), used in
+the paper, properly credited and are the license and terms of use explicitly mentioned and
+properly respected?
+Answer: [Yes]
+Justification: We cite all external sources of assets and their licenses permit our use case.
+13. New Assets"
+EXPERIMENTS COMPUTE RESOURCES,0.9971751412429378,"Question: Are new assets introduced in the paper well documented and is the documentation
+provided alongside the assets?
+Answer: [Yes]
+Justification: Our released code constitutes a new assets and will be well documented on
+GitHub to complement the documentation provided by this paper.
+14. Crowdsourcing and Research with Human Subjects"
+EXPERIMENTS COMPUTE RESOURCES,0.998587570621469,"Question: For crowdsourcing experiments and research with human subjects, does the paper
+include the full text of instructions given to participants and screenshots, if applicable, as
+well as details about compensation (if any)?
+Answer: [NA]
+Justification: This paper did not invovle crowdsourcing or research with human subjects.
+15. Institutional Review Board (IRB) Approvals or Equivalent for Research with Human
+Subjects
+Question: Does the paper describe potential risks incurred by study participants, whether
+such risks were disclosed to the subjects, and whether Institutional Review Board (IRB)
+approvals (or an equivalent approval/review based on the requirements of your country or
+institution) were obtained?
+Answer: [NA]
+Justification: This paper did not invovle crowdsourcing or research with human subjects."

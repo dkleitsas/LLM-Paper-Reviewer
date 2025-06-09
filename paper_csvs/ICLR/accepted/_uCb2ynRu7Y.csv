@@ -1,0 +1,1900 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.001941747572815534,"We present Path Integral Sampler (PIS), a novel algorithm to draw samples from
+unnormalized probability density functions. The PIS is built on the Schr¨odinger
+bridge problem which aims to recover the most likely evolution of a diffusion
+process given its initial distribution and terminal distribution. The PIS draws
+samples from the initial distribution and then propagates the samples through the
+Schr¨odinger bridge to reach the terminal distribution. Applying the Girsanov the-
+orem, with a simple prior diffusion, we formulate the PIS as a stochastic optimal
+control problem whose running cost is the control energy and terminal cost is
+chosen according to the target distribution. By modeling the control as a neural
+network, we establish a sampling algorithm that can be trained end-to-end. We
+provide theoretical justification of the sampling quality of PIS in terms of Wasser-
+stein distance when sub-optimal control is used. Moreover, the path integrals
+theory is used to compute importance weights of the samples to compensate for
+the bias induced by the sub-optimality of the controller and time-discretization.
+We experimentally demonstrate the advantages of PIS compared with other start-
+of-the-art sampling methods on a variety of tasks."
+INTRODUCTION,0.003883495145631068,"1
+INTRODUCTION"
+INTRODUCTION,0.005825242718446602,"We are interested in drawing samples from a target density ˆµ = Zµ known up to a normalizing
+constant Z. Although it has been widely studied in machine learning and statistics, generating
+asymptotically unbiased samples from such unnormalized distribution can still be challenging (Tal-
+war, 2019). In practice, variational inference (VI) and Monte Carlo (MC) methods are two popular
+frameworks for sampling."
+INTRODUCTION,0.007766990291262136,"Variational inference employs a density model q, from which samples are easy and efficient to draw,
+to approximate the target density (Rezende & Mohamed, 2015; Wu et al., 2020). Two important
+ingredients for variational inference sampling include a distance metric between q and ˆµ to identify
+good q and the importance weight to account for the mismatch between the two distributions. Thus,
+in variational inference, one needs to access the explicit density of q, which restricts the possible
+parameterization of q. Indeed, explicit density models that provide samples and probability density
+such as Autoregressive models and normalizing flow are widely used in density estimation (Gao
+et al., 2020a; Nicoli et al., 2020). However, such models impose special structural constraints on the
+representation of q. For instance, the expressive power of normalizing flows (Rezende & Mohamed,
+2015) is constrained by the requirements that the induced map has to be bijective and its Jacobian
+needs to be easy-to-compute (Cornish et al., 2020; Grathwohl et al., 2018; Zhang & Chen, 2021)."
+INTRODUCTION,0.009708737864077669,"Most MC methods generate samples by iteratively simulating a well-designed Markov
+chain (MCMC) or sampling ancestrally (MacKay, 2003). Among them, Sequential Monte Carlo
+and its variants augmented with annealing trick are regarded as state-of-the-art in certain sampling
+tasks (Del Moral et al., 2006). Despite its popularity, MCMC methods may suffer from long mixing
+time. The short-run performance of MCMC can be difficult to analyze and samples often get stuck
+in local minima (Nijkamp et al., 2019; Gao et al., 2020b). There are some recent works exploring the
+possibility of incorporating neural networks to improve MCMC (Spanbauer et al., 2020; Li et al.,
+2020b). However, evaluating existing MCMC empirically, not to say designing an objective loss"
+INTRODUCTION,0.011650485436893204,Published as a conference paper at ICLR 2022
+INTRODUCTION,0.013592233009708738,"Uncontrolled Q0
+Terminal Cost Ψ = log µ0"
+INTRODUCTION,0.015533980582524271,"µ
+Optimal control Q∗= µ µ0Q0"
+INTRODUCTION,0.017475728155339806,"Figure 1: Illustration of Path Integral Sampler (PIS). The optimal policy of a specific stochastic
+control problem where a terminal cost function is chosen according to the given target density µ,
+can generate unbiased samples over a finite time horizon."
+INTRODUCTION,0.019417475728155338,"function to train network-powered MCMC, is difficult (Liu et al., 2016; Gorham & Mackey, 2017).
+Most existing works in this direction focus only on designing data-aware proposals (Song et al.,
+2017; Titsias & Dellaportas, 2019) and training such networks can be challenging without expertise
+knowledge in sampling."
+INTRODUCTION,0.021359223300970873,"In this work, we propose an efficient sampler termed Path Integral Sampler (PIS) to generate samples
+by simulating a stochastic differential equation (SDE) in finite steps. Our algorithm is built on the
+Schr¨odinger bridge problem (Pavon, 1989; Dai Pra, 1991; L´eonard, 2014; Chen et al., 2021) whose
+original goal was to infer the most likely evolution of a diffusion given its marginal distributions at
+two time points. With a proper prior diffusion model, this Schr¨odinger bridge framework can be
+adopted for the sampling task. Moreover, it can be reformulated as a stochastic control problem
+(Chen et al., 2016) whose terminal cost depends on the target density ˆµ so that the diffusion under
+optimal control has terminal distribution ˆµ. We model the control policy with a network and de-
+velop a method to train it gradually and efficiently. The discrepancy of the learned policy from the
+optimal policy also provides an evaluation metric for sampling performance. Furthermore, PIS can
+be made unbiased even with sub-optimal control policy via the path integral theorem to compute
+the importance weights of samples. Compared with VI that uses explicit density models, PIS uses
+an implicit model and has the advantage of free-form network design. The explicit density mod-
+els have weaker expressive power and flexibility compared with implicit models, both theoretically
+and empirically (Cornish et al., 2020; Chen et al., 2019; Kingma & Welling, 2013; Mohamed &
+Lakshminarayanan, 2016). Compared with MCMC, PIS is more efficient and is able to generate
+high-quality samples with fewer steps. Besides, the behavior of MCMC over finite steps can be
+analyzed and quantified. We provide explicit sampling quality guarantee in terms of Wasserstein
+distance to the target density for any given sub-optimal policy."
+INTRODUCTION,0.02330097087378641,"Our algorithm is based on Tzen & Raginsky (2019), where the authors establish the connections be-
+tween generative models with latent diffusion and stochastic control and justify the expressiveness
+of such models theoretically. How to realize this model with networks and how the method performs
+on real datasets are unclear in Tzen & Raginsky (2019). Another closely related work is Wu et al.
+(2020); Arbel et al. (2021), which extends Sequential Monte Carlo (SMC) by combining determin-
+istic normalizing flow blocks with stochastic MCMC blocks. To be able to evaluate the importance
+weights efficiently, MCMC blocks need to be chosen based on annealed target distributions care-
+fully. In contrast, in PIS one can design expressive architecture freely and train the model end-to-end
+without the burden of tuning MCMC kernels, resampling or annealing scheduling. We summarize
+our contributions as follows. 1). We propose Path Integral Sampler, a generic sampler that generates
+samples through simulating a target-dependent SDE which can be trained with free-form architec-
+ture network design. We derive performance guarantee in terms of the Wasserstein distance to the
+target density based on the optimality of the learned SDE. 2). An evaluation metric is provided to
+quantify the performance of learned PIS. By minimizing such evaluation metric, PIS can be trained
+end-to-end. This metric also provides an estimation of the normalization constants of target dis-
+tributions. 3). PIS can generate samples without bias even with sub-optimal SDEs by assigning
+importance weights using path integral theory. 4). Empirically, PIS achieves the state-of-the-art
+sampling performance in several sampling tasks."
+INTRODUCTION,0.02524271844660194,Published as a conference paper at ICLR 2022
+SAMPLING AND STOCHASTIC CONTROL PROBLEMS,0.027184466019417475,"2
+SAMPLING AND STOCHASTIC CONTROL PROBLEMS"
+SAMPLING AND STOCHASTIC CONTROL PROBLEMS,0.02912621359223301,"We begin with a brief introduction to the sampling problem and the stochastic control problem.
+Throughout, we denote by τ = {xt, 0 ≤t ≤T} a continuous-time stochastic trajectory."
+SAMPLING PROBLEMS,0.031067961165048542,"2.1
+SAMPLING PROBLEMS"
+SAMPLING PROBLEMS,0.03300970873786408,"We are interested in drawing samples from a target distribution µ(x) = ˆµ(x)/Z in Rd where Z is
+the normalization constant. Many sampling algorithms rely on constructing a stochastic process that
+drives the random particles from an initial distribution ν that is easy to sample from, to the target
+distribution µ."
+SAMPLING PROBLEMS,0.03495145631067961,"In the variational inference framework, one seeks to construct a parameterized stochastic process to
+achieve this goal. Denote by Ω= C([0, T]; Rd) the path space consisting of all possible trajectories
+and by P the measure over Ωinduced by a stochastic process with terminal distribution µ at time T.
+Let Q be the measure induced by a parameterized stochastic and denote its marginal distribution at
+T by µQ. Then, by the data processing inequality, the Kullback-Leibler divergence (KL) between
+marginal distributions µQ and µ can be bounded by"
+SAMPLING PROBLEMS,0.036893203883495145,"DKL(µQ∥µ) ≤DKL(Q∥P) :=
+Z"
+SAMPLING PROBLEMS,0.038834951456310676,"Ω
+dQ log dQ"
+SAMPLING PROBLEMS,0.040776699029126215,"dP .
+(1)"
+SAMPLING PROBLEMS,0.04271844660194175,"Thus, DKL(Q∥P) serves as a performance metric for the sampler, and a small DKL(Q∥P) value
+corresponds to a good sampler."
+STOCHASTIC CONTROL,0.04466019417475728,"2.2
+STOCHASTIC CONTROL"
+STOCHASTIC CONTROL,0.04660194174757282,"Consider a model characterized by a special stochastic differential equation (SDE) (S¨arkk¨a & Solin,
+2019)
+dxt = utdt + dwt, x0 ∼ν,
+(2)
+where xt, ut denote state and control input respectively, and wt denotes standard Brownian motion.
+In stochastic control, the goal is to find an feedback control strategy that minimizes a certain given
+cost function."
+STOCHASTIC CONTROL,0.04854368932038835,"The standard stochastic control problem can be associated with any cost and any dynamics. In this
+work, we only consider cost of the form E ""Z T 0"
+STOCHASTIC CONTROL,0.05048543689320388,"1
+2 ∥ut∥2 dt + Ψ(xT ) | x0 ∼ν # ,
+(3)"
+STOCHASTIC CONTROL,0.05242718446601942,"where Ψ represents the terminal cost. The corresponding optimal control problem can be solved
+via dynamic programming (Bertsekas et al., 2000), which amounts to solving the Hamilton-Jacobi-
+Bellman (HJB) equation (Evans, 1998) ∂Vt ∂t −1"
+STOCHASTIC CONTROL,0.05436893203883495,"2∇V ′
+t ∇Vt + 1"
+STOCHASTIC CONTROL,0.05631067961165048,"2∆Vt = 0, VT (·) = Ψ(·).
+(4)"
+STOCHASTIC CONTROL,0.05825242718446602,"The space-time function Vt(x) is known as cost-to-go function or value function. The optimal policy
+can be computed from Vt(x) as (Pavon, 1989)"
+STOCHASTIC CONTROL,0.06019417475728155,"u∗
+t (x) = −∇Vt(x).
+(5)"
+PATH INTEGRAL SAMPLER,0.062135922330097085,"3
+PATH INTEGRAL SAMPLER"
+PATH INTEGRAL SAMPLER,0.06407766990291262,"It turns out that, with a proper choice of initial distribution ν and terminal loss function Ψ, the
+stochastic control problem coincides with sampling problem, and the optimal policy drives samples
+from ν to µ perfectly. The process under optimal control can be viewed as the posterior of uncon-
+trolled dynamics conditioned on target distribution as illustrated in Fig 1. Throughout, we denote
+by Qu the path measure associated with control policy u. We also denote by µ0 the terminal distri-
+bution of the uncontrolled process Q0. For the ease of presentation, we begin with sampling from a
+normalized density µ, and then generalize the results to unnormalized ˆµ in Section 3.4."
+PATH INTEGRAL SAMPLER,0.06601941747572816,Published as a conference paper at ICLR 2022
+PATH INTEGRAL AND VALUE FUNCTION,0.06796116504854369,"3.1
+PATH INTEGRAL AND VALUE FUNCTION"
+PATH INTEGRAL AND VALUE FUNCTION,0.06990291262135923,"Thanks to the special cost structure, the nonlinear HJB eq (4) can be transformed into a linear partial
+differential equation (PDE) ∂ϕt"
+PATH INTEGRAL AND VALUE FUNCTION,0.07184466019417475,∂t + 1
+PATH INTEGRAL AND VALUE FUNCTION,0.07378640776699029,"2∆ϕt = 0, ϕT (·) = exp{−Ψ(·)}
+(6)"
+PATH INTEGRAL AND VALUE FUNCTION,0.07572815533980583,"by logarithmic transformation (S¨arkk¨a & Solin, 2019) Vt(x) = −log ϕt(x). By the celebrated
+Feynman-Kac formula (Øksendal, 2003), the above has solution"
+PATH INTEGRAL AND VALUE FUNCTION,0.07766990291262135,"ϕt(x) = EQ0[exp(−Ψ(xT ))|xt = x].
+(7)"
+PATH INTEGRAL AND VALUE FUNCTION,0.07961165048543689,"We remark that eq (7) implies that the optimal value function can be evaluated without knowing
+the optimal policy since the above expectation is with respect to the uncontrolled process Q0. This
+is exactly the Path Integral control theory (Theodorou et al., 2010; Theodorou & Todorov, 2012;
+Thijssen & Kappen, 2015). Furthermore, the optimal control at (t, x) is"
+PATH INTEGRAL AND VALUE FUNCTION,0.08155339805825243,"u∗
+t (x) = ∇log ϕt(x) = lim
+s↘t
+EQ0{exp{−Ψ(xT )}
+R s
+t dwt | xt = x}
+(s −t)EQ0{exp{−Ψ(xT )} | xt = x} ,
+(8)"
+PATH INTEGRAL AND VALUE FUNCTION,0.08349514563106795,"meaning that u∗
+t (x) can also be estimated by uncontrolled trajectories."
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.0854368932038835,"3.2
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM"
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.08737864077669903,"There are infinite choices of control strategy u such that eq (2) has terminal distribution µ. We
+are interested in the one that minimizes the KL divergence to the prior uncontrolled process. This
+is exactly the Schr¨odinger bridge problem (Pavon, 1989; Dai Pra, 1991; Chen et al., 2016; 2021),
+which has been shown to have a stochastic control formulation with cost being control efforts. In
+cases where ν is a Dirac distribution, it is the same as the stochastic control problem in Section 2.2
+with a proper terminal cost as characterized in the following result (Tzen & Raginsky, 2019)."
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.08932038834951456,"Theorem 1 (Proof in appendix A). When ν is a Dirac distribution and terminal loss is chosen as
+Ψ(xT ) = log µ0(xT )"
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.0912621359223301,"µ(xT ) , the distribution Q∗induced by the optimal control policy is"
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.09320388349514563,"Q∗(τ) = Q0(τ|xT )µ(xT ).
+(9)"
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.09514563106796116,"Moreover, Q∗(xT ) = µ(xT )."
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.0970873786407767,"To gain more insight, consider the KL divergence"
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.09902912621359224,DKL(Qu(τ)∥Q0(τ|xT )µ(xT )) = DKL(Qu(τ)∥Q0(τ) µ(xT )
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.10097087378640776,µ0(xT )) = DKL(Qu∥Q0) + EQu[log µ0 µ ].
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.1029126213592233,"(10)
+Thanks to the Girsanov theorem (S¨arkk¨a & Solin, 2019), dQu"
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.10485436893203884,"dQ0 = exp(
+Z T 0"
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.10679611650485436,"1
+2 ∥ut∥2 dt + u′
+tdwt).
+(11)"
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.1087378640776699,It follows that
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.11067961165048544,"DKL(Qu∥Q0) = EQu[
+Z T 0"
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.11262135922330097,"1
+2 ∥ut∥2 dt].
+(12)"
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.1145631067961165,Plugging eq (12) into eq (10) yields
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.11650485436893204,"DKL(Qu(τ)∥Q0(τ|xT )µ(xT )) = EQu[
+Z T 0"
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.11844660194174757,"1
+2 ∥ut∥2 dt + log µ0(xT )"
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.1203883495145631,"µ(xT ) ],
+(13)"
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.12233009708737864,which is exactly the cost defined in eq (3) with Ψ = log µ0
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.12427184466019417,"µ . Theorem 1 implies that once the optimal
+control policy that minimizes this cost is found, it can also drive particles from x0 ∼ν to xT ∼µ."
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.1262135922330097,Published as a conference paper at ICLR 2022
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.12815533980582525,Algorithm 1 Training
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.13009708737864079,"Input: Vector: x0 = 0, Scalar: y0 = 0
+Output: ut(x) parameterized by θ
+Define: SDE drift f(t, [xt, yt]) = [uθt(xt), 1"
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.13203883495145632,"2 ∥uθt(xt)∥2], diffusion g(t, [xt, yt]) = [1, 0]
+loop epoches"
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.13398058252427184,"xT , yT = sdeint(f, g, [x0, y0], [0, T])
+# Integrate SDE from 0 to T with Neural SDE
+Gradient descent step ∇θ[yT + log µ0(xT )"
+SAMPLING AS A STOCHASTIC OPTIMAL CONTROL PROBLEM,0.13592233009708737,"µ(xT ) ]
+# Optimize control policy
+done"
+OPTIMAL CONTROL POLICY AND SAMPLER,0.1378640776699029,"3.3
+OPTIMAL CONTROL POLICY AND SAMPLER"
+OPTIMAL CONTROL POLICY AND SAMPLER,0.13980582524271845,"Optimal Policy Representation: Consider the sampling strategy from a given target density by
+simulating SDE in eq (2) under optimal control. Even though the optimal policy is characterized by
+eq (8), only in rare case (Gaussian target distribution) it has an analytic closed-form."
+OPTIMAL CONTROL POLICY AND SAMPLER,0.141747572815534,"For more general target distributions, we can instead evaluate the value function eq (7) via empir-
+ical samples using Monte Carlo. The approach is essentially importance sampling whose proposal
+distribution is the uncontrolled dynamics. However, this approach has two drawbacks. First, it is
+known that the estimation variance can be intolerably high when the proposal distribution is not
+close enough to the target distribution (MacKay, 2003). Second, even if the variance is acceptable,
+without a good proposal, the required samples size increases exponentially with dimension, which
+prevents the algorithm from being used in high or even medium dimension settings (Neal, 2001)."
+OPTIMAL CONTROL POLICY AND SAMPLER,0.1436893203883495,"To overcome the above shortcomings, we parameterize the control policy with a neural network uθ.
+We seek a control policy that minimizes the cost"
+OPTIMAL CONTROL POLICY AND SAMPLER,0.14563106796116504,"u∗= arg min
+u
+EQu ""Z T 0"
+OPTIMAL CONTROL POLICY AND SAMPLER,0.14757281553398058,"1
+2 ∥ut∥2 dt + log µ0(xT )"
+OPTIMAL CONTROL POLICY AND SAMPLER,0.14951456310679612,µ(xT ) #
+OPTIMAL CONTROL POLICY AND SAMPLER,0.15145631067961166,".
+(14)"
+OPTIMAL CONTROL POLICY AND SAMPLER,0.1533980582524272,The formula eq (14) also serves as distance metric between uθ and u∗as in eq (13).
+OPTIMAL CONTROL POLICY AND SAMPLER,0.1553398058252427,"Gradient-informed Policy Representation: It is believed that proper prior information can signifi-
+cantly boost the performance of neural network (Goodfellow et al., 2016). The score ∇log µ(x) has
+been used widely to improve the proposal distribution in MCMC (Li et al., 2020b; Hoffman & Gel-
+man, 2014) and often leads to better results compared with proposals without gradient information.
+In the same spirit, we incorporate ∇log µ(x) and parameterize the policy as"
+OPTIMAL CONTROL POLICY AND SAMPLER,0.15728155339805824,"ut(x) = NN1(t, x) + NN2(t) × ∇log µ(x),
+(15)"
+OPTIMAL CONTROL POLICY AND SAMPLER,0.15922330097087378,"where NN1 and NN2 are two neural networks. Empirically, we also found that the gradient informa-
+tion leads to faster convergence and smaller discrepancy DKL(Qu∥Q∗). We remark that PIS with
+policy eq (15) can be viewed as a modulated Langevin dynamics (MacKay, 2003) that achieves µ
+within finite time T instead of infinite time."
+OPTIMAL CONTROL POLICY AND SAMPLER,0.16116504854368932,"Optimize Policy: Optimizing uθ requires the gradient of loss in eq (14), which involves ut and the
+terminal state xT . To calculate gradients, we rely on backpropagation through trajectories. We train
+the control policy with recent techniques of Neural SDEs (Li et al., 2020a; Kidger et al., 2021), which
+greatly reduce memory consumption during training. The gradient computation for Neural SDE is
+based on stochastic adjoint sensitivity, which generalizes the adjoint sensitivity method for Neural
+ODE (Chen et al., 2018). Therefore, the backpropagation in Neural SDE is another SDE associated
+with adjoint states. Unlike the training of traditional deep MLPs which often runs into gradient
+vanishing/exploding issues, the training of Neural SDE/ODE is more stable and not sensitive the
+number of discretization steps (Chen et al., 2018; Kidger et al., 2021). We augment the origin SDE
+with state
+R t
+0
+1
+2 ∥us∥2 ds such that the whole training can be conducted end to end. The full training
+procedure in provided in Algorithm 1."
+OPTIMAL CONTROL POLICY AND SAMPLER,0.16310679611650486,"Wasserstein distance bound: The PIS trained by Algorithm 1 can not generate unbiased samples
+from the target distribution µ for two reasons. First, due to the non-convexity of networks and
+randomness of stochastic gradient descent, there is no guarantee that the learned policy is optimal.
+Second, even if the learned policy is optimal, the time-discretization error in simulating SDEs is in-"
+OPTIMAL CONTROL POLICY AND SAMPLER,0.1650485436893204,Published as a conference paper at ICLR 2022
+OPTIMAL CONTROL POLICY AND SAMPLER,0.1669902912621359,"evitable. Fortunately, the following theorem quantifies the Wasserstein distance between the sampler
+and the target density. (More details and a formal statement can be found in appendix C)"
+OPTIMAL CONTROL POLICY AND SAMPLER,0.16893203883495145,"Theorem 2 (Informal). Under mild condition, with sampling step size ∆t, if ∥u∗
+t −ut∥2 ≤dϵ for
+any t, then
+W2(Qu(xT ), µ(xT )) = O(
+p"
+OPTIMAL CONTROL POLICY AND SAMPLER,0.170873786407767,"Td(∆t + ϵ)).
+(16)"
+IMPORTANCE SAMPLING,0.17281553398058253,"3.4
+IMPORTANCE SAMPLING"
+IMPORTANCE SAMPLING,0.17475728155339806,"The training procedure for PIS does not guarantee its optimality. To compensate for the mismatch
+between the trained policy and the optimal policy, we introduce importance weight to calibrate
+generated samples. The importance weight can be calculated by (more details in appendix B)"
+IMPORTANCE SAMPLING,0.1766990291262136,wu(τ) = dQ∗(τ)
+IMPORTANCE SAMPLING,0.1786407766990291,"dQu(τ) = exp(
+Z T 0
+−1"
+IMPORTANCE SAMPLING,0.18058252427184465,"2 ∥ut∥2 dt −u′
+tdwt −Ψ(xT )).
+(17)"
+IMPORTANCE SAMPLING,0.1825242718446602,Algorithm 2 Sampling
+IMPORTANCE SAMPLING,0.18446601941747573,"Input: Vector: x0 = 0, Scalar: y0 = 0
+Output: Samples with weights
+for i ←1 to N do"
+IMPORTANCE SAMPLING,0.18640776699029127,"∆t = ti −ti−1, ∆w ∼N(0, ∆tI),
+xi = xi−1 + u∆t + ∆w
+yi = yi−1 + u′∆w + 1"
+IMPORTANCE SAMPLING,0.1883495145631068,"2 ∥u∥2 ∆t
+end for
+Outputs:
+xN, exp(−yN−log µ0(xN)"
+IMPORTANCE SAMPLING,0.19029126213592232,µ(xN) )
+IMPORTANCE SAMPLING,0.19223300970873786,"We note eq (17) resembles training objective eq (14).
+Indeed, eq (14) is the average of logarithm of eq (17).
+If the trained policy is optimal, that is, Qu = Q∗, all
+the particles share the same weight. We summarize the
+sampling algorithm in Algorithm 2."
+IMPORTANCE SAMPLING,0.1941747572815534,"Effective
+Sample
+Size:
+The
+Effective
+Sample
+Size (ESS), ESSu =
+1
+EQu[(wu)2], is a popular metric to
+measure the variance of importance weights. ESS is of-
+ten accompanied by resampling trick (Tokdar & Kass,
+2010) to mitigate deterioration of sample quality. ESS
+is also regarded as a metric for quantifying goodness of sampler based on importance sampling.
+Low ESS means that estimation or downstream tasks based on such sampling methods may suffer
+from a high variance. ESS of most importance samplers is decreasing along the time. Thanks to the
+adaptive control policy in PIS, we can quantify the ESS of PIS based on the optimality of learned
+policy. For the sake of completeness, the proof in provided in appendix D."
+IMPORTANCE SAMPLING,0.19611650485436893,"Theorem 3 (Corollary 7 (Thijssen & Kappen, 2015)). If maxt,x ∥ut(x) −u∗
+t (x)∥2 ≤ϵ"
+IMPORTANCE SAMPLING,0.19805825242718447,"T , then"
+IMPORTANCE SAMPLING,0.2,"1
+EQu[(wu)2] ≥1 −ϵ."
+IMPORTANCE SAMPLING,0.20194174757281552,"Estimation of normalization constants: In most sampling problems we only have access to the
+target density up to a normalization constant, denoted by ˆµ = Zµ. PIS can still generate samples
+following the same protocol with new terminal cost ˆΨ = log µ0"
+IMPORTANCE SAMPLING,0.20388349514563106,"ˆµ = Ψ −log Z. The additional con-
+stant −log Z is independent of xT and thus does not affect the optimal policy and the optimization
+of uθ. As a byproduct, we can estimate the normalization constants (more details in appendix E).
+Theorem 4. For any given policy u, the logarithm of normalization constant is bounded below by"
+IMPORTANCE SAMPLING,0.2058252427184466,"Eτ∼Qu[−ˆSu(τ)] ≤log Z,
+(18)"
+IMPORTANCE SAMPLING,0.20776699029126214,"where ˆSu(τ) =
+R T
+0
+1
+2 ∥ut(xt)∥2 dt + u′
+t(xt)dwt + ˆΨ(xT ). The equality holds only when u = u∗.
+Moreover, for any sub-optimal policy, an unbiased estimation of Z using importance sampling is"
+IMPORTANCE SAMPLING,0.20970873786407768,"Z = Eτ∼Qu[exp(−ˆSu(τ))].
+(19)"
+EXPERIMENTS,0.21165048543689322,"4
+EXPERIMENTS"
+EXPERIMENTS,0.21359223300970873,"In this section we present empirical evaluations of PIS and the comparisons to several baselines.
+We also provide details of practical implementations. Inspired by Arbel et al. (2021), we conduct
+experiments for tasks of Bayesian inference and normalization constant estimation."
+EXPERIMENTS,0.21553398058252426,"We consider three types of relevant methods. The first category is gradient-guided MCMC methods
+without the annealing trick. It includes the Hamiltonian Monte Carlo (HMC) (MacKay, 2003) and"
+EXPERIMENTS,0.2174757281553398,Published as a conference paper at ICLR 2022
+EXPERIMENTS,0.21941747572815534,"µ
+PIS-Grad
+AFT
+SMC
+NUTS
+HMC
+VI-NF
+PIS-NN"
+EXPERIMENTS,0.22135922330097088,"Figure 2: Sampling performance on rings-shape density function with 100 steps. The gradient
+information can help PIS-Grad and MCMC algorithm improve sampling performance."
+EXPERIMENTS,0.22330097087378642,"No-U-Turn Sampler (NUTS) (Hoffman & Gelman, 2014). The second is Sequential Monte Carlo
+with annealing trick (SMC), which is regarded as state-of-the-art sampling algorithm (Del Moral
+et al., 2006) in terms of sampling quality. We choose a standard instance of SMC samplers and the
+recently proposed Annealed Flow Transport Monte Carlo (AFT) (Arbel et al., 2021). Both use a
+default 10 temperature levels with a linear annealing scheme. We note that there are optimized SMC
+variants that achieve better performance (Del Moral et al., 2006; Chopin & Papaspiliopoulos, 2020;
+Zhou et al., 2016). Since the introduction of advanced tricks, we exclude the comparison with those
+variants for fair comparison purpose. We note PIS can also be augmented with annealing trick, pos-
+sible improvement for PIS can be explored in the future. Last, the variational normalizing flow (VI-
+NF) (Rezende & Mohamed, 2015) is also included for comparison. We note that another popular
+line of sampling algorithms use Stein-Variational Gradient Descent (SVGD) or other particle-based
+variational inference approaches (Liu & Wang, 2016; Liu et al., 2019). We include the comparison
+and more discussions on SGVD in appendix F.3 due to its significant difference. In our experiments,
+the number of steps N of MCMC algorithms and the number of SDE time-discretization steps for
+PIS work as a proxy for benchmarking computation times."
+EXPERIMENTS,0.22524271844660193,"We also investigate the effects of two different network architectures for Path Integral Sampler. The
+first one is a time-conditioned neural network without any prior information, which we denote as
+PIS-NN, while the second one incorporates the gradient information of the given energy function
+as in eq (15), denoted as PIS-Grad. When we have an analytical form for the ground truth optimal
+policy, the policy is denoted as PIS-GT. The subscript RW is to distinguish PIS with path integral
+importance weights eq (17) that use eq (19) to estimate normalization constants from the ones with-
+out importance weights that use the bound in eq (18) to estimate Z. For approaches without the
+annealing trick, we take default N = 100 unless otherwise stated. With annealing, N steps are
+the default for each temperature level, thus AFT and SMC rougly use 10 times more steps com-
+pared with HMC and PIS. We include more details about hyperparameters, training time, sampling
+efficiency, and more experiments with large N in appendices F and G."
+EXPERIMENTS,0.22718446601941747,"4.1
+PIS-GRAD VS PIS-NN: IMPORTANCE OF GRADIENT GUIDANCE"
+EXPERIMENTS,0.229126213592233,"We observed that the advantage of PIS-Grad over PIS-NN is clearer when the target density has
+multiple modes as in the toy example shown in Fig 2. The objective DKL(Q∥Q∗) is known to have
+zero forcing. In particular, when the modes of the density are well separated and Q is not expressive
+enough, minimizing DKL(Q∥Q∗) can drive Q(τ) to zero on some area, even if Q∗(τ) > 0 (Fox &
+Roberts, 2012). PIS-NN and VI-NF generate very similar samples that almost cover half the inner
+ring. The training objective function of VI-NF can also be viewed as minimizing KL divergence
+between two trajectory distributions (Wu et al., 2020). The added noise during the process can
+encourage exploration but it is unlikely such noise only can overcome the local minima. On the
+other hand, the gradient information can help cover more modes and provide exploring directions."
+BENCHMARKING DATASETS,0.23106796116504855,"4.2
+BENCHMARKING DATASETS"
+BENCHMARKING DATASETS,0.23300970873786409,"Mode-separated mixture of Gaussian: We consider the mixture of Gaussian in 2-dimension. We
+notice that when the Gaussian modes are not far away from each other, all methods work well.
+However, when we reduce the variances of the Gaussian distributions and separate the modes of
+Gaussian, the advantage of PIS becomes clear even in this low dimension task. We generate 2000
+samples from each method and plot their kernel density estimate (KDE) in Fig 4. PIS generates
+samples that are visually indistinguishable from the target density."
+BENCHMARKING DATASETS,0.23495145631067962,Published as a conference paper at ICLR 2022
+BENCHMARKING DATASETS,0.23689320388349513,"Funnel distribution: We consider the popular testing distribution in MCMC literature (Hoffman &
+Gelman, 2014; Hoffman et al., 2019), the 10-dimensional Funnel distribution charaterized by"
+BENCHMARKING DATASETS,0.23883495145631067,"x0 ∼N(0, 9),
+x1:9|x0 ∼N(0, exp(x0)I)."
+BENCHMARKING DATASETS,0.2407766990291262,"This distribution can be pictured as a funnel - with x0 wide at the mouth of funnel, getting smaller
+as the funnel narrows."
+BENCHMARKING DATASETS,0.24271844660194175,"MG (d = 2)
+Funnel (d = 10)
+LGCP (d = 1600)
+B
+S
+A
+B
+S
+A
+B
+S
+A
+PISRW -GT
+-0.012
+0.013
+0.018
+-
+-
+-
+-
+-
+-
+PIS-NN
+-1.691
+0.370
+1.731
+-0.098
+5e-3
+0.098
+-92.4
+6.4
+92.62
+PIS-Grad
+-0.440
+0.024
+0.441
+-0.103
+9e-3
+0.104
+-13.2
+3.21
+13.58
+PISRW -NN
+-1.192
+0.482
+1.285
+-0.018
+7e-3
+0.02
+-60.8
+4.81
+60.99
+PISRW -Grad
+-0.021
+0.030
+0.037
+-0.008
+9e-3
+0.012
+-1.94
+0.91
+2.14
+AFT
+-0.509
+0.24
+0.562
+-0.208
+0.193
+0.284
+-3.08
+1.59
+3.46
+SMC
+-0.362
+0.293
+0.466
+-0.216
+0.157
+0.267
+-435
+14.7
+436
+NUTS
+-1.871
+0.527
+1.943
+-0.835
+0.257
+0.874
+-1.3e3
+8.01
+1.3e3
+HMC
+-1.876
+0.527
+1.948
+-0.835
+0.257
+0.874
+-1.3e3
+8.01
+1.3e3
+VI-NF
+-1.632
+0.965
+1.896
+-0.236
+0.0591
+0.243
+-77.9
+5.6
+78.2"
+BENCHMARKING DATASETS,0.2446601941747573,"Table 1: Benchmarking on mode separated mixture of Gaussian (MG), Funnel distribution and
+Log Gaussian Cox Process (LGCP) for estimation log normalization constants. B and S stand for
+estimation bias and standard deviation among 100 runs and A2= B2 + S2."
+BENCHMARKING DATASETS,0.24660194174757283,"Log Gaussian Cox Process: We further investigate the normalization constant estimation problem
+for the challenging log Gaussian Cox process (LGCP), which is designed for modeling the posi-
+tions of Finland pine saplings. In LGCP (Salvatier et al., 2016), an underlying field λ of positive
+real values is modeled using an exponentially-transformed Gaussian process. Then λ is used to
+parameterize Poisson points process to model locations of pine saplings. The posterior density is"
+BENCHMARKING DATASETS,0.24854368932038834,"λ(x) ∼exp(−(x −µ)T K−1(x −µ) 2
+)
+Y"
+BENCHMARKING DATASETS,0.2504854368932039,"i∈d
+exp(xiyi −α exp xi),
+(20)"
+BENCHMARKING DATASETS,0.2524271844660194,"where d denotes the size of discretized grid and yi denotes observation information. The modeling
+parameters, including normal distribution and α, follow Arbel et al. (2021) (See appendix F)."
+BENCHMARKING DATASETS,0.2543689320388349,"Tab 1 clearly shows the advantages of PIS for the above three datasets, and supports the claim
+that importance weight helps improve the estimation of log normalization constants, based on the
+comparison between PISRW and PIS. We also found that PIS-Grad trained with gradient information
+outperforms PIS-NN. The difference is more obvious in datasets that have well-separated modes,
+such as MG and LGCP, and less obvious on unimodal distributions like Funnel."
+BENCHMARKING DATASETS,0.2563106796116505,"In all cases, PISRW -Grad is better than AFT and SMC. Interestingly, even without annealing and
+gradient information of target density, PISRW -NN can outperform SMC with annealing trick and
+HMC kernel for the Funnel distribution."
+ADVANTAGE OF THE SPECIALIZED SAMPLING ALGORITHM,0.258252427184466,"4.3
+ADVANTAGE OF THE SPECIALIZED SAMPLING ALGORITHM"
+ADVANTAGE OF THE SPECIALIZED SAMPLING ALGORITHM,0.26019417475728157,"From the perspective of particles dynamics, most existing MCMC algorithms are invariant to the
+target distribution. Therefore, particles are driven by gradient and random noise in a way that is
+independent of the given target distribution. In contrast, PIS learns different strategies to combine
+gradient information and noise for different target densities. The specialized sampling algorithm
+can generate samples more efficiently and shows better performance empirically in our experiments.
+The advantage can be showed in various datasets, from unimodal distributions like the Funnel dis-
+tribution to multimodal distributions. The benefits and efficiency of PIS are more obvious in high
+dimensional settings as we have shown."
+ALANINE DIPEPTIDE,0.2621359223300971,"4.4
+ALANINE DIPEPTIDE"
+ALANINE DIPEPTIDE,0.26407766990291265,"Building on the success achieved by flow models in the generation of asymptotically unbiased sam-
+ples from physics models (LeCun, 1998), we investigate the applications in the sampling of molec-"
+ALANINE DIPEPTIDE,0.26601941747572816,Published as a conference paper at ICLR 2022
+ALANINE DIPEPTIDE,0.26796116504854367,"KL*
+µ
+ϕ
+η1
+ψ
+η2
+η3
+VI-NF
+175.6 ±4.5
+24.2± 4.1
+3.1 ± 0.05
+14.6± 6.4
+7e-2±5e-3
+8.5e-2±3.5e-3
+SMC
+183.3 ±2.3
+18.3± 2.1
+0.32 ± 0.08
+9.6 ± 1.2
+0.12±0.05
+0.15 ± 9e-3
+SNF
+181.8 ±0.75
+6.3± 0.71
+0.17±0.05
+1.58 ± 0.36
+0.11± 0.03
+8.8e-2 ±8e-3
+PIS-NN
+171.3 ±0.61
+5.2± 0.35
+0.32±0.03
+1.03 ± 0.23
+5e-2±5e-3
+8.7e-2±3e-3"
+ALANINE DIPEPTIDE,0.26990291262135924,"Table 2: KL-divergences comparison among variational approaches of generated density with target
+density in overall atom states distribution and five multimodal torsion angles. We emphasis KL*
+denote the KL divergence between unnormalized distribution due to lack of ground truth normaliza-
+tion constants. Mean and standard deviation are conducted with five different random seeds.
+ular structure from a simulation of Alanine dipeptide as introduced in Wu et al. (2020). The target
+density of molecule is ˆµ = exp(−E(x[0:65]) −1"
+ALANINE DIPEPTIDE,0.27184466019417475,"2
+x[66:131]
+2)."
+ALANINE DIPEPTIDE,0.2737864077669903,"We compare PIS with popular variational approaches used in generating samples from the above
+model.
+More specifically, we consider VI-NF, and Stochastic Normalizing Flow (SNF) (Wu
+et al., 2020).
+SNF is very close to AFT (Arbel et al., 2021).
+Both of them cou-
+ple deterministic normalizing flow layers and MCMC blocks except SNF uses an amor-
+tized structure.
+We include more details of MCMC kernel and modification in appendix F."
+ALANINE DIPEPTIDE,0.2757281553398058,"Figure 3: Sampled Alanine
+dipeptide molecules
+We show a generated molecular in Fig 3 and quantitative comparison
+in terms of KL divergence in Tab 2, including overall atom states dis-
+tribution and five multimodal torsion angles (backbone angles ϕ, ψ
+and methyl rotation angles η1, η2, η3). We remark that unweighted
+samples are used to approximate the density of torsion angles and all
+approaches do not use gradient information. Clearly, PIS gives lower
+divergence."
+SAMPLING IN VARIATIONAL AUTOENCODER LATENT SPACE,0.27766990291262134,"4.5
+SAMPLING IN VARIATIONAL AUTOENCODER LATENT SPACE"
+SAMPLING IN VARIATIONAL AUTOENCODER LATENT SPACE,0.2796116504854369,"In this experiment we investigate sampling in the latent space of a trained Variational Autoen-
+coder (VAE). VAE aims to minimize DKL(q(x)qϕ(z|x)∥p(z)pθ(x|z)), where qϕ(z|x) represents
+encoder and pθ for a decoder with latent variable z and data x. We investigate the posterior distri-
+bution
+z ∼p(z)pθ(x|z).
+(21)"
+SAMPLING IN VARIATIONAL AUTOENCODER LATENT SPACE,0.2815533980582524,"The normalization constant of such target unnormalized density function p(z)pθ(x|z) is exactly the
+likelihood of data points pθ(x), which serves as an evaluation metric for the trained VAE."
+SAMPLING IN VARIATIONAL AUTOENCODER LATENT SPACE,0.283495145631068,"Table 3: Estimation of log pθ(x) of a trained
+VAE. B
+S
+p"
+SAMPLING IN VARIATIONAL AUTOENCODER LATENT SPACE,0.2854368932038835,B2 + S2
+SAMPLING IN VARIATIONAL AUTOENCODER LATENT SPACE,0.287378640776699,"VI-NF
+-2.3
+0.76
+2.42
+AFT
+-1.7
+0.95
+1.96
+SMC
+-10.6
+2.01
+10.79
+PISRW -NN
+-1.9
+0.81
+2.06
+PISRW -Grad
+-0.87
+0.31
+0.92"
+SAMPLING IN VARIATIONAL AUTOENCODER LATENT SPACE,0.28932038834951457,"We investigate a vanilla VAE model trained with
+plateau loss on the binary MNIST (LeCun, 1998)
+dataset. For each distribution, we regard the aver-
+age estimation from 10 long-run SMC with 1000
+temperature levels as the ground truth normal-
+ization constant.
+We choose 100 images ran-
+domly and run the various approaches on estimat-
+ing normalization of those posterior distributions
+in eq (21) and report the average performance in
+Tab 3. PIS has a lower bias and variance."
+CONCLUSION,0.2912621359223301,"5
+CONCLUSION"
+CONCLUSION,0.29320388349514565,"Contributions. In this work, we proposed a new sampling algorithm, Path Integral Sampler, based
+on the connections between sampling and stochastic control. The control can drive particles from
+a simple initial distribution to a target density perfectly when the policy is optimal for an optimal
+control problem whose terminal cost depends on the target distribution. Furthermore, we provide a
+calibration based on importance weights, ensuring sampling quality even with sub-optimal policies."
+CONCLUSION,0.29514563106796116,"Limitations. Compared with most popular non-learnable MCMC algorithms, PIS requires training
+neural networks for the given distributions, which adds additional computational overhead, though
+this can be mitigated with amortization. Besides, the sampling quality of PIS in finite steps depends
+on the optimality of trained network. Improper choices of hyperparameters may lead to numerical
+issues and failure modes as discussed in appendix G.1."
+CONCLUSION,0.2970873786407767,Published as a conference paper at ICLR 2022
+REPRODUCIBILITY STATEMENT,0.29902912621359223,"6
+REPRODUCIBILITY STATEMENT"
+REPRODUCIBILITY STATEMENT,0.30097087378640774,"The detailed discussions on assumptions and proofs of theorems presented in the main paper are
+included in appendices A and C to E. The training settings and implementation tips of the algorithms
+are included in appendices F and G. An implementation based on PyTorch (Paszke et al., 2019) of
+PIS can be found in https://github.com/qsh-zh/pis."
+REPRODUCIBILITY STATEMENT,0.3029126213592233,ACKNOWLEDGMENTS
+REPRODUCIBILITY STATEMENT,0.3048543689320388,"The authors would like to thank the anonymous reviewers for useful comments. This work is par-
+tially supported by NSF ECCS-1942523 and NSF CCF-2008513."
+REFERENCES,0.3067961165048544,REFERENCES
+REFERENCES,0.3087378640776699,"Michael Arbel, Alexander GDG Matthews, and Arnaud Doucet. Annealed flow transport Monte
+Carlo. arXiv preprint arXiv:2102.07501, 2021."
+REFERENCES,0.3106796116504854,"Dimitri P Bertsekas et al. Dynamic programming and optimal control: Vol. 1. Athena scientific
+Belmont, 2000."
+REFERENCES,0.312621359223301,"Ricky T. Q. Chen, Jens Behrmann, David Duvenaud, and J¨orn-Henrik Jacobsen. Residual flows for
+invertible generative modeling. In Advances in Neural Information Processing Systems, 2019."
+REFERENCES,0.3145631067961165,"Ricky TQ Chen, Yulia Rubanova, Jesse Bettencourt, and David Duvenaud. Neural ordinary differ-
+ential equations. arXiv preprint arXiv:1806.07366, 2018."
+REFERENCES,0.31650485436893205,"Yongxin Chen, Tryphon T Georgiou, and Michele Pavon. On the relation between optimal transport
+and Schr¨odinger bridges: A stochastic control viewpoint. Journal of Optimization Theory and
+Applications, 169(2):671–691, 2016."
+REFERENCES,0.31844660194174756,"Yongxin Chen, Tryphon T Georgiou, and Michele Pavon.
+Stochastic control liaisons: Richard
+Sinkhorn meets Gaspard Monge on a Schr¨odinger bridge. SIAM Review, 63(2):249–313, 2021."
+REFERENCES,0.32038834951456313,"Nicolas Chopin and Omiros Papaspiliopoulos. An introduction to sequential Monte Carlo. Springer,
+2020."
+REFERENCES,0.32233009708737864,"Rob Cornish, Anthony Caterini, George Deligiannidis, and Arnaud Doucet. Relaxing bijectivity
+constraints with continuously indexed normalising flows. In International Conference on Machine
+Learning, pp. 2133–2143. PMLR, 2020."
+REFERENCES,0.32427184466019415,Paolo Dai Pra. A stochastic control approach to reciprocal diffusion processes. Applied mathematics
+REFERENCES,0.3262135922330097,"and Optimization, 23(1):313–329, 1991."
+REFERENCES,0.32815533980582523,"Pierre Del Moral, Arnaud Doucet, and Ajay Jasra. Sequential Monte Carlo samplers. Journal of the"
+REFERENCES,0.3300970873786408,"Royal Statistical Society: Series B (Statistical Methodology), 68(3):411–436, 2006."
+REFERENCES,0.3320388349514563,"Laurent Dinh, Jascha Sohl-Dickstein, and Samy Bengio. Density estimation using real nvp. arXiv"
+REFERENCES,0.3339805825242718,"preprint arXiv:1605.08803, 2016."
+REFERENCES,0.3359223300970874,"Peter Eastman, Jason Swails, John D Chodera, Robert T McGibbon, Yutong Zhao, Kyle A
+Beauchamp, Lee-Ping Wang, Andrew C Simmonett, Matthew P Harrigan, Chaya D Stern, et al.
+Openmm 7: Rapid development of high performance algorithms for molecular dynamics. PLoS
+computational biology, 13(7):e1005659, 2017."
+REFERENCES,0.3378640776699029,"Bradley Efron.
+Tweedie’s formula and selection bias.
+Journal of the American Statistical
+Association, 106(496):1602–1614, 2011."
+REFERENCES,0.33980582524271846,"Ronen Eldan, Joseph Lehec, and Yair Shenfeld. Stability of the logarithmic Sobolev inequality
+via the F¨ollmer process. In Annales de l’Institut Henri Poincar´e, Probabilit´es et Statistiques,
+volume 56, pp. 2253–2269. Institut Henri Poincar´e, 2020."
+REFERENCES,0.341747572815534,"Lawrence C Evans. Partial differential equations. Graduate studies in mathematics, 19(4):7, 1998."
+REFERENCES,0.34368932038834954,Published as a conference paper at ICLR 2022
+REFERENCES,0.34563106796116505,Charles W Fox and Stephen J Roberts. A tutorial on variational Bayesian inference. Artificial
+REFERENCES,0.34757281553398056,"intelligence review, 38(2):85–95, 2012."
+REFERENCES,0.34951456310679613,"Christina Gao, Joshua Isaacson, and Claudius Krause. i-flow: High-dimensional integration and
+sampling with normalizing flows. Machine Learning: Science and Technology, 1(4):045023,
+2020a."
+REFERENCES,0.35145631067961164,"Ruiqi Gao, Yang Song, Ben Poole, Ying Nian Wu, and Diederik P Kingma. Learning energy-based
+models by diffusion recovery likelihood. arXiv preprint arXiv:2012.08125, 2020b."
+REFERENCES,0.3533980582524272,"Ian Goodfellow, Yoshua Bengio, Aaron Courville, and Yoshua Bengio. Deep learning, volume 1.
+MIT Press, 2016."
+REFERENCES,0.3553398058252427,"Jackson Gorham and Lester Mackey.
+Measuring sample quality with kernels.
+In International
+Conference on Machine Learning, pp. 1292–1301. PMLR, 2017."
+REFERENCES,0.3572815533980582,"Will Grathwohl, Ricky TQ Chen, Jesse Bettencourt, Ilya Sutskever, and David Duvenaud. FFJORD:
+Free-form continuous dynamics for scalable reversible generative models.
+arXiv preprint
+arXiv:1810.01367, 2018."
+REFERENCES,0.3592233009708738,"Matthew Hoffman, Pavel Sountsov, Joshua V Dillon, Ian Langmore, Dustin Tran, and Srinivas
+Vasudevan. Neutra-lizing bad geometry in Hamiltonian Monte Carlo using neural transport. arXiv
+preprint arXiv:1903.03704, 2019."
+REFERENCES,0.3611650485436893,"Matthew D Hoffman and Andrew Gelman. The No-U-Turn sampler: adaptively setting path lengths
+in Hamiltonian Monte Carlo. Journal of Machine Learning Research, 15(1):1593–1623, 2014."
+REFERENCES,0.36310679611650487,"Jian Huang, Yuling Jiao, Lican Kang, Xu Liao, Jin Liu, and Yanyan Liu. Schr¨odinger-F¨ollmer
+sampler: Sampling without ergodicity. arXiv preprint arXiv:2106.10880, 2021."
+REFERENCES,0.3650485436893204,"Arthur Jacot, Franck Gabriel, and Cl´ement Hongler. Neural tangent kernel: Convergence and gen-
+eralization in neural networks. arXiv preprint arXiv:1806.07572, 2018."
+REFERENCES,0.36699029126213595,"Patrick Kidger, James Foster, Xuechen Li, and Terry Lyons. Efficient and accurate gradients for
+neural sdes. arXiv preprint arXiv:2105.13493, 2021."
+REFERENCES,0.36893203883495146,Diederik P Kingma and Jimmy Ba. Adam: A method for stochastic optimization. arXiv preprint
+REFERENCES,0.37087378640776697,"arXiv:1412.6980, 2014."
+REFERENCES,0.37281553398058254,"Diederik P Kingma and Max Welling.
+Auto-encoding variational Bayes.
+arXiv preprint
+arXiv:1312.6114, 2013."
+REFERENCES,0.37475728155339805,"Yann LeCun. The mnist database of handwritten digits. http://yann. lecun. com/exdb/mnist/, 1998."
+REFERENCES,0.3766990291262136,"Christian L´eonard. A survey of the Schr¨odinger problem and some of its connections with optimal
+transport. Discrete & Continuous Dynamical Systems, 34(4):1533, 2014."
+REFERENCES,0.3786407766990291,"Xuechen Li, Ting-Kam Leonard Wong, Ricky TQ Chen, and David Duvenaud. Scalable gradients
+for stochastic differential equations. In International Conference on Artificial Intelligence and
+Statistics, pp. 3870–3882. PMLR, 2020a."
+REFERENCES,0.38058252427184464,"Zengyi Li, Yubei Chen, and Friedrich T Sommer. A neural network mcmc sampler that maximizes
+proposal entropy. arXiv preprint arXiv:2010.03587, 2020b."
+REFERENCES,0.3825242718446602,"Chang Liu, Jingwei Zhuo, Pengyu Cheng, Ruiyi Zhang, and Jun Zhu. Understanding and acceler-
+ating particle-based variational inference. In International Conference on Machine Learning, pp.
+4082–4092. PMLR, 2019."
+REFERENCES,0.3844660194174757,"Qiang Liu and Dilin Wang. Stein variational gradient descent: A general purpose Bayesian inference
+algorithm. arXiv preprint arXiv:1608.04471, 2016."
+REFERENCES,0.3864077669902913,"Qiang Liu, Jason Lee, and Michael Jordan. A kernelized Stein discrepancy for goodness-of-fit tests.
+In International conference on machine learning, pp. 276–284. PMLR, 2016."
+REFERENCES,0.3883495145631068,Published as a conference paper at ICLR 2022
+REFERENCES,0.39029126213592236,"David JC MacKay. Information theory, inference and learning algorithms. Cambridge university
+press, 2003."
+REFERENCES,0.39223300970873787,Shakir Mohamed and Balaji Lakshminarayanan. Learning in implicit generative models. arXiv
+REFERENCES,0.3941747572815534,"preprint arXiv:1610.03483, 2016."
+REFERENCES,0.39611650485436894,"Jesper Møller, Anne Randi Syversveen, and Rasmus Plenge Waagepetersen. Log Gaussian cox
+processes. Scandinavian journal of statistics, 25(3):451–482, 1998."
+REFERENCES,0.39805825242718446,"Radford M Neal. Annealed importance sampling. Statistics and computing, 11(2):125–139, 2001."
+REFERENCES,0.4,"Kim A Nicoli, Shinichi Nakajima, Nils Strodthoff, Wojciech Samek, Klaus-Robert M¨uller, and
+Pan Kessel. Asymptotically unbiased estimation of physical observables with neural samplers.
+Physical Review E, 101(2):023304, 2020."
+REFERENCES,0.40194174757281553,"Erik Nijkamp, Mitch Hill, Song-Chun Zhu, and Ying Nian Wu. Learning non-convergent non-
+persistent short-run mcmc toward energy-based model. arXiv preprint arXiv:1904.09770, 2019."
+REFERENCES,0.40388349514563104,"Frank No´e, Simon Olsson, Jonas K¨ohler, and Hao Wu. Boltzmann generators: Sampling equilibrium
+states of many-body systems with deep learning. Science, 365(6457), 2019."
+REFERENCES,0.4058252427184466,"Bernt Øksendal. Stochastic differential equations. In Stochastic differential equations, pp. 65–84.
+Springer, 2003."
+REFERENCES,0.4077669902912621,"Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor
+Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, et al.
+Pytorch: An imperative style,
+high-performance deep learning library. Advances in neural information processing systems, 32:
+8026–8037, 2019."
+REFERENCES,0.4097087378640777,"Michele Pavon.
+Stochastic control and nonequilibrium thermodynamical systems.
+Applied
+Mathematics and Optimization, 19(1):187–202, 1989."
+REFERENCES,0.4116504854368932,"Danilo Rezende and Shakir Mohamed.
+Variational inference with normalizing flows.
+In
+International Conference on Machine Learning, pp. 1530–1538. PMLR, 2015."
+REFERENCES,0.41359223300970877,"John Salvatier, Thomas V Wiecki, and Christopher Fonnesbeck.
+Probabilistic programming in
+python using pymc3. PeerJ Computer Science, 2:e55, 2016."
+REFERENCES,0.4155339805825243,"Simo S¨arkk¨a and Arno Solin. Applied stochastic differential equations, volume 10. Cambridge
+University Press, 2019."
+REFERENCES,0.4174757281553398,"Jiaming Song, Shengjia Zhao, and Stefano Ermon. A-nice-MC: Adversarial training for MCMC."
+REFERENCES,0.41941747572815535,"arXiv preprint arXiv:1706.07561, 2017."
+REFERENCES,0.42135922330097086,"Span Spanbauer, Cameron Freer, and Vikash Mansinghka. Deep involutive generative models for
+neural mcmc. arXiv preprint arXiv:2006.15167, 2020."
+REFERENCES,0.42330097087378643,"Kunal Talwar.
+Computational separations between sampling and optimization.
+arXiv preprint
+arXiv:1911.02074, 2019."
+REFERENCES,0.42524271844660194,"Matthew Tancik, Pratul P Srinivasan, Ben Mildenhall, Sara Fridovich-Keil, Nithin Raghavan,
+Utkarsh Singhal, Ravi Ramamoorthi, Jonathan T Barron, and Ren Ng.
+Fourier features
+let networks learn high frequency functions in low dimensional domains.
+arXiv preprint
+arXiv:2006.10739, 2020."
+REFERENCES,0.42718446601941745,"Evangelos Theodorou, Jonas Buchli, and Stefan Schaal. A generalized path integral control ap-
+proach to reinforcement learning. The Journal of Machine Learning Research, 11:3137–3181,
+2010."
+REFERENCES,0.429126213592233,"Evangelos A Theodorou and Emanuel Todorov. Relative entropy and free energy dualities: Connec-
+tions to path integral and KL control. In 2012 ieee 51st ieee conference on decision and control
+(cdc), pp. 1466–1473. IEEE, 2012."
+REFERENCES,0.43106796116504853,Sep Thijssen and HJ Kappen. Path integral control and state-dependent feedback. Physical Review
+REFERENCES,0.4330097087378641,"E, 91(3):032104, 2015."
+REFERENCES,0.4349514563106796,Published as a conference paper at ICLR 2022
+REFERENCES,0.4368932038834951,"Michalis Titsias and Petros Dellaportas.
+Gradient-based adaptive Markov chain Monte Carlo.
+Advances in Neural Information Processing Systems, 32:15730–15739, 2019."
+REFERENCES,0.4388349514563107,"Surya T Tokdar and Robert E Kass.
+Importance sampling: a review.
+Wiley Interdisciplinary
+Reviews: Computational Statistics, 2(1):54–60, 2010."
+REFERENCES,0.4407766990291262,"Belinda Tzen and Maxim Raginsky. Theoretical guarantees for sampling and inference in generative
+models with latent diffusions. In Conference on Learning Theory, pp. 3084–3114. PMLR, 2019."
+REFERENCES,0.44271844660194176,"Hao Wu, Jonas K¨ohler, and Frank Noe. Stochastic normalizing flows. In H. Larochelle, M. Ranzato,
+R. Hadsell, M. F. Balcan, and H. Lin (eds.), Advances in Neural Information Processing Systems,
+volume 33, pp. 5933–5944. Curran Associates, Inc., 2020."
+REFERENCES,0.4446601941747573,Qinsheng Zhang and Yongxin Chen. Diffusion normalizing flow. Advances in Neural Information
+REFERENCES,0.44660194174757284,"Processing Systems, 34, 2021."
+REFERENCES,0.44854368932038835,"Yan Zhou, Adam M Johansen, and John AD Aston.
+Toward automatic model comparison: an
+adaptive sequential Monte Carlo approach. Journal of Computational and Graphical Statistics, 25
+(3):701–726, 2016."
+REFERENCES,0.45048543689320386,Published as a conference paper at ICLR 2022
+REFERENCES,0.4524271844660194,"A
+PROOF OF THEOREM 1"
+REFERENCES,0.45436893203883494,"Before proving our main theorem, we introduce the following important lemma.
+Lemma 4.1 (Dai Pra (1991); Pavon (1989)). The transition density associated with optimal control
+policy u∗for eq (2) and eq (3) is"
+REFERENCES,0.4563106796116505,"Q∗
+s,t(x, y) = Q0
+s,t(x, y)ϕt(y)"
+REFERENCES,0.458252427184466,"ϕs(x),
+(22)"
+REFERENCES,0.4601941747572815,"where Qu
+s,t(x, y) denotes the transition probability from state x at time s to state y at time t."
+REFERENCES,0.4621359223300971,"Proof of Theorem 1: We denote the initial Dirac distribution by ν = δ¯x0. Combining eq (7) and
+Vt(x) = −log ϕt(x) we obtain"
+REFERENCES,0.4640776699029126,"V0(¯x0) = −log EQ0[exp(−Ψ(xT ))] = −log(
+Z
+µ
+µ0 dµ0) = 0."
+REFERENCES,0.46601941747572817,"Therefore, we can evaluate the KL divergence between Q∗and Q0(τ|xT )µ(xT ) as"
+REFERENCES,0.4679611650485437,"DKL(Q∗(τ)∥Q0(τ|xT )µ(xT )) = Eτ∼Q∗[
+Z T 0"
+REFERENCES,0.46990291262135925,"1
+2 ∥u∗
+t ∥2 dt + Ψ(xT )] = V0(¯x0) = 0."
+REFERENCES,0.47184466019417476,"The first equality is based on eq (13). Next, we show that x∗
+T ∼µ. The above equations imply
+Q∗
+0,T (¯x0, y)dy = exp (−Ψ(y))µ0(dy). It follows that"
+REFERENCES,0.47378640776699027,"P[x∗
+T ∈A] =
+Z"
+REFERENCES,0.47572815533980584,"A
+Q∗
+0,T (¯x0, y)dy =
+Z"
+REFERENCES,0.47766990291262135,"A
+exp(−Ψ(y))µ0(dy) = µ(A)."
+REFERENCES,0.4796116504854369,"B
+PROOF OF IMPORTANCE WEIGHTS"
+REFERENCES,0.4815533980582524,By definition
+REFERENCES,0.48349514563106794,wu(τ) = dQ∗(τ)
+REFERENCES,0.4854368932038835,dQu(τ) = dQ∗(τ)
+REFERENCES,0.487378640776699,"dQ0(τ)
+dQ0(τ)
+dQu(τ).
+(23)"
+REFERENCES,0.4893203883495146,Plugging eq (11) and eq (22) into the above we obtain
+REFERENCES,0.4912621359223301,"wu(τ) = exp(
+Z T 0 −1"
+REFERENCES,0.49320388349514566,"2 ∥ut∥2 dt−u′
+tdwt−log µ0(xT )"
+REFERENCES,0.49514563106796117,"µ(xT ) ) = exp(
+Z T 0 −1"
+REFERENCES,0.4970873786407767,"2 ∥ut∥2 dt−u′
+tdwt−Ψ(xT ))."
+REFERENCES,0.49902912621359224,"C
+PROOF OF THEOREM 2"
+REFERENCES,0.5009708737864078,"C.1
+LIPCHITZ CONDITON AND PRELIMINARY LEMMA"
+REFERENCES,0.5029126213592233,"To ease the burden of notations, we assume x0 ∼δ0. Our conclusion and proof can be generalized to
+other Dirac distributions easily. We start by assuming some conditions on the Lipschitz of optimal
+policy u∗. It promises the existence of a unique strong solution with xT ∼µ. The conditions
+and properties are studied in Schr¨odinger-F¨ollmer process, which dates back to the Schr¨odinger
+problem. For proof of existence of a unique strong solution and detailed discussion, we refer the
+reader to Dai Pra (1991); L´eonard (2014); Eldan et al. (2020); Huang et al. (2021).
+Condition 1."
+REFERENCES,0.5048543689320388,"||u∗
+t (x)||2
+2 ≤C0(1 + ∥x∥2)
+(24)
+and
+u∗
+t1(x1) −u∗
+t2(x2)
+ ≤C1(∥x1 −x2∥+ |t1 −t2|
+1
+2 ).
+(25)"
+REFERENCES,0.5067961165048543,"Below is the formal statement of Theorem 2.
+Theorem 5. Under Condition 1, with sampling step size ∆t, if ∥u∗
+t −ut∥2 ≤dϵ for any t, then"
+REFERENCES,0.5087378640776699,"W2(Qu(xT ), µ(xT )) = O(
+p"
+REFERENCES,0.5106796116504855,"Td(∆t + ϵ)).
+(26)"
+REFERENCES,0.512621359223301,Published as a conference paper at ICLR 2022
+REFERENCES,0.5145631067961165,We introduce the following lemma before stating the proof for Theorem 2.
+REFERENCES,0.516504854368932,"Lemma 5.1. (Huang et al., 2021, Lemma A.2.) Assume Condition 1 holds, then the following
+inequality holds for xt generated from u∗,"
+REFERENCES,0.5184466019417475,"E[∥xt2 −xt1∥2] ≤4C0 exp(2C0)(C0 + d)(t2 −t1)2 + 2C0(t2 −t1)2 + 2d|t2 −t1|, t1, t2 ∈[0, T].
+(27)"
+REFERENCES,0.5203883495145631,"C.2
+PROOF OF THEOREM 2"
+REFERENCES,0.5223300970873787,"We denote by x∗
+(0:T ) the trajectory controlled by the optimal policy u∗, and by {xt0, xt1, · · · , xtN }
+the discrete time process with sub-optimal policy u over discrete time {tk} such that t0 = 0, tN = T
+and tk −tk−1 = ∆t. The process {xtk} can be extended to continuous time setting as"
+REFERENCES,0.5242718446601942,"xtk = xtk−1 +
+Z tk"
+REFERENCES,0.5262135922330097,"tk−1
+utk−1(xtk−1)ds + dws."
+REFERENCES,0.5281553398058253,"The key of our proof is the bound of
+xtk −x∗
+tk
+2 as"
+REFERENCES,0.5300970873786408,"xtk −x∗
+tk
+2 ="
+REFERENCES,0.5320388349514563,"xtk−1 +
+Z tk"
+REFERENCES,0.5339805825242718,"tk−1
+utk−1(xtk−1)ds + dws −[x∗
+tk−1 +
+Z tk"
+REFERENCES,0.5359223300970873,"tk−1
+u∗
+s(x∗
+s)ds + dws]  2"
+REFERENCES,0.537864077669903,"≤
+xtk−1 −x∗
+tk−1 2
++  Z tk"
+REFERENCES,0.5398058252427185,"tk−1
+[u∗
+s(x∗
+s) −utk−1(xtk−1)]ds  2"
+REFERENCES,0.541747572815534,"+ 2
+xtk−1 −x∗
+tk−1   Z tk"
+REFERENCES,0.5436893203883495,"tk−1
+[u∗
+s(x∗
+s) −utk−1(xtk−1)]ds "
+REFERENCES,0.545631067961165,"≤
+xtk−1 −x∗
+tk−1"
+REFERENCES,0.5475728155339806,"2
++ (
+Z tk tk−1"
+REFERENCES,0.5495145631067961,"u∗
+s(x∗
+s) −utk−1(xtk−1)
+ ds)2"
+REFERENCES,0.5514563106796116,"+ 2
+xtk−1 −x∗
+tk−1"
+REFERENCES,0.5533980582524272,"(
+Z tk tk−1"
+REFERENCES,0.5553398058252427,"u∗
+s(x∗
+s) −utk−1(xtk−1)
+ ds)"
+REFERENCES,0.5572815533980583,"≤(1 + α)
+xtk−1 −x∗
+tk−1"
+REFERENCES,0.5592233009708738,"2
++ (1 + 1"
+REFERENCES,0.5611650485436893,"α)(
+Z tk tk−1"
+REFERENCES,0.5631067961165048,"u∗
+s(x∗
+s) −utk−1(xtk−1)
+ ds)2"
+REFERENCES,0.5650485436893203,"≤(1 + α)
+xtk−1 −x∗
+tk−1 2"
+REFERENCES,0.566990291262136,+ (1 + 1
+REFERENCES,0.5689320388349515,"α)(tk −tk−1)(
+Z tk tk−1"
+REFERENCES,0.570873786407767,"u∗
+s(x∗
+s) −utk−1(xtk−1)
+2 ds),
+(28)"
+REFERENCES,0.5728155339805825,"where the first and second inequalities are based on the triangle inequality, the third inequality is
+based 2ab ≤αa2 + 1"
+REFERENCES,0.574757281553398,"αb2 for any α > 0, and the forth inequality is based on the Cauchy-Schwarz
+inequality."
+REFERENCES,0.5766990291262136,In the following we bound the second term in eq (28) as
+REFERENCES,0.5786407766990291,"u∗
+s(x∗
+s) −utk−1(xtk−1)
+2"
+REFERENCES,0.5805825242718446,"=
+u∗
+s(x∗
+s) −u∗
+tk−1(xtk−1) + u∗
+tk−1(xtk−1) −utk−1(xtk−1)
+
+2"
+REFERENCES,0.5825242718446602,"≤(1 + β)
+u∗
+s(x∗
+s) −u∗
+tk−1(xtk−1)
+
+2
++ (1 + 1"
+REFERENCES,0.5844660194174758,"β )
+u∗
+tk−1(xtk−1) −utk−1(xtk−1)
+
+2"
+REFERENCES,0.5864077669902913,"≤2C2
+1(1 + β)[
+x∗
+s −xtk−1
+2 + |s −tk−1|] + (1 + 1"
+REFERENCES,0.5883495145631068,"β )
+u∗
+tk−1(xtk−1) −utk−1(xtk−1)
+
+2
+,"
+REFERENCES,0.5902912621359223,Published as a conference paper at ICLR 2022
+REFERENCES,0.5922330097087378,where the first inequality uses 2ab ≤βa2 + 1
+REFERENCES,0.5941747572815534,"β b2 for an arbitrary β > 0 and the second one is based
+on eq (25). It follows that
+Z tk tk−1"
+REFERENCES,0.596116504854369,"u∗
+s(x∗
+s) −utk−1(xtk−1)
+2 ds"
+REFERENCES,0.5980582524271845,"≤
+Z tk"
+REFERENCES,0.6,"tk−1
+2C2
+1(1 + β)
+x∗
+s −xtk−1
+2 ds +
+Z tk"
+REFERENCES,0.6019417475728155,"tk−1
+2C2
+1(1 + β)(s −tk−1)ds"
+REFERENCES,0.6038834951456311,"+
+Z tk"
+REFERENCES,0.6058252427184466,"tk−1
+(1 + 1"
+REFERENCES,0.6077669902912621,"β )
+u∗
+tk−1(xtk−1) −utk−1(xtk−1)
+
+2
+ds."
+REFERENCES,0.6097087378640776,"Thus, for stepsize ∆t = tk −tk−1, we establish
+Z tk tk−1"
+REFERENCES,0.6116504854368932,"u∗
+s(x∗
+s) −utk−1(xtk−1)
+2 ds"
+REFERENCES,0.6135922330097088,"≤
+Z tk"
+REFERENCES,0.6155339805825243,"tk−1
+2C2
+1(1 + β)
+x∗
+s −xtk−1
+2 ds"
+REFERENCES,0.6174757281553398,"+ C2
+1(1 + β)∆t2 + (1 + 1"
+REFERENCES,0.6194174757281553,"β )
+u∗
+tk−1(xtk−1) −utk−1(xtk−1)
+
+2
+∆t.
+(29)"
+REFERENCES,0.6213592233009708,"Next we bound
+x∗
+s −xtk−1
+2 in eq (29) as"
+REFERENCES,0.6233009708737864,"x∗
+s −xtk−1
+2 ≤(1 + η)
+x∗
+s −x∗
+tk−1"
+REFERENCES,0.625242718446602,"2
++ (1 + 1"
+REFERENCES,0.6271844660194175,"η )
+x∗
+tk−1 −xtk−1
+
+2
+,
+(30)"
+REFERENCES,0.629126213592233,where the inequality is based on (a + b)2 ≤(1 + η)a2 + (1 + 1
+REFERENCES,0.6310679611650486,η)b2 for an arbitrary η > 0.
+REFERENCES,0.6330097087378641,"Plugging eq (30) into eq (29) yields
+Z tk tk−1"
+REFERENCES,0.6349514563106796,"u∗
+s(x∗
+s) −utk−1(xtk−1)
+2 ds"
+REFERENCES,0.6368932038834951,≤(1 + 1
+REFERENCES,0.6388349514563106,"β )
+u∗
+tk−1(xtk−1) −utk−1(xtk−1)
+
+2
+∆t + C2
+1(1 + β)∆t2"
+REFERENCES,0.6407766990291263,"+ 2C2
+1(1 + β)(1 + 1"
+REFERENCES,0.6427184466019418,"η )
+x∗
+tk−1 −xtk−1
+
+2
+∆t + 2C2
+1(1 + β)(1 + η)
+Z tk tk−1"
+REFERENCES,0.6446601941747573,"x∗
+s −x∗
+tk−1 2
+ds. (31)"
+REFERENCES,0.6466019417475728,Plugging eq (29) and (31) into eq (28) yields
+REFERENCES,0.6485436893203883,"LHS ≤[1 + α + 2C2
+1(1 + 1"
+REFERENCES,0.6504854368932039,α)(1 + β)(1 + 1
+REFERENCES,0.6524271844660194,"η )∆t2]
+x∗
+tk−1 −xtk−1
+
+2"
+REFERENCES,0.654368932038835,"+ 2C2
+1(1 + 1"
+REFERENCES,0.6563106796116505,"α)(1 + β)(1 + η)∆t
+Z tk tk−1"
+REFERENCES,0.658252427184466,"x∗
+s −x∗
+tk−1"
+DS,0.6601941747572816,"2
+ds"
+DS,0.6621359223300971,+ (1 + 1
+DS,0.6640776699029126,α)(1 + 1
+DS,0.6660194174757281,"β )
+u∗
+tk−1(x∗
+tk−1) −utk−1(xtk−1)
+
+2
+∆t2 + (1 + 1"
+DS,0.6679611650485436,"α)C2
+1(1 + β)∆t3. (32)"
+DS,0.6699029126213593,"Invoking lemma 5.1, we obtain"
+DS,0.6718446601941748,"E[
+Z tk tk−1"
+DS,0.6737864077669903,"x∗
+s −x∗
+tk−1"
+DS,0.6757281553398058,"2
+ds] ≤4C0 exp(2C0)(C0 + d)∆t3 + 2C0∆t3 + 2d∆t2."
+DS,0.6776699029126214,"Taking the expectation of eq (32), in view of the above and the assumption on control, we establish"
+DS,0.6796116504854369,"E[
+xtk −x∗
+tk
+2] ≤C3E[
+xtk−1 −x∗
+tk−1"
+DS,0.6815533980582524,"2
+] + C4,"
+DS,0.683495145631068,Published as a conference paper at ICLR 2022
+DS,0.6854368932038835,"where C3 = [1 + α + 2C2
+1(1 + 1"
+DS,0.6873786407766991,α)(1 + β)(1 + 1
+DS,0.6893203883495146,"η)∆t2], and"
+DS,0.6912621359223301,C4 =(1 + 1
+DS,0.6932038834951456,α)(1 + 1
+DS,0.6951456310679611,β )dϵ∆t2 + (1 + 1
+DS,0.6970873786407767,"α)C2
+1(1 + β)∆t3"
+DS,0.6990291262135923,"+ 2C2
+1(1 + 1"
+DS,0.7009708737864078,α)(1 + β)(1 + η)[4C0 exp(2C0)(C0 + d)∆t3 + 2C0∆t3 + 2d∆t2]∆t.
+DS,0.7029126213592233,"Finally, in view of the fact x0 = x∗
+0 and fixed step size ∆t, we conclude that by the choice α =
+C1∆t, β = η = 1"
+DS,0.7048543689320388,"E[∥xT −x∗
+T ∥2] ≤C"
+DS,0.7067961165048544,"T
+∆t
+3
+−1
+C3 −1 C4 = O(dT(∆t + ϵ)),
+(33)"
+DS,0.7087378640776699,"where the last inequality is based on ignoring the high order terms, C"
+DS,0.7106796116504854,"T
+∆t
+3
+−1 ≤O(T) and
+C4
+C3−1 ≤
+O(d(∆t + ϵ))."
+DS,0.7126213592233009,"D
+PROOF OF THEOREM 3"
+DS,0.7145631067961165,The proof is a natural extension of Corollary 7 in Thijssen & Kappen (2015).
+DS,0.7165048543689321,We define random variable
+DS,0.7184466019417476,"Su(t) =
+Z t 0 ∥us∥2"
+DS,0.7203883495145631,"2
+ds + u′
+sdws + Ψ(xT ),
+(34)"
+DS,0.7223300970873786,"and
+Φ(t) = exp(−Su(0) + Su(t)).
+(35)
+Lemma 5.2. (Thijssen & Kappen, 2015, Lemma 4) For any feasible control policy u for stochastic
+optimal control problem,"
+DS,0.7242718446601941,"Φ(T)ϕt(xT ) −Φ(t)ϕt(xt) =
+Z T"
+DS,0.7262135922330097,"t
+Φ(s)ϕt(xs)(u∗
+s −us)′dws.
+(36)"
+DS,0.7281553398058253,Corollary 1.
+DS,0.7300970873786408,"ϕt(x) = EQ0[exp(−Ψ(xT ))|xt = x] = EQu[exp(−Ψ(xT ) −
+Z T t ∥us∥2"
+DS,0.7320388349514563,"2
+ds)|xt = x]
+(37)"
+DS,0.7339805825242719,Proof. This follows importance sampling with density ratio from eq (11).
+DS,0.7359223300970874,"Proof of Theorem 3: We denote the important weight by wu; note it is a random variable. It follows
+that"
+DS,0.7378640776699029,"wu =
+exp(−Ψ(xT ) −
+R T
+0 ( ∥u∥2"
+DS,0.7398058252427184,2 dt + u′dw))
+DS,0.7417475728155339,"EQu[exp(−Ψ(xT ) −
+R T
+0 ( ∥u∥2"
+DS,0.7436893203883496,"2 dt + u′dw))]
+=
+exp(−Su(t))
+EQu[exp(−Su(t))].
+(38)"
+DS,0.7456310679611651,Dividing the LHS of eq (36) by ϕ0(x0) we obtain
+DS,0.7475728155339806,Φ(T)ϕt(xT ) −Φ(t)ϕt(xt)
+DS,0.7495145631067961,"ϕ0(x0)
+= Φ(T)ϕt(xT ) −ϕ0(x0)"
+DS,0.7514563106796116,"EQu[exp(−Su(0))]
+= wu −EQu[wu].
+(39)"
+DS,0.7533980582524272,"Therefore, the variance of wu equals"
+DS,0.7553398058252427,"EQu[(wu −EQu[wu])2] = EQu[(
+Z T 0"
+DS,0.7572815533980582,Φ(s)ϕs(xs)
+DS,0.7592233009708738,"ϕ0(x0)
+(u∗
+s −us)′dw)2]"
+DS,0.7611650485436893,"= EQu[
+Z T 0"
+DS,0.7631067961165049,"Φ2(s)ϕ2
+s(xs)
+ϕ2
+0(x0)
+(u∗
+s −us)′(u∗
+s −us)ds]"
+DS,0.7650485436893204,"= EQu[
+Z T"
+DS,0.7669902912621359,"0
+(wuϕs(xs) exp(Su(s)))2(u∗
+s −us)′(u∗
+s −us)ds].
+(40)"
+DS,0.7689320388349514,Published as a conference paper at ICLR 2022
+DS,0.7708737864077669,By Jensen’s inequality
+DS,0.7728155339805826,"ϕ(s, xs)2 = (EQu[exp(−Su(s))|xs])2 ≤EQu[exp(−2Su(s))|xs]."
+DS,0.7747572815533981,"Plugging the above inequality into eq (40), we reach the upper bound of variance"
+DS,0.7766990291262136,"EQu[(wu −EQu[wu])2] ≤
+Z T"
+DS,0.7786407766990291,"0
+EQu[(u∗
+s −us)′(u∗
+s −us)(wu)2]ds.
+(41)"
+DS,0.7805825242718447,"In view of the fact Var(wu) + 1 = EQu[(wu)2], we arrive at"
+DS,0.7825242718446602,"1 + EQu[(wu)2] ≤EQu[(wu)2]
+Z T"
+DS,0.7844660194174757,"0
+EQu[(u∗
+s −us)′(u∗
+s −us)]ds."
+DS,0.7864077669902912,"If we consider the near optimal policy such that maxt,x ∥ut(x) −u∗
+t (x)∥2 ≤ϵ"
+DS,0.7883495145631068,"T , then it follows that"
+DS,0.7902912621359224,"1
+EQu[(wu)2] ≥1 −ϵ.
+(42)"
+DS,0.7922330097087379,"E
+PROOF OF THEOREM 4"
+DS,0.7941747572815534,"We consider the KL divergence between trajectory distribution resulted from the policy u and the
+one from optimal policy u∗:"
+DS,0.7961165048543689,DKL(Qu(τ)∥Q∗(τ)) = DKL(Qu(τ)∥Q0(τ) µ(xT )
+DS,0.7980582524271844,µ0(xT ))
+DS,0.8,"= Eτ∼Qu[
+Z T 0"
+DS,0.8019417475728156,"1
+2 ∥ut∥2 dt + u′
+tdwt + Ψ(xT )]"
+DS,0.8038834951456311,"= Eτ∼Qu[
+Z T 0"
+DS,0.8058252427184466,"1
+2 ∥ut∥2 dt + u′
+tdwt + ˆΨ(xT ) + log Z]"
+DS,0.8077669902912621,"= Eτ∼Qu[ ˆSu(τ) + log Z]
+≥0."
+DS,0.8097087378640777,"The last inequality is based on the fact DKL(Qu(τ)∥Q∗(τ)) ≥0 and the equality holds only when
+u = u∗, pointing to"
+DS,0.8116504854368932,0 = Eτ∼Q∗[ ˆSu(τ) + log Z].
+DS,0.8135922330097087,"Therefore, we can estimate the normalization constant by"
+DS,0.8155339805825242,"Z ≥exp(−Eτ∼Qu[ ˆSu(τ)]),
+Z = exp(−Eτ∼Q∗[ ˆSu(τ)]).
+(43)"
+DS,0.8174757281553398,"Next we provide an unbiased estimation with sub-optimal policy u based on importance sampling
+as"
+DS,0.8194174757281554,1 = Eτ∼Qu[ Q∗(τ)
+DS,0.8213592233009709,Qu(τ)]
+DS,0.8233009708737864,= Eτ∼Qu[exp(log Q∗(τ)
+DS,0.8252427184466019,Qu(τ))]
+DS,0.8271844660194175,= Eτ∼Qu[exp(−ˆSu(τ) −log Z)].
+DS,0.829126213592233,The last equality is based on the fact Eτ∼Qu[ Q∗(τ)
+DS,0.8310679611650486,"Qu(τ)] =
+R"
+DS,0.8330097087378641,"τ Q∗(τ)dτ = 1. Hence, we obtain an
+unbiased estimation of the normalization constant as"
+DS,0.8349514563106796,Z = Eτ∼Qu[exp(−ˆSu(τ))].
+DS,0.8368932038834952,"F
+EXPERIMENT DETAILS AND DISCUSSIONS"
+DS,0.8388349514563107,Published as a conference paper at ICLR 2022
+DS,0.8407766990291262,"log µ
+PIS
+AFT
+SMC
+NUTS
+HMC
+VI-NF"
+DS,0.8427184466019417,"Figure 4: Sampling performance on a challenging 2D unnormalized density model with well-
+separated modes. Kernel density estimation plots are compared with 2k samples. AFT and SMC
+use annealing trick with 10 decreasing temperate levels and HMC kernel following (Arbel et al.,
+2021). Even without annealing trick and resampling, Path Integral Sampler (PIS) generates visually
+indistinguishable samples from target density with 100 steps. PIS starts x0 from origin point while
+others start from a standard Gaussian. The underlying distribution is chosen deliberately to distin-
+guish the performance of different methods. In particular, 100 steps are not sufficient for general
+MCMC to converge to the stationary distribution. We also note performance of compared methods
+can be further improved with tuning temperature scheduling, samples initialization. Our generic
+algorithm can explore more modes with similar initialization and less tuning parameters."
+DS,0.8446601941747572,"F.1
+TRAINING TIME, MEMORY REQUIREMENTS AND SAMPLING EFFICIENCY"
+DS,0.8466019417475729,"The PIS can be trained once before sampling and did not contribute to the runtime in sampling
+computation. Most MCMC methods do not have learnable parameters. However, PIS policy is
+trained once and used everywhere. Thus, the training time can be amortized when PIS policy is
+deployed in generating a large number of samples. The training time of PIS highly depends on
+efficiency of training NeuralSDEs. One future direction is to investigate additional regularizations
+and structured SDEs to speed up the training. The PIS algorithm is implemented in PyTorch (Paszke
+et al., 2019). We use Adam optimizer (Kingma & Ba, 2014) in all experiments to learn optimal
+policy with learning rates 5 × 10−3 and other default hyperparameters. All experiments are trained
+with 30 epochs and 15000 points datasets. Loss in most experiments plateau after 3 epochs, some
+even 1 epoch. Experiments are conducted using an NVIDIA A6000 GPU. Training one epoch on
+2d example takes around 15 seconds for PIS-NN and 30 seconds for PIS-Grad, 1.6 minutes and 1.8
+minutes respectively on Funnel (d = 10), and 7 minutes and 9 minutes on LGCP (d = 1600). We
+note both PIS and AFT can be trained once and used everywhere. Therefore, the training time can
+be amortized when the PIS policy is deployed in generating a large number of samples. We further
+compare empirical sampling time for various approaches in Tab 4."
+DS,0.8485436893203884,"In the high dimensional data, thanks to the efficient adjoint SDE solver, we do not need to cache the
+whole computational graph and the required memory is approximately the cost associated with one
+forward and backward pass of ut(x) network. In our experiments, the total consumed memory is
+around 1.5GB for the toy and Funnel example, and around 5GB for the LGCP."
+DS,0.8504854368932039,"method
+Sampling Time
+Training Time
+AFT
+352.2ms
+711.2ms
+SMC
+110.8 ms
+−
+PIS-NN
+16.8 ms
+30.3 ms
+PIS-Grad
+34.3 ms
+61.2 ms
+SNF
+130.6 ms
+256.1 ms"
+DS,0.8524271844660194,"Table 4: Sampling and training efficiency comparison. For sampling, we measure the consumed
+time for generating 2000 particles with each method for 100 times in lower dimensional data, 2-D
+points datasets, and report average time for each method. We also include one batch training time
+for AFT and PIS."
+DS,0.8543689320388349,"F.2
+NETWORK INITIALIZATION"
+DS,0.8563106796116505,Published as a conference paper at ICLR 2022
+DS,0.858252427184466,"In most experiments in the paper, we found PIS with the default setting, T = 1 and zero control
+initialization, gives reasonable performance. One exception is LGCP, where we found training with
+T = 1 sometimes suffers from numerical issues and gives NAN loss. We sweep T = 1, 2, 5 and
+found T = 5 gives encouraging results. As we discussed in appendix G, the optimal policy u∗
+depends on T and large T not only results in a large cover area but also a “smoother” u∗. For neural
+network weight initialization, we use the zero initialization for the last layer of parameterized policy
+ut(x) and other weights follow default initialization in PyTorch.
+We note there is no guarantee
+that PIS can cover all modes initially with only the given unnormalized distribution. However,
+the initialization problem exists for most sampling algorithms and MCMC algorithms suffer longer
+mixing times compared with the ones with proper initialization (Chopin & Papaspiliopoulos, 2020).
+PIS also suffers from improper initialization and we report some failure mode in appendix G."
+DS,0.8601941747572815,"F.3
+DETAILS FOR COMPARED METHODS"
+DS,0.8621359223300971,"For all trained PIS and its variants, we use uniform 100 time-discretization steps for the SDEs. Gra-
+dient clipping with value 1 is used. A Fourier feature augmentation (Tancik et al., 2020) is employed
+for time condition. Throughout all experiments, we use the same network with the modified first
+layer and last layer for different input data shape. In one pass ut(x), we augmented scalar t with
+Fourier feature to 128 dimension, followed by a 2 linear layers to extract 64 dimension signal fea-
+ture. We use 2 layer linear layers to extract 64 dimension feature for x and the concatenate x, t
+features before feeding into another 3 linear layer with 64 hidden neurons to get ut(x). We found
+that the training is stable with our simple MLP parametrization in our experiments."
+DS,0.8640776699029126,"For HMC, we use 10 iterations of Hamiltonian Monte Carlo with 10 leapfrog steps per iterations,
+totaling 100 leapfrog steps. For NUTS, we set the maximum depth of the tree built as 5. Note
+that samples of HMC and NUTS used in our experiments are from separate trajectories instead of
+from one trajectory at different timestamps. We observed that the latter is more likely to generate
+samples that concentrate on one single mode. For SMC and AFT, we use 10 transitions with each
+transition using the same amount computation as HMC. The settings of SMC and AFT follow the
+official implementation (Arbel et al., 2021) in the released codebase 1. In the Alanine Dipeptide
+experiments, for AFT we sweep adam learning rate lr = 1×10−4, 5×10−4, 1×10−3, 5×10−3, 1×
+10−2 and select 5 × 10−3. Other settings follow the default setup from the official codebase."
+DS,0.8660194174757282,"F.4
+COMPARISON WITH SVGD ALGORITHM"
+DS,0.8679611650485437,"In this section, we present some comparison between celebrated SVGD sampling algorithm (Liu
+et al., 2016; 2019) and PIS sampler. SVGD is based on collections of interacting particle, and we
+found its performance increase with more samples in a batch as it shown in Fig 5. Even with 5000
+particles in a bach, sample quality of SVGD is still worse than PIS-Grad. Meanwhile, the kernel-
+based approach pays much more computation results as the number of active particles increases as
+we show in Tab 5 compared with PIS. In this perspective, PIS enjoy much better scalibility."
+DS,0.8699029126213592,"method
+Time (mean ± std)
+SVGD 100 particles
+19.3 ms ± 1.2 ms
+SVGD 1000 particles
+29.4 ms ± 1.8 ms
+SVGD 5000 particles
+434 ms ± 2.43 ms
+PIS-NN 5000 particles
+223 µs ± 14.2 µs
+PIS-Grad 5000 particles
+412 µs ± 15.1 µs"
+DS,0.8718446601941747,"Table 5: Consumed time for one iteration of SVGD and one step in PIS in 2D points example.
+Sampling with SVGD is less efficient compared with PIS."
+DS,0.8737864077669902,1https://github.com/deepmind/annealed_flow_transport
+DS,0.8757281553398059,Published as a conference paper at ICLR 2022
+PARTICLES,0.8776699029126214,"100 particles
+1000 particles
+5000 particles"
+PARTICLES,0.8796116504854369,"Figure 5: Generated samples from SVGD (Liu & Wang, 2016) with 100 steps. We generated samples
+with batch size 100, 1000, 5000. We find with more particles, samples generated are more closed to
+the ground truth data."
+PARTICLES,0.8815533980582524,"F.5
+CHOICE OF PRIOR SDE:"
+PARTICLES,0.883495145631068,We can use a more general SDE
+PARTICLES,0.8854368932038835,"dxt = f(t, xt)dt + g(t, xt)(utdt + dwt), x0 ∼ν
+(44)"
+PARTICLES,0.887378640776699,"instead of eq (2) for sampling. As discuss in Section 3.3, we prefer use a linear function for f, g
+to promise a closed-form µ0. The choice of f, g encodes prior knowledge into dynamics without
+control and Q∗is determined based on the prior Q0. Intuitively, the ideal Q0 should drive particles
+from ν to Q0(xT ) that is close to µ. In PIS, our training objective is to fit Q∗with parameterized
+Qu. Thus training can be easier and faster if Q∗and Q0 are close since we use zero control as
+initialization for training policy. However, there is no general approach to choose f, g such that
+Q0(xT ) is close to µ and Q0(xT ) has a closed form. In this work, we adopt the general form with
+f = 0, g = I. It would be interesting to explore other prior dynamics or data-variant f, g in the
+future work, e.g., underdamped Langevin."
+PARTICLES,0.8893203883495145,"F.6
+ESTIMATION OF NORMALIZATION CONSTANTS"
+PARTICLES,0.8912621359223301,"As discussed in Chopin & Papaspiliopoulos (2020), normalization constants estimation of SMC and
+its variants AFT can be achieved with incremental importance sampling weights."
+PARTICLES,0.8932038834951457,"In our experiments we treat HMC and NUTS as special cases of SMC with only two different tem-
+perature levels. One corresponds to a standard Gaussian distribution and the other one corresponds
+to the target density. Since the initial distribution ν for SMC and NUTs is chosen as standard Gaus-
+sian, we can omit the MCMC steps for it and the total computation efforts required for the specific
+SMC are for the transitions in HMC and NUTS."
+PARTICLES,0.8951456310679612,"For VI-NF, we use importance sampling
+Z
+ˆµ(x)dx =
+Z
+q(x) ˆµ(x)"
+PARTICLES,0.8970873786407767,q(x) dx = Eq[ ˆµ(x)
+PARTICLES,0.8990291262135922,"q(x) ],"
+PARTICLES,0.9009708737864077,"where q is the normalized distribution represented by normalizing flows, to provide an unbiased esti-
+mation of normalization constants. We use the ELBO in eq (18) for PIS and the unbiased estimation
+eq (19) for PISRW ."
+PARTICLES,0.9029126213592233,"F.7
+2 DIMENSIONAL RINGS EXAMPLE"
+PARTICLES,0.9048543689320389,The ring-shape density function
+PARTICLES,0.9067961165048544,"log ˆµ = −min((∥x∥−1)2, (∥x∥−3)2, (∥x∥−5)2) 100
+."
+PARTICLES,0.9087378640776699,Published as a conference paper at ICLR 2022
+PARTICLES,0.9106796116504854,"Consider the special case of gradient informed SDE, which can be viewed as PIS-Grad with a spe-
+cific group of parameters,
+dxt = ∇log ˆµ(xt)dt +
+√ 2dwt."
+PARTICLES,0.912621359223301,"This is exactly the Langevin dynamics used widely in sampling (MacKay, 2003). As a special
+case of MCMC, Langevin sampling can generate high quality samples given large enough time
+interval (MacKay, 2003). From this perspective, PIS-Grad can be viewed as a modulated Langevin
+dynamics that is adjusted and represented by neural networks."
+PARTICLES,0.9145631067961165,"F.8
+BENCHMARKING DATASETS"
+PARTICLES,0.916504854368932,"MG(d=2)
+Funnel(d=10)
+LGCP(d=1600)
+B
+S
+A
+B
+S
+A
+B
+S
+A
+AFT-103
+-0.509
+0.24
+0.562
+-0.249
+0.0758
+0.261
+-3.08
+1.59
+3.46
+SMC-103
+-0.362
+0.293
+0.466
+-0.338
+0.136
+0.364
+-440
+14.7
+441
+AFT-2 × 103
+-0.371
+0.477
+0.604
+-0.249
+0.0758
+0.261
+-1.23
+0.826
+1.48
+SMC-2×103
+-0.398
+0.198
+0.444
+-0.338
+0.136
+0.364
+-197
+5.21
+197
+AFT-3 × 103
+-0.316
+0.365
+0.483
+-0.281
+0.0839
+0.293
+-1.05
+0.514
+1.17
+SMC-3×103
+-0.137
+0.62
+0.635
+-0.323
+0.064
+0.329
+-109
+5.58
+109
+AFT-5 × 103
+-0.194
+0.319
+0.373
+-0.253
+0.0397
+0.256
+-0.949
+0.439
+1.05
+SMC-5×103
+-0.129
+0.246
+0.278
+-0.298
+0.0564
+0.303
+-37.5
+5.04
+37.8
+AFT-104
+-0.03
+0.515
+0.515
+-0.194
+0.0554
+0.202
+-0.827
+0.356
+0.901
+SMC-104
+-0.171
+0.446
+0.477
+-0.239
+0.0412
+0.243
+-6.47
+1.95
+6.76
+PIS-102
+-0.021
+0.03
+0.037
+-0.008
+9e-3
+0.012
+-1.94
+0.91
+2.14"
+PARTICLES,0.9184466019417475,"Table 6: Long-run MCMC on mode separated mixture of Gaussian (MG), Funel distribution and
+Log Gaussian Cox Process (LGCP) for estimating log normalization constants. The suffix denotes
+the total number of discrete-time steps for each method, which equals the number of layers multiply
+steps per layer. We experiments 10, 20, 30, 50, 100 layers for annealing and 100 leapfrog steps per
+layer. As the number of steps increases, the performance of AFT and SMC gradually improves. PIS
+denotes the PISRW -Grad. B and S stand for estimation bias and standard deviation among 100 runs
+and A2= B2 + S2."
+PARTICLES,0.920388349514563,"For mixture of Gaussian, we choose nine centers over the grid {−5, 0, 5} × {−5, 0, 5}, and each
+Gaussian has variance 0.3. The small variance is selected deliberately to distinguish the performance
+of the different methods. We use 2000 samples for estimating the log normalization constant Z. We
+use the standard MLP network to parameterize the control drift ut(x), where the time signal is
+augmented by Fourier feature using 64 different frequencies. We use 2 layer (64 hidden neurons in
+each layer) MLP to extract features from the augmented time signal and x separately, and another 2
+layer MLP to map the summation of features to the policy command. We note that all these methods
+for comparison, including HMC, NUTS, SMC, AFT, can reach reasonably good results given large
+enough iterations. However, with small finite number of steps, PIS achieves the best performance.
+We include more results for long-run MCMC methods in Tab 6."
+PARTICLES,0.9223300970873787,"In the experiment with Funnel distribution, Arbel et al. (2021) suggests to use a slice sampler kernel
+for AFT and SMC, which includes 1000 steps of slice sampling per temperature. In Tab 1, we still
+use HMC for comparing performance with the same number of integral steps. We also include the
+results with slice sampler in Tab 7. We use 6000 particles for the estimation of log normalization
+constants. The network architecture of PIS is exactly the same as that in the experiments with
+mixture of Gaussian."
+PARTICLES,0.9242718446601942,"In the example with Cox process, the covariance K is chosen as"
+PARTICLES,0.9262135922330097,"K(u, v) = 1.91 × exp(−∥u −v∥ Mβ
+),"
+PARTICLES,0.9281553398058252,Published as a conference paper at ICLR 2022
+PARTICLES,0.9300970873786408,"Funnel(d=10)
+B
+S
+A
+AFT-10
+0.128
+0.376
+0.398
+SMC-10
+-0.193
+0.067
+0.204
+AFT-20
+0.0134
+0.173
+0.174
+SMC-20
+-0.113
+0.0878
+0.143
+AFT-30
+0.074
+0.309
+0.318
+SMC-30
+-0.006
+0.188
+0.188
+PISRW -Grad
+-0.008
+0.009
+0.012"
+PARTICLES,0.9320388349514563,"Table 7: AFT and SMC with slice sampler kernel. The suffix denotes the number of temperature
+levels for annealing. 1000 slicing sampling steps are used for each temperature. Though there is no
+annealing and only 100 steps are used, the performance of PIS is competitive."
+PARTICLES,0.9339805825242719,"and the mean vector equals log(126) −σ2 and α = 1/M 2. We note that this setting follows Arbel
+et al. (2021); Møller et al. (1998). Totally 2000 samples are used to evaluate the log normalization
+constant. We treat the mean of estimation results from 100 repetitions of SMC with 1000 tempera-
+tures as ground truth normalization constants. In this experiment, we found clipping gradient from
+target density function help stabilize and speed up the training of PIS-Grad. This example is the
+most challenging task among the three. One major reason is the high dimensionality of the task; the
+PIS needs to find optimal policy u : (t, Rd) →Rd in high dimensional space. In addition, there
+is no prior information that can be used to shrink the search space, which makes the training of PIS
+with MLP more difficult. We use 2000 particles for estimation of log normalization constants. We
+also include more experiment results in Tab 8."
+PARTICLES,0.9359223300970874,"LGCP(d=1600)
+B
+S
+A
+AFT-104
+-0.827
+0.356
+0.901
+PISRW -Grad-1 × 102
+-1.94
+0.91
+2.14
+PISRW -Grad-5 × 102
+-1.25
+0.57
+1.373
+PISRW -Grad-10 × 102
+-0.832
+0.214
+0.859"
+PARTICLES,0.9378640776699029,"Table 8: PIS with large number of integral step. The suffix number is the total integral steps. For
+AFT-104, we use 100 annealing layers and run 100 leapfrog steps per each annealing layer."
+PARTICLES,0.9398058252427185,"F.9
+ALANINE DIPEPTIDE"
+PARTICLES,0.941747572815534,"The setup for target density distribution and the comparison method are adopted from Wu et al.
+(2020). Following No´e et al. (2019), an invertible transformation between Cartesian coordinates
+and the internal coordinates is deployed before output the final samples. Then we normalize the
+coordinates by removing means and dividing them by the standard deviation of train data. To setup
+the target distribution, we simulate Alanine dipeptide in vacuum using OpenMMTools (Eastman
+et al., 2017) 2. Total 105 atoms data points are generated as training data. Situation parameters,
+including time-step and temperature setting are the same as Wu et al. (2020). We refer the reader to
+official codebase for more details of setting target density function 3."
+PARTICLES,0.9436893203883495,"Following the setup in Wu et al. (2020), we use unweighted samples to compute the metrics. KL
+divergence of VI-NF on µ is calculated based on ELBO instead of importance sampling as in nor-
+malizing constants tasks. We use Metropolis random walk MCMC block for SMC, SNF and AFT
+and RealNVP blocks for SNF and AFT (Dinh et al., 2016). For a fair comparison, we use PIS-NN
+instead of PIS-Grad since none of the approaches in this example uses the gradient information. We
+note that SNF is originally trained with maximizing data likelihood where some empirical samples"
+PARTICLES,0.945631067961165,"2https://github.com/choderalab/openmmtools
+3https://github.com/noegroup/stochastic_normalizing_flows"
+PARTICLES,0.9475728155339805,Published as a conference paper at ICLR 2022
+PARTICLES,0.9495145631067962,"are assumed to be available. We modify the training objective function by reversing the original KL
+divergence as in eq (1)."
+PARTICLES,0.9514563106796117,"F.10
+MORE DETAILS ON SAMPLING IN VARIATIONAL AUTOENCODER LATENT SPACE"
+PARTICLES,0.9533980582524272,"Figure 6: Origin data images and their reconstructions from trained vanilla VAE. It can be seen that
+reconstruction images are smoother compared with the original images."
+PARTICLES,0.9553398058252427,"We use a vanilla VAE architecture to train on binary MNIST data. The encoder uses a standard 3
+layer MLP networks with 1024 hidden neurons, and maps an image to the mean and standard devi-
+ation of 50 dimension diagonal Normal distribution. The decoder employs 3 layer MLP networks
+to decode images from latent states. ReLU nonlinearity is used for hidden layers. For training,
+we use the Adam optimizer with learning rate 5 × 10−4, batch size 128. With reparameterization
+trick (Kingma & Welling, 2013) and closed-form KL divergence between approximated normal dis-
+tribution and standard normalization distribution, we train networks for totally 100 epochs. We show
+performance of vanilla in Fig 6."
+PARTICLES,0.9572815533980582,We parameterize distribution of decoder pθ(x|z) as
+PARTICLES,0.9592233009708738,log pθ(x|z) = log p(x|Dθ(z)) = x log Dθ(z) + (1 −x) log(1 −Dθ(z)).
+PARTICLES,0.9611650485436893,"For PIS, we use the same network and training protocol as that in the experiment for mixture of
+Gaussian and Funnel distributions. We also use gradient clip to prevent the magnitude of control
+drift from being too large."
+PARTICLES,0.9631067961165048,"G
+TECHNICAL DETAILS AND FAILURE MODES"
+PARTICLES,0.9650485436893204,"G.1
+TIPS"
+PARTICLES,0.9669902912621359,"Here we provide a list of observations and failure cases we encountered when we trained PIS. We
+found such evidences through some experiments, though there is no way we are certain the following
+claims are correct and general for different target densities."
+PARTICLES,0.9689320388349515,"• We notice that smaller T may result in control strategy with large Lipchastiz constants,
+which is within expectation since large control is required to drive particles to destina-
+tion with less amount of time. It is reported that it is more difficult to approximate large
+Lipchastiz functions with neural networks (Jacot et al., 2018; Tancik et al., 2020). We
+thus recommend to increase T or constraint the magnitude of u to stablize training when
+encountering numeric issue or when results are not satisfactory."
+PARTICLES,0.970873786407767,"• We found batch normalization can help stablize and speed up training, and the choice of
+nonlinear activation (ReLU and its variants) does not make much difference."
+PARTICLES,0.9728155339805825,"• We also notice that if the control ut(x) has large Lipchastiz constants in time dimension,
+the discretized error would also increase. For calculating the weights based on path integral,
+we suggest to decrease time stepsize and increase N when the number of integral steps is
+small and discretization error is high."
+PARTICLES,0.974757281553398,"• We obtained more stable and smaller training loss when training with Tweedie’s for-
+mula (Efron, 2011), but we found no obvious improvements on testing the trained sampler
+or estimating normalization constants."
+PARTICLES,0.9766990291262136,"• Regardless the accuracy and memory advantages of Reversible Heun claimed by
+torchsde (Li et al., 2020a; Kidger et al., 2021) , we found this integration approach is"
+PARTICLES,0.9786407766990292,Published as a conference paper at ICLR 2022
+PARTICLES,0.9805825242718447,"Figure 7: Generated 5000 uncurated samples with T = 0.1, 0.2, 0.4, 0.6, 0.8, 1.0, 2.0, 3.0, 4.0, 5.0.
+PIS with small T may miss some modes."
+PARTICLES,0.9825242718446602,"less stable compared with simple Euler integration without adjoint and results in numer-
+ical issues occasionally.
+We empirically found that methods without adjoint are more
+stable and lower loss compared with adjoint ones, even in low dimensional data like 2d
+points. We use Euler-Maruyama without adjoint for low dimension data and Reversible
+Heun method (Kidger et al., 2021) in datasets when required memory is overwhelming to
+cache the whole computational graph. We recommend readers to use Ito Euler integra-
+tion when memory permits or conduct training with a small ∆t. The more steps in PIS
+and smaller ∆t not only reduce policy discretization error Theorem 2, but also reduce the
+Euler-Maruyama SDE integration errors."
+PARTICLES,0.9844660194174757,"G.2
+FAILURE MODES"
+PARTICLES,0.9864077669902913,"In this section, we show some failure modes of PIS. With an improper initialization and an extremely
+small T, PIS suffers from missing mode. The failure can be resulted from following factors. First,
+the untrained and initial p(xT ) = N(0, TI) may be far away from the target the distribution modes.
+Thus it is extremely difficult for training PIS to cover region of high probability mass under µ.
+Second, small T results in policies with large Lipchastic constants that are challenging to train
+networks as we discussed in appendix G.1. Third, the policy with limited representation power
+tends to miss modes due to the proposed KL training scheme. We show some uncurated samples
+trained with different T and other failure cases."
+PARTICLES,0.9883495145631068,"Thoughout our experiments, we also find that large T leads to more stable training and PIS sampler
+covers more modes. However large T with large δt deteriorates sample quality due to discretization
+error but it can be eased with increasing number of steps."
+PARTICLES,0.9902912621359223,"We note PIS is not a perfect sampler and failure modes exists for all compared methods, experiments
+results in Section 4 we reported are based on uncurated experiments."
+PARTICLES,0.9922330097087378,Published as a conference paper at ICLR 2022
+PARTICLES,0.9941747572815534,"(a) T = 10, ∆t = 0.1, N = 100 (b) T = 10, ∆t = 0.01, N = 103"
+PARTICLES,0.996116504854369,"Figure 8: Large T with large δt deteriorates sample quality due to discretization error in Fig 8a but
+it can be eased with increasing number of steps in Fig 8b."
+PARTICLES,0.9980582524271845,"Figure 9: Another failure case with T = 2, ∆t = 0.02, N = 100 due to randomness of training
+networks."

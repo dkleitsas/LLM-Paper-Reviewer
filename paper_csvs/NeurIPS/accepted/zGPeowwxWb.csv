@@ -1,0 +1,881 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,Abstract
+ABSTRACT,0.002770083102493075,"Diffusion-based generative models are extremely effective in generating high-
+quality images, with generated samples often surpassing the quality of those pro-
+duced by other models under several metrics. One distinguishing feature of these
+models, however, is that they typically require long sampling chains to produce
+high-ﬁdelity images. This presents a challenge not only from the lenses of sam-
+pling time, but also from the inherent difﬁculty in backpropagating through these
+chains in order to accomplish tasks such as model inversion, i.e., approximately
+ﬁnding latent states that generate known images. In this paper, we look at diffusion
+models through a different perspective, that of a (deep) equilibrium (DEQ) ﬁxed
+point model. Speciﬁcally, we extend the recent denoising diffusion implicit model
+(DDIM) [68], and model the entire sampling chain as a joint, multi-variate ﬁxed
+point system. This setup provides an elegant uniﬁcation of diffusion and equilib-
+rium models, and shows beneﬁts in 1) single image sampling, as it replaces the
+fully-serial typical sampling process with a parallel one; and 2) model inversion,
+where we can leverage fast gradients in the DEQ setting to much more quickly ﬁnd
+the noise that generates a given image. The approach is also orthogonal and thus
+complementary to other methods used to reduce the sampling time, or improve
+model inversion. We demonstrate our method’s strong performance across several
+datasets, including CIFAR10, CelebA, and LSUN Bedroom and Churches.1"
+INTRODUCTION,0.00554016620498615,"1
+Introduction"
+INTRODUCTION,0.008310249307479225,"Diffusion models have emerged as a promising class of generative models that can generate high
+quality images [69, 68, 57], outperforming GANs on perceptual quality metrics [19], and likelihood-
+based models on density estimation [42]. One of the limitations of these models, however, is the
+fact that they require a long diffusion chain (many repeated applications of a denoising process), in
+order to generate high-ﬁdelity samples. Several recent papers have focused on tackling this limitation,
+e.g., by shortening the length of diffusion process through an alternative parameterization [68, 44], or
+through progressive distillation of a sampler with large diffusion chain into a smaller one [54, 65].
+However, all of these methods still rely on a fundamentally sequential sampling process, imposing
+challenges on accelerating the sampling and for other applications like differentiating through the
+entire generation process."
+INTRODUCTION,0.0110803324099723,"In this paper, we propose an alternative approach that also begins to address such challenges from a
+different perspective. Speciﬁcally, we propose to model the generative process of a speciﬁc class of"
+INTRODUCTION,0.013850415512465374,1Code is available at https://github.com/ashwinipokle/deq-ddim
+INTRODUCTION,0.01662049861495845,"diffusion model, the denoising diffusion implicit model (DDIM) [68], as a deep equilibrium (DEQ)
+model [6]. Deep equilibrium (DEQ) models are networks that aim to ﬁnd the ﬁxed point of the
+underlying system in the forward pass and differentiate implicitly through this ﬁxed point in the
+backward pass. To apply DEQs to diffusion models, we ﬁrst formulate this process as an equilibrium
+system consisting of all T joint sampling steps, and then simultaneously solve the ﬁxed point of all
+the T steps to achieve sampling."
+INTRODUCTION,0.019390581717451522,"This approach has several beneﬁts: First, the DEQ sampling process can be solved in parallel
+over multiple GPUs by batching the workload. This is particularly beneﬁcial in the case of single
+image (i.e., batch-size-one) generation, where the serial sampling nature of diffusion models has
+inevitably made them unable to maximize GPU computation. Second, solving for the joint equilibria
+simultaneously leads to faster overall convergence as we have better estimates of the intermediate
+states in fewer steps. Speciﬁcally, the formulation naturally lends itself to an augmented diffusion
+chain that each state is generated according to all others. Third, the DEQ formulation allows us to
+leverage a faster differentiation through the chain. This enables us to much more effectively solve
+problems that require us to differentiate through the generative process, useful for tasks such as model
+inversion that seeks to ﬁnd the noise that leads to a particular instance of an image."
+INTRODUCTION,0.0221606648199446,"We demonstrate the advantages of this formulation on two applications: single image generation
+and model inversion. Both single image generation and model inversion are widely applied in real
+world image manipulation tasks like image editing and restoration [77, 63, 35, 2, 49, 55]. On CIFAR-
+10 [46] and CelebA [52], DEQ achieves up to 2⇥speedup over the sequential sampling processes of"
+INTRODUCTION,0.024930747922437674,"DDIM [68], while maintaining a comparable perceptual quality of images. In the model inversion,
+the loss converges much faster when trained with DEQs than with sequential sampling. Moreover,
+optimizing the sequential sampling process can be computationally expensive. Leveraging modern
+autograd packages is infeasible as they require storing the entire computational graph for all T states.
+Some recent works like Nie et al. [58] achieve this through use of SDE solvers. In contrast, with
+DEQs we can use the implicit differentiation of O(1) memory complexity. Empirically, the initial
+hidden state recovered by DEQ more accurately regenerates the original image while capturing its
+ﬁner details."
+INTRODUCTION,0.027700831024930747,"To summarize, our main contributions are as follows:"
+INTRODUCTION,0.030470914127423823,• We formulate the generative process of an augmented type of DDIM as a deep equilibrium
+INTRODUCTION,0.0332409972299169,"model that allows the use of black-box solvers to efﬁciently compute the ﬁxed point and
+generate images.
+• The DEQ formulation parallelizes the sampling process of DDIM, and as a result, it can be"
+INTRODUCTION,0.036011080332409975,"run on multiple GPUs instead of a single GPU. This alternate sampling process converges
+faster compared to the original process.
+• We demonstrate the advantages of our formulation on single image generation and model"
+INTRODUCTION,0.038781163434903045,"inversion. We ﬁnd that optimizing the sampling process via DEQs consistently outperforms
+naive sequential sampling.
+• We provide an easy way to extend this DEQ formulation to a more general family of"
+INTRODUCTION,0.04155124653739612,"diffusion models with stochastic generative process like DDPM [67, 33]."
+PRELIMINARIES,0.0443213296398892,"2
+Preliminaries"
+PRELIMINARIES,0.04709141274238227,"Diffusion Models
+Denoising diffusion probabilistic models (DDPM) [67, 33] are generative models
+that can convert the data distribution to a simple distribution, (e.g., a standard Gaussian, N(0, I)),
+through a diffusion process. Speciﬁcally, given samples from a target distribution x0 ⇠q(x0), the
+diffusion process is a Markov chain that adds Gaussian noises to the data to generate latent states
+x1, ..., xT in the same sample space as x0. The inference distribution of diffusion process is given by:"
+PRELIMINARIES,0.04986149584487535,"q(x1:T |x0) = T
+Y t=1"
+PRELIMINARIES,0.05263157894736842,"q(xt|xt−1)
+(1)"
+PRELIMINARIES,0.055401662049861494,To learn the parameters ✓that characterize a distribution p✓(x0) = R
+PRELIMINARIES,0.05817174515235457,"p✓(x0:T )dx1:T as an approxi-
+mation of q(x0), a surrogate variational lower bound [67] was proposed to train this model:"
+PRELIMINARIES,0.060941828254847646,L = Eq[−log p✓(x0|x1) + X t
+PRELIMINARIES,0.06371191135734072,"DKL(q(xt−1|xt, x0)||p✓(xt−1|xt) + DKL(q(xT |x0)||p(xT )] (2)"
+PRELIMINARIES,0.0664819944598338,"After training, samples can be generated by a reverse Markov chain, i.e., ﬁrst sampling xT ⇠p(xT ),
+and then repeatedly sampling xt−1 till we reach x0."
+PRELIMINARIES,0.06925207756232687,"As noted in [67, 68], the length T of a diffusion process is usually large (e.g., T = 1000 [33]) as it
+contributes to a better approximation of Gaussian conditional distributions in the generative process.
+However, because of the large value of T, sampling from diffusion models can be visibly slower
+compared to other deep generative models like GANs [29]."
+PRELIMINARIES,0.07202216066481995,"One feasible acceleration is to rewrite the forward process into a non-Markovian one that leads to a
+“shorter” and deterministic generative process, i.e., denoising diffusion implicit model [68] (DDIM)."
+PRELIMINARIES,0.07479224376731301,"DDIM can be trained similarly to DDPM, using the variational lower bound shown in Eq. (2).
+Essentially, DDIM constructs a nearly non-stochastic scheme that can quickly sample from the
+learned data distribution without introducing additional noises. Speciﬁcally, the scheme to generate a
+sample xt−1 given xt is:"
+PRELIMINARIES,0.07756232686980609,xt−1 = p↵t−1
+PRELIMINARIES,0.08033240997229917,✓xt −p1 −↵t✏(t)
+PRELIMINARIES,0.08310249307479224,"✓(xt)
+p↵t ◆ + q"
+PRELIMINARIES,0.08587257617728532,1 −↵t−1 −σ2
+PRELIMINARIES,0.0886426592797784,t · ✏(t)
+PRELIMINARIES,0.09141274238227147,"✓(xt) + σt✏t
+(3)"
+PRELIMINARIES,0.09418282548476455,"where ↵1, ..., ↵T
+2 (0, 1], ✏t
+⇠N(0, I), and ✏(t)"
+PRELIMINARIES,0.09695290858725762,"✓(xt) is an estimator trained to predict
+the noise given a noisy state xt. Different values of σt deﬁne different generative processes.
+For a variance schedule β1 . . . βT , we use the notation ↵t = Qt"
+PRELIMINARIES,0.0997229916897507,"s=1(1 −βs).
+When σt =
+p"
+PRELIMINARIES,0.10249307479224377,(1 −↵t−1)/(1 −↵t) p
+PRELIMINARIES,0.10526315789473684,"1 −↵t/↵t−1 for all t, the generative process represents a DDPM. Setting
+σt = 0 for all t gives rise to a DDIM, which results in a deterministic generating process except the
+initial sampling xT ⇠p(xT )."
+PRELIMINARIES,0.10803324099722991,"Deep Equilibrium Models
+Deep equilibrium models are a recently-proposed class of deep net-
+works that, in their forward pass, seek to ﬁnd a ﬁxed point of a single layer applied repeatedly to a
+hidden state. Speciﬁcally, consider a deep feedforward model with L layers:"
+PRELIMINARIES,0.11080332409972299,z[i+1] = f [i] ✓ ⇣
+PRELIMINARIES,0.11357340720221606,z[i]; x ⌘
+PRELIMINARIES,0.11634349030470914,"for i = 0, ..., L −1
+(4)"
+PRELIMINARIES,0.11911357340720222,"where x is the input injection, z[i] is the hidden state of ith layer, and f [i]"
+PRELIMINARIES,0.12188365650969529,"✓is a layer that deﬁnes the
+feature transformation. Assuming the above model is weight-tied, i.e., f [i]"
+PRELIMINARIES,0.12465373961218837,"✓= f✓, 8i, then in the limit
+of inﬁnite depth, the output z[i] of this network converges to a ﬁxed point z⇤."
+PRELIMINARIES,0.12742382271468145,"lim
+i!1 f✓ ⇣"
+PRELIMINARIES,0.13019390581717452,z[i]; x ⌘
+PRELIMINARIES,0.1329639889196676,"= z⇤
+(5)"
+PRELIMINARIES,0.13573407202216067,"Inspired from the neural convergence phenomenon, Deep equilibrium (DEQ) models [6] are proposed
+to directly compute this ﬁxed point z⇤as the output, i.e.,"
+PRELIMINARIES,0.13850415512465375,"f✓(z⇤; x) = z⇤
+(6)"
+PRELIMINARIES,0.14127423822714683,"The equilibrium state z⇤can be solved by black-box solvers like Broyden’s method [13], or Anderson
+acceleration [5]. To train this ﬁxed-point system, Bai et al. [6] leverage implicit differentiation to
+directly backpropagate through the equilibrium state z⇤using O(1) memory complexity. DEQ is
+known as a principled framework for characterizing convergence and energy minimization in deep
+learning. We leave a detailed discussion in Sec. 6."
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.1440443213296399,"3
+A Deep Equilibrium Approach to DDIMs"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.14681440443213298,"In this section, we present the main modeling contribution of the paper, a formulation of diffusion
+processes under the DEQ framework. Although diffusion models may seem to be a natural ﬁt for
+DEQ modeling (after all, we typically do not care about intermediate states in the denoising chain, but
+only the ﬁnal clean image), there are several reasons why setting up the diffusion chain “naively” as a
+DEQ (i.e., making f✓be a single sampling step) does not ultimately lead to a functional algorithm.
+Most fundamentally, the diffusion process is not time-invariant (i.e., not “weight-tied” in the DEQ
+sense), and the ﬁnal generated image is practically-speaking independent of the noise used to generate
+it (i.e., not truly based upon “input injection” either)."
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.14958448753462603,"Thus, at a high level, our approach to building a DEQ version of the DDIM involves representing
+all the states x0:T simultaneously within the DEQ state. The advantage of this approach is that 1)"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.1523545706371191,"we can exactly capture the typical diffusion inference chain; and 2) we can create a more expressive
+reverse process where the state xt is updated based upon all previous states xt+1:T , improving the
+inference process; 3) we can execute all steps of the inference chain in parallel rather than solely in
+sequence as is typically required in diffusion models; and 4) we can use common DEQ acceleration
+methods, such as the Anderson solver [5] to ﬁnd the ﬁxed point, which makes the sampling process
+converge faster. A downside of this formulation is that we need to store all DEQ states simultaneously
+(i.e., only the images, not the intermediate network states)."
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.15512465373961218,"3.1
+A DEQ formulation of DDIMs (DEQ-DDIM)"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.15789473684210525,The generative process of DDIM is given by:
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.16066481994459833,xt−1 = p↵t−1
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.1634349030470914,✓xt −p1 −↵t✏(t)
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.16620498614958448,"✓(xt)
+p↵t ◆ + p"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.16897506925207756,1 −↵t−1 · ✏(t)
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.17174515235457063,"✓(xt),
+t = [1, . . . , T]
+(7)"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.1745152354570637,"This process also lets us generate a sample using a subset of latent states {x⌧1, . . . , x⌧S}, where
+{⌧1, . . . , ⌧S} ✓T. While this helps in accelerating the overall generative process, there is a tradeoff
+between sampling quality and computational efﬁciency. As noted in Song et al. [68], larger T values
+lead to lower FID scores of the generated images but need more compute time; smaller T are faster
+to sample from, but the resulting images have worse FID scores."
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.1772853185595568,"Reformulating this sampling process as a DEQ addresses multiple concerns raised above. We can
+deﬁne a DEQ, with a sequence of latent states x1:T as its internal state, that simultaneously solves for
+the equilibrium points at all the timesteps. The global convergence of this process is upper bounded
+by T steps, by deﬁnition. To derive the DEQ formulation of the generative process, ﬁrst we rearrange
+the terms in Eq. (7):"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.18005540166204986,xt−1 = r↵t−1 ↵t xt + 0 @p
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.18282548476454294,1 −↵t−1 − s
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.18559556786703602,↵t−1(1 −↵t) ↵t 1
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.1883656509695291,A ✏(t)
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.19113573407202217,"✓(xt)
+(8)"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.19390581717451524,Let c(t)
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.19667590027700832,"1
+= p1 −↵t−1 − r"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.1994459833795014,↵t−1(1 −↵t) ↵t
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.20221606648199447,. Then we can write
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.20498614958448755,xt−1 = r↵t−1 ↵t
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.2077562326869806,xt + c(t)
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.21052631578947367,1 ✏(t)
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.21329639889196675,"✓(xt)
+(9)"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.21606648199445982,"By induction, we can rewrite the above equation as:"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.2188365650969529,xT −k =
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.22160664819944598,r↵T −k ↵T xT +
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.22437673130193905,"T −1
+X"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.22714681440443213,t=T −k
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.2299168975069252,r↵T −k ↵t
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.23268698060941828,c(t+1)
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.23545706371191136,"1
+✏(t+1)"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.23822714681440443,"✓
+(xt+1),
+k 2 [0, .., T]
+(10)"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.2409972299168975,"This deﬁnes a “fully-upper-triangular” inference process, where the update of xt depends on the
+noise prediction network ✏✓applied to all subsequent states xt+1:T ; in contrast to the traditional
+diffusion process, which updates xt based only on xt+1. Speciﬁcally, let h(·) represent the function
+that performs the operations in the equations (10) for a latent xt at timestep t, and let ˜h(·) represent
+the function that performs the same set of operations across all the timesteps simultaneously. We can
+write the above set of equations as a ﬁxed point system: 2 664"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.24376731301939059,"xT −1
+xT −2"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.24653739612188366,"...
+x0 3 775 = 2 664"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.24930747922437674,"h(xT )
+h(xT −1:T )"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.2520775623268698,"...
+h(x1:T ) 3 775 or,"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.2548476454293629,"x0:T −1 = ˜h(x0:T −1; xT )
+(11)"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.25761772853185594,"The above system of equations represent a DEQ with xT ⇠N(0, I) as input injection. We can
+simultaneously solve for the roots of this system of equations through black-box solvers like Anderson
+acceleration [5]. Let g(x0:T −1; xT ) = ˜h(x0:T −1; xT ) −x0:T −1, then we have x⇤"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.26038781163434904,"0:T = RootSolver(g(x0:T −1; xT ))
+(12)"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.2631578947368421,"This DEQ formulation has multiple beneﬁts. Solving for all the equilibria simultaneously leads to a
+better estimation of the intermediate latent states xt in a fewer number of steps (i.e., t steps for xt).
+This leads to faster convergence of the sampling process as the ﬁnal sample x0, which is dependent
+on the latent states of all the previous time steps, has a better estimate of these intermediate latent
+states. Note that by the same reasoning, the intermediate latent states xt converge faster too. Thus,
+we can get images with perceptual quality comparable to DDIM in a signiﬁcantly fewer number
+of steps. Of course, we also note that the computational requirements of each individual step has
+signiﬁcantly increased, but this is at least largely offset by the fact that the steps can be executed as
+mini-batched in parallel over each state. Empirically, in fact, we often notice signiﬁcant speedup
+using this approach on tasks like single image generation."
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.2659279778393352,"This DEQ formulation of DDIM can be extended to the stochastic generative processes of DDIM
+with ⌘> 0, including that of DDPM (referred to as DEQ-sDDIM). The key idea is to sample noises
+for all the time steps along the sampling chain and treat this noise as an input injection to DEQ, in
+addition to xT . x⇤"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.26869806094182824,"0:T = RootSolver(g(x0:T −1; xT , ✏1:T ))
+(13)"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.27146814404432135,"where RootSolver(·) is any black-box ﬁxed point solver, and ✏1:T ⇠N(0, I) represents the input
+injected noises. We discuss this formulation in more detail in Appendix D."
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.2742382271468144,"4
+Efﬁcient Inversion of DDIM"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.2770083102493075,"One of the primary strengths of DEQs is their constant memory consumption, for both forward pass
+and backward pass, regardless of their ‘effective depth’. This leads to an interesting application of
+DEQs in inverting DDIMs that fully leverages this advantage along with the other beneﬁts discussed
+in the previous section."
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.27977839335180055,"Algorithm 1 A naive algorithm to invert DDIM
+Input: A target image x0 ⇠D, ✏✓(xt, t) a"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.28254847645429365,"trained denoising diffusion model, N the total
+number of epochs
+. f denotes the sampling process in Eq (7)
+Initialize ˆxT ⇠N(0, I)
+for epochs from 1 to N do"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.2853185595567867,"for t = T, ..., 1 do"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.2880886426592798,"Sample ˆxt−1 = f(ˆxt; ✏✓(ˆxt, t))
+end for
+Take a gradient descent step on"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.29085872576177285,rˆxT kˆx0 −x0k2 F
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.29362880886426596,"end for
+Output: ˆxT"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.296398891966759,"Algorithm 2 Inverting DDIM with DEQ
+Input: A target image x0 ⇠D, ✏✓(xt, t) a"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.29916897506925205,"trained denoising diffusion model, N the total
+number of epochs
+. g is the function in Eq. (12)
+Initialize ˆx0:T ⇠N(0, I)
+for epochs from 1 to N do"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.30193905817174516,". Disable gradient computation
+x⇤"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.3047091412742382,0:T = RootSolver(g(x0:T −1); xT )
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.3074792243767313,". Enable gradient computation
+Compute Loss L(x0, x⇤"
+A DEEP EQUILIBRIUM APPROACH TO DDIMS,0.31024930747922436,"0)
+Use the 1-step grad to compute @L/@xT
+Take a gradient descent step using above
+end for
+Output: x⇤ T"
+PROBLEM SETUP,0.31301939058171746,"4.1
+Problem Setup"
+PROBLEM SETUP,0.3157894736842105,"Given an arbitrary image x0 ⇠D, and a denoising diffusion model ✏✓(xt, t) trained on a dataset D,
+model inversion seeks to determine the latent ˆxT ⇠N(0, I) that can generate an image ˆx0 identical
+to the original image x0 through the generative process for DDIM described in Eq. (7). For an input
+image x0, and a generated image ˆx0, this task needs to minimize the squared-Frobenius distance
+between these images:"
+PROBLEM SETUP,0.3185595567867036,"L(x0, ˆx0) = kx0 −ˆx0k2"
+PROBLEM SETUP,0.32132963988919666,"F
+(14)"
+PROBLEM SETUP,0.32409972299168976,"4.2
+Inverting DDIM: The Naive Approach"
+PROBLEM SETUP,0.3268698060941828,"A relatively straightforward way to invert DDIM is to randomly sample xT ⇠N(0, I), and update it
+via gradient descent by ﬁrst estimating x0 using the generative process in Eq. (7) and backpropagating
+through this process after computing the loss objective in (14). The overall process has been
+summarized in Algorithm 1. This process has a large computational overhead. Every training epoch"
+PROBLEM SETUP,0.3296398891966759,"requires a sequential sampling for all T timesteps. Optimizing through this generative process
+would require the creation of a large computational graph for storing relevant intermediate variables
+necessary for the backward pass. Sequential sampling further slows down the entire process."
+PROBLEM SETUP,0.33240997229916897,"4.3
+Efﬁcient Inversion of DDIM with DEQs"
+PROBLEM SETUP,0.33518005540166207,"Alternatively, we can use the DEQ formulation to develop a much more efﬁcient inversion method.
+We provide a high-level overview of this approach in Algorithm 2. We can apply implicit function
+theorem (IFT) to the ﬁxed point, i.e., (12) to compute gradients of the loss L(x0, x⇤"
+PROBLEM SETUP,0.3379501385041551,0) in (14) w.r.t. (·):
+PROBLEM SETUP,0.3407202216066482,"@L
+@(·) = −@L @x⇤ 0:T ⇣ J−1 g✓ 77 x⇤ 0:T"
+PROBLEM SETUP,0.34349030470914127,⌘@˜h(x⇤
+PROBLEM SETUP,0.3462603878116344,0:T −1; xT )
+PROBLEM SETUP,0.3490304709141274,"@(·)
+(15)"
+PROBLEM SETUP,0.3518005540166205,"where (·) could be any of the latent states x1, ..., xT , and J−1 g✓ 77 x⇤"
+PROBLEM SETUP,0.3545706371191136,"0:T is the inverse Jacobian of
+g(x0:T −1; xT ) evaluated at x⇤"
+PROBLEM SETUP,0.3573407202216066,"0:T . Refer to [6] for a detailed proof. Computing the inverse of
+Jacobian matrix can become computationally intractable, especially when the latent states xt are
+high dimensional. Further, prior works [6, 8, 28] have reported growing instability of DEQs during
+training due to the ill-conditioning of Jacobian. Recent works [27, 26, 28, 9] suggest that we do not
+need an exact gradient to train DEQs. We can instead use an approximation to Eq. (15), i.e.,"
+PROBLEM SETUP,0.3601108033240997,"@L
+@(·) = −@L @x⇤ 0:T"
+PROBLEM SETUP,0.3628808864265928,M@˜h(x⇤
+PROBLEM SETUP,0.3656509695290859,0:T −1; xT )
+PROBLEM SETUP,0.3684210526315789,"@(·)
+(16)"
+PROBLEM SETUP,0.37119113573407203,where M is an approximation of J−1 g✓ 77 x⇤
+PROBLEM SETUP,0.3739612188365651,"0:T . For example, [27, 26, 28] show that setting M = I,
+i.e., 1-step gradient, works well. In this work, we follow Geng et al. [28] to further add a damping
+factor to the 1-step gradient. The forward pass is given by: x⇤"
+PROBLEM SETUP,0.3767313019390582,"0:T = RootSolver(g(x0:T −1); xT )
+(17) x⇤"
+PROBLEM SETUP,0.37950138504155123,0:T = ⌧· ˜h(x⇤
+PROBLEM SETUP,0.38227146814404434,0:T −1; x⇤
+PROBLEM SETUP,0.3850415512465374,T ) + (1 −⌧) · x⇤
+PROBLEM SETUP,0.3878116343490305,"0:T
+(18)"
+PROBLEM SETUP,0.39058171745152354,"The gradients for the backward pass can be computed through standard autograd packages. We
+provide the PyTorch-style pseudocode of our approach in the Appendix B. Using inexact gradients
+for the backward pass has several beneﬁts: 1) It remarkably improves the training stability of DEQs;
+2) Our backward pass consists of a single step and is ultra-cheap to compute. It reduces the total
+training time by a signiﬁcant amount. It is easy to extend the strategy used in Algorithm 2 and use
+DEQs to invert DDIMs with stochastic generative process (referred to as DEQ-sDDIM). We provide
+the key steps of this approach in Algorithm 4."
+EXPERIMENTS,0.39335180055401664,"5
+Experiments"
+EXPERIMENTS,0.3961218836565097,"We consider four datasets that have images of different resolutions for our experiments: CIFAR10
+(32⇥32) [46], CelebA (64⇥64) [52], LSUN Bedroom (256⇥256) and LSUN Outdoor Church
+(256⇥256) [76]. For all the experiments, we use Anderson acceleration as the default ﬁxed point
+solver. We use the pretrained denoising diffusion models from Ho et al. [33] for CIFAR10, LSUN
+Bedroom, and LSUN Outdoor Church, and from Song et al. [68] for CelebA. While training DEQs
+for model inversion, we use the 1-step gradient Eq. (18) to compute the backward pass. The damping
+factor ⌧for 1-step gradient is set to 0.1. All the experiments have been performed on NVIDIA RTX
+A6000 GPUs. We provide additional experimental details in the Appendix A. While the primary
+focus in this section will be on the DDIM with a deterministic generative process i.e., ⌘= 0, we
+also include a few key results on stochastic version of DDIM (DEQ-sDDIM) here. More extensive
+experiments can be found in Appendix D."
+CONVERGENCE OF DEQ-DDIM,0.3988919667590028,"5.1
+Convergence of DEQ-DDIM"
+CONVERGENCE OF DEQ-DDIM,0.40166204986149584,"We verify that DEQ converges to a ﬁxed point by plotting the values of k˜h(x0:T ) −x0:T k2 over
+Anderson solver steps. As seen in Figure 1, DEQ converges to a ﬁxed point for generative processes
+of different lengths. It is easier to reach simultaneous equilibria on smaller sequence lengths than
+larger sequence lengths. However, this does not affect the quality of images generated. We visualize"
+CONVERGENCE OF DEQ-DDIM,0.40443213296398894,"the latent states of DEQ in Figure 2. Our experiments demonstrate that DEQ is able to generate
+high-quality images in as few as 15 Anderson solver steps on diffusion chains that were trained on a
+much larger number of steps T. One might note that DEQs converge to a limit cycle for diffusion
+processes with larger sequence lengths. This is not a limitation as we only want the latent states at
+the last few timesteps to converge well, which happens in practice as demonstrated in Fig. 2. Further,
+these residuals can be driven down by using more powerful solvers like quasi-Newton methods,
+e.g., Broyden’s method."
+CONVERGENCE OF DEQ-DDIM,0.407202216066482,"Figure 1: DEQ-DDIM ﬁnds an equilibrium point. We plot the absolute ﬁxed-point convergence
+k˜h(x0:T )−x0:T k2 during a forward pass of DEQ for CIFAR-10 (left) and CelebA (right) for different
+number of steps T. The shaded region indicates the maximum and minimum value encountered
+during any of the 25 runs."
+CONVERGENCE OF DEQ-DDIM,0.4099722991689751,"Figure 2: Visualization of intermediate latents xt of DEQ-DDIM after 15 forward steps with Anderson
+solver for CIFAR-10 (ﬁrst row, T = 500), CelebA (second row, T = 500), LSUN Bedroom (third
+row, T = 50, and LSUN Outdoor Church (fourth row, T = 50). For T = 500, we visualize every
+50th latent, and for T = 50, we visualize every 5th latent. In addition, we also visualize x0:4 in the
+last 5 columns."
+SAMPLE QUALITY OF IMAGES GENERATED WITH DEQ,0.41274238227146814,"5.2
+Sample quality of images generated with DEQ"
+SAMPLE QUALITY OF IMAGES GENERATED WITH DEQ,0.4155124653739612,"We verify that DEQs can generate images of comparable quality to DDIM by reporting Fréchet
+Inception Distance (FID) [32] in Table 1. For the forward pass of DEQ, we run Anderson solver for a
+maximum of 15 steps for each image. We report FID scores on 50,000 images, and average time to
+generate an image (including GPU time) on 500 images. We note signiﬁcant gains in wall-clock time
+on single-shot image generation with DEQs on images with smaller resolutions. Speciﬁcally, DEQs
+can generate images almost 2⇥faster than the sequential sampling of DDIM on CIFAR-10 (32⇥32)
+and CelebA (64⇥64). We note that these gains vanish on sequences of shorter lengths and images
+with larger resolutions as seen in case of LSUN Bedrooms, and Outdoor Churches (256⇥256). This
+is because the number of ﬁxed point solver iterations needed for convergence becomes comparable to
+the length of diffusion chain for small values of T. Thus, lightweight updates performed on short
+diffusion chains for sequential sampling are faster compared to compute heavy updates in DEQs."
+SAMPLE QUALITY OF IMAGES GENERATED WITH DEQ,0.4182825484764543,"We also report FID scores on DEQ-sDDIM for CIFAR10 in Table 2. We run Anderson solver for a
+maximum of 50 steps for each image. We observe that while DEQ-sDDIM is slower than DDIM,"
+SAMPLE QUALITY OF IMAGES GENERATED WITH DEQ,0.42105263157894735,"it always generates images with comparable or better FID scores. For higher levels of stochasticity
+i.e., for larger valued of ⌘, DEQ-sDDIM need more Anderson solver iterations to converge to a
+ﬁxed point, which increases image generation wall-clock time. We include additional results in
+Appendix D.2. Finally, we also ﬁnd that on full-batch inference with larger batches, sequential
+sampling might outperform DEQs, as DEQs would have larger memory requirements in this case,
+i.e., processing smaller batches of size B might be faster than processing larger batches of size BT."
+SAMPLE QUALITY OF IMAGES GENERATED WITH DEQ,0.42382271468144045,"Dataset
+T"
+SAMPLE QUALITY OF IMAGES GENERATED WITH DEQ,0.4265927977839335,"DDPM
+DDIM
+DEQ-DDIM"
+SAMPLE QUALITY OF IMAGES GENERATED WITH DEQ,0.4293628808864266,"FID
+Time
+FID
+Time
+FID
+Time"
+SAMPLE QUALITY OF IMAGES GENERATED WITH DEQ,0.43213296398891965,"CIFAR10
+1000
+3.17
+24.45s
+4.07
+20.16s
+3.79
+2.91s
+CelebA
+500
+5.32
+14.95s
+3.66
+10.31s
+2.92
+5.12s
+LSUN Bedroom
+25
+184.05
+1.72s
+8.76
+1.19s
+8.73
+3.82s
+LSUN Church
+25
+122.18
+1.77s
+13.44
+1.68s
+13.55
+3.99s"
+SAMPLE QUALITY OF IMAGES GENERATED WITH DEQ,0.43490304709141275,"Table 1: FID scores and time for single image generation for DDPM, DDIM and DEQ-DDIM."
+SAMPLE QUALITY OF IMAGES GENERATED WITH DEQ,0.4376731301939058,"⌘
+T
+FID Scores
+Time (in seconds)"
+SAMPLE QUALITY OF IMAGES GENERATED WITH DEQ,0.4404432132963989,"DDIM
+DEQ-sDDIM
+DDIM
+DEQ-sDDIM"
+SAMPLE QUALITY OF IMAGES GENERATED WITH DEQ,0.44321329639889195,"0.2
+20
+7.19
+6.99
+0.33
+0.51
+0.5
+20
+8.35
+8.22
+0.35
+0.51
+1
+20
+18.37
+17.72
+0.34
+0.93"
+SAMPLE QUALITY OF IMAGES GENERATED WITH DEQ,0.44598337950138506,"0.2
+50
+4.69
+4.44
+0.88
+0.88
+0.5
+50
+5.26
+4.99
+0.83
+1.00
+1
+50
+8.02
+7.85
+0.83
+1.58"
+SAMPLE QUALITY OF IMAGES GENERATED WITH DEQ,0.4487534626038781,"Table 2: FID scores for single image generation for DDIM and DEQ-sDDIM on CIFAR10. Note
+that DDPM [33] with a larger variance achieves FID scores of 133.37⇤and 32.72⇤respectively for
+T = 20 and T = 50, where ⇤indicates numbers reported from Song et al. [68] ."
+MODEL INVERSION OF DDIM WITH DEQS,0.4515235457063712,"5.3
+Model Inversion of DDIM with DEQs"
+MODEL INVERSION OF DDIM WITH DEQS,0.45429362880886426,"We report the minimum values of squared Frobenius norm between the recovered and target images
+averaged from 100 different runs in Table 3. We report results for DEQ with ⌘= 0 (i.e., DEQ-DDIM)
+in this table, and additional results for ⌘> 0 (i.e., DEQ-sDDIM) are reported in Figure 17. DEQ
+outperforms the baseline method on all the datasets by a signiﬁcant margin. We also plot the training
+loss curves of DEQ-DDIM and the baseline in Figure 3. We observe that DEQ-DDIM converges faster
+and has much lower loss values than the baseline method induced by DDIM. We also visualize the
+images generated with the recovered latent states for DEQ-DDIM in Figure 4 and with DEQ-sDDIM
+in Figure 5. It is worth noting that images generated with DEQ capture more vivid details of the
+original images, like textures of foliage, crevices, and other ﬁner details than the baseline. We include
+additional results of model inversion with DEQ-sDDIM on different datasets in Appendix D.3."
+MODEL INVERSION OF DDIM WITH DEQS,0.45706371191135736,"Dataset
+T
+Baseline
+DEQ-DDIM"
+MODEL INVERSION OF DDIM WITH DEQS,0.4598337950138504,"Min loss #
+Avg Time (mins) #
+Min loss #
+Avg Time (mins) #"
+MODEL INVERSION OF DDIM WITH DEQS,0.4626038781163435,"CIFAR10
+100
+15.74 ± 8.7
+49.07 ± 1.76
+0.76 ± 0.35
+12.99 ± 0.97
+CIFAR10
+10
+2.59 ± 3.67
+14.36 ± 0.26
+0.68 ± 0.32
+2.54 ± 0.41
+CelebA
+20
+14.13 ± 5.04
+30.09 ± 0.57
+1.03 ± 0.37
+28.09 ± 1.76
+Bedroom
+10
+1114.49 ± 795.86
+26.41 ± 0.17
+36.37 ± 22.86
+33.7 ± 1.05
+Church
+10
+1674.68 ± 1432.54
+29.7 ± 0.75
+47.94 ± 24.78
+33.54 ± 3.02"
+MODEL INVERSION OF DDIM WITH DEQS,0.46537396121883656,"Table 3: Comparison of minimum loss and average time required to generate an image. All the
+results have been reported on 100 images. See Appendix A for detailed training settings."
+MODEL INVERSION OF DDIM WITH DEQS,0.46814404432132967,"Figure 3: Training loss for CelebA and LSUN Bedroom over epochs. DEQ converges in fewer
+epochs, and achieves lower values of loss compared to the baseline. The shaded region indicates the
+maximum and minimum value of loss encountered during any of the 100 runs."
+RELATED WORK,0.4709141274238227,"6
+Related Work"
+RELATED WORK,0.47368421052631576,"Implicit Deep Learning
+Implicit deep learning is an emerging ﬁeld that introduces structured
+methods to construct modern neural networks. Different from prior explicit counterparts deﬁned
+by hierarchy or layer stacking, implicit models take advantage of dynamical systems [43, 23, 3],
+e.g., optimization [4, 72, 20, 27, 21], differential equation [16, 22, 70, 30], or ﬁxed-point system [6,
+7, 31]. For instance, Neural ODE [16] describes a continuous time-dependent system, while Deep
+Equilibrium (DEQ) model [6], which is actually path-independent, is a new type of implicit models
+that outputs the equilibrium states of the underlying system, e.g., z⇤from z⇤= f✓(z⇤, x) given the
+input x. This ﬁxed-point system can be solved by black-box solvers [5, 13], and further accelerated
+by the neural solver [10] in the inference. An active topic is the stability [8, 28, 9] of such a system as
+it will gradually deteriorate during training, albeit strong performances [16, 6, 8]. DEQ has achieved
+SOTA results on a wide-range of tasks like language modeling [6], semantic segmentation [7], graph
+modeling [31, 51, 59, 15], object detection [73], optical ﬂow estimation [9], robustness [74, 48], and
+generative models like normalizing ﬂow [53], with theoretical guarantees [75, 38, 25, 50]."
+RELATED WORK,0.47645429362880887,"Figure 4: Model inversion on CIFAR10, CelebA, LSUN Bedrooms and Churches, respectively. Each
+triplet has the original image (left), DDIM’s inversion (middle), and DEQ-DDIM’s inversion (right)."
+RELATED WORK,0.4792243767313019,"Diffusion Models
+Diffusion models [67, 33, 68], or score-based generative models [69, 71], are
+newly developed generative models that utilize an iterative denoising process to progressively sample
+from a learned data distribution, which actually is the reverse of a forward diffusion process. They
+have demonstrated impressive ﬁdelity for text-conditioned image generation [62] and outperformed
+state-of-the-art GANs on ImageNet [19]. Despite the superior practical results, diffusion models
+suffer from a plodding sampling speed, e.g., over hours to generate 50k CIFAR-sized images [68]. To
+accelerate the sampling from diffusion models, researchers propose to skip a part of the sampling
+steps by reframing the reverse chain [68, 45, 44], or distill the trained diffusion model into a faster
+one [54, 65]. Plus, the forward and backward processes in diffusion models can be formulated as
+stochastic differential equations [71], bridging diffusion models with Neural ODEs [16] in implicit
+deep learning. However, the community still lacks insights into the connection between DEQ and
+diffusion models, where we build our work to investigate this."
+RELATED WORK,0.481994459833795,"Figure 5: Model inversion of DEQ-sDDIM on CIFAR10, CelebA, LSUN Bedrooms and Churches,
+respectively. Each triplet displays the original image (left), and images obtained through inversion
+with DEQ-sDDIM for ⌘= 0.5 (middle), and ⌘= 1 (right)."
+RELATED WORK,0.48476454293628807,"Model inversion
+Model inversion gives insights into the latent space of a generative model, as an
+inability of a generative model to correctly reconstruct an image from its latent code is indicative of
+its inability to model all the attributes of image correctly. Further, the ability to manipulate the latent
+codes to edit high-level attributes of images ﬁnds applications in many tasks like semantic image
+manipulation [77, 2], super resolution [14, 47], in-painting [18], compressed sensing [12], etc. For
+generative models like GANs [29], inversion is non-trivial and requires alternate methods like learning
+the mapping from an image to the latent code [11, 61, 78], and optimizing the latent code through
+optimizers, e.g., both gradient-based [1] and gradient-free [34]. For diffusion models like DDPM [33],
+the generative process is stochastic, which can make model inversion very challenging. Many existing
+works based on diffusion models [55, 18, 71, 36, 40] edit images or solve inverse problems without
+requiring full model inversion. Instead, they do so by utilizing existing understanding of diffusion
+models as presented in some recent works [71, 37, 39]. Diffusion models have been widely applied
+to conditional image generation [17, 18, 57, 64, 36, 66, 40, 56]. Chung et al. [18] propose a method
+to reduce the number of steps in reverse conditional diffusion process through better initialization,
+based on the idea of contraction theory of stochastic differential equations. Our proposed method is
+orthogonal to this work; we explicitly model DDIM as a joint, multi-variate ﬁxed point system and
+leverage black-box root solvers to solve for the ﬁxed point and also allow for efﬁcient differentiation."
+CONCLUSION,0.48753462603878117,"7
+Conclusion"
+CONCLUSION,0.4903047091412742,"We propose an approach to elegantly unify diffusion models and deep equilibrium (DEQ) models. We
+model the entire sampling chain of the denoising diffusion implicit model (DDIM) as a joint, multi-
+variate (deep) equilibrium model. This setup replaces the traditional sequential sampling process
+with a parallel one, thereby enabling us to enjoy speedup obtained from multiple GPUs. Further,
+we can leverage inexact gradients to optimize the entire sampling chain quickly, which results in
+signiﬁcant gains in model inversion. We demonstrate the beneﬁts of this approach on 1) single-shot
+image generation, where we were able to obtain FID scores on par with or slightly better than those
+of DDIM; and 2) model inversion, where we achieved much faster convergence. We also propose an
+easy way to extend DEQ formulation for deterministic DDIM to its stochastic variants. It is possible
+to further speedup the sampling process by training a DEQ model to predict the noise at a particular
+timestep of the diffusion chain. We can jointly optimize the noise prediction network, and the latent
+variables of the diffusion chain, which we leave as future work."
+ACKNOWLEDGEMENTS,0.4930747922437673,"8
+Acknowledgements"
+ACKNOWLEDGEMENTS,0.49584487534626037,Ashwini Pokle is supported by a grant from the Bosch Center for Artiﬁcial Intelligence.
+REFERENCES,0.4986149584487535,References
+REFERENCES,0.5013850415512465,"[1] Rameen Abdal, Yipeng Qin, and Peter Wonka. Image2stylegan: How to embed images into the"
+REFERENCES,0.5041551246537396,stylegan latent space? In Proceedings of the IEEE/CVF International Conference on Computer
+REFERENCES,0.5069252077562327,"Vision, pages 4432–4441, 2019. (Cited on 10)"
+REFERENCES,0.5096952908587258,"[2] Rameen Abdal, Peihao Zhu, Niloy J Mitra, and Peter Wonka. Styleﬂow: Attribute-conditioned"
+REFERENCES,0.5124653739612188,"exploration of stylegan-generated images using conditional continuous normalizing ﬂows. ACM
+Transactions on Graphics (TOG), 40(3):1–21, 2021. (Cited on 2, 10)"
+REFERENCES,0.5152354570637119,[3] Brandon Amos. Tutorial on amortized optimization for learning to optimize over continuous
+REFERENCES,0.518005540166205,"domains. arXiv preprint arXiv:2202.00665, 2022. (Cited on 9)"
+REFERENCES,0.5207756232686981,[4] Brandon Amos and J. Zico Kolter. OptNet: Differentiable optimization as a layer in neural
+REFERENCES,0.5235457063711911,"networks. In International Conference on Machine Learning (ICML), 2017. (Cited on 9)"
+REFERENCES,0.5263157894736842,[5] Donald G Anderson. Iterative procedures for nonlinear integral equations. Journal of the ACM
+REFERENCES,0.5290858725761773,"(JACM), 1965. (Cited on 3, 4, 9, 17, 21)"
+REFERENCES,0.5318559556786704,"[6] Shaojie Bai, J Zico Kolter, and Vladlen Koltun. Deep equilibrium models. Neural Information"
+REFERENCES,0.5346260387811634,"Processing Systems (NeurIPS), 2019. (Cited on 2, 3, 6, 9, 19)"
+REFERENCES,0.5373961218836565,"[7] Shaojie Bai, Vladlen Koltun, and J Zico Kolter. Multiscale deep equilibrium models. Neural"
+REFERENCES,0.5401662049861495,"Information Processing Systems (NeurIPS), 2020. (Cited on 9)"
+REFERENCES,0.5429362880886427,"[8] Shaojie Bai, Vladlen Koltun, and J Zico Kolter. Stabilizing equilibrium models by jacobian"
+REFERENCES,0.5457063711911357,"regularization. arXiv preprint arXiv:2106.14342, 2021. (Cited on 6, 9)"
+REFERENCES,0.5484764542936288,"[9] Shaojie Bai, Zhengyang Geng, Yash Savani, and J Zico Kolter. Deep equilibrium optical ﬂow"
+REFERENCES,0.5512465373961218,"estimation. arXiv preprint arXiv:2204.08442, 2022. (Cited on 6, 9)"
+REFERENCES,0.554016620498615,"[10] Shaojie Bai, Vladlen Koltun, and J Zico Kolter. Neural deep equilibrium solvers. In International"
+REFERENCES,0.556786703601108,"Conference on Learning Representations, 2022. (Cited on 9)"
+REFERENCES,0.5595567867036011,"[11] David Bau, Hendrik Strobelt, William Peebles, Jonas Wulff, Bolei Zhou, Jun-Yan Zhu, and"
+REFERENCES,0.5623268698060941,"Antonio Torralba. Semantic photo manipulation with a generative image prior. arXiv preprint
+arXiv:2005.07727, 2020. (Cited on 10)"
+REFERENCES,0.5650969529085873,"[12] Ashish Bora, Ajil Jalal, Eric Price, and Alexandros G Dimakis. Compressed sensing using"
+REFERENCES,0.5678670360110804,"generative models. In International Conference on Machine Learning, pages 537–546. PMLR,
+2017. (Cited on 10)"
+REFERENCES,0.5706371191135734,[13] Charles G Broyden. A class of methods for solving nonlinear simultaneous equations. Mathe-
+REFERENCES,0.5734072022160664,"matics of computation, 1965. (Cited on 3, 9, 19)"
+REFERENCES,0.5761772853185596,"[14] Kelvin CK Chan, Xintao Wang, Xiangyu Xu, Jinwei Gu, and Chen Change Loy. Glean:"
+REFERENCES,0.5789473684210527,"Generative latent bank for large-factor image super-resolution. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition, pages 14245–14254, 2021. (Cited on
+10)"
+REFERENCES,0.5817174515235457,"[15] Qi Chen, Yifei Wang, Yisen Wang, Jiansheng Yang, and Zhouchen Lin. Optimization-induced"
+REFERENCES,0.5844875346260388,"graph implicit nonlinear diffusion. In International Conference on Machine Learning, pages
+3648–3661. PMLR, 2022. (Cited on 9)"
+REFERENCES,0.5872576177285319,"[16] Tian Qi Chen, Yulia Rubanova, Jesse Bettencourt, and David K Duvenaud. Neural ordinary"
+REFERENCES,0.590027700831025,"differential equations. In Neural Information Processing Systems (NeurIPS), 2018. (Cited on 9)"
+REFERENCES,0.592797783933518,"[17] Jooyoung Choi, Sungwon Kim, Yonghyun Jeong, Youngjune Gwon, and Sungroh Yoon."
+REFERENCES,0.5955678670360111,"Ilvr: Conditioning method for denoising diffusion probabilistic models.
+arXiv preprint
+arXiv:2108.02938, 2021. (Cited on 10)"
+REFERENCES,0.5983379501385041,"[18] Hyungjin Chung, Byeongsu Sim, and Jong Chul Ye. Come-closer-diffuse-faster: Accelerating"
+REFERENCES,0.6011080332409973,"conditional diffusion models for inverse problems through stochastic contraction. arXiv preprint
+arXiv:2112.05146, 2021. (Cited on 10)"
+REFERENCES,0.6038781163434903,[19] Prafulla Dhariwal and Alexander Nichol. Diffusion models beat gans on image synthesis.
+REFERENCES,0.6066481994459834,"Advances in Neural Information Processing Systems, 34, 2021. (Cited on 1, 9)"
+REFERENCES,0.6094182825484764,[20] Josip Djolonga and Andreas Krause. Differentiable learning of submodular models. Advances
+REFERENCES,0.6121883656509696,"in Neural Information Processing Systems, 30, 2017. (Cited on 9)"
+REFERENCES,0.6149584487534626,"[21] Priya L. Donti, David Rolnick, and J Zico Kolter. DC3: A learning method for optimization"
+REFERENCES,0.6177285318559557,"with hard constraints. In International Conference on Learning Representations (ICLR), 2021.
+(Cited on 9)"
+REFERENCES,0.6204986149584487,"[22] Emilien Dupont, Arnaud Doucet, and Yee Whye Teh. Augmented neural ODEs. In Neural"
+REFERENCES,0.6232686980609419,"Information Processing Systems (NeurIPS), 2019. (Cited on 9)"
+REFERENCES,0.6260387811634349,"[23] Laurent El Ghaoui, Fangda Gu, Bertrand Travacca, and Armin Askari. Implicit deep learning."
+REFERENCES,0.628808864265928,"arXiv:1908.06315, 2019. (Cited on 9)"
+REFERENCES,0.631578947368421,"[24] Thorsten Falk, Dominic Mai, Robert Bensch, Özgün Çiçek, Ahmed Abdulkadir, Yassine"
+REFERENCES,0.6343490304709142,"Marrakchi, Anton Böhm, Jan Deubner, Zoe Jäckel, Katharina Seiwald, et al. U-net: deep
+learning for cell counting, detection, and morphometry. Nature methods, 16(1):67–70, 2019.
+(Cited on 17)"
+REFERENCES,0.6371191135734072,"[25] Zhili Feng and J Zico Kolter. On the neural tangent kernel of equilibrium models, 2021. (Cited on 9)"
+REFERENCES,0.6398891966759003,"[26] Samy Wu Fung, Howard Heaton, Qiuwei Li, Daniel McKenzie, Stanley Osher, and Wotao Yin."
+REFERENCES,0.6426592797783933,"Fixed point networks: Implicit depth models with jacobian-free backprop. arXiv e-prints, pages
+arXiv–2103, 2021. (Cited on 6)"
+REFERENCES,0.6454293628808865,"[27] Zhengyang Geng, Meng-Hao Guo, Hongxu Chen, Xia Li, Ke Wei, and Zhouchen Lin. Is atten-"
+REFERENCES,0.6481994459833795,"tion better than matrix decomposition? In International Conference on Learning Representa-
+tions (ICLR), 2021. (Cited on 6, 9)"
+REFERENCES,0.6509695290858726,"[28] Zhengyang Geng, Xin-Yu Zhang, Shaojie Bai, Yisen Wang, and Zhouchen Lin. On training"
+REFERENCES,0.6537396121883656,"implicit models. Neural Information Processing Systems (NeurIPS), 2021. (Cited on 6, 9, 17)"
+REFERENCES,0.6565096952908587,"[29] Ian Goodfellow, Jean Pouget-Abadie, Mehdi Mirza, Bing Xu, David Warde-Farley, Sherjil"
+REFERENCES,0.6592797783933518,"Ozair, Aaron Courville, and Yoshua Bengio. Generative adversarial nets. Advances in neural
+information processing systems, 27, 2014. (Cited on 3, 10)"
+REFERENCES,0.6620498614958449,"[30] Albert Gu, Karan Goel, and Christopher Re. Efﬁciently modeling long sequences with structured"
+REFERENCES,0.6648199445983379,"state spaces. In International Conference on Learning Representations (ICLR), 2022. (Cited on
+9)"
+REFERENCES,0.667590027700831,"[31] Fangda Gu, Heng Chang, Wenwu Zhu, Somayeh Sojoudi, and Laurent El Ghaoui. Implicit"
+REFERENCES,0.6703601108033241,"Graph Neural Networks. In Neural Information Processing Systems (NeurIPS), pages 11984–
+11995, 2020. (Cited on 9)"
+REFERENCES,0.6731301939058172,"[32] Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bernhard Nessler, and Sepp Hochreiter."
+REFERENCES,0.6759002770083102,"Gans trained by a two time-scale update rule converge to a local nash equilibrium. Advances in
+neural information processing systems, 30, 2017. (Cited on 7)"
+REFERENCES,0.6786703601108033,"[33] Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. Neural"
+REFERENCES,0.6814404432132964,"Information Processing Systems (NeurIPS), 2020. (Cited on 2, 3, 6, 8, 9, 10, 17, 20)"
+REFERENCES,0.6842105263157895,"[34] Minyoung Huh, Richard Zhang, Jun-Yan Zhu, Sylvain Paris, and Aaron Hertzmann. Transform-"
+REFERENCES,0.6869806094182825,"ing and projecting images into class-conditional generative networks. In European Conference
+on Computer Vision, pages 17–34. Springer, 2020. (Cited on 10)"
+REFERENCES,0.6897506925207756,"[35] Thibaut Issenhuth, Ugo Tanielian, Jérémie Mary, and David Picard. Edibert, a generative model"
+REFERENCES,0.6925207756232687,"for image editing. arXiv preprint arXiv:2111.15264, 2021. (Cited on 2)"
+REFERENCES,0.6952908587257618,"[36] Ajil Jalal, Marius Arvinte, Giannis Daras, Eric Price, Alexandros G Dimakis, and Jon Tamir."
+REFERENCES,0.6980609418282548,"Robust compressed sensing mri with deep generative priors. Advances in Neural Information
+Processing Systems, 34:14938–14954, 2021. (Cited on 10)"
+REFERENCES,0.7008310249307479,[37] Zahra Kadkhodaie and Eero P Simoncelli. Solving linear inverse problems using the prior
+REFERENCES,0.703601108033241,"implicit in a denoiser. arXiv preprint arXiv:2007.13640, 2020. (Cited on 10)"
+REFERENCES,0.7063711911357341,[38] Kenji Kawaguchi. On the Theory of Implicit Deep Learning: Global Convergence with Implicit
+REFERENCES,0.7091412742382271,"Layers. In International Conference on Learning Representations (ICLR), 2020. (Cited on 9)"
+REFERENCES,0.7119113573407202,"[39] Bahjat Kawar, Gregory Vaksman, and Michael Elad. Snips: Solving noisy inverse problems"
+REFERENCES,0.7146814404432132,"stochastically. Advances in Neural Information Processing Systems, 34:21757–21769, 2021.
+(Cited on 10)"
+REFERENCES,0.7174515235457064,[40] Gwanghyun Kim and Jong Chul Ye. Diffusionclip: Text-guided image manipulation using
+REFERENCES,0.7202216066481995,"diffusion models. arXiv preprint arXiv:2110.02711, 2021. (Cited on 10)"
+REFERENCES,0.7229916897506925,[41] Diederik P Kingma and Jimmy Ba. Adam: A method for stochastic optimization. arXiv preprint
+REFERENCES,0.7257617728531855,"arXiv:1412.6980, 2014. (Cited on 17)"
+REFERENCES,0.7285318559556787,"[42] Diederik P Kingma, Tim Salimans, Ben Poole, and Jonathan Ho. Variational diffusion models."
+REFERENCES,0.7313019390581718,"arXiv preprint arXiv:2107.00630, 2021. (Cited on 1)"
+REFERENCES,0.7340720221606648,"[43] J. Zico Kolter, David Duvenaud, and Matthew Johnson. Deep implicit layers tutorial - neural"
+REFERENCES,0.7368421052631579,"ODEs, deep equilibirum models, and beyond. Neural Information Processing Systems Tutorial,
+2020. (Cited on 9, 17)"
+REFERENCES,0.739612188365651,[44] Zhifeng Kong and Wei Ping. On fast sampling of diffusion probabilistic models. arXiv preprint
+REFERENCES,0.7423822714681441,"arXiv:2106.00132, 2021. (Cited on 1, 9)"
+REFERENCES,0.7451523545706371,"[45] Zhifeng Kong, Wei Ping, Jiaji Huang, Kexin Zhao, and Bryan Catanzaro. Diffwave: A versatile"
+REFERENCES,0.7479224376731302,"diffusion model for audio synthesis. In International Conference on Learning Representations
+(ICLR), 2021. (Cited on 9)"
+REFERENCES,0.7506925207756233,"[46] Alex Krizhevsky. Learning multiple layers of features from tiny images. Technical report,"
+REFERENCES,0.7534626038781164,"Citeseer, 2009. (Cited on 2, 6)"
+REFERENCES,0.7562326869806094,"[47] Haoying Li, Yifan Yang, Meng Chang, Shiqi Chen, Huajun Feng, Zhihai Xu, Qi Li, and"
+REFERENCES,0.7590027700831025,"Yueting Chen. Srdiff: Single image super-resolution with diffusion probabilistic models.
+Neurocomputing, 2022. (Cited on 10)"
+REFERENCES,0.7617728531855956,"[48] Mingjie Li, Yisen Wang, and Zhouchen Lin. Cerdeq: Certiﬁable deep equilibrium model. In"
+REFERENCES,0.7645429362880887,"International Conference on Machine Learning, 2022. (Cited on 9)"
+REFERENCES,0.7673130193905817,"[49] Huan Ling, Karsten Kreis, Daiqing Li, Seung Wook Kim, Antonio Torralba, and Sanja Fidler."
+REFERENCES,0.7700831024930748,"Editgan: High-precision semantic image editing. Advances in Neural Information Processing
+Systems, 34:16331–16345, 2021. (Cited on 2)"
+REFERENCES,0.7728531855955678,"[50] Zenan Ling, Xingyu Xie, Qiuhao Wang, Zongpeng Zhang, and Zhouchen Lin. Global conver-"
+REFERENCES,0.775623268698061,"gence of over-parameterized deep equilibrium models. arXiv preprint arXiv:2205.13814, 2022.
+(Cited on 9)"
+REFERENCES,0.778393351800554,"[51] Juncheng Liu, Kenji Kawaguchi, Bryan Hooi, Yiwei Wang, and Xiaokui Xiao. EIGNN: Efﬁcient"
+REFERENCES,0.7811634349030471,"inﬁnite-depth graph neural networks. In Neural Information Processing Systems (NeurIPS),
+2021. (Cited on 9)"
+REFERENCES,0.7839335180055401,"[52] Ziwei Liu, Ping Luo, Xiaogang Wang, and Xiaoou Tang. Deep learning face attributes in the"
+REFERENCES,0.7867036011080333,"wild. In Proceedings of International Conference on Computer Vision (ICCV), December 2015.
+(Cited on 2, 6)"
+REFERENCES,0.7894736842105263,"[53] Cheng Lu, Jianfei Chen, Chongxuan Li, Qiuhao Wang, and Jun Zhu. Implicit normalizing ﬂows."
+REFERENCES,0.7922437673130194,"In International Conference on Learning Representations (ICLR), 2021. (Cited on 9)"
+REFERENCES,0.7950138504155124,[54] Eric Luhman and Troy Luhman. Knowledge distillation in iterative generative models for
+REFERENCES,0.7977839335180056,"improved sampling speed. ArXiv, abs/2101.02388, 2021. (Cited on 1, 9)"
+REFERENCES,0.8005540166204986,"[55] Chenlin Meng, Yang Song, Jiaming Song, Jiajun Wu, Jun-Yan Zhu, and Stefano Ermon."
+REFERENCES,0.8033240997229917,"Sdedit: Image synthesis and editing with stochastic differential equations. arXiv preprint
+arXiv:2108.01073, 2021. (Cited on 2, 10)"
+REFERENCES,0.8060941828254847,"[56] Alex Nichol, Prafulla Dhariwal, Aditya Ramesh, Pranav Shyam, Pamela Mishkin, Bob McGrew,"
+REFERENCES,0.8088642659279779,"Ilya Sutskever, and Mark Chen. Glide: Towards photorealistic image generation and editing
+with text-guided diffusion models. arXiv preprint arXiv:2112.10741, 2021. (Cited on 10)"
+REFERENCES,0.8116343490304709,[57] Alexander Quinn Nichol and Prafulla Dhariwal. Improved denoising diffusion probabilistic
+REFERENCES,0.814404432132964,"models. In International Conference on Machine Learning, pages 8162–8171. PMLR, 2021.
+(Cited on 1, 10)"
+REFERENCES,0.817174515235457,"[58] Weili Nie, Brandon Guo, Yujia Huang, Chaowei Xiao, Arash Vahdat, and Anima Anandkumar."
+REFERENCES,0.8199445983379502,"Diffusion models for adversarial puriﬁcation. arXiv preprint arXiv:2205.07460, 2022. (Cited
+on 2)"
+REFERENCES,0.8227146814404432,"[59] Junyoung Park, Jinhyun Choo, and Jinkyoo Park. Convergent graph solvers. arXiv preprint"
+REFERENCES,0.8254847645429363,"arXiv:2106.01680, 2021. (Cited on 9)"
+REFERENCES,0.8282548476454293,"[60] Adam Paszke, Sam Gross, Soumith Chintala, Gregory Chanan, Edward Yang, Zachary DeVito,"
+REFERENCES,0.8310249307479224,"Zeming Lin, Alban Desmaison, Luca Antiga, and Adam Lerer. Automatic differentiation in
+pytorch. 2017. (Cited on 17)"
+REFERENCES,0.8337950138504155,"[61] Guim Perarnau, Joost Van De Weijer, Bogdan Raducanu, and Jose M Álvarez. Invertible"
+REFERENCES,0.8365650969529086,"conditional gans for image editing. arXiv preprint arXiv:1611.06355, 2016. (Cited on 10)"
+REFERENCES,0.8393351800554016,"[62] Aditya Ramesh, Prafulla Dhariwal, Alex Nichol, Casey Chu, and Mark Chen. Hierarchical text-"
+REFERENCES,0.8421052631578947,"conditional image generation with clip latents. arXiv preprint arXiv:2204.06125, 2022. (Cited
+on 9)"
+REFERENCES,0.8448753462603878,"[63] Ardavan Saeedi, Matthew Hoffman, Stephen DiVerdi, Asma Ghandeharioun, Matthew Johnson,"
+REFERENCES,0.8476454293628809,"and Ryan Adams. Multimodal prediction and personalization of photo edits with deep generative
+models. In International Conference on Artiﬁcial Intelligence and Statistics, pages 1309–1317.
+PMLR, 2018. (Cited on 2)"
+REFERENCES,0.850415512465374,"[64] Chitwan Saharia, Jonathan Ho, William Chan, Tim Salimans, David J Fleet, and Mohammad"
+REFERENCES,0.853185595567867,"Norouzi. Image super-resolution via iterative reﬁnement. arXiv preprint arXiv:2104.07636,
+2021. (Cited on 10)"
+REFERENCES,0.8559556786703602,[65] Tim Salimans and Jonathan Ho. Progressive distillation for fast sampling of diffusion models.
+REFERENCES,0.8587257617728532,"In International Conference on Learning Representations (ICLR), 2022. (Cited on 1, 9)"
+REFERENCES,0.8614958448753463,"[66] Hiroshi Sasaki, Chris G Willcocks, and Toby P Breckon. Unit-ddpm: Unpaired image translation"
+REFERENCES,0.8642659279778393,"with denoising diffusion probabilistic models. arXiv preprint arXiv:2104.05358, 2021. (Cited
+on 10)"
+REFERENCES,0.8670360110803325,"[67] Jascha Sohl-Dickstein, Eric Weiss, Niru Maheswaranathan, and Surya Ganguli. Deep unsuper-"
+REFERENCES,0.8698060941828255,"vised learning using nonequilibrium thermodynamics. In International Conference on Machine
+Learning (ICML), 2015. (Cited on 2, 3, 9, 20)"
+REFERENCES,0.8725761772853186,"[68] Jiaming Song, Chenlin Meng, and Stefano Ermon. Denoising diffusion implicit models. arXiv"
+REFERENCES,0.8753462603878116,"preprint arXiv:2010.02502, 2020. (Cited on 1, 2, 3, 4, 6, 8, 9, 17, 20, 22)"
+REFERENCES,0.8781163434903048,[69] Yang Song and Stefano Ermon. Generative modeling by estimating gradients of the data
+REFERENCES,0.8808864265927978,"distribution. Advances in Neural Information Processing Systems, 32, 2019. (Cited on 1, 9)"
+REFERENCES,0.8836565096952909,"[70] Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano Ermon, and"
+REFERENCES,0.8864265927977839,"Ben Poole. Score-based generative modeling through stochastic differential equations. In
+International Conference on Learning Representations (ICLR), 2021. (Cited on 9)"
+REFERENCES,0.889196675900277,"[71] Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano Ermon, and"
+REFERENCES,0.8919667590027701,"Ben Poole. Score-based generative modeling through stochastic differential equations. In
+International Conference on Learning Representations (ICLR), 2021. (Cited on 9, 10)"
+REFERENCES,0.8947368421052632,"[72] Po-Wei Wang, Priya Donti, Bryan Wilder, and Zico Kolter. Satnet: Bridging deep learning and"
+REFERENCES,0.8975069252077562,"logical reasoning using a differentiable satisﬁability solver. In International Conference on
+Machine Learning (ICML), 2019. (Cited on 9)"
+REFERENCES,0.9002770083102493,"[73] Tiancai Wang, Xiangyu Zhang, and Jian Sun. Implicit Feature Pyramid Network for Object"
+REFERENCES,0.9030470914127424,"Detection. arXiv preprint arXiv:2012.13563, 2020. (Cited on 9)"
+REFERENCES,0.9058171745152355,[74] Colin Wei and J Zico Kolter. Certiﬁed robustness for deep equilibrium models via interval bound
+REFERENCES,0.9085872576177285,"propagation. In International Conference on Learning Representations, 2022. (Cited on 9)"
+REFERENCES,0.9113573407202216,[75] Ezra Winston and J. Zico Kolter. Monotone operator equilibrium networks. In Neural Informa-
+REFERENCES,0.9141274238227147,"tion Processing Systems (NeurIPS), 2020. (Cited on 9)"
+REFERENCES,0.9168975069252078,"[76] Fisher Yu, Yinda Zhang, Shuran Song, Ari Seff, and Jianxiong Xiao. LSUN: construction of a"
+REFERENCES,0.9196675900277008,"large-scale image dataset using deep learning with humans in the loop. CoRR, abs/1506.03365,
+2015. (Cited on 6)"
+REFERENCES,0.9224376731301939,"[77] Jiapeng Zhu, Yujun Shen, Deli Zhao, and Bolei Zhou. In-domain gan inversion for real image"
+REFERENCES,0.925207756232687,"editing. In European conference on computer vision, pages 592–608. Springer, 2020. (Cited on
+2, 10)"
+REFERENCES,0.9279778393351801,"[78] Jun-Yan Zhu, Philipp Krähenbühl, Eli Shechtman, and Alexei A Efros. Generative visual"
+REFERENCES,0.9307479224376731,"manipulation on the natural image manifold. In European conference on computer vision, pages
+597–613. Springer, 2016. (Cited on 10)"
+REFERENCES,0.9335180055401662,Checklist
+REFERENCES,0.9362880886426593,"The checklist follows the references. Please read the checklist guidelines carefully for information on
+how to answer these questions. For each question, change the default [TODO] to [Yes] , [No] , or
+[N/A] . You are strongly encouraged to include a justiﬁcation to your answer, either by referencing
+the appropriate section of your paper or providing a brief inline description. For example:"
+REFERENCES,0.9390581717451524,"• Did you include the license to the code and datasets? [Yes]
+• Did you include the license to the code and datasets? [No] The code and the data are"
+REFERENCES,0.9418282548476454,"proprietary.
+• Did you include the license to the code and datasets? [N/A]"
+REFERENCES,0.9445983379501385,"Please do not modify the questions and only use the provided macros for your answers. Note that the
+Checklist section does not count towards the page limit. In your paper, please delete this instructions
+block and only keep the Checklist section heading above along with the questions/answers below."
+REFERENCES,0.9473684210526315,1. For all authors...
+REFERENCES,0.9501385041551247,(a) Do the main claims made in the abstract and introduction accurately reﬂect the paper’s
+REFERENCES,0.9529085872576177,"contributions and scope? [Yes]
+(b) Did you describe the limitations of your work? [Yes]"
+REFERENCES,0.9556786703601108,"(c) Did you discuss any potential negative societal impacts of your work? [Yes]
+(d) Have you read the ethics review guidelines and ensured that your paper conforms to"
+REFERENCES,0.9584487534626038,"them? [Yes]
+2. If you are including theoretical results..."
+REFERENCES,0.961218836565097,"(a) Did you state the full set of assumptions of all theoretical results? [Yes]
+(b) Did you include complete proofs of all theoretical results? [Yes]
+3. If you ran experiments..."
+REFERENCES,0.96398891966759,"(a) Did you include the code, data, and instructions needed to reproduce the main experi-"
+REFERENCES,0.9667590027700831,"mental results (either in the supplemental material or as a URL)? [Yes]
+(b) Did you specify all the training details (e.g., data splits, hyperparameters, how they"
+REFERENCES,0.9695290858725761,"were chosen)? [Yes]
+(c) Did you report error bars (e.g., with respect to the random seed after running experi-"
+REFERENCES,0.9722991689750693,"ments multiple times)? [Yes]
+(d) Did you include the total amount of compute and the type of resources used (e.g., type"
+REFERENCES,0.9750692520775623,"of GPUs, internal cluster, or cloud provider)? [Yes]
+4. If you are using existing assets (e.g., code, data, models) or curating/releasing new assets..."
+REFERENCES,0.9778393351800554,"(a) If your work uses existing assets, did you cite the creators? [Yes]
+(b) Did you mention the license of the assets? [Yes]"
+REFERENCES,0.9806094182825484,"(c) Did you include any new assets either in the supplemental material or as a URL? [Yes]
+(d) Did you discuss whether and how consent was obtained from people whose data you’re"
+REFERENCES,0.9833795013850416,"using/curating? [Yes]
+(e) Did you discuss whether the data you are using/curating contains personally identiﬁable"
+REFERENCES,0.9861495844875346,"information or offensive content? [N/A]
+5. If you used crowdsourcing or conducted research with human subjects..."
+REFERENCES,0.9889196675900277,"(a) Did you include the full text of instructions given to participants and screenshots, if"
+REFERENCES,0.9916897506925207,"applicable? [N/A]
+(b) Did you describe any potential participant risks, with links to Institutional Review"
+REFERENCES,0.9944598337950139,"Board (IRB) approvals, if applicable? [N/A]
+(c) Did you include the estimated hourly wage paid to participants and the total amount"
+REFERENCES,0.997229916897507,spent on participant compensation? [N/A]

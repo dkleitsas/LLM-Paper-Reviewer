@@ -1,0 +1,975 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.003389830508474576,"We hypothesize that due to the greedy nature of learning in multi-modal deep neural
+networks, these models tend to rely on just one modality while under-utilizing the
+other modalities. We observe empirically that such behavior hurts their overall
+generalization. To estimate the model’s modality-wise dependency, we compute
+the gain on the accuracy when the model has access to an additional modality and
+refer to this gain as the conditional utilization rate of the added modality. In the
+experiments, we consistently observe an imbalance in conditional utilization rates
+between modalities, across multiple tasks and architectures. Since conditional
+utilization rate cannot be computed efﬁciently during training, we introduce an
+proxy for it based on the pace at which the model learns from each modality, which
+we refer to as conditional learning speed. We propose an algorithm to balance the
+conditional learning speed between modalities during training and demonstrate that
+it indeed addresses the issue of greedy learning. The proposed algorithm improves
+the model’s generalization on three datasets: Colored MNIST (Kim et al., 2019),
+Princeton ModelNet40 (Wu et al., 2015), and NVIDIA Dynamic Hand Gesture
+Dataset (Molchanov et al., 2016)."
+INTRODUCTION,0.006779661016949152,"1
+INTRODUCTION"
+INTRODUCTION,0.010169491525423728,"In real-world problems, each instance frequently has multiple modalities associated with it. For
+example, we detect cancer in both X-ray and ultrasound images. We seek clues from images to
+answer questions given in text. We are naturally interested in training deep neural networks (DNNs)
+end-to-end to learn from all available input modalities. We refer to such a training regime as a
+multi-modal learning process and DNNs resulting from this process as multi-modal DNNs."
+INTRODUCTION,0.013559322033898305,"Several recent studies have reported unsatisfactory performance of multi-modal DNNs in various
+tasks (Wang et al., 2020a; Wu et al., 2020; Gat et al., 2020; Cadene et al., 2019; Agrawal et al., 2016;
+Hessel & Lee, 2020; Han et al., 2021). For example, in Visual Question Answering, multi-modal
+DNNs were found to ignore the visual modality (presented as an image) and exploit statistical
+regularities shared between the textual modality (presented as a question) and the answer alone,
+resulting in poor generalization (Cadene et al., 2019; Gat et al., 2020; Agrawal et al., 2016). Similarly,
+in Human Action Recognition, multi-modal DNNs trained on images and audio were observed to
+under-perform uni-modal DNNs trained on images only (Wang et al., 2020a)."
+INTRODUCTION,0.01694915254237288,"These earlier negative ﬁndings compel us to ask, what prevents multi-modal DNNs from achieving
+better performance? In order to answer this question, we ﬁrst diagnose these DNNs as lacking
+utilization of all modalities by analyzing their conditional utilization rates. For a multi-modal DNN
+trained with two modalities, m0 and m1, the conditional utilization rate of m1 given m0, denoted by
+u(m1|m0), measures how important it is to use m1, given the presence of m0. It is computed as the
+relative difference in accuracy between two derived models from the DNN, one using both modalities
+and the other using only one modality. In several multi-modal learning tasks, we consistently observe
+a signiﬁcant imbalance in conditional utilization rates between modalities. For example, we observe
+u(RGB|depth) = 0.01 and u(depth|RGB) = 0.63 for a DNN trained to identify gestures in videos
+using the NVIDIA Dynamic Hand Gesture Dataset (NVGesture) (Molchanov et al., 2016). It indicates
+that the DNN relies on the depth modality to make predictions and does not pay attention to the RGB"
+INTRODUCTION,0.020338983050847456,Under review as a conference paper at ICLR 2022
+INTRODUCTION,0.023728813559322035,"modality. These observations lead to a conjecture that the multi-modal learning process often results
+in models that under-utilize some of the input modalities."
+INTRODUCTION,0.02711864406779661,"As the focal point of this work, we put forward the greedy learner hypothesis. The greedy learner
+hypothesis states that a multi-modal DNN learns to rely on one of the input modalities, based on
+which it could learn faster, and does not continue to learn to use the other modalities. This greediness
+leads to an imbalance in conditional utilization rates between modalities. In other words, it prevents
+a multi-modal DNN from learning to exploit all available modalities and often results in worse
+generalization. It explains the challenge in training multi-modal DNNs and motivates us to design a
+better multi-modal learning algorithm."
+INTRODUCTION,0.030508474576271188,"According to the greedy learner hypothesis, it is the diverged speed at which a multi-modal DNN
+learns from different modalities that leads to an imbalance in conditional utilization rate. If we
+intervene in the training process to adjust these speeds, we may be able to prevent the hurtful
+imbalance across input modalities. We analyze the learning dynamics of model components and
+propose a metric named by conditional learning speed using the gradient norm and weight norm
+of models’ parameters. It measures the relative learning speed at which the model learns from one
+modality against the other modality. We empirically show that it is a reasonable proxy for conditional
+utilization rate. We introduce a training algorithm, balanced multi-modal learning which guides the
+model to learn intentionally from one of the modalities according to the conditional learning speeds.
+We show that models trained with this algorithm learn to use all modalities appropriately and achieve
+stronger generalization on three multi-modal datasets: Colored MNIST dataset (Kim et al., 2019),
+ModelNet40 dataset of 3D objects (Su et al., 2015) and NVGesture Dataset (Molchanov et al., 2015)."
+PROBLEM SETUP,0.03389830508474576,"2
+PROBLEM SETUP"
+PROBLEM SETUP,0.03728813559322034,"We consider two input modalities, referred to as m0 and m1, without loss of generality towards tasks
+with more than two modalities. We denote a multi-modal dataset by D =
+
+(xi, yi)
+	N
+i=1, where
+x = (xm0, xm1). We partition the dataset D into training, validation and test sets, denoted by Dtrain,
+Dval, and Dtest, respectively. The goal is then to use this data set to train a multi-modal DNN such
+that it accurately predicts y from x. xm0 xm1 ̂y0 ̂y1 ̂y"
+PROBLEM SETUP,0.04067796610169491,"Figure 1: The multi-modal DNN with in-
+termediate fusion that we study in this
+work. Blue and red blocks represent the
+two uni-modal networks learning from
+modalities m0 and m1. The fusion lay-
+ers are marked with green, green-blue, and
+green-red. The predictions from the two
+uni-modal branches are denoted by ˆy0 and
+ˆy1. We denote the average of the two by ˆy
+which is the model’s prediction."
+PROBLEM SETUP,0.04406779661016949,"Multi-modal DNNs
+We use a multi-modal DNN that has two uni-modal branches, each taking one
+modality as input. The two uni-modal branches are interconnected by layer-wise fusion modules.
+These fusion modules enable information ﬂow from one branch to another. According to categoriza-
+tion of multi-modal fusion strategies in the deep learning literature, this is intermediate fusion (Ngiam
+et al., 2011; Atrey et al., 2010; Baltrušaitis et al., 2018). It has demonstrated competitive performance
+against multi-modal DNNs with late fusion in many tasks (Perez et al., 2018; Joze et al., 2020;
+Anderson et al., 2018; Wang et al., 2020b)."
+PROBLEM SETUP,0.04745762711864407,"We implement every fusion module by a multi-modal transfer module (MMTM) (Joze et al., 2020).
+Each MMTM connects two layers from the two uni-modal branches. There is ﬁrst the global average
+pooling applied over spatial dimensions to transform feature maps into a vector. We concatenate the
+two vectors and apply linear transformation. We refer to its output as context representation. Next,
+for each uni-modal branch, we implement a fully connected layer on the context representation and
+get a vector with a dimension of the number of feature maps. Feature maps are re-scaled by this
+vector before passing to the next layer of the uni-modal branch."
+PROBLEM SETUP,0.05084745762711865,"We train a multi-modal DNN f on Dtrain. Let ˆy be the prediction of f for an input x:
+ˆy = f(xm0, xm1)."
+PROBLEM SETUP,0.05423728813559322,Under review as a conference paper at ICLR 2022
+PROBLEM SETUP,0.0576271186440678,"As shown in Figure 1, ˆy = 1"
+PROBLEM SETUP,0.061016949152542375,"2(ˆy0 + ˆy1), where ˆy0 and ˆy1 are the outputs of the two uni-modal branches.
+During training, the parameters of the multi-modal DNN are updated by stochastic gradient descent
+(SGD) to minimize the loss: L = CE(y, ˆy0) + CE(y, ˆy1), where CE stands for cross-entropy. We
+refer to each of the cross-entropy losses as a modality-speciﬁc loss. We train the model until ˆy = y
+for all samples in Dtrain and take the checkpoint of it when ˆy reaches the highest accuracy on Dval."
+PROBLEM SETUP,0.06440677966101695,"During training, each uni-modal branch largely focuses on its associate input modality. The fusion
+modules generate context representation using all modalities and feed such information to the uni-
+modal branches. Both ˆy0 and ˆy1 depend on information from both modalities. We end up with two
+functions, f0 and f1, corresponding to the two uni-modal branches:"
+PROBLEM SETUP,0.06779661016949153,"ˆy0 = f0(xm0, xm1),
+ˆy1 = f1(xm0, xm1)."
+PROBLEM SETUP,0.0711864406779661,"To evaluate the multi-modal DNN’s ability in using a single modality, we disable information sharing
+between branches ad derive f ′
+0 and f ′
+1, each taking only one of the input modalities as input. We
+describe how we derive them in detail in Appendix A.1. We use ˆy′
+0 and ˆy′
+1 to refer to their outputs:"
+PROBLEM SETUP,0.07457627118644068,"ˆy′
+0 = f ′
+0(xm0),
+ˆy′
+1 = f ′
+1(xm1)."
+PROBLEM SETUP,0.07796610169491526,"In summary, we derive four models from f and we deﬁne the ability of each model as its accuracy
+A on Dtest. We group the four accuracies into two pairs: (A(f0), A(f ′
+0)), and (A(f1), A(f ′
+1)) and
+deﬁne the conditional utilization rates as bellow:"
+PROBLEM SETUP,0.08135593220338982,"Deﬁnition 2.1 (Conditional utilization rate) For a multi-modal DNN, f, taking two modalities m0
+and m1 as inputs, its conditional utilization rates for m1 and m0 are deﬁned as u(m1|m0) =
+A(f0)−A(f ′
+0)
+A(f0)
+and u(m0|m1) = A(f1)−A(f ′
+1)
+A(f1)
+, respectively."
+PROBLEM SETUP,0.0847457627118644,"The conditional utilization rate is the relative change in accuracy between the two models within each
+pair. The conditional utilization rate of m0, u(m0|m1), measures how important it is for f to use m0
+together with m1. In other words, it estimates the marginal contribution that m0 has in increasing the
+accuracy of ˆy1 depending on m1."
+PROBLEM SETUP,0.08813559322033898,"A multi-modal learning process
+Given a DNN’s architecture and a dataset, every time we run a
+multi-modal learning process, we perform the following steps: (1) sample a value of learning rate
+randomly from a given range, (2) initialize the DNN’s parameters randomly, (3) update them to ﬁt
+Dtrain with SGD, and (4) select the model checkpoint with the highest accuracy on Dval."
+THE GREEDY LEARNER HYPOTHESIS,0.09152542372881356,"3
+THE GREEDY LEARNER HYPOTHESIS"
+THE GREEDY LEARNER HYPOTHESIS,0.09491525423728814,"In this section, we introduce the greedy learner hypothesis to explain challenges observed in training
+multi-modal DNNs. Before describing our hypothesis, we discuss some assumptions on the multi-
+modal data and preliminary observations made in the multi-modal learning literature."
+ASSUMPTIONS IN MULTI-MODAL LEARNING,0.09830508474576272,"3.1
+ASSUMPTIONS IN MULTI-MODAL LEARNING"
+ASSUMPTIONS IN MULTI-MODAL LEARNING,0.1016949152542373,"First, in multi-modal learning literature (Blum & Mitchell, 1998; Sridharan & Kakade, 2008), both
+modalities are assumed to be predictive of the target, i.e., I(Y , Xm0) > 0 and I(Y , Xm1) > 0,
+where I denotes the mutual information. In order to minimize one of the modality-speciﬁc losses, e.g.
+CE(y, ˆy0), one can either update the parameters of the fusion layers that pass information from m1
+to ˆy0, or the parameters of the uni-modal branch taking m0 as input, or both."
+ASSUMPTIONS IN MULTI-MODAL LEARNING,0.10508474576271186,"Second, modalities are predictive of the target at different degrees. For example, it has been
+observed that when training DNNs on each modality separately, they usually do not reach the same
+performance (Wang et al., 2020b; Joze et al., 2020). In addition, multi-modal DNNs exhibit varying
+performance when being trained on different subsets of modalities present for the task (Weng et al.,
+2021; Pérez-Rúa et al., 2019; Liu et al., 2018)."
+ASSUMPTIONS IN MULTI-MODAL LEARNING,0.10847457627118644,"Third, modalities are learned by the model at different speeds. This has been observed in both
+uni-modal DNNs and Multi-modal DNNs (Wang et al., 2020a; Wu et al., 2020)."
+ASSUMPTIONS IN MULTI-MODAL LEARNING,0.11186440677966102,Under review as a conference paper at ICLR 2022
+MULTI-MODAL LEARNING PROCESS IS GREEDY,0.1152542372881356,"3.2
+MULTI-MODAL LEARNING PROCESS IS GREEDY"
+MULTI-MODAL LEARNING PROCESS IS GREEDY,0.11864406779661017,"Before formalizing our greedy learner hypothesis that explains the behaviour of multi-modal DNNs,
+we ﬁrst demonstrate that we can tell whether the model utilizes all modalities by analyzing its
+conditional utilization rates."
+MULTI-MODAL LEARNING PROCESS IS GREEDY,0.12203389830508475,"Given a multi-modal DNN, f, with two input modalities, m0 and m1, we compute the difference
+between conditional utilization rates, u(m1|m0) and u(m0|m1) as"
+MULTI-MODAL LEARNING PROCESS IS GREEDY,0.12542372881355932,dutil(f) = u(m1|m0) −u(m0|m1).
+MULTI-MODAL LEARNING PROCESS IS GREEDY,0.1288135593220339,"If we observe high | dutil(f)|, we say that f exhibits imbalance in utilization between modalities."
+MULTI-MODAL LEARNING PROCESS IS GREEDY,0.13220338983050847,"The difference between conditional utilization rates is bounded between −1 and 1. When it is close
+to −1 or 1, the model beneﬁts only from one of the modalities given the other but not vice versa. This
+implies that the model’s ability to predict ˆy0 and ˆy1 comes only from one of the modalities."
+MULTI-MODAL LEARNING PROCESS IS GREEDY,0.13559322033898305,We now introduce the greedy learner hypothesis:
+MULTI-MODAL LEARNING PROCESS IS GREEDY,0.13898305084745763,"We call a multi-modal learning process greedy, when it trains models to rely on only one of the
+available modalities. A greedy multi-modal learning process cannot avoid producing models
+that exhibit a high degree of imbalance in utilization between modalities. We hypothesize
+that a multi-modal learning process, in which a multi-modal DNN is trained to minimize the
+sum of modality-speciﬁc losses, is greedy."
+MULTI-MODAL LEARNING PROCESS IS GREEDY,0.1423728813559322,"Let E[bdutil] denote the expectation of bdutil over the empirical distribution of models resulting from a
+multi-modal learning process (as deﬁned in §2). The absolute value of E[bdutil] is associated with the
+greediness of the process. The higher the |E[bdutil]| is, the greedier the learning process is."
+MULTI-MODAL LEARNING PROCESS IS GREEDY,0.14576271186440679,We propose the following conjectures consistent with the greedy learner hypothesis:
+MULTI-MODAL LEARNING PROCESS IS GREEDY,0.14915254237288136,"1. There exists an ϵ > 0, s.t. |E[bdutil]| > ϵ, as long the multi-modal dataset has the last two
+properties from §3.1. Otherwise, bdutil is distributed symmetrically around zero and E[bdutil] = 0."
+MULTI-MODAL LEARNING PROCESS IS GREEDY,0.15254237288135594,"2. The stronger the regularization we apply to the DNNs’ parameters in training, the higher the
+|E[bdutil]| is."
+MULTI-MODAL LEARNING PROCESS IS GREEDY,0.15593220338983052,"We expect the ﬁrst scenario in the ﬁrst conjecture to be true for all real-world multi-modal tasks. To
+test the second scenario in the ﬁrst conjecture, we construct datasets of two identical modalities."
+MULTI-MODAL LEARNING PROCESS IS GREEDY,0.15932203389830507,"We suspect that the implicit regularization of DNNs is a factor impacting the greediness of learning
+in multi-modal DNNs. The implicit regularization of DNNs commonly refers to a consensus that
+DNNs have the tendency to lean towards simplicity during training and it explains their strong
+generalization (Valle-Perez et al., 2019; Zhang et al., 2017; 2021; Smith et al., 2021). Since it is
+difﬁcult to precisely measure and control such implicit regularization, alternatively, we construct the
+second conjecture using explicit regularization applied to the DNNs’ parameters."
+MULTI-MODAL LEARNING PROCESS IS GREEDY,0.16271186440677965,"In order to validate the above hypothesis and conjectures empirically, we conduct experiments
+on several multi-modal datasets using different network architectures (cf. §5.1). We present our
+observations in §5.2 and §5.3. We show that the multi-modal learning process cannot avoid producing
+models that exhibit a high degree of imbalance in utilization between modalities. Further, in the
+next section, we propose a metric for measuring the speeds at which the model learns from different
+modalities and we show the imbalance in such speeds is correlated with the imbalance in utilization."
+MAKING MULTI-MODAL LEARNING LESS GREEDY,0.16610169491525423,"4
+MAKING MULTI-MODAL LEARNING LESS GREEDY"
+MAKING MULTI-MODAL LEARNING LESS GREEDY,0.1694915254237288,"We aim to make multi-modal learning less greedy by controlling the speed at which a multi-modal
+DNN learns to rely on each modality. To this end, we deﬁne conditional learning speed to measure the
+speed at which the DNN learns from one modality. It serves as an efﬁcient proxy to the conditional
+utilization rate of the corresponding modality, as shown empirically in §5.2 and §5.3. We then
+propose the balanced multi-modal learning algorithm, which controls the difference in conditional
+learning speed between modalities that the model exhibits during training."
+MAKING MULTI-MODAL LEARNING LESS GREEDY,0.17288135593220338,Under review as a conference paper at ICLR 2022
+CONDITIONAL LEARNING SPEED,0.17627118644067796,"4.1
+CONDITIONAL LEARNING SPEED"
+CONDITIONAL LEARNING SPEED,0.17966101694915254,"As demonstrated in §3.2, the imbalance in conditional utilization rates is a sign of the model
+exploiting the connection between the target and only one of the input modalities, ignoring cross-
+modal information. However, conditional utilization rates are measured after training is done, making
+it expensive to use them in real-time during training. We instead derive a proxy metric, called
+conditional learning speed, that captures relative learning speed between modalities during training."
+CONDITIONAL LEARNING SPEED,0.18305084745762712,"Let us revisit the architecture of the multi-modal DNN. We denote the parameters of each uni-modal
+branch taking m0 and m1 as inputs, by θ0 and θ1. Layers of the fusion modules marked with green
+and green/blue in Figure 1, are part of the function mapping x to ˆy0. Let θ′
+0 refer to their parameters.
+Analogously, the layers marked with green and green/red in Figure 1 are part of the function mapping
+x to ˆy1. We denote their parameters by θ′
+1. In this way, we divide the model’s parameters into two
+pairs: (θ0, θ′
+0) and (θ1, θ′
+1).1"
+CONDITIONAL LEARNING SPEED,0.1864406779661017,"For parameters θ, let θ(i−1) and θ(i) denote its value before and after the gradient descent step i, and
+G = ∂L"
+CONDITIONAL LEARNING SPEED,0.18983050847457628,∂θ |θ(i−1). We deﬁne the model’s conditional learning speed as:
+CONDITIONAL LEARNING SPEED,0.19322033898305085,"Deﬁnition 4.1 (Conditional learning speed) Given a multi-modal DNN, f, with two input modali-
+ties, m0 and m1, the conditional learning speeds of these modalities after t training steps, are"
+CONDITIONAL LEARNING SPEED,0.19661016949152543,"s(m1|m0; t) = log
+Pt
+i=1 µ(θ′
+0; i)
+Pt
+i=1 µ(θ0; i)
+,
+s(m0|m1; t) = log
+Pt
+i=1 µ(θ′
+1; i)
+Pt
+i=1 µ(θ1; i)
+,"
+CONDITIONAL LEARNING SPEED,0.2,"where µ(θ; i) = ||G||2
+2/||θ(i)||2
+2 quantiﬁes the change of f that comes from updating θ at the ith
+step, which can be also interpreted as the effective update on θ."
+CONDITIONAL LEARNING SPEED,0.2033898305084746,"This deﬁnition of µ(θ; i) is inspired by discussion on the effective update of parameters in the
+literature (Van Laarhoven, 2017; Zhang et al., 2019; Brock et al., 2021; Hoffer et al., 2018). When
+normalization techniques, such as batch normalization (Ioffe & Szegedy, 2015), are applied to the
+DNNs, the key property of the weight vector, θ, is its direction, i.e., θ/||θ||2
+2. Thus, we measure the
+update on θ using the norm of its gradient normalized by its norm."
+CONDITIONAL LEARNING SPEED,0.20677966101694914,"The conditional learning speed, s(m1|m0; t) (and analogously s(m0|m1; t)), is the log-ratio between
+the learning speed of θ′
+0 and that of θ0. Because θ′
+0 carries information from m1 to ˆy0 and information
+from m0 to ˆy0 is carried by θ0, s(m1|m0; t) reﬂects how fast the model learns from m1 relative to
+m0, after the ﬁrst t steps."
+CONDITIONAL LEARNING SPEED,0.21016949152542372,We further compute the difference between s(m1|m0; t) and s(m0|m1; t) as:
+CONDITIONAL LEARNING SPEED,0.2135593220338983,"dspeed(f; t) = s(m1|m0; t) −s(m0|m1; t),"
+CONDITIONAL LEARNING SPEED,0.21694915254237288,"analogous to dutil(f). For each model, we report dspeed(f; T) as dspeed(f) where the model takes
+T steps until reaching the highest accuracy on Dval. We anticipate that the conditional learning
+speed would serve as a proxy for the conditional utilization rate and we say dspeed(f; t) would
+predict dutil(f) at the end of training. In §5.2 and §5.3, we show the distributions of bdspeed and bdutil
+side-by-side to validate this."
+BALANCED MULTI-MODAL LEARNING,0.22033898305084745,"4.2
+BALANCED MULTI-MODAL LEARNING"
+BALANCED MULTI-MODAL LEARNING,0.22372881355932203,"Because dspeed(f, t) is predictive of the imbalanced utilization between modalities, we can take
+advantage of dspeed(f, t) to balance conditional utilization on-the-ﬂy. In addition to training the
+network normally with both modalities, we accelerate the model to learn from either modality
+alternately to balance the conditional learning speeds of them. See Algorithm 1 for an overall
+description of the algorithm."
+BALANCED MULTI-MODAL LEARNING,0.2271186440677966,"We refer to the training steps at which we perform forward and backward passes normally as regular
+steps. We introduce re-balancing steps at which we update one of the uni-modal branches intentionally
+in order to accelerate the model to learn from the corresponding modality. See Appendix A.2 for the
+full explanation of the re-balancing step."
+BALANCED MULTI-MODAL LEARNING,0.2305084745762712,"1Some parameters are both in θ′
+0 and θ′
+1."
+BALANCED MULTI-MODAL LEARNING,0.23389830508474577,Under review as a conference paper at ICLR 2022
+BALANCED MULTI-MODAL LEARNING,0.23728813559322035,"To warm-up the model, we perform only regular steps in the ﬁrst training epoch. Then we switch
+from regular steps to re-balancing steps if | dspeed(t)| > α, where α is a hyperparameter, referred to
+as the imbalance tolerance parameter. The training takes Q re-balancing steps before returning to
+regular mode. We refer to the hyperparameter Q as the re-balancing window size."
+BALANCED MULTI-MODAL LEARNING,0.24067796610169492,"Algorithm 1: Balanced multi-modal learning
+Input: Q, re-balancing window size;
+α, imbalance tolerance parameter
+T, # of training steps;
+T1, # of steps in the 1th training
+epoch
+Let M denote the accumulated
+effective update (µ) in regular steps
+Mθ0, Mθ′
+0 = 0, 0;
+Mθ1, Mθ′
+1 = 0, 0;
+for t ←1 to T1 do"
+BALANCED MULTI-MODAL LEARNING,0.2440677966101695,"Take a regular step;
+Update Mθ0, Mθ′
+0, Mθ1, Mθ′
+1
+end
+regular_mode = True"
+BALANCED MULTI-MODAL LEARNING,0.24745762711864408,for t ←T1 to T do
+BALANCED MULTI-MODAL LEARNING,0.25084745762711863,if regular_mode then
+BALANCED MULTI-MODAL LEARNING,0.2542372881355932,"Take a regular step;
+Update Mθ0, Mθ′
+0, Mθ1, Mθ′
+1;
+Compute dspeed;
+if | dspeed| > α then"
+BALANCED MULTI-MODAL LEARNING,0.2576271186440678,"q = 0; regular_mode = False
+end
+else"
+BALANCED MULTI-MODAL LEARNING,0.26101694915254237,"q ←q + 1;
+if q = Q then regular_mode = True;
+Take a re-balancing step to accelerate
+learning from m0 if dspeed > 0 else m1;
+end
+end"
+EXPERIMENTS AND RESULTS,0.26440677966101694,"5
+EXPERIMENTS AND RESULTS"
+EXPERIMENTS AND RESULTS,0.2677966101694915,"5.1
+DATASETS, TASKS AND BASELINES"
+EXPERIMENTS AND RESULTS,0.2711864406779661,"Colored-and-gray-MNIST (Kim et al., 2019) is a synthetic dataset based on MNIST (LeCun et al.,
+1998). In the training set of 60,000 examples, each example has two images, a gray-scale image and
+a monochromatic image, with color strongly correlated with its digit label. For the validation set of
+10,000 examples, each example also has a gray-scale image and a corresponding monochromatic
+image however with a low correlation between the color and its label. We consider the monochromatic
+image as the ﬁrst modality m0 and the gray-scale one as the second modality m1. We use a neural
+network with four convolutional layers as the uni-modal branch and employ three MMTMs to connect
+them. The corresponding uni-modal DNNs trained on the monochromatic images and the gray-scale
+images achieve the validation accuracies of 43% and 98%, respectively. We use this synthetic dataset
+mainly to demonstrate the proposed greedy learner hypothesis."
+EXPERIMENTS AND RESULTS,0.2745762711864407,"ModelNet40 is one of the Princeton ModelNet datasets (Wu et al., 2015) with 3D objects of 40
+categories (9,483 training samples and 2,468 test samples). We use the task that is to classify a 3D
+object based on the 2D views of its front and back (Su et al., 2015). Each example is a 3D object
+rendered as 2D images of 224×224 pixels. For the uni-modal branches, we use ResNet18 (He et al.,
+2016) and apply MMTMs in the three ﬁnal residual blocks. The uni-modal DNNs achieve 91.6% and
+93.1% accuracy, when learning from the front view (m0) and the rear view (m1), respectively."
+EXPERIMENTS AND RESULTS,0.27796610169491526,"NVIDIA Dynamic Hand Gesture Dataset (or NVGesture (Molchanov et al., 2015)), consists of 1,532
+video clips (1,050 training and 482 test ones) of hand gestures in 25 classes. We sample 20% training
+examples as the validation set and use depth and RGB as the two modalities. We adopt the data
+preparation steps used in Joze et al. (2020) and use the I3D architecture (Carreira & Zisserman, 2017)
+as uni-modal branches and MMTMs as fusion modules in the six ﬁnal inception modules."
+EXPERIMENTS AND RESULTS,0.28135593220338984,We provide examples of each dataset and details on data preprocessing in § A.4 in Appendix.
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.2847457627118644,"5.2
+VALIDATING THE GREEDY LEARNER HYPOTHESIS"
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.288135593220339,"In this section, we run the conventional multi-modal learning process on seven tasks with different
+input and output pairs to validate the ﬁrst conjecture from §3.2 experimentally and the proposed
+greedy learner hypothesis."
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.29152542372881357,Under review as a conference paper at ICLR 2022
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.29491525423728815,"Study design
+For each task introduced in §5.1, in addition to the original dataset, we construct a
+dataset with two identical input modalities by copying one of the modalities. For example, when
+using the colored-and-gray-MNIST dataset, we predict the digit class using two identical gray-scale
+images. We train a multi-modal DNN on these dataset as explained below for each task:"
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.2983050847457627,"• Colored-and-gray-MNIST: we train multi-modal DNNs using SGD with the momentum coefﬁcient
+of 0.9 and a batch size of 128. We sample 20 learning rates at random from the interval [10−5, 1]
+on a logarithmic scale. We train the model four times using each of the learning rate and random
+initialization of the parameters. In total, we train 80 models."
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.3016949152542373,"• ModelNet40: we use SGD without momentum and use minibatches of eight examples. We select
+nine learning rates from 10−3 to 1 and train model using each learning rate for three times. This
+ends up with 27 models."
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.3050847457627119,"• NVGesture: we use a batch size of four, SGD with momentum of 0.9, and uniformly sample 20
+learning rates from the interval [10−4, 10−1.5] on a logarithmic scale. We train the model three
+times using each learning rate, resulting in 60 models in total."
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.30847457627118646,"0
+2
+4
+6
+8
+number of models 0.2 0.1 0.0 0.1 dutil"
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.31186440677966104,"front & rear views
+duplicated front-view"
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.3152542372881356,"0
+2
+4
+number of models 0.10 0.05 0.00 0.05"
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.31864406779661014,dspeed
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.3220338983050847,"front & rear views
+duplicated front-view"
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.3254237288135593,"0
+2
+4
+6
+number of models 0.5 0.0 0.5 1.0 dutil"
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.3288135593220339,"RGB & Depth
+identical RGBs"
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.33220338983050846,"0
+2
+4
+6
+8
+number of models 0.4 0.2 0.0 0.2 0.4 0.6"
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.33559322033898303,dspeed
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.3389830508474576,"RGB & Depth
+identical RGBs"
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.3423728813559322,"Figure 2: Histograms and estimated
+density functions of bdutil and bdspeed
+of models trained using ModelNet40
+(top) or NVGesture (bottom). We
+mark zero and E[bdutil] with dashed
+lines. Many models have high bdutil.
+We see bdutil is distributed asymmet-
+rically around zero when using two
+different input modalities. When us-
+ing two identical input modalities, it
+is distributed symmetrically around
+zero. We see bdspeed exhibits similar
+distributions as bdutil."
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.34576271186440677,"Results
+We present the results for the experiments on ModelNet40 and NVGesture in Figure 2 and
+on Colored-and-gray-MNIST in Figure 2 in Appendix."
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.34915254237288135,"First, many models have high | dutil|. This conﬁrms that the multi-modal learning process encourages
+the model to rely on one modality and ignore the other one, which is consistent with our hypothesis.
+We make this observation across all tasks, conﬁrming that the conventional multi-modal learning
+process is greedy regardless of network architectures and tasks."
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.3525423728813559,"Second, bdutil is distributed symmetrically around zero, and E[bdutil] is approximately 0.0, for all
+the experiments using two identical input modalities. On the other hand, if we use two distinct
+modalities, bdutil is distributed asymmetrically, and we observe |E[bdutil]| of approximately 0.3, 0.1
+and 0.4 for colored-and-gray-MNIST, ModelNet40 and NVGesture, respectively. This validates the
+ﬁrst conjecture in §3.2."
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.3559322033898305,"Third, by observing conditional learning speed bdspeed, we can draw the same conclusions. In fact,
+the distributions of bdspeed largely replicate the distributions of bdutil. It validates our greedy learner
+hypothesis which blames the varying rate at which the learner learns to rely on each modality. It
+moreover conﬁrms dspeed is an appropriate proxy to use to re-balance multi-modal learning."
+VALIDATING THE GREEDY LEARNER HYPOTHESIS,0.3593220338983051,"We analyze the model’s behavior when using different learning rates. Interestingly, we see relatively
+balanced conditional utilization rates when using high learning rates, as shown in Figure 3 in
+Appendix. This observation indicates that high learning rates implicitly calibrate the learning pace
+between modalities. We leave this for future analysis."
+STRONG REGULARIZATION ENCOURAGES GREEDINESS,0.36271186440677966,"5.3
+STRONG REGULARIZATION ENCOURAGES GREEDINESS"
+STRONG REGULARIZATION ENCOURAGES GREEDINESS,0.36610169491525424,"We investigate L1 regularization’s impact on multi-modal DNNs and demonstrate that, as the second
+conjecture in §3.2 says, strong regularization encourages greediness in multi-modal learning."
+STRONG REGULARIZATION ENCOURAGES GREEDINESS,0.3694915254237288,Under review as a conference paper at ICLR 2022
+STRONG REGULARIZATION ENCOURAGES GREEDINESS,0.3728813559322034,"Study design
+We apply L1 regularization to the multi-modal DNNs. That is, we train the networks
+to optimize the loss L′ = L + λ||θ||1, where L is the classiﬁcation loss in §2, θ stands for all model
+parameters and λ is the weight on the regularizer."
+STRONG REGULARIZATION ENCOURAGES GREEDINESS,0.376271186440678,"We measure the effect of λ on the network f by computing the fraction of its parameters smaller than
+10−7. We denote this quantity by R(f). Since L1 regularization encourages sparsity of the network’s
+parameters, as shown in Appendix Figure 4, the larger the λ we use, the higher the R(f) we observe."
+STRONG REGULARIZATION ENCOURAGES GREEDINESS,0.37966101694915255,"We conduct this study with ModelNet40, using the front and rear views. We choose ten values from
+an interval [10−9, 10−3] as λ. We use SGD without momentum, set the learning rate to 0.1 and batch
+size to eight. Using each combination of hyperparameters, we repeat training for three times with
+random initialization and get three models."
+STRONG REGULARIZATION ENCOURAGES GREEDINESS,0.38305084745762713,"Results
+As shown in Figure 3, | dutil(f)| increases along λ, especially when log(λ) ≥−5. We also
+see that | dutil(f)| is positively correlated with R(f). In other words, the stronger the regularization
+is, the larger the imbalance in utilization between modalities we observe. We see that | dspeed| follows
+the same trend as | dutil|. Again, it supports our choice of using the conditional learning speed to
+predict the conditional utilization rate."
+STRONG REGULARIZATION ENCOURAGES GREEDINESS,0.3864406779661017,-9.0 -8.0 -7.0 -6.0 -5.0 -4.3 -4.0 -3.8 -3.5 -3.3
+STRONG REGULARIZATION ENCOURAGES GREEDINESS,0.3898305084745763,log( ) 0.0 0.2 0.4 0.6
+STRONG REGULARIZATION ENCOURAGES GREEDINESS,0.39322033898305087,|dutil| 0.10 0.03 0.17 0.30
+STRONG REGULARIZATION ENCOURAGES GREEDINESS,0.39661016949152544,|dspeed|
+STRONG REGULARIZATION ENCOURAGES GREEDINESS,0.4,"0.0
+0.1
+0.2
+0.3
+R(f) 0.00 0.25 0.50"
+STRONG REGULARIZATION ENCOURAGES GREEDINESS,0.4033898305084746,|dutil|
+STRONG REGULARIZATION ENCOURAGES GREEDINESS,0.4067796610169492,"0.0
+0.1
+0.2
+0.3
+R(f) 0.0 0.1 0.2"
+STRONG REGULARIZATION ENCOURAGES GREEDINESS,0.4101694915254237,|dspeed|
+STRONG REGULARIZATION ENCOURAGES GREEDINESS,0.4135593220338983,"Figure 3: The observed | dutil| and | dspeed| for models trained with different weights (λ) on the L1
+regularizer. Left: | dutil| and | dspeed| as a function of log(λ). Middle: | dutil| increases along R(f).
+Right: The | dspeed| increases along R(f). The multi-modal learning process exhibit higher greed if
+we introduce stronger regularization on the multi-modal DNNs."
+BALANCED MULTI-MODAL LEARNING,0.41694915254237286,"5.4
+BALANCED MULTI-MODAL LEARNING"
+BALANCED MULTI-MODAL LEARNING,0.42033898305084744,"Besides the proposed training algorithm (cf. §4.2, referred to as guided), we introduce a variant of it
+in Appendix A.3, referred to as random. This algorithm is motivated by Modality Dropout (Neverova
+et al., 2015) but better suited to the multi-modal DNNs with intermediate fusion. We consider it a
+stronger baseline that can also balance learning from inputs of different modalities."
+BALANCED MULTI-MODAL LEARNING,0.423728813559322,"Calibrated modality utilization
+We train multi-modal DNNs as described in §5.2, using the
+guided, the random, and the conventional training algorithm (referred to as vanilla). For ModelNet40,
+we set the imbalance tolerance parameter α to 0.01 and the re-balancing window size Q to 5. For
+NVGesture, we use α of 0.1 and Q of 5.2 Results are shown in Figure 4. Models trained with the
+guided algorithm have lower |bdutil| compared to the vanilla algorithm. On NVGesture, we obtain
+E(bdutil) of approximately 0.3 and 0.4 for models trained with the guided and the vanilla algorithm.
+On ModelNet40, we obtain E(bdutil) of approximately -0.0, and -0.1 for models trained with the
+guided and the vanilla algorithm."
+BALANCED MULTI-MODAL LEARNING,0.4271186440677966,"The random algorithm also calibrates modality utilization effectively (see Figure 7 in Appendix). We
+will see in the next section that it helps less on generalization compared to the guided algorithm."
+BALANCED MULTI-MODAL LEARNING,0.43050847457627117,"Improved generalization performance
+We compare the generalization ability of multi-modal
+DNNs trained by the three algorithms (guided, random and vanilla) and the RUBi learning strat-
+egy (Cadene et al., 2019). For each algorithm, we train each model three times with the same learning
+rate. We use 0.01, 0.1 and 0.01 as learning rate for Colored-and-gray-MNIST, ModelNet40 and
+NVGesture respectively. We use α of 0.1 for Colored-and-gray-MNIST and NVGesture and 0.01 for
+ModelNet40. We set Q of 5 for all three datasets. For NVGesture, we add one experiment where we
+initialize the model with parameters pre-trained using the Kinetics dataset (Carreira & Zisserman,
+2017) in addition to random initialization. We refer to this setting as “NVGesture-pretrained” and to
+the other one as “NVGesture-scratch”."
+BALANCED MULTI-MODAL LEARNING,0.43389830508474575,2We provide studies on the model’s sensitivity to Q and α in Figure 5 and Figure 6 in Appendix.
+BALANCED MULTI-MODAL LEARNING,0.43728813559322033,Under review as a conference paper at ICLR 2022
+BALANCED MULTI-MODAL LEARNING,0.4406779661016949,"0
+2
+4
+6
+8
+number of models 0.2 0.1 0.0 0.1 dutil"
+BALANCED MULTI-MODAL LEARNING,0.4440677966101695,"vanilla
+guided"
+BALANCED MULTI-MODAL LEARNING,0.44745762711864406,(a) ModelNet40
+BALANCED MULTI-MODAL LEARNING,0.45084745762711864,"0.0
+2.5
+5.0
+7.5
+10.0
+12.5
+number of models 0.00 0.25 0.50 0.75 1.00 dutil"
+BALANCED MULTI-MODAL LEARNING,0.4542372881355932,"vanilla
+guided"
+BALANCED MULTI-MODAL LEARNING,0.4576271186440678,(b) NVGesture
+BALANCED MULTI-MODAL LEARNING,0.4610169491525424,"Figure 4: Histograms and esti-
+mated density functions of bdutil
+of models trained using the
+guided and the vanilla algorithm.
+We use dashed lines to mark zero
+and E[bdutil] over the set of mod-
+els trained with each of the algo-
+rithm. The guided algorithm is
+less greedy than the vanilla one."
+BALANCED MULTI-MODAL LEARNING,0.46440677966101696,"We report means and standard deviations of the models’ test accuracies in Table 1.3 RUBi does not
+show consistent improvement across tasks compared to the vanilla algorithm. The guided algorithm
+improves the models’ generalization performance over all three other methods in all four cases."
+BALANCED MULTI-MODAL LEARNING,0.46779661016949153,"Table 1: Test accuracy of models trained with the vanilla, random and guided algorithms."
+BALANCED MULTI-MODAL LEARNING,0.4711864406779661,"Colored-and-gray-MNIST
+ModelNet40
+NVGesture-scratch
+NVGesture-pretrained"
+BALANCED MULTI-MODAL LEARNING,0.4745762711864407,"vanilla
+45.26±0.46
+90.09±0.58
+79.81±1.14
+83.20±0.21
+RUBi
+44.79±0.62
+90.45±0.58
+79.95±0.12
+81.60±1.28
+random
+74.07±2.75
+91.36±0.10
+79.88±0.90
+82.64±0.84
+guided
+91.01±1.20
+91.37±0.28
+80.22±0.73
+83.82±1.45"
+RELATED WORK,0.47796610169491527,"6
+RELATED WORK"
+RELATED WORK,0.48135593220338985,"Previous works on multi-modal learning focus more on architectural designs of the DNNs (Ngiam
+et al., 2011; Tran et al., 2015; Lazaridou et al., 2015; Wang et al., 2020b; Pérez-Rúa et al., 2019).
+Recently, unbalanced learning dynamics and modality-wise utilization in the end-to-end trained
+multi-modal classiﬁers were discussed (Goyal et al., 2017; Han et al., 2021; Wang et al., 2020a;
+Gat et al., 2020; Hessel & Lee, 2020; Collell & Moens, 2018; Winterbottom et al., 2020; Sun et al.,
+2021). For example, Wang et al. (2020b) design a parameter-free multi-modal fusion framework that
+dynamically exchanges channels between the uni-modal branches. Wang et al. (2020a) estimate the
+uni-modal branches’ generalization and overﬁtting speeds and calibrate the learning through loss
+re-weighting. Their weight estimation slows down training and relies on a representative subset of
+the training data. Finally Gat et al. (2020) point out the bias in the multi-modal data as the cause of
+the issue. They propose to supply inputs with Gaussian perturbations to the model and regularize it
+by maximizing functional entropies. In this work, we explain this phenomenon by the greedy nature
+of learning in multi-modal DNNs and propose an algorithm based on the training dynamics of model.
+Our proposed method does not introduce any additional computation and only relies on the norm of
+the gradients and weights computed during training. It does not require architectural changes of the
+multi-modal DNNs and can be easily modiﬁed to accommodate different fusion modules. In addition
+to the multi-modal classiﬁers, the unbalanced modality-wise utilization has been identiﬁed in the
+multi-modal pre-trained models (Li et al., 2020; Cao et al., 2020). We expect that the insights we
+provide in this work are applicable to the self-supervised multi-modal training framework too."
+CONCLUSIONS,0.4847457627118644,"7
+CONCLUSIONS"
+CONCLUSIONS,0.488135593220339,"Our work demonstrates that the end-to-end trained multi-modal DNNs rely on one of the input
+modalities to make predictions while leaving the other modalities underutilized. We hypothesize
+that it is due to the greedy nature of learning in multi-modal DNNs, and validated our statements
+experimentally on three multi-modal datasets. We illustrated that using the proposed algorithm
+to balance the models’ learning from different modalities enhances generalization. This result
+emphasizes that the adequate modality utilization is a desired property that a model should achieve in
+multi-modal learning."
+CONCLUSIONS,0.4915254237288136,"3Results on NVGesture are not directly comparable with numbers in other works since we use 20% training
+samples as the validation data."
+CONCLUSIONS,0.49491525423728816,Under review as a conference paper at ICLR 2022
+ETHICS STATEMENT,0.49830508474576274,ETHICS STATEMENT
+ETHICS STATEMENT,0.5016949152542373,"This work focuses on analyzing the challenges of training multi-modal deep neural networks. It
+does not involve any human subjects. We do not anticipate any potentially harmful consequences for
+society due to the publication of this work. As we use publicly available datasets in our study, we do
+not anticipate privacy and security issues. We claim no conﬂicts of interest."
+REPRODUCIBILITY STATEMENT,0.5050847457627119,REPRODUCIBILITY STATEMENT
+REPRODUCIBILITY STATEMENT,0.5084745762711864,"We provide complete descriptions of the used datasets and the applied processing steps in §5.1 and in
+Appendix §A.4. We state our experimental conﬁgurations for each study in §5.1, §5.2, and §5.3. We
+plan to publish the source code once the paper is released."
+REFERENCES,0.511864406779661,REFERENCES
+REFERENCES,0.5152542372881356,"Aishwarya Agrawal, Dhruv Batra, and Devi Parikh. Analyzing the behavior of visual question
+answering models. EMNLP, 2016."
+REFERENCES,0.5186440677966102,"Peter Anderson, Xiaodong He, Chris Buehler, Damien Teney, Mark Johnson, Stephen Gould, and Lei
+Zhang. Bottom-up and top-down attention for image captioning and visual question answering.
+CVPR, 2018."
+REFERENCES,0.5220338983050847,"Pradeep K Atrey, M Anwar Hossain, Abdulmotaleb El Saddik, and Mohan S Kankanhalli. Multimodal
+fusion for multimedia analysis: a survey. Multimedia systems, 2010."
+REFERENCES,0.5254237288135594,"Tadas Baltrušaitis, Chaitanya Ahuja, and Louis-Philippe Morency. Multimodal machine learning: A
+survey and taxonomy. IEEE transactions on pattern analysis and machine intelligence, 2018."
+REFERENCES,0.5288135593220339,Avrim Blum and Tom Mitchell. Combining labeled and unlabeled data with co-training. 1998.
+REFERENCES,0.5322033898305085,"Andrew Brock, Soham De, Samuel L Smith, and Karen Simonyan. High-performance large-scale
+image recognition without normalization. ICML, 2021."
+REFERENCES,0.535593220338983,"Remi Cadene, Corentin Dancette, Hedi Ben-Younes, Matthieu Cord, and Devi Parikh. Rubi: Reducing
+unimodal biases in visual question answering. NIPS, 2019."
+REFERENCES,0.5389830508474577,"Jize Cao, Zhe Gan, Yu Cheng, Licheng Yu, Yen-Chun Chen, and Jingjing Liu. Behind the scene:
+Revealing the secrets of pre-trained vision-and-language models. ECCV, 2020."
+REFERENCES,0.5423728813559322,"Joao Carreira and Andrew Zisserman. Quo vadis, action recognition? a new model and the kinetics
+dataset. CVPR, 2017."
+REFERENCES,0.5457627118644067,"Guillem Collell and Marie-Francine Moens. Do neural network cross-modal mappings really bridge
+modalities? ACL, 2018."
+REFERENCES,0.5491525423728814,"Itai Gat, Idan Schwartz, Alexander Schwing, and Tamir Hazan. Removing bias in multi-modal
+classiﬁers: Regularization by maximizing functional entropies. NeurIPS, 2020."
+REFERENCES,0.5525423728813559,"Yash Goyal, Tejas Khot, Douglas Summers-Stay, Dhruv Batra, and Devi Parikh. Making the V in
+VQA matter: Elevating the role of image understanding in Visual Question Answering. CVPR,
+2017."
+REFERENCES,0.5559322033898305,"Zongbo Han, Changqing Zhang, Huazhu Fu, and Joey Tianyi Zhou. Trusted multi-view classiﬁcation.
+ICLR, 2021."
+REFERENCES,0.559322033898305,"Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image
+recognition. CVPR, 2016."
+REFERENCES,0.5627118644067797,"Jack Hessel and Lillian Lee. Does my multimodal model learn cross-modal interactions? it’s harder
+to tell than you might think! EMNLP, 2020."
+REFERENCES,0.5661016949152542,"Elad Hoffer, Ron Banner, Itay Golan, and Daniel Soudry. Norm matters: efﬁcient and accurate
+normalization schemes in deep networks. NeurIPS, 2018."
+REFERENCES,0.5694915254237288,Under review as a conference paper at ICLR 2022
+REFERENCES,0.5728813559322034,"Sergey Ioffe and Christian Szegedy. Batch normalization: Accelerating deep network training by
+reducing internal covariate shift. ICML, 2015."
+REFERENCES,0.576271186440678,"Hamid Reza Vaezi Joze, Amirreza Shaban, Michael L Iuzzolino, and Kazuhito Koishida. Mmtm:
+multimodal transfer module for cnn fusion. CVPR, 2020."
+REFERENCES,0.5796610169491525,"Byungju Kim, Hyunwoo Kim, Kyungsu Kim, Sungjin Kim, and Junmo Kim. Learning not to learn:
+Training deep neural networks with biased data. CVPR, 2019."
+REFERENCES,0.5830508474576271,"Angeliki Lazaridou, Marco Baroni, et al. Combining language and vision with a multimodal skip-
+gram model. HLT-NAACL, 2015."
+REFERENCES,0.5864406779661017,"Yann LeCun, Léon Bottou, Yoshua Bengio, and Patrick Haffner. Gradient-based learning applied to
+document recognition. Proceedings of the IEEE, 1998."
+REFERENCES,0.5898305084745763,"Linjie Li, Zhe Gan, and Jingjing Liu. A closer look at the robustness of vision-and-language
+pre-trained models. arXiv:2012.08673, 2020."
+REFERENCES,0.5932203389830508,"Kuan Liu, Yanen Li, Ning Xu, and Prem Natarajan. Learn to combine modalities in multimodal deep
+learning. arXiv:1805.11730, 2018."
+REFERENCES,0.5966101694915255,"Pavlo Molchanov, Shalini Gupta, Kihwan Kim, and Jan Kautz. Hand gesture recognition with 3d
+convolutional neural networks. CVPR, 2015."
+REFERENCES,0.6,"Pavlo Molchanov, Xiaodong Yang, Shalini Gupta, Kihwan Kim, Stephen Tyree, and Jan Kautz.
+Online detection and classiﬁcation of dynamic hand gestures with recurrent 3d convolutional
+neural network. CVPR, 2016."
+REFERENCES,0.6033898305084746,"Natalia Neverova, Christian Wolf, Graham Taylor, and Florian Nebout. Moddrop: Adaptive multi-
+modal gesture recognition. IEEE transactions on pattern analysis and machine intelligence,
+2015."
+REFERENCES,0.6067796610169491,"Jiquan Ngiam, Aditya Khosla, Mingyu Kim, Juhan Nam, Honglak Lee, and Andrew Y Ng. Multi-
+modal deep learning. ICML, 2011."
+REFERENCES,0.6101694915254238,"Ethan Perez, Florian Strub, Harm De Vries, Vincent Dumoulin, and Aaron Courville. Film: Visual
+reasoning with a general conditioning layer. AAAI, 2018."
+REFERENCES,0.6135593220338983,"Juan-Manuel Pérez-Rúa, Valentin Vielzeuf, Stéphane Pateux, Moez Baccouche, and Frédéric Jurie.
+Mfas: Multimodal fusion architecture search. CVPR, 2019."
+REFERENCES,0.6169491525423729,"Samuel L Smith, Benoit Dherin, David Barrett, and Soham De. On the origin of implicit regularization
+in stochastic gradient descent. ICLR, 2021."
+REFERENCES,0.6203389830508474,"Karthik Sridharan and Sham M Kakade. An information theoretic framework for multi-view learning.
+COLT, 2008."
+REFERENCES,0.6237288135593221,"Hang Su, Subhransu Maji, Evangelos Kalogerakis, and Erik G. Learned-Miller. Multi-view convolu-
+tional neural networks for 3d shape recognition. ICCV, 2015."
+REFERENCES,0.6271186440677966,"Ya Sun, Sijie Mai, and Haifeng Hu. Learning to balance the learning rates between various modalities
+via adaptive tracking factor. IEEE Signal Processing Letters, 2021."
+REFERENCES,0.6305084745762712,"Du Tran, Lubomir Bourdev, Rob Fergus, Lorenzo Torresani, and Manohar Paluri. Learning spa-
+tiotemporal features with 3d convolutional networks. ICCV, 2015."
+REFERENCES,0.6338983050847458,"Guillermo Valle-Perez, Chico Q. Camargo, and Ard A. Louis. Deep learning generalizes because the
+parameter-function map is biased towards simple functions. ICLR, 2019."
+REFERENCES,0.6372881355932203,"Twan Van Laarhoven. L2 regularization versus batch and weight normalization. arXiv:1706.05350,
+2017."
+REFERENCES,0.6406779661016949,"Weiyao Wang, Du Tran, and Matt Feiszli. What makes training multi-modal classiﬁcation networks
+hard? CVPR, 2020a."
+REFERENCES,0.6440677966101694,Under review as a conference paper at ICLR 2022
+REFERENCES,0.6474576271186441,"Yikai Wang, Wenbing Huang, Fuchun Sun, Tingyang Xu, Yu Rong, and Junzhou Huang. Deep
+multimodal fusion by channel exchanging. NeurIPS, 2020b."
+REFERENCES,0.6508474576271186,"Zejia Weng, Zuxuan Wu, Hengduo Li, and Yu-Gang Jiang. Hms: Hierarchical modality selectionfor
+efﬁcient video recognition. arXiv:2104.09760, 2021."
+REFERENCES,0.6542372881355932,"Thomas Winterbottom, Sarah Xiao, Alistair McLean, and Noura Al Moubayed. On modality bias in
+the tvqa dataset. BMVC, 2020."
+REFERENCES,0.6576271186440678,"Nan Wu, Stanisław Jastrz˛ebski, Jungkyu Park, Linda Moy, Kyunghyun Cho, and Krzysztof J. Geras.
+Improving the ability of deep networks to use information from multiple views in breast cancer
+screening. MIDL, 2020."
+REFERENCES,0.6610169491525424,"Zhirong Wu, Shuran Song, Aditya Khosla, Fisher Yu, Linguang Zhang, Xiaoou Tang, and Jianxiong
+Xiao. 3d shapenets: A deep representation for volumetric shapes. CVPR, 2015."
+REFERENCES,0.6644067796610169,"Chiyuan Zhang, Samy Bengio, Moritz Hardt, Benjamin Recht, and Oriol Vinyals. Understanding
+deep learning requires rethinking generalization. ICLR, 2017."
+REFERENCES,0.6677966101694915,"Chiyuan Zhang, Samy Bengio, Moritz Hardt, Benjamin Recht, and Oriol Vinyals. Understanding
+deep learning (still) requires rethinking generalization. Commun. ACM, 2021."
+REFERENCES,0.6711864406779661,"Guodong Zhang, Chaoqi Wang, Bowen Xu, and Roger Grosse. Three mechanisms of weight decay
+regularization. ICLR, 2019."
+REFERENCES,0.6745762711864407,Under review as a conference paper at ICLR 2022
+REFERENCES,0.6779661016949152,"A
+APPENDIX"
+REFERENCES,0.6813559322033899,"A.1
+DERIVING f ′
+0 AND f ′
+1 FROM THE MULTI-MODAL DNNS"
+REFERENCES,0.6847457627118644,"We denote the kth fusion module by gk. For an input x, let hm0
+k (x) and hm1
+k (x) denote the feature
+vectors from the layer in the uni-modal branches where gk is implemented."
+REFERENCES,0.688135593220339,"To derive f ′
+0(xm0) and f ′
+1(xm1), we force each uni-modal branch to make predictions based on the
+single modality. Precisely, for each uni-modal branch, we aggregate its feature vectors over the whole
+training set and compute their average:"
+REFERENCES,0.6915254237288135,"h
+m0
+k
+= 1 N X"
+REFERENCES,0.6949152542372882,"x′
+hm0
+k (x′),
+h
+m1
+k
+= 1 N X"
+REFERENCES,0.6983050847457627,"x′
+hm1
+k (x′)."
+REFERENCES,0.7016949152542373,"Let wm0
+k (x) and wm1
+k (x) denote the context information gk gives:"
+REFERENCES,0.7050847457627119,"wm0
+k (x) = gk(hm0
+k (x), h
+m1
+k ),
+wm1
+k (x) = gk(h
+m0
+k , hm1
+k (x))."
+REFERENCES,0.7084745762711865,"In this way, we cut off the cross-modal information sharing between the uni-modal branches while
+limiting the distribution shift for both the fusion modules and the layers in the uni-modal branches."
+REFERENCES,0.711864406779661,"In our multi-modal DNN, we employ the fusion module as a Multi-Modal Transfer Module (MMTM).
+We adopt the annotation used by Joze et al. (2020). A MMTM takes two sets of tensors, A ∈
+RN1×···×NK×C and B ∈RM1×···×ML×C′, each as feature maps of a convolutional layer of a uni-
+modal branch. Here, Ni and Mi represent the spatial dimensions of each feature map, and C and C′
+represent the number of feature maps."
+REFERENCES,0.7152542372881356,"In order to derive f ′
+0(xm0) and f ′
+1(xm1), we have operations in a MMTM written as:"
+REFERENCES,0.7186440677966102,"SA(c) =
+1
+Ntraining"
+REFERENCES,0.7220338983050848,"Ntraining
+X"
+REFERENCES,0.7254237288135593,"i=1
+Si
+A(c),
+SB(c) =
+1
+Ntraining"
+REFERENCES,0.7288135593220338,"Ntraining
+X"
+REFERENCES,0.7322033898305085,"i=1
+Si
+B(c)"
+REFERENCES,0.735593220338983,"ZA = W [SA, SB],
+ZB = W [SA, SB]"
+REFERENCES,0.7389830508474576,"E′
+A = WAZA + bA,
+E′
+B = WBZB + bB
+˜
+A′ = 2 × σ(E′
+A) ⊙A,
+˜
+B′ = 2 × σ(E′
+B) ⊙B,"
+REFERENCES,0.7423728813559322,"where [·, ·] represents the concatenation operation; Wi and bi are parameters of the fully connected
+layers; ⊙is the channel-wise product operation; and σ(·) is the sigmoid function."
+REFERENCES,0.7457627118644068,"A.2
+THE RE-BALANCING STEP"
+REFERENCES,0.7491525423728813,"Suppose that we have K fusion modules and let wm0
+k (x) and wm1
+k (x) denote the output of the kth
+fusion module. At the t training step in the balanced multi-modal learning process, we have"
+REFERENCES,0.752542372881356,"wm0
+k
+= 1 Nt X"
+REFERENCES,0.7559322033898305,"x′∈Dt
+passed"
+REFERENCES,0.7593220338983051,"wm0
+k (x′),
+wm1
+k
+= 1 Nt X"
+REFERENCES,0.7627118644067796,"x′∈Dt
+passed"
+REFERENCES,0.7661016949152543,"wm1
+k (x′),"
+REFERENCES,0.7694915254237288,"where Dt
+passed denotes all samples appeared in the previous regular training steps until now. For
+example, in a re-balancing step on m0, we aim to accelerate the model’s learning from m0, and we
+have
+ˆy0 = φ0(xm0, wm0
+1 , · · · , wm0
+K ),
+ˆy1 = φ1(xm1, wm1
+1 (x), · · · , wm1
+K (x)),
+where x = (xm0, xm1) is the input at this step, and φ0 and φ1 denote the uni-modal branch take m0
+and m1 as inputs."
+REFERENCES,0.7728813559322034,"A.3
+RANDOM VERSION OF THE BALANCED MULTI-MODAL LEARNING ALGORITHM"
+REFERENCES,0.7762711864406779,"We present a random version of the balanced multi-modal learning algorithm in Algorithm 1. Similar
+to the guided version, we perform regular steps in the ﬁrst epoch. Afterwards, at each time, we let
+the model take the step that is randomly sampled from: regular step, re-balancing step on m0, and
+re-balancing step on m1."
+REFERENCES,0.7796610169491526,Under review as a conference paper at ICLR 2022
+REFERENCES,0.7830508474576271,"Algorithm 1: Random version of the balanced multi-modal learning
+Input: T, # of training steps;
+T1, # of steps in the 1th training epoch;
+Ωstep = { regular step,
+re-balancing step to accelerate
+learning from m0,
+re-balancing step to accelerate
+learning from m1}"
+REFERENCES,0.7864406779661017,for t ←1 to T1 do
+REFERENCES,0.7898305084745763,"Take a regular step;
+end
+for t ←T1 to T do"
+REFERENCES,0.7932203389830509,"Randomly sample a step from Ωstep;
+Take the sampled step;
+end"
+REFERENCES,0.7966101694915254,"A.4
+DATA PREPARATION"
+REFERENCES,0.8,"We used three datasets in the paper: Colored MNIST dataset (Kim et al., 2019), ModelNet40
+dataset (Su et al., 2015) and NVGesture dataset (Molchanov et al., 2015), as illustrated in Figure 1."
+REFERENCES,0.8033898305084746,"For Colored MNIST and ModelNet40, we did not perform any extra data pre-processing steps on the
+original datasets."
+REFERENCES,0.8067796610169492,"For the NVGesture dataset, each video has a resolution of 240×320 and a duration of 80 frames
+from action starting to ending. There are three videos with unmatched starting indices between
+RGB and depth. We adopt the starting frame indice of RGB for all modalities. We randomly select
+64 consecutive frames from the videos in the dataset and if the video has less than 64 frames, we
+zero-pad on both sides of it to obtain 64 frames. Frames are resized as 256×256 and are cropped into
+224×224 as inputs (we use static cropping where we crop from the same location across times and
+modalities)."
+REFERENCES,0.8101694915254237,"During training, we perform spatial augmentation on the video, including ﬂipping and random
+cropping. During inference on validation or test set, we perform center cropping on the video."
+REFERENCES,0.8135593220338984,"(a) Colored MNIST
+(b) ModelNet40
+(c) NVGesture"
+REFERENCES,0.8169491525423729,"Figure 1: (a) The Colored MNIST dataset (Kim et al., 2019). We consider the monochromatic image,
+and the gray-scale image as the two input modalities (b) The ModelNet40 dataset (Su et al., 2015).
+The 2D representations are gray-scale images rendered from 12 different viewpoints of the object.
+(c)The NVGesture dataset (Molchanov et al., 2015). We use depth and RGB channels as the two
+modalities."
+REFERENCES,0.8203389830508474,"A.5
+MORE RESULTS"
+REFERENCES,0.823728813559322,Under review as a conference paper at ICLR 2022 1 0 1 dutil
+REFERENCES,0.8271186440677966,"color & gray-scale
+duplicated color"
+REFERENCES,0.8305084745762712,duplicated gray-scale
+REFERENCES,0.8338983050847457,"0
+5
+10
+15
+number of models 2 0 2"
+REFERENCES,0.8372881355932204,dspeed
+REFERENCES,0.8406779661016949,color & gray-scale
+REFERENCES,0.8440677966101695,"0
+5
+10
+15
+number of models"
+REFERENCES,0.847457627118644,duplicated color
+REFERENCES,0.8508474576271187,"0
+5
+10
+15
+number of models"
+REFERENCES,0.8542372881355932,duplicated gray-scale
+REFERENCES,0.8576271186440678,"Figure 2: Histograms and estimated density functions of dutil and dspeed of models trained for
+colored-and-gray-MNIST, using monochromatic and gray-scale images as two modalities, using
+identical monochromatic images as two modalities and using identical gray-scale images as two
+modalities. 0.001 0.003 0.01 0.03 0.1 0.3 0.5 0.7 1.0"
+REFERENCES,0.8610169491525423,learning rate 0.15 0.10 0.05 dutil
+REFERENCES,0.864406779661017,(a) ModelNet40 (front and rear views)
+REFERENCES,0.8677966101694915,-3.979 -3.71
+REFERENCES,0.8711864406779661,-3.519
+REFERENCES,0.8745762711864407,-3.079 -2.49
+REFERENCES,0.8779661016949153,-2.451
+REFERENCES,0.8813559322033898,-2.199
+REFERENCES,0.8847457627118644,-2.165
+REFERENCES,0.888135593220339,-2.101
+REFERENCES,0.8915254237288136,-2.099
+REFERENCES,0.8949152542372881,-2.085
+REFERENCES,0.8983050847457628,-2.018
+REFERENCES,0.9016949152542373,-1.939
+REFERENCES,0.9050847457627119,-1.818
+REFERENCES,0.9084745762711864,-1.732
+REFERENCES,0.911864406779661,-1.687 -1.61
+REFERENCES,0.9152542372881356,-1.489
+REFERENCES,0.9186440677966101,learning rate (log10) 0.0 0.2 0.4 0.6 0.8 1.0 dutil
+REFERENCES,0.9220338983050848,(b) NVGesture (RGB and Depth)
+REFERENCES,0.9254237288135593,"Figure 3: The imbalance in utilization, measured by dutil for models trained using different learning
+rate. It appears that high learning rates can help with mitigating the imbalance in utilization between
+modalities."
+REFERENCES,0.9288135593220339,-9.0 -8.0 -7.0 -6.0 -5.0 -4.3 -4.0 -3.8 -3.5 -3.3
+REFERENCES,0.9322033898305084,log( ) 0.00 0.05 0.10 0.15 0.20 0.25 0.30 R(f)
+REFERENCES,0.9355932203389831,"Figure 4: The mean and standard deviation of R(f) for three model repetitions obtained by training
+the model with λ as the weight on the L1 regularization. Generally, the larger the λ is, the higher the
+R(f) is, i.e., the sparser the model’s parameters are."
+REFERENCES,0.9389830508474576,Under review as a conference paper at ICLR 2022
+REFERENCES,0.9423728813559322,"1.0
+5.0
+10.0 20.0 50.0 Q 0.0 0.1"
+REFERENCES,0.9457627118644067,|dutil|
+REFERENCES,0.9491525423728814,"1.0
+5.0
+10.0 20.0 50.0 Q 91.0 91.5"
+REFERENCES,0.9525423728813559,accuracy
+REFERENCES,0.9559322033898305,"Figure 5: Models’ behavior when using different values for the re-balancing window size Q in the
+balanced multi-modal training algorithm. We use ModelNet40 (front and rear views) in the study. We
+ﬁx the learning rate at 0.1 and the imbalance tolerance parameter at 0.01 while using Q of 1, 5, 10,
+20 and 50. We can effectively control the imbalance in conditional utilization except for Q = 50 (see
+dutil shown in the left panel). According to the accuracy the model reaches, we choose to use Q = 5."
+REFERENCES,0.9593220338983051,"0.001 0.01 0.025 0.05
+0.1 0.05 0.10 0.15"
+REFERENCES,0.9627118644067797,|dutil|
+REFERENCES,0.9661016949152542,"0.001 0.01 0.025 0.05
+0.1 90 91"
+REFERENCES,0.9694915254237289,accuracy
+REFERENCES,0.9728813559322034,"Figure 6: Models’ behavior when using different values for the imbalance tolerance parameter α
+in the balanced multi-modal training algorithm. We use ModelNet40 (front and rear views) in the
+study and ﬁx the learning rate at 0.1 and the re-balancing window size at 5. The values we use for
+α are ratios of E(bdutil) computed in the study in §5.2. Precisely, we use 0.01E(bdutil), 0.1E(bdutil),
+0.25E(bdutil), 0.5E(bdutil), E(bdutil). Based on the pattern of dutil shown in the left panel, using less
+than 0.25 of E(bdutil) gives desirable results. We choose to use α = 0.1E(bdutil) = 0.01 according to
+the accuracy."
+REFERENCES,0.976271186440678,"0
+2
+4
+6
+number of models 0.2 0.1 0.0 0.1 dutil"
+REFERENCES,0.9796610169491525,"vanilla
+random"
+REFERENCES,0.9830508474576272,(a) ModelNet40 (front and rear views)
+REFERENCES,0.9864406779661017,"0
+5
+10
+15
+number of models 0.00 0.25 0.50 0.75 1.00 dutil"
+REFERENCES,0.9898305084745763,"vanilla
+random"
+REFERENCES,0.9932203389830508,(b) NVGesture (RGB and Depth)
+REFERENCES,0.9966101694915255,"Figure 7: Histograms and estimated density functions of dutil for random version of the balanced
+multi-modal learning process and the vanilla process. Both versions of the balanced multi-modal
+learning process are less greedy than the vanilla one."

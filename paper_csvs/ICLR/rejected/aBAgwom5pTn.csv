@@ -1,0 +1,2096 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.001652892561983471,"Gray-box hyperparameter optimization techniques have recently emerged as a
+promising direction for tuning Deep Learning methods.
+However, the multi-
+budget search mechanisms of existing prior works can suffer from the poor cor-
+relation among the performances of hyperparameter conﬁgurations at different
+budgets. As a remedy, we introduce DYHPO, a method that learns to dynami-
+cally decide which conﬁguration to try next, and for what budget. Our technique
+is a modiﬁcation to the classical Bayesian optimization for a gray-box setup. Con-
+cretely, we propose a new surrogate for Gaussian Processes that embeds the learn-
+ing curve dynamics and a new acquisition function that incorporates multi-budget
+information. We demonstrate the signiﬁcant superiority of DYHPO against state-
+of-the-art hyperparameter optimization baselines through large-scale experiments
+comprising 50 datasets (Tabular, Image, NLP) and diverse neural networks (MLP,
+CNN/NAS, RNN)."
+INTRODUCTION,0.003305785123966942,"1
+INTRODUCTION"
+INTRODUCTION,0.0049586776859504135,"Hyperparameter Optimization (HPO) is arguably an acute open challenge for Deep Learning (DL),
+especially considering the crucial impact HPO has on achieving state-of-the-art empirical results.
+Unfortunately, HPO for DL is a relatively under-explored ﬁeld and most DL researchers still op-
+timize their hyperparameters via obscure trial-and-error practices. On the other hand, traditional
+Bayesian Optimization HPO methods (Snoek et al., 2012; Bergstra et al., 2011) are not directly
+applicable to deep networks, due to the infeasibility of evaluating a large number of hyperparam-
+eter conﬁgurations. In order to scale HPO for DL, three main directions of research have been
+recently explored. (i) Online HPO methods search for hyperparameters during the optimization pro-
+cess via meta-level controllers (Chen et al., 2017; Parker-Holder et al., 2020), however, this online
+adaptation can not accommodate all hyperparameters (e.g. related to architectural changes). (ii)
+Gradient-based HPO techniques, on the other hand, compute the derivative of the validation loss
+w.r.t. hyperparameters by reversing the training update steps (Maclaurin et al., 2015; Franceschi
+et al., 2017; Lorraine et al., 2020), however, the reversion is not directly applicable to all cases (e.g.
+dropout rate). The last direction, (iii) Gray-box HPO techniques discard sub-optimal conﬁgurations
+after evaluating them on lower budgets (e.g. after few epochs) (Li et al., 2017; Falkner et al., 2018)."
+INTRODUCTION,0.006611570247933884,"In contrast to the online and gradient-based alternatives, gray-box approaches can be deployed in
+an off-the-shelf manner to all types of hyperparameters and architectures. The gray-box concept is
+based on the intuition that a poorly-performing hyperparameter conﬁguration can be identiﬁed and
+terminated by inspecting the validation loss of the ﬁrst few epochs, instead of waiting for the full
+convergence. The most prominent gray-box algorithm is Hyperband (Li et al., 2017), which runs
+random conﬁgurations at different budgets (e.g. different number of epochs) and successively halves
+these conﬁgurations by keeping only the top performers. Follow-up works, such as BOHB (Falkner
+et al., 2018) or DEHB (Awad et al., 2021), replace the random sampling of Hyperband with more
+intelligent sampling based on Bayesian optimization or differentiable evolution."
+INTRODUCTION,0.008264462809917356,"Despite their great practical potential, existing gray-box methods suffer from a major issue. The
+low-budget (few epochs) performances are not always a good indicator for the full-budget (full
+convergence) performances. For example, a properly regularized network converges slower in the
+ﬁrst few epochs, however, typically performs better than a non-regularized variant after the full
+convergence. In other words, there is a poor rank correlation of the conﬁgurations’ performances"
+INTRODUCTION,0.009917355371900827,Under review as a conference paper at ICLR 2022
+INTRODUCTION,0.011570247933884297,"at different budgets. As a remedy, we introduce DYHPO, a gray-box method that dynamically
+decides how many conﬁgurations to try and how much budget to spend on each conﬁguration."
+INTRODUCTION,0.013223140495867768,"DYHPO is a Bayesian Optimization (BO) approach based on Gaussian Processes (GP), that extends
+and adapts BO to the multi-budget (a.k.a. multi-ﬁdelity) case. In this perspective, we propose a
+deep kernel GP that captures the learning dynamics (learning curve until the evaluated budget). As
+a result, we train a kernel capable of capturing the similarity of a pair of hyperparameter conﬁg-
+urations, even if the pair’s conﬁgurations are evaluated at different budgets (technically, different
+learning curve lengths). Furthermore, we extend Expected Improvement (Jones et al., 1998) to the
+multi-budget case, by introducing a new mechanism for the incumbent conﬁguration of a budget."
+INTRODUCTION,0.01487603305785124,"The joint effect of modeling a GP kernel across budgets together with a dedicated acquisition func-
+tion leads to DYHPO achieving a statistically signiﬁcant empirical gain against state-of-the-art
+gray-box baselines (Falkner et al., 2018; Awad et al., 2021), including prior work on multi-budget
+GPs (Kandasamy et al., 2017; Metz et al., 2020). We demonstrate the performance of DYHPO in
+three diverse popular types of deep learning architectures (MLP, CNN/NAS, RNN) and 50 datasets
+of three diverse modalities (tabular, image, natural language processing). We believe our method is
+a step forward towards making HPO for DL practical and feasible. Overall, our contributions can be
+summarized as follows:"
+INTRODUCTION,0.01652892561983471,"• We introduce a novel Bayesian surrogate model that is based on a Gaussian Process with
+a deep kernel. This surrogate model predicts the validation score of a machine learning
+model based on the hyperparameter conﬁguration and the learning curve."
+INTRODUCTION,0.01818181818181818,"• We derive a simple yet robust way to combine this surrogate model with Bayesian opti-
+mization, reusing most of the existing components currently used in traditional Bayesian
+optimization methods."
+INTRODUCTION,0.019834710743801654,"• Finally, we demonstrate the efﬁciency of our method for hyperparameter optimization and
+neural architecture search tasks compared to the current state-of-the-art methods. As an
+overarching goal, we believe our method is an important step towards scaling HPO for DL."
+MOTIVATION,0.021487603305785124,"2
+MOTIVATION"
+MOTIVATION,0.023140495867768594,"As mentioned earlier, a major source of sub-optimality for the current gray-box techniques (Li et al.,
+2017; Falkner et al., 2018; Awad et al., 2021) is the poor rank correlation of performances at low and
+high budgets, which is endemic to the successive halving mechanism. In essence, prior methods mis-
+takenly discard good hyper-parameter conﬁgurations by myopically relying only on the early per-
+formance after few epochs. In contrast, our method ﬁxes the endemic poor correlation of successive
+halving, by learning to decide which conﬁguration to continue optimizing for one more time-budget
+step (e.g. one more epoch). In that perspective, our strategy resembles Freeze-Thaw (Swersky
+et al., 2014), however, differs in ﬁtting deep kernel GP surrogates with learning curves and a special
+multi-budget acquisition. DYHPO never discards a conﬁguration as all options remain latent until
+the acquisition selects the most promising one and allocates one more budget unit of optimization."
+MOTIVATION,0.024793388429752067,"We illustrate the differences between our strategy and successive halving with the experiment of
+Figure 1, where we showcase the HPO progress of three different methods on the ”Helena” dataset
+from the LCBench benchmark (Zimmer et al., 2021). Random search is an example of a black-box
+approach that trains each candidate until completion without considering the intermediate scores.
+Hyperband (Li et al., 2017) is a gray-box approach that statically pre-allocates the budget for a set
+of candidates (Hyperband bracket) according to a predeﬁned policy. Finally, DYHPO dynamically
+adapts the allocation of budgets for conﬁgurations after every HPO step."
+MOTIVATION,0.026446280991735537,"The plots in the top row of Figure 1 show the learning curves of multiple neural networks trained
+with different hyperparameter conﬁgurations. The darker the color of a learning curve, the later
+the model corresponding to the learning curve was trained during the optimization process. In an
+optimal scenario, there should be no learning curve of darker color trained for a very long time if
+there is already a learning curve of lighter color with higher accuracy. Since black-box functions
+do not consider intermediate responses, this trend is not observed for random search. This is also
+not the case for gray-box methods such as Hyperband, because it is possible that no conﬁguration
+selected for a Hyperband bracket is outperforming the current best conﬁguration. Since at least one"
+MOTIVATION,0.02809917355371901,Under review as a conference paper at ICLR 2022 0.0 0.1 0.2
+MOTIVATION,0.02975206611570248,Accuracy
+MOTIVATION,0.03140495867768595,Random Search
+MOTIVATION,0.03305785123966942,(Black-Box)
+MOTIVATION,0.03471074380165289,"Hyperband
+(Gray-Box)"
+MOTIVATION,0.03636363636363636,"DyHPO
+(Gray-Box)"
+MOTIVATION,0.03801652892561983,"0
+20
+40
+Number of Epochs 0 5 10 15"
+MOTIVATION,0.03966942148760331,Temporal Order
+MOTIVATION,0.04132231404958678,"0
+20
+40
+Number of Epochs 0 25 50 75"
+MOTIVATION,0.04297520661157025,"0
+20
+40
+Number of Epochs 0 25 50 75"
+MOTIVATION,0.04462809917355372,"Figure 1: Top row: Learning curves observed during the search. The darker the learning curve, the
+later it was evaluated during the search. Bottom row: y-axis shows a sequence of learning curve
+evaluations (bottom to top). The color indicates accuracy. The darker red the higher the accuracy."
+MOTIVATION,0.04628099173553719,"of the bracket candidates must be fully trained according to the predeﬁned policy, we observe this
+suboptimal behavior in Figure 1. This motivates our idea of dynamically deciding when we want to
+continue training a conﬁguration based on the intermediate response. Clearly, DYHPO invests only
+a small budget into conﬁgurations that show little promise as indicated by the intermediate scores."
+RELATED WORK ON GRAY-BOX HPO,0.047933884297520664,"3
+RELATED WORK ON GRAY-BOX HPO"
+RELATED WORK ON GRAY-BOX HPO,0.049586776859504134,"Multi-Fidelity Bayesian Optimization.
+Bayesian optimization is a black-box function optimiza-
+tion framework that has been successfully applied in optimizing hyperparameter and neural archi-
+tectures alike (Snoek et al., 2012; Kandasamy et al., 2018; Bergstra et al., 2011). To further improve
+Bayesian optimization, several works propose low-ﬁdelity data approximations of hyperparameter
+conﬁgurations. Low-ﬁdelity approximations of hyperparameter conﬁgurations can be obtained by
+training on a subset of the data (Swersky et al., 2013; Klein et al., 2017) or terminating training
+early (Swersky et al., 2014). Several methods extend Bayesian optimization to multi-ﬁdelity data
+by engineering new kernels suited for this problem (Swersky et al., 2013; 2014; Poloczek et al.,
+2017). Kandasamy et al. (2016) extends GP-UCB (Srinivas et al., 2010) to the multi-ﬁdelity setting
+by learning one Gaussian Process (GP) with a standard kernel for each ﬁdelity. Their later work
+improves upon this method by learning one GP for all ﬁdelities that enables the use of continuous
+ﬁdelities (Kandasamy et al., 2017). The work by Takeno et al. (2020) follows a similar idea but pro-
+poses to use an acquisition function based on information gain instead of UCB. While most of the
+works rely on GPs to model the surrogate function, Li et al. (2020) use a Bayesian neural network
+that models the complex relationship between ﬁdelities with stacked neural networks, one for each
+ﬁdelity."
+RELATED WORK ON GRAY-BOX HPO,0.0512396694214876,"Multi-Fidelity Bandits.
+Hyperband (Li et al., 2017) is a bandits-based multi-ﬁdelity method for
+hyperparameter optimization, that due to its simplicity and strong performance, enjoys great pop-
+ularity. The algorithm selects hyperparameter conﬁgurations at random and uses successive halv-
+ing (Jamieson & Talwalkar, 2016) with different settings to early-stop less promising training runs.
+Several improvements have been proposed to Hyperband with the aim to replace the random sam-
+pling of hyperparameter conﬁgurations with a more guided approach (Bertrand et al., 2017; Wang
+et al., 2018; Wistuba, 2017). BOHB (Falkner et al., 2018) uses TPE (Bergstra et al., 2011) and builds
+a surrogate model for every ﬁdelity adhering to a ﬁxed-ﬁdelity selection scheme. DEHB (Awad
+et al., 2021) samples candidates using differential evolution which handles discrete and large hyper-
+parameter search spaces better than BOHB."
+RELATED WORK ON GRAY-BOX HPO,0.05289256198347107,Under review as a conference paper at ICLR 2022
+RELATED WORK ON GRAY-BOX HPO,0.05454545454545454,"Deep Kernel Learning with Bayesian Optimization.
+We are among the ﬁrst to use deep kernel
+learning with Bayesian optimization and to the best of our knowledge the ﬁrst to use it for multi-
+ﬁdelity Bayesian optimization. Rai et al. (2016) consider the use of a deep kernel instead of a
+manually designed kernel in the context of standard Bayesian optimization, but, limit their exper-
+imentation to synthetic data and do not consider its use for hyperparameter optimization. Perrone
+et al. (2018); Wistuba & Grabocka (2021) use a pre-trained deep kernel to warm start Bayesian op-
+timization with meta-data from previous optimizations. These approaches are multi-task or transfer
+learning methods that require the availability of meta-data from related tasks."
+RELATED WORK ON GRAY-BOX HPO,0.05619834710743802,"In contrast to prior work, we propose the ﬁrst deep kernel GP for multi-ﬁdelity HPO that is able
+to capture the learning dynamics across ﬁdelities/budgets, combined with an acquisition function
+that is tailored for the gray-box setup. Furthermore, our work represents an important step towards
+scaling HPO for Deep Learning (DL), by demonstrating a statistically signiﬁcant reduction in terms
+of HPO time on a series of DL network architectures and a large set of diverse datasets."
+PRELIMINARIES,0.05785123966942149,"4
+PRELIMINARIES"
+PRELIMINARIES,0.05950413223140496,"Black-Box Optimization.
+As mentioned earlier, the problem of optimizing hyperparameters can
+be modeled as a black-box optimization problem. The objective is to maximize the response func-
+tion f : X →R that returns the validation score for training a machine learning model with a
+hyperparameter conﬁguration x ∈X. In practice, this observation is noisy such that we observe in
+fact yi = f(xi) + ε where ε ∼N(0, σ2
+n)."
+PRELIMINARIES,0.06115702479338843,"Gray-Box Optimization.
+Since many machine learning algorithms allow to measure at various ﬁ-
+delities, a relaxation of the black-box to the gray-box optimization problem is in many cases logical
+and allows for signiﬁcantly faster optimization. The gray-box setting allows us to query conﬁgu-
+rations with a budget smaller than the maximum budget B. Thus, we can query from the response
+function f : X × N →R where fi,j = f(xi, j) is the response after spending a budget of j on
+conﬁguration xi. As before, these observations are noisy and we observe yi,j = f(xi, j) + εj
+where εj ∼N(0, σ2
+j,n). Please note, we assume that the budget required to query fi,j+b after
+querying fi,j is only b. While this is not necessarily the case for all problems, the models we
+consider are learned incrementally. Furthermore, we are able to make use of the learning curve
+Yi,j−1 = (yi,1, . . . , yi,j−1) when predicting fi,j."
+PRELIMINARIES,0.0628099173553719,"Bayesian Optimization (BO).
+BO is a general framework for solving black-box optimization
+problems and is very popular for optimizing hyperparameters. It has two ingredients, i.e. a surrogate
+model and an acquisition function. The surrogate is a probabilistic model which approximates the
+black-box function using the available information of function evaluations. The acquisition function
+returns the expected utility for a conﬁguration given the surrogate model’s prediction. The BO
+framework executes the following steps sequentially. First, the surrogate model is trained on the
+available information about the black-box function, denoted as the history of evaluations D. Then,
+the conﬁguration with the highest expected utility xi is evaluated and yi is observed. The tuple
+(xi, yi) is added to D and the process is repeated until the HPO budget is exhausted. A common
+choice for the surrogate model are Gaussian Processes (Rasmussen & Williams, 2006), a popular
+choice for the acquisition function is expected improvement (Jones et al., 1998)."
+PRELIMINARIES,0.06446280991735537,"Gaussian Processes (GP).
+GPs are probabilistic machine learning models. Given a training data
+set D = {(xi, yi)|i = 1, . . . , n} with n data points, the Gaussian Process assumption is that yi is a
+random variable and the joint distribution of all yi is assumed to be multivariate Gaussian distributed
+as:
+y ∼N (m (X) , k (X, X))
+(1)
+Furthermore, f∗for test instances x∗are jointly Gaussian with y as:
+
+y
+f∗"
+PRELIMINARIES,0.06611570247933884,"
+∼N
+
+m (X, x∗) ,
+ Kn
+K∗
+KT
+∗
+K∗∗"
+PRELIMINARIES,0.06776859504132231,"
+.
+(2)"
+PRELIMINARIES,0.06942148760330578,"The mean function m is often set to 0 and its covariance function k depends on parameters θ. For
+notational convenience, we use:"
+PRELIMINARIES,0.07107438016528926,"Kn = k (X, X|θ) + σ2
+nI, K∗= k (X, X∗|θ) , K∗∗= k (X∗, X∗|θ)
+(3)"
+PRELIMINARIES,0.07272727272727272,Under review as a conference paper at ICLR 2022
+PRELIMINARIES,0.0743801652892562,"to deﬁne the kernel matrix. We can derive the posterior predictive distribution with mean and co-
+variance as follows:"
+PRELIMINARIES,0.07603305785123966,"E [f∗|X, y, X∗] = KT
+∗K−1
+n y, cov [f∗|X, X∗] = K∗∗−KT
+∗K−1
+n K∗
+(4)"
+PRELIMINARIES,0.07768595041322314,"Often, the kernel function is manually engineered, one popular example is the squared exponential
+kernel. However, in this work, we make use of the idea of deep kernel learning (Wilson et al., 2016).
+The idea is to model the kernel as a neural network ϕ and learn the best kernel transformation as:"
+PRELIMINARIES,0.07933884297520662,"kdeep(x, x′|θ, w) = k(ϕ(x, w), ϕ(x′, w)|θ).
+(5)"
+PRELIMINARIES,0.08099173553719008,"As we will see later, this allows us to use convolutional operations as part of our kernel."
+DYNAMIC MULTI-FIDELITY HYPERPARAMETER OPTIMIZATION,0.08264462809917356,"5
+DYNAMIC MULTI-FIDELITY HYPERPARAMETER OPTIMIZATION"
+DYNAMIC MULTI-FIDELITY HYPERPARAMETER OPTIMIZATION,0.08429752066115702,"In this section, we will describe DYHPO, our proposed method for hyperparameter optimization in
+the gray-box setting. At ﬁrst, we will describe the surrogate model which is a Gaussian Process with
+a deep convolutional kernel. Then, we describe a variation of the popular expected improvement
+acquisition function (Jones et al., 1998), modiﬁed to consider multiple ﬁdelities, and conclude with
+the ﬁnal algorithm."
+MULTI-FIDELITY SURROGATE WITH DEEP CONVOLUTIONAL KERNEL,0.0859504132231405,"5.1
+MULTI-FIDELITY SURROGATE WITH DEEP CONVOLUTIONAL KERNEL"
+MULTI-FIDELITY SURROGATE WITH DEEP CONVOLUTIONAL KERNEL,0.08760330578512397,"We propose to use a Gaussian Process surrogate model that infers the value of fi,j based on the
+hyperparameter conﬁguration xi, the budget j as well as the past learning curve Yi,j−1. For this
+purpose, we use a deep kernel which is deﬁned as"
+MULTI-FIDELITY SURROGATE WITH DEEP CONVOLUTIONAL KERNEL,0.08925619834710743,"kdeep((xi, Yi,j−1, j), (xi′, Yi′,j′−1, j′)) = k(ϕ(xi, Yi,j−1, j), ϕ(xi′, Yi′,j′−1, j′))
+(6)"
+MULTI-FIDELITY SURROGATE WITH DEEP CONVOLUTIONAL KERNEL,0.09090909090909091,"We use a squared exponential kernel for k and the neural network ϕ is composed of linear and
+convolutional layers as shown in Figure 2. We normalize the budget j to a range between 0 and 1
+by dividing it by the maximum budget B. Afterward, it is concatenated with the hyperparameter
+conﬁguration xi and fed to a linear layer. xi j"
+MULTI-FIDELITY SURROGATE WITH DEEP CONVOLUTIONAL KERNEL,0.09256198347107437,"Yi,j−1 · 1 B P P P"
+MULTI-FIDELITY SURROGATE WITH DEEP CONVOLUTIONAL KERNEL,0.09421487603305785,"Convolution
+max P P P"
+MULTI-FIDELITY SURROGATE WITH DEEP CONVOLUTIONAL KERNEL,0.09586776859504133,Figure 2: The feature extractor ϕ used in our deep kernel.
+MULTI-FIDELITY SURROGATE WITH DEEP CONVOLUTIONAL KERNEL,0.09752066115702479,"The learning curve Yi,j−1 is trans-
+formed by a one-dimensional convo-
+lution followed by a global max pool-
+ing layer.
+Finally, both representa-
+tions are fed to another linear layer.
+Its output will be the input to the ker-
+nel function k.
+Both, the kernel k
+and the neural network ϕ consist of
+trainable parameters θ and w, respec-
+tively. We ﬁnd their optimal values
+by computing the maximum likeli-
+hood estimates as:"
+MULTI-FIDELITY SURROGATE WITH DEEP CONVOLUTIONAL KERNEL,0.09917355371900827,"ˆθ, ˆw = arg max
+θ,w
+p(y|X, Y, θ, w) = arg max
+θ,w"
+MULTI-FIDELITY SURROGATE WITH DEEP CONVOLUTIONAL KERNEL,0.10082644628099173,"Z
+p(y|X, Y, θ, w)p(f|X, Y, θ, w)df"
+MULTI-FIDELITY SURROGATE WITH DEEP CONVOLUTIONAL KERNEL,0.1024793388429752,"∝arg min
+θ,w
+yTK−1
+n y + log |Kn|
+(7)"
+MULTI-FIDELITY SURROGATE WITH DEEP CONVOLUTIONAL KERNEL,0.10413223140495868,"In order to solve this optimization problem, we use gradient descent and Adam (Kingma & Ba,
+2015) with a learning rate of 0.1. Given the maximum likelihood estimates, we can approximate the
+predictive posterior as formalized in Equation 8, and ultimately compute the mean and covariance
+of this Gaussian using Equation 4."
+MULTI-FIDELITY SURROGATE WITH DEEP CONVOLUTIONAL KERNEL,0.10578512396694215,"p (fi,j|xi, Yi,j−1, j, D) ≈p
+
+fi,j|xi, Yi,j−1, j, D, ˆθ, ˆw
+
+(8)"
+MULTI-FIDELITY SURROGATE WITH DEEP CONVOLUTIONAL KERNEL,0.10743801652892562,Under review as a conference paper at ICLR 2022
+MULTI-FIDELITY EXPECTED IMPROVEMENT,0.10909090909090909,"5.2
+MULTI-FIDELITY EXPECTED IMPROVEMENT"
+MULTI-FIDELITY EXPECTED IMPROVEMENT,0.11074380165289256,"Expected improvement (Jones et al., 1998) is a commonly used acquisition function for the black-
+box setting and is deﬁned as:"
+MULTI-FIDELITY EXPECTED IMPROVEMENT,0.11239669421487604,"EI(x|D) = E [max {f(x) −ymax, 0}] ,
+(9)"
+MULTI-FIDELITY EXPECTED IMPROVEMENT,0.1140495867768595,where ymax is the largest observed value of f. We propose a multi-ﬁdelity version of it as:
+MULTI-FIDELITY EXPECTED IMPROVEMENT,0.11570247933884298,"EIMF(x, j|D) = E
+
+max
+
+f(x, j) −ymax
+j
+, 0
+	
+,
+(10)"
+MULTI-FIDELITY EXPECTED IMPROVEMENT,0.11735537190082644,where:
+MULTI-FIDELITY EXPECTED IMPROVEMENT,0.11900826446280992,"ymax
+j
+=
+max {y | ((x, ·, j), y) ∈D}
+∃x ∈X : ((x, ·, j), y) ∈D
+max {y | (·, y) ∈D}
+otherwise
+(11)"
+MULTI-FIDELITY EXPECTED IMPROVEMENT,0.1206611570247934,"Simply put, ymax
+j
+is the largest observed value of f for a budget of j if it exists already, otherwise, it
+is the largest observed value for any budget. If there is only one possible budget, the multi-ﬁdelity
+expected improvement is identical to expected improvement."
+THE DYHPO ALGORITHM,0.12231404958677686,"5.3
+THE DYHPO ALGORITHM"
+THE DYHPO ALGORITHM,0.12396694214876033,Algorithm 1: DYHPO Algorithm
+THE DYHPO ALGORITHM,0.1256198347107438,"1: while not converged do
+2:
+xi ←arg maxx∈X EIMF (x, j) (Section 5.2)
+3:
+Observe yi,j.
+4:
+D ←D ∪{((xi, Yi,j−1, j), yi,j)}
+5:
+Update the surrogate model on D. (Section 5.1)
+6: return xi with largest yi,j."
+THE DYHPO ALGORITHM,0.12727272727272726,"The DYHPO algorithm looks very
+similar to many black-box Bayesian
+optimization algorithms as shown in
+Algorithm 1. The big difference is that
+at each step we dynamically decide
+which candidate conﬁguration to train
+for a small additional budget. Possi-
+ble candidates are previously uncon-
+sidered conﬁgurations as well as con-
+ﬁgurations that did not reach the max-
+imum budget.
+In Line 2, the most
+promising candidate is chosen using the acquisition function introduced in Section 5.2 and the sur-
+rogate model’s predictions. It is important to highlight that we do not maximize the acquisition
+function along the budget dimensionality. Instead, we set j such that it is by exactly one higher than
+the budget used to evaluate xi before. If xi has not been evaluated for any budget yet, j is set to 1.
+This ensures that we explore conﬁgurations by slowly increasing the budget. After having selected
+the candidate and the corresponding budget, the function f is evaluated and we observe yi,j (Line
+3). This additional data point is added to D in Line 4. Then in Line 5, the surrogate model is updated
+according to the training scheme described in Section 5.1."
+EXPERIMENTS,0.12892561983471074,"6
+EXPERIMENTS"
+EXPERIMENTS,0.1305785123966942,"We evaluate DYHPO in three different settings on hyperparameter optimization for tabular, text, and
+image classiﬁcation against several competitor methods. These include Hyperband (Li et al., 2017),
+BOHB (Falkner et al., 2018), DEHB (Awad et al., 2021), and Dragonﬂy (Metz et al., 2020). We use
+Dragonﬂy’s multi-ﬁdelity optimizer (Kandasamy et al., 2017). For a sanity check, we also compare
+against random search (Bergstra & Bengio, 2012). We use the publicly available implementations
+whenever available and implemented Hyperband and random search ourselves. We report the mean
+of ten repetitions and report two common metrics such as the regret and the average rank. The regret
+refers to the absolute difference between the score of the solution found by an optimizer compared to
+the best possible score. If we report the regret as an aggregate result over multiple datasets, we report
+the mean over all regrets. The average rank is a metric we use to aggregate results over different
+datasets. For each dataset, the best performing method obtains a rank of 1. Ties are broken by using
+the average rank, e.g., if the methods have scores 0.9, 0.8, 0.8, 0.7, the ranks are 1, 2.5, 2.5, and 4.
+For both metrics, smaller is better."
+FEEDFORWARD NEURAL NETWORKS,0.1322314049586777,"6.1
+FEEDFORWARD NEURAL NETWORKS"
+FEEDFORWARD NEURAL NETWORKS,0.13388429752066117,"In our ﬁrst experiment, we evaluate the various methods on how well they optimize neural networks
+for tabular datasets. For this purpose, we use the LCBench learning curve benchmark (Zimmer et al.,"
+FEEDFORWARD NEURAL NETWORKS,0.13553719008264462,Under review as a conference paper at ICLR 2022
+FEEDFORWARD NEURAL NETWORKS,0.1371900826446281,"0.2
+0.4
+0.6
+0.8
+1.0
+Normalized Wallclock Time 10
+1"
+FEEDFORWARD NEURAL NETWORKS,0.13884297520661157,Mean Regret
+FEEDFORWARD NEURAL NETWORKS,0.14049586776859505,"0.2
+0.4
+0.6
+0.8
+1.0
+Normalized Wallclock Time 2.5 3.0 3.5 4.0 4.5 5.0"
+FEEDFORWARD NEURAL NETWORKS,0.14214876033057852,Average Rank
+FEEDFORWARD NEURAL NETWORKS,0.14380165289256197,"Random
+Hyperband
+BOHB
+DEHB
+Dragonfly
+DyHPO"
+FEEDFORWARD NEURAL NETWORKS,0.14545454545454545,"Figure 3: LCBench: Aggregated results over 35 different datasets. The normalized wallclock time
+represents the actual runtime divided by the total wallclock time of DYHPO including the overhead
+of ﬁtting the deep GP. DYHPO achieves the best performance among all methods for both metrics."
+FEEDFORWARD NEURAL NETWORKS,0.14710743801652892,"1
+2
+3
+4
+5
+6"
+FEEDFORWARD NEURAL NETWORKS,0.1487603305785124,"Random
+Dragonfly
+Hyperband
+DyHPO
+BOHB
+DEHB"
+FEEDFORWARD NEURAL NETWORKS,0.15041322314049588,"1
+2
+3
+4
+5
+6"
+FEEDFORWARD NEURAL NETWORKS,0.15206611570247933,"Random
+Dragonfly
+Hyperband
+DEHB
+BOHB
+DyHPO"
+FEEDFORWARD NEURAL NETWORKS,0.1537190082644628,"1
+2
+3
+4
+5
+6"
+FEEDFORWARD NEURAL NETWORKS,0.15537190082644628,"Random
+Dragonfly
+Hyperband
+DEHB
+BOHB
+DyHPO"
+FEEDFORWARD NEURAL NETWORKS,0.15702479338842976,"Figure 4: Critical difference diagram for LCBench for results corresponding to the time DYHPO
+took to complete 200, 600 and 1,000 epochs. DYHPO’s improvement is statistically signiﬁcant."
+FEEDFORWARD NEURAL NETWORKS,0.15867768595041323,"2021). This benchmark contains learning curves for 35 different datasets where 2,000 neural net-
+works per dataset are trained for 50 epochs with Auto-PyTorch. The objective is to optimize seven
+different hyperparameters of funnel-shaped neural networks, i.e., batch size, learning rate, momen-
+tum, weight decay, dropout, number of layers, and maximum number of units per layer. We show
+the aggregated results in Figure 3. Here we aggregate the normalized wallclock time by dividing
+the actual wallclock time of baselines by the total wallclock time of our method DYHPO includ-
+ing the overhead incurred by ﬁtting the deep GP. In that manner, we can aggregate wallclock times
+across datasets. However, all the results for each individual dataset are reported in the Appendix
+(Figure 12 and 13). Furthermore, we use a critical difference diagram to report the pairwise statis-
+tical difference between all methods (Figure 4). Horizontal lines indicate groups of methods that
+are not signiﬁcantly different from each other. As suggested in the work of Demsar (2006), we use
+the Friedman test to reject the null hypothesis followed by a pairwise posthoc analysis based on the
+Wilcoxon signed-rank test (α = 0.05). While all gray-box methods have a very similar performance
+in the very beginning, DYHPO quickly outperforms its competitors with respect to both evaluation
+metrics with statistical signiﬁcance. On this task, both BOHB and DEHB are signiﬁcantly better
+than Hyperband but there is no clear winner among these two methods."
+RECURRENT NEURAL NETWORKS,0.16033057851239668,"6.2
+RECURRENT NEURAL NETWORKS"
+RECURRENT NEURAL NETWORKS,0.16198347107438016,"We continue with evaluating all methods on NLP tasks using search spaces provided in
+TaskSet (Metz et al., 2020). The objective is to optimize eight hyperparameters for a set of different
+recurrent neural networks (RNN) that differ in embedding size, RNN cell, and other architectural
+features. The set of hyperparameters consists of optimizer-speciﬁc hyperparameters, such as the
+learning rate, the exponential decay rate of the ﬁrst and second momentum of Adam, β1 and β2, and
+Adam’s constant for numerical stability ε. Furthermore, there are two hyperparameters controlling
+linear and exponential learning rate decays, as well as L1 and L2 regularization terms. As before,
+we provide the aggregated results in the main paper (Figure 5) and provide detailed results in the
+Appendix (Figure 11). We show the critical difference diagram in Figure 6. As before, all gray-box
+methods have a very similar performance in the very beginning, but, DYHPO quickly outperforms
+its competitors with respect to both evaluation metrics. The difference is signiﬁcant in the ﬁrst inter-
+val measured, in fact, DYHPO is providing the best results across all different tasks for the majority"
+RECURRENT NEURAL NETWORKS,0.16363636363636364,Under review as a conference paper at ICLR 2022
+RECURRENT NEURAL NETWORKS,0.1652892561983471,"0
+200
+400
+600
+800
+1000
+Number of Steps 10
+1"
+RECURRENT NEURAL NETWORKS,0.1669421487603306,Mean Regret
+RECURRENT NEURAL NETWORKS,0.16859504132231404,"0
+200
+400
+600
+800
+1000
+Number of Steps 1 2 3 4 5 6"
+RECURRENT NEURAL NETWORKS,0.17024793388429751,Average Rank
+RECURRENT NEURAL NETWORKS,0.171900826446281,"Random
+Hyperband
+BOHB
+DEHB
+Dragonfly
+DyHPO"
+RECURRENT NEURAL NETWORKS,0.17355371900826447,"Figure 5: TaskSet: Aggregated results over 12 different NLP tasks. Again, DYHPO shows the best
+performance among all methods for both evaluation metrics."
+RECURRENT NEURAL NETWORKS,0.17520661157024794,"1
+2
+3
+4
+5
+6"
+RECURRENT NEURAL NETWORKS,0.1768595041322314,"Random
+Dragonfly
+Hyperband
+DEHB
+BOHB
+DyHPO"
+RECURRENT NEURAL NETWORKS,0.17851239669421487,"1
+2
+3
+4
+5
+6"
+RECURRENT NEURAL NETWORKS,0.18016528925619835,"Random
+Dragonfly
+Hyperband
+DEHB
+BOHB
+DyHPO"
+RECURRENT NEURAL NETWORKS,0.18181818181818182,"1
+2
+3
+4
+5
+6"
+RECURRENT NEURAL NETWORKS,0.1834710743801653,"Random
+Dragonfly"
+RECURRENT NEURAL NETWORKS,0.18512396694214875,"DEHB
+Hyperband
+BOHB
+DyHPO"
+RECURRENT NEURAL NETWORKS,0.18677685950413223,"Figure 6: Critical difference diagram for TaskSet for results after 200, 600 and 1,000 epochs, re-
+spectively. DYHPO’s improvement is statistically signiﬁcant."
+RECURRENT NEURAL NETWORKS,0.1884297520661157,"of the elapsed time. Given enough time, BOHB is able to catch up but DYHPO’s improvement is
+still statistically signiﬁcant."
+CONVOLUTIONAL NEURAL NETWORKS,0.19008264462809918,"6.3
+CONVOLUTIONAL NEURAL NETWORKS"
+CONVOLUTIONAL NEURAL NETWORKS,0.19173553719008266,"10
+2
+10
+3
+10
+4
+10
+5"
+CONVOLUTIONAL NEURAL NETWORKS,0.1933884297520661,"Wallclock Time in Seconds 10
+1"
+CONVOLUTIONAL NEURAL NETWORKS,0.19504132231404958,Regret
+CONVOLUTIONAL NEURAL NETWORKS,0.19669421487603306,ImageNet16-120
+CONVOLUTIONAL NEURAL NETWORKS,0.19834710743801653,"Random
+Hyperband"
+CONVOLUTIONAL NEURAL NETWORKS,0.2,"BOHB
+DEHB"
+CONVOLUTIONAL NEURAL NETWORKS,0.20165289256198346,"Dragonfly
+DyHPO"
+CONVOLUTIONAL NEURAL NETWORKS,0.20330578512396694,"Figure 8: DYHPO quickly ﬁnds well-performing
+conﬁgurations. Given enough time, most methods
+ﬁnd equally good architectures."
+CONVOLUTIONAL NEURAL NETWORKS,0.2049586776859504,"Neural Architecture Search (Zoph & Le, 2017)
+(NAS) raised a lot of interest in the deep learn-
+ing community in the last few years. Since it
+can be reformulated to a hyperparameter op-
+timization problem, we can apply our method
+as well as many other standard hyperparame-
+ter optimization methods to it. We refrain from
+comparing against specialized NAS methods,
+since, this is out-of-scope for our work but re-
+fer the interested reader to the comparison of
+Dong & Yang (2020). To evaluate our methods
+in this scenario, we use NAS-Bench-201 (Dong
+& Yang, 2020). This benchmark has precom-
+puted about 15,600 architectures trained for
+200 epochs for the image classiﬁcation datasets
+CIFAR-10, CIFAR-100, and ImageNet.
+The
+objective is to select for each of the six oper-
+ations within the cell of the macro architecture
+one of ﬁve different operations. All other hy-
+perparameters such as learning rate and batch size are kept ﬁx. We report the results in Figure 8,
+the remaining results can be found in the Appendix (Figure 10). Initially, DYHPO provides better
+results, but, given enough time, most methods perform no longer signiﬁcantly different. We see
+also no difference between Hyperband and BOHB or DEHB. A reason for this observation will be
+discussed in the next section."
+CONVOLUTIONAL NEURAL NETWORKS,0.2066115702479339,Under review as a conference paper at ICLR 2022
+CONVOLUTIONAL NEURAL NETWORKS,0.20826446280991737,"0
+200
+400
+600
+800
+1000
+Number of Epochs 10
+2 10
+1"
+CONVOLUTIONAL NEURAL NETWORKS,0.20991735537190082,Regret
+CONVOLUTIONAL NEURAL NETWORKS,0.2115702479338843,Mean Regret over all Datasets
+CONVOLUTIONAL NEURAL NETWORKS,0.21322314049586777,"DyHPO
+DyHPO w/o LC"
+CONVOLUTIONAL NEURAL NETWORKS,0.21487603305785125,"10
+2
+10
+3
+10
+4
+10
+5"
+CONVOLUTIONAL NEURAL NETWORKS,0.21652892561983472,"Training Time in Seconds 10
+1"
+CONVOLUTIONAL NEURAL NETWORKS,0.21818181818181817,Regret
+CONVOLUTIONAL NEURAL NETWORKS,0.21983471074380165,ImageNet16-120
+CONVOLUTIONAL NEURAL NETWORKS,0.22148760330578512,"DyHPO
+DyHPO w/o LC"
+CONVOLUTIONAL NEURAL NETWORKS,0.2231404958677686,"Figure 7: Left: Aggregated results for LCBench. Right: Results on ImageNet from NAS-Bench
+201. Using the learning curve gives only little advantage on average for the LCBench problems.
+However, not using it signiﬁcantly worsens it for the NAS-Bench 201 tasks."
+ABLATION STUDY,0.22479338842975208,"6.4
+ABLATION STUDY"
+ABLATION STUDY,0.22644628099173553,"One of the main differences between DYHPO and similar methods such as the work by Kandasamy
+et al. (2017), is that the learning curve is an input to the kernel function. For this reason, we investi-
+gate the impact of this design choice. We consider a variation of DYHPO, DYHPO w/o LC, which
+is identical to its counterpart, and the only difference is that the learning curve is not part of the
+input. We report the results in Figure 7 and refer to the Appendix for additional results (Figure 9).
+One of the striking observations is that the learning curve has only a small impact for LCBench in
+contrast to NAS-Bench-201 where it is signiﬁcant. Our hypothesis is that for LCBench the hyperpa-
+rameter representation is a valuable feature such that the additional use of the learning curve (which
+in fact is already implicitly considered by the Gaussian Process) is not required. For NAS-Bench
+201, however, the architecture representation is poor and does not allow for good predictions on
+its own. This hypothesis aligns well with our previous experiments, where BOHB did better on
+LCBench compared to Hyperband whereas we have not seen any difference on NAS-Bench 201. As
+a reminder, BOHB is a variation of Hyperband that considers the hyperparameter representation to
+sample candidates."
+ABLATION STUDY,0.228099173553719,"We conclude, that the additional use of an explicit learning curve representation might not lead to a
+strong improvement in every scenario, however, it also does not seem to deteriorate it. Furthermore,
+there are cases where the explicit consideration leads to signiﬁcantly better results."
+LIMITATIONS OF OUR PAPER,0.22975206611570248,"7
+LIMITATIONS OF OUR PAPER"
+LIMITATIONS OF OUR PAPER,0.23140495867768596,"Although DYHPO shows a convincing and statistically signiﬁcant reduction of the HPO time on
+diverse Deep Learning (DL) experiments, we cautiously characterized our method only as a ”step
+towards” scaling HPO for DL. The reason for our restrain is the lack of tabular benchmarks for HPO
+on very large deep learning models, such as Transformers-based architectures (Devlin et al., 2019).
+We hope our promising results will motivate the DL community, that own compute power, to invest
+in creating pre-computed tabular HPO benchmarks for very deep models, where HPO researchers
+can demonstrate the empirical performance of their proposed methods."
+CONCLUSIONS,0.23305785123966943,"8
+CONCLUSIONS"
+CONCLUSIONS,0.23471074380165288,"In this work, we present DYHPO, a new Bayesian optimization (BO) algorithm for the gray-box
+setting. We introduced a new surrogate model for BO that uses a learnable deep kernel and takes the
+learning curve as an explicit input. Furthermore, we motivated a variation of expected improvement
+for the multi-ﬁdelity setting. Finally, we compared our approach on diverse benchmarks on a total
+of 50 different tasks against the current state-of-the-art methods on gray-box hyperparameter opti-
+mization (HPO). Our method shows signiﬁcant gains and has the potential to become the de facto
+standard for HPO in Deep Learning."
+CONCLUSIONS,0.23636363636363636,Under review as a conference paper at ICLR 2022
+CONCLUSIONS,0.23801652892561984,ACKNOWLEDGMENTS
+CONCLUSIONS,0.2396694214876033,Double-blind.
+ETHICS STATEMENT,0.2413223140495868,ETHICS STATEMENT
+ETHICS STATEMENT,0.24297520661157024,"In our work, we use only publicly available data with no privacy concerns. Furthermore, our algo-
+rithm reduces the overall time for ﬁtting deep networks, therefore, saving computational resources
+and yielding a positive impact on the environment. Moreover, our method can help smaller research
+organizations with limited access to resources to be competitive in the deep learning domain, which
+reduces the investment costs on hardware. Although our method signiﬁcantly reduces the time taken
+for optimizing a machine learning algorithm that achieves peak performance, we warn against run-
+ning our method for an extended time only to achieve marginal gains in performance, unless it is
+mission-critical. Last but not least, in order to save energy, we invite the community to create sparse
+benchmarks with surrogates, instead of dense tabular ones."
+REPRODUCIBILITY STATEMENT,0.24462809917355371,REPRODUCIBILITY STATEMENT
+REPRODUCIBILITY STATEMENT,0.2462809917355372,We attempt to facilitate reproduction of our results with the following measures:
+REPRODUCIBILITY STATEMENT,0.24793388429752067,"• We use only publicly available datasets and provide a detailed description of preprocessing
+(Section A.2) and the datasets themselves (Section A.1).
+• All our baselines are publicly available or trivial to implement. We provide all required
+details in Section A.5.
+• We clearly describe our method in Section 5 and provide additional details in Section A.4.
+• Finally, we plan to make the source code of our method publicly available."
+REFERENCES,0.24958677685950414,REFERENCES
+REFERENCES,0.2512396694214876,"Noor H. Awad, Neeratyoy Mallik, and Frank Hutter. DEHB: evolutionary hyberband for scalable,
+robust and efﬁcient hyperparameter optimization. In Proceedings of the Thirtieth International
+Joint Conference on Artiﬁcial Intelligence, IJCAI 2021, Virtual Event / Montreal, Canada, 19-27
+August 2021, pp. 2147–2153, 2021. doi: 10.24963/ijcai.2021/296. URL https://doi.org/
+10.24963/ijcai.2021/296."
+REFERENCES,0.2528925619834711,"James Bergstra and Yoshua Bengio.
+Random search for hyper-parameter optimization.
+J.
+Mach. Learn. Res., 13:281–305, 2012. URL http://dl.acm.org/citation.cfm?id=
+2188395."
+REFERENCES,0.2545454545454545,"James Bergstra,
+R´emi Bardenet,
+Yoshua Bengio,
+and Bal´azs K´egl.
+Algorithms for
+hyper-parameter
+optimization.
+In
+Advances
+in
+Neural
+Information
+Processing
+Sys-
+tems 24:
+25th Annual Conference on Neural Information Processing Systems 2011.
+Proceedings of a meeting held 12-14 December 2011,
+Granada,
+Spain,
+pp. 2546–
+2554,
+2011.
+URL
+https://proceedings.neurips.cc/paper/2011/hash/
+86e8f7ab32cfd12577bc2619bc635690-Abstract.html."
+REFERENCES,0.256198347107438,"Hadrien Bertrand, Roberto Ardon, Matthieu Perrot, and Isabelle Bloch.
+Hyperparameter opti-
+mization of deep neural networks: Combining hyperband with bayesian model selection.
+In
+Conf´erence sur l’Apprentissage Automatique, 2017."
+REFERENCES,0.2578512396694215,"Yutian Chen, Matthew W. Hoffman, Sergio Gomez Colmenarejo, Misha Denil, Timothy P. Lillicrap,
+Matthew Botvinick, and Nando de Freitas. Learning to learn without gradient descent by gradient
+descent. In Proceedings of the 34th International Conference on Machine Learning, ICML 2017,
+Sydney, NSW, Australia, 6-11 August 2017, pp. 748–756, 2017. URL http://proceedings.
+mlr.press/v70/chen17e.html."
+REFERENCES,0.25950413223140495,"Janez Demsar. Statistical comparisons of classiﬁers over multiple data sets. J. Mach. Learn. Res.,
+7:1–30, 2006. URL http://jmlr.org/papers/v7/demsar06a.html."
+REFERENCES,0.2611570247933884,Under review as a conference paper at ICLR 2022
+REFERENCES,0.2628099173553719,"Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. BERT: pre-training of deep
+bidirectional transformers for language understanding. In Proceedings of the 2019 Conference of
+the North American Chapter of the Association for Computational Linguistics: Human Language
+Technologies, NAACL-HLT 2019, Minneapolis, MN, USA, June 2-7, 2019, Volume 1 (Long and
+Short Papers), pp. 4171–4186, 2019. doi: 10.18653/v1/n19-1423. URL https://doi.org/
+10.18653/v1/n19-1423."
+REFERENCES,0.2644628099173554,"Xuanyi Dong and Yi Yang. Nas-bench-201: Extending the scope of reproducible neural architec-
+ture search. In 8th International Conference on Learning Representations, ICLR 2020, Addis
+Ababa, Ethiopia, April 26-30, 2020, 2020. URL https://openreview.net/forum?id=
+HJxyZkBKDr."
+REFERENCES,0.26611570247933886,"Stefan Falkner, Aaron Klein, and Frank Hutter. BOHB: robust and efﬁcient hyperparameter opti-
+mization at scale. In Proceedings of the 35th International Conference on Machine Learning,
+ICML 2018, Stockholmsm¨assan, Stockholm, Sweden, July 10-15, 2018, pp. 1436–1445, 2018.
+URL http://proceedings.mlr.press/v80/falkner18a.html."
+REFERENCES,0.26776859504132233,"Luca Franceschi, Michele Donini, Paolo Frasconi, and Massimiliano Pontil. Forward and reverse
+gradient-based hyperparameter optimization. In Proceedings of the 34th International Conference
+on Machine Learning, ICML 2017, Sydney, NSW, Australia, 6-11 August 2017, pp. 1165–1173,
+2017. URL http://proceedings.mlr.press/v70/franceschi17a.html."
+REFERENCES,0.2694214876033058,"Jacob R. Gardner, Geoff Pleiss, Kilian Q. Weinberger, David Bindel, and Andrew Gordon Wil-
+son. Gpytorch: Blackbox matrix-matrix gaussian process inference with GPU acceleration. In
+Advances in Neural Information Processing Systems 31: Annual Conference on Neural Infor-
+mation Processing Systems 2018, NeurIPS 2018, December 3-8, 2018, Montr´eal, Canada, pp.
+7587–7597, 2018. URL https://proceedings.neurips.cc/paper/2018/hash/
+27e8e17134dd7083b050476733207ea1-Abstract.html."
+REFERENCES,0.27107438016528923,"Kevin G. Jamieson and Ameet Talwalkar. Non-stochastic best arm identiﬁcation and hyperparameter
+optimization. In Proceedings of the 19th International Conference on Artiﬁcial Intelligence and
+Statistics, AISTATS 2016, Cadiz, Spain, May 9-11, 2016, pp. 240–248, 2016. URL http://
+proceedings.mlr.press/v51/jamieson16.html."
+REFERENCES,0.2727272727272727,"Donald R. Jones, Matthias Schonlau, and William J. Welch. Efﬁcient global optimization of ex-
+pensive black-box functions. J. Global Optimization, 13(4):455–492, 1998. doi: 10.1023/A:
+1008306431147. URL https://doi.org/10.1023/A:1008306431147."
+REFERENCES,0.2743801652892562,"Kirthevasan Kandasamy, Gautam Dasarathy, Junier B. Oliva, Jeff G. Schneider, and Barnab´as
+P´oczos.
+Gaussian process bandit optimisation with multi-ﬁdelity evaluations.
+In Ad-
+vances in Neural Information Processing Systems 29:
+Annual Conference on Neu-
+ral Information Processing Systems 2016, December 5-10, 2016, Barcelona, Spain, pp.
+992–1000, 2016.
+URL https://proceedings.neurips.cc/paper/2016/hash/
+605ff764c617d3cd28dbbdd72be8f9a2-Abstract.html."
+REFERENCES,0.27603305785123966,"Kirthevasan Kandasamy, Gautam Dasarathy, Jeff G. Schneider, and Barnab´as P´oczos. Multi-ﬁdelity
+bayesian optimisation with continuous approximations.
+In Proceedings of the 34th Interna-
+tional Conference on Machine Learning, ICML 2017, Sydney, NSW, Australia, 6-11 August 2017,
+pp. 1799–1808, 2017. URL http://proceedings.mlr.press/v70/kandasamy17a.
+html."
+REFERENCES,0.27768595041322314,"Kirthevasan Kandasamy, Willie Neiswanger, Jeff Schneider, Barnab´as P´oczos, and Eric P.
+Xing.
+Neural architecture search with bayesian optimisation and optimal transport.
+In Ad-
+vances in Neural Information Processing Systems 31: Annual Conference on Neural Informa-
+tion Processing Systems 2018, NeurIPS 2018, December 3-8, 2018, Montr´eal, Canada, pp.
+2020–2029, 2018. URL https://proceedings.neurips.cc/paper/2018/hash/
+f33ba15effa5c10e873bf3842afb46a6-Abstract.html."
+REFERENCES,0.2793388429752066,"Diederik P. Kingma and Jimmy Ba. Adam: A method for stochastic optimization. In 3rd Inter-
+national Conference on Learning Representations, ICLR 2015, San Diego, CA, USA, May 7-9,
+2015, Conference Track Proceedings, 2015. URL http://arxiv.org/abs/1412.6980."
+REFERENCES,0.2809917355371901,Under review as a conference paper at ICLR 2022
+REFERENCES,0.28264462809917357,"Aaron Klein, Stefan Falkner, Simon Bartels, Philipp Hennig, and Frank Hutter. Fast bayesian opti-
+mization of machine learning hyperparameters on large datasets. In Proceedings of the 20th In-
+ternational Conference on Artiﬁcial Intelligence and Statistics, AISTATS 2017, 20-22 April 2017,
+Fort Lauderdale, FL, USA, pp. 528–536, 2017. URL http://proceedings.mlr.press/
+v54/klein17a.html."
+REFERENCES,0.28429752066115704,"Lisha Li, Kevin G. Jamieson, Giulia DeSalvo, Afshin Rostamizadeh, and Ameet Talwalkar. Hyper-
+band: A novel bandit-based approach to hyperparameter optimization. J. Mach. Learn. Res., 18:
+185:1–185:52, 2017. URL http://jmlr.org/papers/v18/16-558.html."
+REFERENCES,0.2859504132231405,"Shibo Li, Wei Xing, Robert M. Kirby, and Shandian Zhe. Multi-ﬁdelity bayesian optimization
+via deep neural networks. In Advances in Neural Information Processing Systems 33: Annual
+Conference on Neural Information Processing Systems 2020, NeurIPS 2020, December 6-12,
+2020, virtual, 2020. URL https://proceedings.neurips.cc/paper/2020/hash/
+60e1deb043af37db5ea4ce9ae8d2c9ea-Abstract.html."
+REFERENCES,0.28760330578512394,"Jonathan Lorraine, Paul Vicol, and David Duvenaud. Optimizing millions of hyperparameters by
+implicit differentiation. In The 23rd International Conference on Artiﬁcial Intelligence and Statis-
+tics, AISTATS 2020, 26-28 August 2020, Online [Palermo, Sicily, Italy], pp. 1540–1552, 2020.
+URL http://proceedings.mlr.press/v108/lorraine20a.html."
+REFERENCES,0.2892561983471074,"Dougal Maclaurin, David Duvenaud, and Ryan P. Adams. Gradient-based hyperparameter opti-
+mization through reversible learning. In Proceedings of the 32nd International Conference on
+Machine Learning, ICML 2015, Lille, France, 6-11 July 2015, pp. 2113–2122, 2015.
+URL
+http://proceedings.mlr.press/v37/maclaurin15.html."
+REFERENCES,0.2909090909090909,"Luke Metz, Niru Maheswaranathan, Ruoxi Sun, C. Daniel Freeman, Ben Poole, and Jascha Sohl-
+Dickstein. Using a thousand optimization tasks to learn hyperparameter search strategies. CoRR,
+abs/2002.11887, 2020. URL https://arxiv.org/abs/2002.11887."
+REFERENCES,0.29256198347107437,"Jack Parker-Holder, Vu Nguyen, and Stephen J. Roberts. Provably efﬁcient online hyperparameter
+optimization with population-based bandits. In Advances in Neural Information Processing Sys-
+tems 33: Annual Conference on Neural Information Processing Systems 2020, NeurIPS 2020, De-
+cember 6-12, 2020, virtual, 2020. URL https://proceedings.neurips.cc/paper/
+2020/hash/c7af0926b294e47e52e46cfebe173f20-Abstract.html."
+REFERENCES,0.29421487603305785,"Valerio Perrone, Rodolphe Jenatton, Matthias W. Seeger, and C´edric Archambeau. Scalable hyper-
+parameter transfer learning. In Advances in Neural Information Processing Systems 31: Annual
+Conference on Neural Information Processing Systems 2018, NeurIPS 2018, December 3-8, 2018,
+Montr´eal, Canada, pp. 6846–6856, 2018. URL https://proceedings.neurips.cc/
+paper/2018/hash/14c879f3f5d8ed93a09f6090d77c2cc3-Abstract.html."
+REFERENCES,0.2958677685950413,"Matthias Poloczek, Jialei Wang, and Peter I. Frazier.
+Multi-information source optimization.
+In Advances in Neural Information Processing Systems 30:
+Annual Conference on Neu-
+ral Information Processing Systems 2017, December 4-9, 2017, Long Beach, CA, USA, pp.
+4288–4298, 2017. URL https://proceedings.neurips.cc/paper/2017/hash/
+df1f1d20ee86704251795841e6a9405a-Abstract.html."
+REFERENCES,0.2975206611570248,"Akshara Rai, Ruta Desai, and Siddharth Goyal. Bayesian optimization with a neural network kernel,
+2016. URL http://www.cs.cmu.edu/˜rutad/files/BO_NN.pdf."
+REFERENCES,0.2991735537190083,"Carl Edward Rasmussen and Christopher K. I. Williams. Gaussian processes for machine learning.
+Adaptive computation and machine learning. MIT Press, 2006. ISBN 026218253X."
+REFERENCES,0.30082644628099175,"Jasper Snoek, Hugo Larochelle, and Ryan P. Adams.
+Practical bayesian optimization of
+machine learning algorithms.
+In Advances in Neural Information Processing Systems
+25:
+26th Annual Conference on Neural Information Processing Systems 2012. Proceed-
+ings of a meeting held December 3-6, 2012, Lake Tahoe, Nevada, United States, pp.
+2960–2968, 2012. URL https://proceedings.neurips.cc/paper/2012/hash/
+05311655a15b75fab86956663e1819cd-Abstract.html."
+REFERENCES,0.30247933884297523,Under review as a conference paper at ICLR 2022
+REFERENCES,0.30413223140495865,"Niranjan Srinivas, Andreas Krause, Sham M. Kakade, and Matthias W. Seeger. Gaussian process
+optimization in the bandit setting: No regret and experimental design. In Proceedings of the 27th
+International Conference on Machine Learning (ICML-10), June 21-24, 2010, Haifa, Israel, pp.
+1015–1022, 2010. URL https://icml.cc/Conferences/2010/papers/422.pdf."
+REFERENCES,0.30578512396694213,"Kevin Swersky,
+Jasper Snoek,
+and Ryan Prescott Adams.
+Multi-task bayesian opti-
+mization.
+In Advances in Neural Information Processing Systems 26:
+27th An-
+nual Conference on Neural Information Processing Systems 2013. Proceedings of a
+meeting held December 5-8,
+2013,
+Lake Tahoe,
+Nevada,
+United States,
+pp. 2004–
+2012,
+2013.
+URL
+https://proceedings.neurips.cc/paper/2013/hash/
+f33ba15effa5c10e873bf3842afb46a6-Abstract.html."
+REFERENCES,0.3074380165289256,"Kevin Swersky, Jasper Snoek, and Ryan Prescott Adams. Freeze-thaw bayesian optimization. CoRR,
+abs/1406.3896, 2014. URL http://arxiv.org/abs/1406.3896."
+REFERENCES,0.3090909090909091,"Shion Takeno, Hitoshi Fukuoka, Yuhki Tsukada, Toshiyuki Koyama, Motoki Shiga, Ichiro Takeuchi,
+and Masayuki Karasuyama. Multi-ﬁdelity bayesian optimization with max-value entropy search
+and its parallelization. In Proceedings of the 37th International Conference on Machine Learn-
+ing, ICML 2020, 13-18 July 2020, Virtual Event, pp. 9334–9345, 2020.
+URL http://
+proceedings.mlr.press/v119/takeno20a.html."
+REFERENCES,0.31074380165289256,"Jiazhuo Wang, Jason Xu, and Xuejun Wang. Combination of hyperband and bayesian optimization
+for hyperparameter optimization in deep learning. CoRR, abs/1801.01596, 2018. URL http:
+//arxiv.org/abs/1801.01596."
+REFERENCES,0.31239669421487604,"Andrew Gordon Wilson, Zhiting Hu, Ruslan Salakhutdinov, and Eric P. Xing.
+Deep kernel
+learning.
+In Proceedings of the 19th International Conference on Artiﬁcial Intelligence and
+Statistics, AISTATS 2016, Cadiz, Spain, May 9-11, 2016, pp. 370–378, 2016.
+URL http:
+//proceedings.mlr.press/v51/wilson16.html."
+REFERENCES,0.3140495867768595,"Martin Wistuba. Bayesian optimization combined with incremental evaluation for neural network
+architecture optimization. In AutoML@PKDD/ECML, 2017."
+REFERENCES,0.315702479338843,"Martin Wistuba and Josif Grabocka. Few-shot bayesian optimization with deep kernel surrogates.
+In 9th International Conference on Learning Representations, ICLR 2021, Virtual Event, Austria,
+May 3-7, 2021, 2021. URL https://openreview.net/forum?id=bJxgv5C3sYc."
+REFERENCES,0.31735537190082647,"Lucas Zimmer, Marius Lindauer, and Frank Hutter. Auto-pytorch: Multi-ﬁdelity metalearning for
+efﬁcient and robust autodl. IEEE Trans. Pattern Anal. Mach. Intell., 43(9):3079–3090, 2021.
+doi: 10.1109/TPAMI.2021.3067763. URL https://doi.org/10.1109/TPAMI.2021.
+3067763."
+REFERENCES,0.31900826446280994,"Barret Zoph and Quoc V. Le. Neural architecture search with reinforcement learning. In 5th In-
+ternational Conference on Learning Representations, ICLR 2017, Toulon, France, April 24-26,
+2017, Conference Track Proceedings, 2017.
+URL https://openreview.net/forum?
+id=r1Ue8Hcxg."
+REFERENCES,0.32066115702479336,Under review as a conference paper at ICLR 2022
+REFERENCES,0.32231404958677684,"A
+EXPERIMENTAL SETUP"
+REFERENCES,0.3239669421487603,"A.1
+BENCHMARKS"
+REFERENCES,0.3256198347107438,"LCBench.
+LCBench1 is a feedforward neural network benchmark on tabular data which consists
+of 2000 conﬁguration settings for each of the 35 datasets. The conﬁgurations were evaluated during
+HPO runs with AutoPyTorch. LCBench features a search space of 7 numerical hyperparameters,
+where every hyperparameter conﬁguration is trained for 50 epochs."
+REFERENCES,0.32727272727272727,"TaskSet.
+TaskSet2 is a benchmark that features over 1162 diverse tasks from different domains
+and includes 5 search spaces. In this work, we focus on NLP tasks and we use the Adam8p search
+space with 8 continuous hyperparameters. We refer to Figure 11 for the exact task names considered
+in our experiments. The learning curves provided in TaskSet report scores after every 200 iterations.
+We refer to those as ”steps” in Figure 5."
+REFERENCES,0.32892561983471075,"NAS-Bench-201.
+NAS-Bench-2013 is a benchmark consisting of 15625 hyperparameter conﬁg-
+urations representing different architectures on the CIFAR-10, CIFAR-100 and ImageNet datasets.
+NAS-Bench-201 features a search space of 6 categorical hyperparameters and each architecture is
+trained for 200 epochs."
+REFERENCES,0.3305785123966942,"A.2
+PREPROCESSING"
+REFERENCES,0.3322314049586777,"In the following, we describe the preprocessing applied to the hyperparameter representation. For
+LCBench, we apply a log-transform to batch size, learning rate, and weight decay. For TaskSet,
+we apply it on the learning rate, L1 and L2 regularization terms, linear and exponential decay of
+the learning rate. All continuous hyperparameters are scaled to the range between 0 and 1 using
+sklearn’s MinMaxScaler. If not mentioned otherwise, we use one-hot encoding for the categorical
+hyperparameters. As detailed in the following, some baselines have a speciﬁc way of dealing with
+them. In that case, we use the method recommended by the authors."
+REFERENCES,0.3338842975206612,"A.3
+FRAMEWORK"
+REFERENCES,0.33553719008264465,"The framework contains the evaluated hyperparameters and their corresponding validation curves.
+The list of candidate hyperparameters is passed to the baseline-speciﬁc interface, which in turn,
+optimizes and queries the framework for the hyperparameter conﬁguration that maximizes utility.
+Our framework in turn responds with the validation curve and the cost of the evaluation. In case a
+hyperparameter conﬁguration has been evaluated previously up to a budget b and a baseline requires
+the response for budget b + 1, the cost is calculated accordingly only for the extra budget requested."
+REFERENCES,0.3371900826446281,"A.4
+IMPLEMENTATION DETAILS"
+REFERENCES,0.33884297520661155,"We implement the Deep Kernel Gaussian Process using GPyTorch 1.5 (Gardner et al., 2018). We
+use an RBF kernel and the dense layers of the transformation function ϕ (Figure 2) have 128 and
+256 units. We used a convolutional layer with kernel size three and four ﬁlters. All parameters of
+the Deep Kernel are estimated by maximizing the marginal likelihood. We achieve this by using
+gradient ascent and Adam (Kingma & Ba, 2015) with a learning rate of 0.1 and batch size of 64.
+We stop training as soon as the training likelihood is not improving for 10 epochs in a row or we
+completed 1,000 epochs. For every new data point, we start training the GP with its old parameters
+to reduce the required effort for training."
+REFERENCES,0.34049586776859503,"1https://github.com/automl/LCBench
+2https://github.com/google-research/google-research/tree/master/task_
+set
+3https://github.com/D-X-Y/NAS-Bench-201"
+REFERENCES,0.3421487603305785,Under review as a conference paper at ICLR 2022
+REFERENCES,0.343801652892562,"A.5
+BASELINES"
+REFERENCES,0.34545454545454546,"Random Search & Hyperband.
+Random search and Hyperband sample hyperparameter conﬁg-
+urations at random and therefore the preprocessing is irrelevant. We have implemented both from
+scratch and use the recommended hyperparameters for Hyperband, i.e. η = 3."
+REFERENCES,0.34710743801652894,"BOHB.
+For our experiments with BOHB, we use version 0.7.4 of the ofﬁcially-released code4."
+REFERENCES,0.3487603305785124,"DEHB.
+For our experiments with DEHB, we use the ofﬁcial public implementation5. We devel-
+oped an interface that communicates between our framework and DEHB. In addition to the initial
+preprocessing common for all methods, we encode categorical hyperparameters with a numerical
+value in the interval [0, 1]. For a categorical hyperparameter xi, we take N equal-sized intervals,
+where Ni represents the number of unique categorical values for hyperparameter xi and we assign
+the value for a categorical value n ∈Ni to the middle of the interval [i, i + 1] as suggested by the
+authors. For conﬁguring the DEHB algorithm we used the default values from the library."
+REFERENCES,0.3504132231404959,"Dragonﬂy.
+We use the publicly available code of Dragonﬂy6. No special treatment of categorical
+hyperparameters is required since Dragonﬂy has its own way to deal with them. We use version
+0.1.6 with default settings."
+REFERENCES,0.35206611570247937,"B
+ADDITIONAL PLOTS"
+REFERENCES,0.3537190082644628,"In this section, we provide additional plots for the performance comparison between all methods for
+the individual datasets in our benchmarks. In Figure 12 and 13 we show the performance comparison
+for all the datasets from LCBench regarding regret over the number of epochs. As can be seen,
+DYHPO manages to outperform the other competitors in the majority of the datasets, and in the
+datasets that it does not, it is always close to the top-performing method and the difference between
+methods is marginal."
+REFERENCES,0.35537190082644626,"10
+2
+10
+3
+10
+4"
+REFERENCES,0.35702479338842974,"Training Time in Seconds 10
+2 10
+1"
+REFERENCES,0.3586776859504132,Regret
+REFERENCES,0.3603305785123967,cifar10
+REFERENCES,0.36198347107438017,"DyHPO
+DyHPO w/o LC"
+REFERENCES,0.36363636363636365,"10
+2
+10
+3
+10
+4"
+REFERENCES,0.3652892561983471,"Training Time in Seconds 10
+2 10
+1"
+REFERENCES,0.3669421487603306,Regret
+REFERENCES,0.3685950413223141,cifar100
+REFERENCES,0.3702479338842975,"DyHPO
+DyHPO w/o LC"
+REFERENCES,0.371900826446281,Figure 9: The learning curve as an explicit input is very important for each task of NAS-Bench 201.
+REFERENCES,0.37355371900826445,"Additionally, in Figure 10 we show the performance comparison over time of every method for the
+CIFAR-10 and CIFAR-100 datasets in the NAS-Bench-201 benchmark. As can be seen, DYHPO
+converges faster and has a better performance compared to the other methods over the majority of
+the time, however, towards the end although it is the optimal method or close to the optimal method,
+the difference in regret is not signiﬁcant anymore."
+REFERENCES,0.3752066115702479,"Furthermore, Figure 11 shows the performance comparison for the datasets chosen from TaskSet
+over the number of steps. Looking at the results, DYHPO is outperforming all methods convinc-
+ingly on the majority of datasets by converging faster and with signiﬁcant differences in the regret
+evaluation metric."
+REFERENCES,0.3768595041322314,"4https://github.com/automl/HpBandSter
+5https://github.com/automl/DEHB/
+6https://github.com/dragonfly/dragonfly"
+REFERENCES,0.3785123966942149,Under review as a conference paper at ICLR 2022
+REFERENCES,0.38016528925619836,"10
+2
+10
+3
+10
+4"
+REFERENCES,0.38181818181818183,"Wallclock Time in Seconds 10
+2 10
+1"
+REFERENCES,0.3834710743801653,Regret
+REFERENCES,0.3851239669421488,cifar10
+REFERENCES,0.3867768595041322,"Random
+Hyperband"
+REFERENCES,0.3884297520661157,"BOHB
+DEHB"
+REFERENCES,0.39008264462809916,"Dragonfly
+DyHPO"
+REFERENCES,0.39173553719008264,"10
+2
+10
+3
+10
+4"
+REFERENCES,0.3933884297520661,"Wallclock Time in Seconds 10
+2 10
+1"
+REFERENCES,0.3950413223140496,Regret
+REFERENCES,0.39669421487603307,cifar100
+REFERENCES,0.39834710743801655,"Random
+Hyperband"
+REFERENCES,0.4,"BOHB
+DEHB"
+REFERENCES,0.40165289256198344,"Dragonfly
+DyHPO"
+REFERENCES,0.4033057851239669,Figure 10: NAS-Bench-201 Regret Results.
+REFERENCES,0.4049586776859504,"0
+200
+400
+600
+800
+1000
+Number of Steps 10
+3 10
+2 10
+1"
+REFERENCES,0.4066115702479339,Regret
+REFERENCES,0.40826446280991735,"FixedTextRNNClassification
+imdb_patch128_LSTM128_avg_bs64"
+REFERENCES,0.4099173553719008,"Random
+Hyperband"
+REFERENCES,0.4115702479338843,"BOHB
+DEHB"
+REFERENCES,0.4132231404958678,"Dragonfly
+DyHPO"
+REFERENCES,0.41487603305785126,"0
+200
+400
+600
+800
+1000
+Number of Steps 10
+3 10
+2 10
+1"
+REFERENCES,0.41652892561983473,Regret
+REFERENCES,0.41818181818181815,"FixedTextRNNClassification
+imdb_patch128_LSTM128_bs64"
+REFERENCES,0.41983471074380163,"Random
+Hyperband"
+REFERENCES,0.4214876033057851,"BOHB
+DEHB"
+REFERENCES,0.4231404958677686,"Dragonfly
+DyHPO"
+REFERENCES,0.42479338842975206,"0
+200
+400
+600
+800
+1000
+Number of Steps 10
+1"
+REFERENCES,0.42644628099173554,Regret
+REFERENCES,0.428099173553719,"FixedTextRNNClassification
+imdb_patch128_LSTM128_embed128_bs64"
+REFERENCES,0.4297520661157025,"Random
+Hyperband"
+REFERENCES,0.43140495867768597,"BOHB
+DEHB"
+REFERENCES,0.43305785123966944,"Dragonfly
+DyHPO"
+REFERENCES,0.43471074380165287,"0
+200
+400
+600
+800
+1000
+Number of Steps 10
+1"
+REFERENCES,0.43636363636363634,"6 × 10
+2"
+REFERENCES,0.4380165289256198,"2 × 10
+1"
+REFERENCES,0.4396694214876033,"3 × 10
+1"
+REFERENCES,0.4413223140495868,Regret
+REFERENCES,0.44297520661157025,"FixedTextRNNClassification
+imdb_patch32_GRU128_bs128"
+REFERENCES,0.4446280991735537,"Random
+Hyperband"
+REFERENCES,0.4462809917355372,"BOHB
+DEHB"
+REFERENCES,0.4479338842975207,"Dragonfly
+DyHPO"
+REFERENCES,0.44958677685950416,"0
+200
+400
+600
+800
+1000
+Number of Steps 10
+1"
+REFERENCES,0.4512396694214876,Regret
+REFERENCES,0.45289256198347105,"FixedTextRNNClassification
+imdb_patch32_GRU64_avg_bs128"
+REFERENCES,0.45454545454545453,"Random
+Hyperband"
+REFERENCES,0.456198347107438,"BOHB
+DEHB"
+REFERENCES,0.4578512396694215,"Dragonfly
+DyHPO"
+REFERENCES,0.45950413223140496,"0
+200
+400
+600
+800
+1000
+Number of Steps 10
+1"
+REFERENCES,0.46115702479338844,Regret
+REFERENCES,0.4628099173553719,"FixedTextRNNClassification
+imdb_patch32_IRNN64_relu_avg_bs128"
+REFERENCES,0.4644628099173554,"Random
+Hyperband"
+REFERENCES,0.46611570247933887,"BOHB
+DEHB"
+REFERENCES,0.4677685950413223,"Dragonfly
+DyHPO"
+REFERENCES,0.46942148760330576,"0
+200
+400
+600
+800
+1000
+Number of Steps 10
+1 10
+0"
+REFERENCES,0.47107438016528924,Regret
+REFERENCES,0.4727272727272727,"FixedTextRNNClassification
+imdb_patch32_IRNN64_relu_last_bs128"
+REFERENCES,0.4743801652892562,"Random
+Hyperband"
+REFERENCES,0.47603305785123967,"BOHB
+DEHB"
+REFERENCES,0.47768595041322315,"Dragonfly
+DyHPO"
+REFERENCES,0.4793388429752066,"0
+200
+400
+600
+800
+1000
+Number of Steps 10
+2 10
+1"
+REFERENCES,0.4809917355371901,Regret
+REFERENCES,0.4826446280991736,"FixedTextRNNClassification
+imdb_patch32_LSTM128_E128_bs128"
+REFERENCES,0.484297520661157,"Random
+Hyperband"
+REFERENCES,0.4859504132231405,"BOHB
+DEHB"
+REFERENCES,0.48760330578512395,"Dragonfly
+DyHPO"
+REFERENCES,0.48925619834710743,"0
+200
+400
+600
+800
+1000
+Number of Steps 10
+2 10
+1"
+REFERENCES,0.4909090909090909,Regret
+REFERENCES,0.4925619834710744,"FixedTextRNNClassification
+imdb_patch32_LSTM128_bs128"
+REFERENCES,0.49421487603305786,"Random
+Hyperband"
+REFERENCES,0.49586776859504134,"BOHB
+DEHB"
+REFERENCES,0.4975206611570248,"Dragonfly
+DyHPO"
+REFERENCES,0.4991735537190083,"0
+200
+400
+600
+800
+1000
+Number of Steps 10
+1"
+REFERENCES,0.5008264462809917,"2 × 10
+1"
+REFERENCES,0.5024793388429752,Regret
+REFERENCES,0.5041322314049587,"FixedTextRNNClassification
+imdb_patch32_VRNN128_tanh_bs128"
+REFERENCES,0.5057851239669422,"Random
+Hyperband"
+REFERENCES,0.5074380165289256,"BOHB
+DEHB"
+REFERENCES,0.509090909090909,"Dragonfly
+DyHPO"
+REFERENCES,0.5107438016528926,"0
+200
+400
+600
+800
+1000
+Number of Steps 10
+1"
+REFERENCES,0.512396694214876,Regret
+REFERENCES,0.5140495867768595,"FixedTextRNNClassification
+imdb_patch32_VRNN64_relu_avg_bs128"
+REFERENCES,0.515702479338843,"Random
+Hyperband"
+REFERENCES,0.5173553719008265,"BOHB
+DEHB"
+REFERENCES,0.5190082644628099,"Dragonfly
+DyHPO"
+REFERENCES,0.5206611570247934,"0
+200
+400
+600
+800
+1000
+Number of Steps 10
+3 10
+2 10
+1"
+REFERENCES,0.5223140495867769,Regret
+REFERENCES,0.5239669421487604,"FixedTextRNNClassification
+imdb_patch32_VRNN64_tanh_avg_bs128"
+REFERENCES,0.5256198347107438,"Random
+Hyperband"
+REFERENCES,0.5272727272727272,"BOHB
+DEHB"
+REFERENCES,0.5289256198347108,"Dragonfly
+DyHPO"
+REFERENCES,0.5305785123966942,Figure 11: Detailed results on a per dataset level for TaskSet.
+REFERENCES,0.5322314049586777,"Lastly, in Figure 9 we ablate the learning curve input in our kernel, to see the effect it has on perfor-
+mance for the CIFAR-10 and CIFAR-100 datasets. The results indicate that the learning curve plays
+an important role in achieving better results by allowing faster convergence and a better anytime
+performance."
+REFERENCES,0.5338842975206611,Under review as a conference paper at ICLR 2022
+REFERENCES,0.5355371900826447,"0
+500
+1000
+1500
+2000
+2500
+3000
+Wallclock Time in Seconds 10
+2"
+REFERENCES,0.5371900826446281,Regret
+REFERENCES,0.5388429752066116,APSFailure
+REFERENCES,0.540495867768595,"Random
+Hyperband"
+REFERENCES,0.5421487603305785,"BOHB
+DEHB"
+REFERENCES,0.543801652892562,"Dragonfly
+DyHPO"
+REFERENCES,0.5454545454545454,"0
+200
+400
+600
+800
+1000
+1200
+1400
+1600
+Wallclock Time in Seconds 10
+1"
+REFERENCES,0.547107438016529,"3 × 10
+2"
+REFERENCES,0.5487603305785124,"4 × 10
+2"
+REFERENCES,0.5504132231404959,"6 × 10
+2"
+REFERENCES,0.5520661157024793,Regret
+REFERENCES,0.5537190082644629,Amazon_employee_access
+REFERENCES,0.5553719008264463,"Random
+Hyperband"
+REFERENCES,0.5570247933884298,"BOHB
+DEHB"
+REFERENCES,0.5586776859504132,"Dragonfly
+DyHPO"
+REFERENCES,0.5603305785123966,"0
+200
+400
+600
+800
+1000
+Wallclock Time in Seconds 10
+3 10
+2 10
+1"
+REFERENCES,0.5619834710743802,Regret
+REFERENCES,0.5636363636363636,Australian
+REFERENCES,0.5652892561983471,"Random
+Hyperband"
+REFERENCES,0.5669421487603306,"BOHB
+DEHB"
+REFERENCES,0.5685950413223141,"Dragonfly
+DyHPO"
+REFERENCES,0.5702479338842975,"0
+1000
+2000
+3000
+4000
+5000
+Wallclock Time in Seconds 10
+2 10
+1"
+REFERENCES,0.571900826446281,Regret
+REFERENCES,0.5735537190082645,Fashion-MNIST
+REFERENCES,0.5752066115702479,"Random
+Hyperband"
+REFERENCES,0.5768595041322314,"BOHB
+DEHB"
+REFERENCES,0.5785123966942148,"Dragonfly
+DyHPO"
+REFERENCES,0.5801652892561984,"0
+500
+1000
+1500
+2000
+2500
+Wallclock Time in Seconds 10
+2 10
+1"
+REFERENCES,0.5818181818181818,Regret
+REFERENCES,0.5834710743801653,KDDCup09_appetency
+REFERENCES,0.5851239669421487,"Random
+Hyperband"
+REFERENCES,0.5867768595041323,"BOHB
+DEHB"
+REFERENCES,0.5884297520661157,"Dragonfly
+DyHPO"
+REFERENCES,0.5900826446280992,"0
+500
+1000
+1500
+2000
+2500
+3000
+3500
+4000
+Wallclock Time in Seconds 10
+1"
+REFERENCES,0.5917355371900826,Regret
+REFERENCES,0.5933884297520661,MiniBooNE
+REFERENCES,0.5950413223140496,"Random
+Hyperband"
+REFERENCES,0.596694214876033,"BOHB
+DEHB"
+REFERENCES,0.5983471074380166,"Dragonfly
+DyHPO"
+REFERENCES,0.6,"0
+500
+1000
+1500
+2000
+Wallclock Time in Seconds 10
+3 10
+2 10
+1"
+REFERENCES,0.6016528925619835,Regret adult
+REFERENCES,0.6033057851239669,"Random
+Hyperband"
+REFERENCES,0.6049586776859505,"BOHB
+DEHB"
+REFERENCES,0.6066115702479339,"Dragonfly
+DyHPO"
+REFERENCES,0.6082644628099173,"0
+2000
+4000
+6000
+8000
+10000
+12000
+14000
+Wallclock Time in Seconds 10
+2"
+REFERENCES,0.6099173553719008,Regret
+REFERENCES,0.6115702479338843,airlines
+REFERENCES,0.6132231404958678,"Random
+Hyperband"
+REFERENCES,0.6148760330578512,"BOHB
+DEHB"
+REFERENCES,0.6165289256198347,"Dragonfly
+DyHPO"
+REFERENCES,0.6181818181818182,"0
+2000
+4000
+6000
+8000
+10000
+Wallclock Time in Seconds 10
+2"
+REFERENCES,0.6198347107438017,Regret
+REFERENCES,0.6214876033057851,albert
+REFERENCES,0.6231404958677685,"Random
+Hyperband"
+REFERENCES,0.6247933884297521,"BOHB
+DEHB"
+REFERENCES,0.6264462809917355,"Dragonfly
+DyHPO"
+REFERENCES,0.628099173553719,"0
+250
+500
+750
+1000
+1250
+1500
+1750
+2000
+Wallclock Time in Seconds 10
+2 10
+1"
+REFERENCES,0.6297520661157024,Regret
+REFERENCES,0.631404958677686,bank-marketing
+REFERENCES,0.6330578512396694,"Random
+Hyperband"
+REFERENCES,0.6347107438016529,"BOHB
+DEHB"
+REFERENCES,0.6363636363636364,"Dragonfly
+DyHPO"
+REFERENCES,0.6380165289256199,"0
+200
+400
+600
+800
+1000
+Wallclock Time in Seconds 10
+2 10
+1"
+REFERENCES,0.6396694214876033,Regret
+REFERENCES,0.6413223140495867,blood-transfusion-service-center
+REFERENCES,0.6429752066115703,"Random
+Hyperband"
+REFERENCES,0.6446280991735537,"BOHB
+DEHB"
+REFERENCES,0.6462809917355372,"Dragonfly
+DyHPO"
+REFERENCES,0.6479338842975206,"0
+200
+400
+600
+800
+1000
+Wallclock Time in Seconds 10
+1"
+REFERENCES,0.6495867768595042,Regret car
+REFERENCES,0.6512396694214876,"Random
+Hyperband"
+REFERENCES,0.6528925619834711,"BOHB
+DEHB"
+REFERENCES,0.6545454545454545,"Dragonfly
+DyHPO"
+REFERENCES,0.656198347107438,"0
+2500
+5000
+7500
+10000
+12500
+15000
+17500
+Wallclock Time in Seconds 10
+2 10
+1"
+REFERENCES,0.6578512396694215,Regret
+REFERENCES,0.6595041322314049,christine
+REFERENCES,0.6611570247933884,"Random
+Hyperband"
+REFERENCES,0.6628099173553719,"BOHB
+DEHB"
+REFERENCES,0.6644628099173554,"Dragonfly
+DyHPO"
+REFERENCES,0.6661157024793388,"0
+500
+1000
+1500
+2000
+2500
+Wallclock Time in Seconds 10
+2 10
+1 10
+0"
+REFERENCES,0.6677685950413224,Regret
+REFERENCES,0.6694214876033058,cnae-9
+REFERENCES,0.6710743801652893,"Random
+Hyperband"
+REFERENCES,0.6727272727272727,"BOHB
+DEHB"
+REFERENCES,0.6743801652892562,"Dragonfly
+DyHPO"
+REFERENCES,0.6760330578512397,"0
+500
+1000
+1500
+2000
+2500
+Wallclock Time in Seconds 10
+2 10
+1"
+REFERENCES,0.6776859504132231,Regret
+REFERENCES,0.6793388429752066,connect-4
+REFERENCES,0.6809917355371901,"Random
+Hyperband"
+REFERENCES,0.6826446280991736,"BOHB
+DEHB"
+REFERENCES,0.684297520661157,"Dragonfly
+DyHPO"
+REFERENCES,0.6859504132231405,"0
+1000
+2000
+3000
+4000
+5000
+Wallclock Time in Seconds 10
+1"
+REFERENCES,0.687603305785124,Regret
+REFERENCES,0.6892561983471074,covertype
+REFERENCES,0.6909090909090909,"Random
+Hyperband"
+REFERENCES,0.6925619834710743,"BOHB
+DEHB"
+REFERENCES,0.6942148760330579,"Dragonfly
+DyHPO"
+REFERENCES,0.6958677685950413,"0
+200
+400
+600
+800
+1000
+Wallclock Time in Seconds 10
+1"
+REFERENCES,0.6975206611570248,Regret
+REFERENCES,0.6991735537190082,credit-g
+REFERENCES,0.7008264462809918,"Random
+Hyperband"
+REFERENCES,0.7024793388429752,"BOHB
+DEHB"
+REFERENCES,0.7041322314049587,"Dragonfly
+DyHPO"
+REFERENCES,0.7057851239669422,"0
+2000
+4000
+6000
+8000
+10000
+12000
+14000
+Wallclock Time in Seconds 10
+1"
+REFERENCES,0.7074380165289256,Regret
+REFERENCES,0.7090909090909091,dionis
+REFERENCES,0.7107438016528925,"Random
+Hyperband"
+REFERENCES,0.7123966942148761,"BOHB
+DEHB"
+REFERENCES,0.7140495867768595,"Dragonfly
+DyHPO"
+REFERENCES,0.715702479338843,Figure 12: Detailed results on a per dataset level for LCBench.
+REFERENCES,0.7173553719008264,Under review as a conference paper at ICLR 2022
+REFERENCES,0.71900826446281,"0
+500
+1000
+1500
+2000
+2500
+3000
+Wallclock Time in Seconds 10
+2 10
+1"
+REFERENCES,0.7206611570247934,Regret
+REFERENCES,0.7223140495867768,fabert
+REFERENCES,0.7239669421487603,"Random
+Hyperband"
+REFERENCES,0.7256198347107438,"BOHB
+DEHB"
+REFERENCES,0.7272727272727273,"Dragonfly
+DyHPO"
+REFERENCES,0.7289256198347107,"0
+500
+1000
+1500
+2000
+2500
+3000
+3500
+Wallclock Time in Seconds 10
+1"
+REFERENCES,0.7305785123966942,Regret
+REFERENCES,0.7322314049586777,helena
+REFERENCES,0.7338842975206612,"Random
+Hyperband"
+REFERENCES,0.7355371900826446,"BOHB
+DEHB"
+REFERENCES,0.7371900826446282,"Dragonfly
+DyHPO"
+REFERENCES,0.7388429752066116,"0
+500
+1000
+1500
+2000
+2500
+3000
+3500
+Wallclock Time in Seconds 10
+1"
+REFERENCES,0.740495867768595,Regret higgs
+REFERENCES,0.7421487603305785,"Random
+Hyperband"
+REFERENCES,0.743801652892562,"BOHB
+DEHB"
+REFERENCES,0.7454545454545455,"Dragonfly
+DyHPO"
+REFERENCES,0.7471074380165289,"0
+500
+1000
+1500
+2000
+2500
+3000
+Wallclock Time in Seconds 10
+2 10
+1"
+REFERENCES,0.7487603305785124,Regret
+REFERENCES,0.7504132231404959,jannis
+REFERENCES,0.7520661157024794,"Random
+Hyperband"
+REFERENCES,0.7537190082644628,"BOHB
+DEHB"
+REFERENCES,0.7553719008264462,"Dragonfly
+DyHPO"
+REFERENCES,0.7570247933884298,"0
+200
+400
+600
+800
+1000
+1200
+1400
+Wallclock Time in Seconds 10
+2 10
+1"
+REFERENCES,0.7586776859504132,Regret
+REFERENCES,0.7603305785123967,jasmine
+REFERENCES,0.7619834710743801,"Random
+Hyperband"
+REFERENCES,0.7636363636363637,"BOHB
+DEHB"
+REFERENCES,0.7652892561983471,"Dragonfly
+DyHPO"
+REFERENCES,0.7669421487603306,"0
+500
+1000
+1500
+2000
+Wallclock Time in Seconds 10
+2 10
+1"
+REFERENCES,0.768595041322314,Regret
+REFERENCES,0.7702479338842976,jungle_chess_2pcs_raw_endgame_complete
+REFERENCES,0.771900826446281,"Random
+Hyperband"
+REFERENCES,0.7735537190082644,"BOHB
+DEHB"
+REFERENCES,0.775206611570248,"Dragonfly
+DyHPO"
+REFERENCES,0.7768595041322314,"0
+200
+400
+600
+800
+1000
+Wallclock Time in Seconds 10
+1"
+REFERENCES,0.7785123966942149,Regret kc1
+REFERENCES,0.7801652892561983,"Random
+Hyperband"
+REFERENCES,0.7818181818181819,"BOHB
+DEHB"
+REFERENCES,0.7834710743801653,"Dragonfly
+DyHPO"
+REFERENCES,0.7851239669421488,"0
+200
+400
+600
+800
+1000
+1200
+Wallclock Time in Seconds 10
+2 10
+1"
+REFERENCES,0.7867768595041322,Regret
+REFERENCES,0.7884297520661157,kr-vs-kp
+REFERENCES,0.7900826446280992,"Random
+Hyperband"
+REFERENCES,0.7917355371900826,"BOHB
+DEHB"
+REFERENCES,0.7933884297520661,"Dragonfly
+DyHPO"
+REFERENCES,0.7950413223140496,"0
+200
+400
+600
+800
+1000
+1200
+Wallclock Time in Seconds 10
+2 10
+1"
+REFERENCES,0.7966942148760331,Regret
+REFERENCES,0.7983471074380165,mfeat-factors
+REFERENCES,0.8,"Random
+Hyperband"
+REFERENCES,0.8016528925619835,"BOHB
+DEHB"
+REFERENCES,0.8033057851239669,"Dragonfly
+DyHPO"
+REFERENCES,0.8049586776859504,"0
+500
+1000
+1500
+2000
+Wallclock Time in Seconds 10
+2 10
+1"
+REFERENCES,0.8066115702479338,Regret nomao
+REFERENCES,0.8082644628099174,"Random
+Hyperband"
+REFERENCES,0.8099173553719008,"BOHB
+DEHB"
+REFERENCES,0.8115702479338843,"Dragonfly
+DyHPO"
+REFERENCES,0.8132231404958677,"0
+500
+1000
+1500
+2000
+2500
+3000
+3500
+Wallclock Time in Seconds 10
+2"
+REFERENCES,0.8148760330578513,Regret
+REFERENCES,0.8165289256198347,numerai28.6
+REFERENCES,0.8181818181818182,"Random
+Hyperband"
+REFERENCES,0.8198347107438017,"BOHB
+DEHB"
+REFERENCES,0.8214876033057851,"Dragonfly
+DyHPO"
+REFERENCES,0.8231404958677686,"0
+200
+400
+600
+800
+1000
+1200
+Wallclock Time in Seconds 10
+2 10
+1"
+REFERENCES,0.824793388429752,Regret
+REFERENCES,0.8264462809917356,phoneme
+REFERENCES,0.828099173553719,"Random
+Hyperband"
+REFERENCES,0.8297520661157025,"BOHB
+DEHB"
+REFERENCES,0.8314049586776859,"Dragonfly
+DyHPO"
+REFERENCES,0.8330578512396695,"0
+200
+400
+600
+800
+1000
+Wallclock Time in Seconds 10
+1"
+REFERENCES,0.8347107438016529,Regret
+REFERENCES,0.8363636363636363,segment
+REFERENCES,0.8380165289256198,"Random
+Hyperband"
+REFERENCES,0.8396694214876033,"BOHB
+DEHB"
+REFERENCES,0.8413223140495868,"Dragonfly
+DyHPO"
+REFERENCES,0.8429752066115702,"0
+500
+1000
+1500
+2000
+Wallclock Time in Seconds 10
+1"
+REFERENCES,0.8446280991735537,Regret
+REFERENCES,0.8462809917355372,shuttle
+REFERENCES,0.8479338842975207,"Random
+Hyperband"
+REFERENCES,0.8495867768595041,"BOHB
+DEHB"
+REFERENCES,0.8512396694214877,"Dragonfly
+DyHPO"
+REFERENCES,0.8528925619834711,"0
+200
+400
+600
+800
+1000
+1200
+Wallclock Time in Seconds 10
+2 10
+1"
+REFERENCES,0.8545454545454545,Regret
+REFERENCES,0.856198347107438,sylvine
+REFERENCES,0.8578512396694215,"Random
+Hyperband"
+REFERENCES,0.859504132231405,"BOHB
+DEHB"
+REFERENCES,0.8611570247933884,"Dragonfly
+DyHPO"
+REFERENCES,0.8628099173553719,"0
+200
+400
+600
+800
+1000
+Wallclock Time in Seconds 10
+2 10
+1"
+REFERENCES,0.8644628099173554,Regret
+REFERENCES,0.8661157024793389,vehicle
+REFERENCES,0.8677685950413223,"Random
+Hyperband"
+REFERENCES,0.8694214876033057,"BOHB
+DEHB"
+REFERENCES,0.8710743801652893,"Dragonfly
+DyHPO"
+REFERENCES,0.8727272727272727,"0
+500
+1000
+1500
+2000
+2500
+3000
+Wallclock Time in Seconds 10
+2 10
+1"
+REFERENCES,0.8743801652892562,Regret
+REFERENCES,0.8760330578512396,volkert
+REFERENCES,0.8776859504132232,"Random
+Hyperband"
+REFERENCES,0.8793388429752066,"BOHB
+DEHB"
+REFERENCES,0.8809917355371901,"Dragonfly
+DyHPO"
+REFERENCES,0.8826446280991735,Figure 13: Detailed results on a per dataset level for LCBench (cont.)
+REFERENCES,0.8842975206611571,Under review as a conference paper at ICLR 2022
+REFERENCES,0.8859504132231405,"0
+10
+20
+30
+40
+50
+Number of Epochs 0.0 0.1 0.2 0.3 0.4"
+REFERENCES,0.8876033057851239,Average Number of True Positives
+REFERENCES,0.8892561983471075,LCBench
+REFERENCES,0.8909090909090909,"Random
+Hyperband"
+REFERENCES,0.8925619834710744,"BOHB
+DEHB"
+REFERENCES,0.8942148760330578,"Dragonfly
+DyHPO"
+REFERENCES,0.8958677685950414,"0
+10
+20
+30
+40
+50
+Number of Epochs 0.0 0.1 0.2 0.3"
+REFERENCES,0.8975206611570248,Average Number of True Positives
+REFERENCES,0.8991735537190083,Taskset
+REFERENCES,0.9008264462809917,"Random
+Hyperband"
+REFERENCES,0.9024793388429752,"BOHB
+DEHB"
+REFERENCES,0.9041322314049587,"Dragonfly
+DyHPO"
+REFERENCES,0.9057851239669421,"0
+50
+100
+150
+200
+Number of Epochs 0.05 0.10 0.15"
+REFERENCES,0.9074380165289256,Average Number of True Positives
+REFERENCES,0.9090909090909091,NAS-Bench-201
+REFERENCES,0.9107438016528926,"Random
+Hyperband"
+REFERENCES,0.912396694214876,"BOHB
+DEHB"
+REFERENCES,0.9140495867768595,"Dragonfly
+DyHPO"
+REFERENCES,0.915702479338843,"Figure 14: DYHPO efﬁciently selects top-performing candidates and keeps training them, avoiding
+training poor conﬁgurations for a long time."
+REFERENCES,0.9173553719008265,"0
+10
+20
+30
+40
+50
+Number of Epochs 0.05 0.10 0.15"
+REFERENCES,0.9190082644628099,Average Regret
+REFERENCES,0.9206611570247933,LCBench
+REFERENCES,0.9223140495867769,"Random
+Hyperband"
+REFERENCES,0.9239669421487603,"BOHB
+DEHB"
+REFERENCES,0.9256198347107438,"Dragonfly
+DyHPO"
+REFERENCES,0.9272727272727272,"0
+10
+20
+30
+40
+50
+Number of Epochs 0.10 0.15 0.20 0.25 0.30"
+REFERENCES,0.9289256198347108,Average Regret
+REFERENCES,0.9305785123966942,Taskset
+REFERENCES,0.9322314049586777,"Random
+Hyperband"
+REFERENCES,0.9338842975206612,"BOHB
+DEHB"
+REFERENCES,0.9355371900826446,"Dragonfly
+DyHPO"
+REFERENCES,0.9371900826446281,"0
+50
+100
+150
+200
+Number of Epochs 0.04 0.06 0.08 0.10 0.12"
+REFERENCES,0.9388429752066115,Average Regret
+REFERENCES,0.9404958677685951,NAS-Bench-201
+REFERENCES,0.9421487603305785,"Random
+Hyperband"
+REFERENCES,0.943801652892562,"BOHB
+DEHB"
+REFERENCES,0.9454545454545454,"Dragonfly
+DyHPO"
+REFERENCES,0.947107438016529,Figure 15: DYHPO spends most its budget on top-performing candidates.
+REFERENCES,0.9487603305785124,"C
+ON THE EFFECTIVENESS OF DYHPO"
+REFERENCES,0.9504132231404959,"DYHPO effectively explores the search space and identiﬁes promising candidates. This is visualized
+in Figure 14 in which we plot the precision of each method for different considered budgets. The
+precision at an epoch i is deﬁned as the number of top 1% candidates trained for at least i epochs
+divided by the number of all candidates trained for at least i epochs. The higher the precision, the less
+irrelevant candidates were considered and the less computational resources were wasted. For small
+budgets, the precision is low since DYHPO spends budget to consider some candidates but then
+promising candidates are successfully identiﬁed and the precision quickly increases. For LCBench
+and Taskset, all other methods dedicate signiﬁcantly more resources to irrelevant candidates which
+explains why DYHPO ﬁnds good candidates faster. For NAS-Bench-201, DEHB can match the
+precision but only at a later stage. Simply put, the baselines select much more ”poor” conﬁgurations
+(i.e. outside the top 1% performers) compared to our method DYHPO."
+REFERENCES,0.9520661157024793,"This argument is further supported by Figure 15 where we visualize the average regret of all the
+candidates trained for at least the speciﬁed number of epochs in the x-axis. In contrast to the regret
+plots in Section 6, here we do not show the regret of the best conﬁguration, but the mean regret
+of all the selected conﬁgurations. The analysis deduces a similar ﬁnding as in Figure 14 above.
+Our method DYHPO selects highly more qualitative hyperparameter conﬁgurations than all the
+baselines."
+REFERENCES,0.9537190082644628,"D
+PROMOTION OF POOR PERFORMING CANDIDATES"
+REFERENCES,0.9553719008264463,"An interesting property of multi-ﬁdelity HPO is the phenomenon of poor rank correlations among
+the validation performance of candidates at different budgets. In other words, a conﬁguration that
+achieves a poor performance at a small budget, might perform strongly at a larger budget. For
+instance, a well-regularized neural network will converge slower than an un-regularized network
+in the early optimization epochs, but eventually performs better when converged. We analyze this
+phenomenon and report the respective results in Figure 16. In this experiment we measure the
+percentage of ”good” conﬁgurations at a particular budget, that were ”bad” performers in at least
+one of the smaller budgets. We deﬁne a ”good” performance at a budget B, when a conﬁguration
+achieves a validation accuracy ranked among the top 1/3 compared to the validation accuracies of
+all the other conﬁgurations that were run until that budget B. Similarly a ”bad” performance at"
+REFERENCES,0.9570247933884297,Under review as a conference paper at ICLR 2022
+REFERENCES,0.9586776859504132,"a budget B represents a conﬁguration whose validation accuracy belongs to the bottom 2/3 of all
+conﬁgurations run at that budget B."
+REFERENCES,0.9603305785123967,"0
+10
+20
+30
+40
+50
+Number of Epochs 0.0 0.2 0.4 0.6 0.8"
+REFERENCES,0.9619834710743802,Fraction of Poor
+REFERENCES,0.9636363636363636,Performer Promotions
+REFERENCES,0.9652892561983472,LCBench
+REFERENCES,0.9669421487603306,"Random
+Hyperband
+BOHB"
+REFERENCES,0.968595041322314,"DEHB
+Dragonfly"
+REFERENCES,0.9702479338842975,"DyHPO
+Baseline"
+REFERENCES,0.971900826446281,"0
+10
+20
+30
+40
+50
+Number of Steps 0.0 0.2 0.4 0.6 0.8"
+REFERENCES,0.9735537190082645,Fraction of Poor
+REFERENCES,0.9752066115702479,Performer Promotions
+REFERENCES,0.9768595041322314,Taskset
+REFERENCES,0.9785123966942149,"Random
+Hyperband
+BOHB"
+REFERENCES,0.9801652892561984,"DEHB
+Dragonfly"
+REFERENCES,0.9818181818181818,"DyHPO
+Baseline"
+REFERENCES,0.9834710743801653,"0
+50
+100
+150
+200
+Number of Epochs 0.0 0.2 0.4 0.6 0.8 1.0"
+REFERENCES,0.9851239669421488,Fraction of Poor
+REFERENCES,0.9867768595041322,Performer Promotions
+REFERENCES,0.9884297520661157,NAS-Bench-201
+REFERENCES,0.9900826446280991,"Random
+Hyperband
+BOHB"
+REFERENCES,0.9917355371900827,"DEHB
+Dragonfly"
+REFERENCES,0.9933884297520661,"DyHPO
+Baseline"
+REFERENCES,0.9950413223140496,"Figure 16: Percentage of conﬁguration i) belonging to the top 1/3 conﬁgurations at a given budget,
+and ii) that were in the bottom 2/3 of conﬁgurations at one of the previous budgets. Here the budget
+is represented by the number of steps or epochs."
+REFERENCES,0.996694214876033,"In Figure 16 we analyze the percentage of ”good” conﬁgurations at each budget denoted by the x-
+axis, that were ”bad” performers in at least one of the lower budgets. Such a metric is a proxy for the
+degree of the promotion of ”bad” conﬁgurations towards higher budgets. We present the analysis
+for all the competing methods of our experimental protocol from Section 6. We have additionally
+included the ground-truth line annotated as ”Baseline”, which represents the fraction of past poor
+performers among all the feasible conﬁgurations in the search space. In contrast, the respective
+methods compute the fraction of promotions only among the conﬁgurations that those methods have
+considered (i.e. selected within their HPO trials) until the budget indicated by the x-axis. We see
+that in all the search spaces LCBench, TaskSet and NASBench-201 there is a high degree of ”good”
+conﬁgurations that were ”bad” at a previous budget, with fractions of the ground-truth ”Baseline”
+varying from ca. 40% in LCBench, up to ca. 70% in the NASBench-201 datasets."
+REFERENCES,0.9983471074380166,"On the other hand, the analysis demonstrates that our method DYHPO has promoted more ”good”
+conﬁgurations that were ”bad” in a lower budget, compared to all the rival methods. In particular, ca.
+80% of selected conﬁgurations at the datasets from the LCBench benchmark were ”bad” performers
+at a lower budget, while in the case of NASBench-201 this fraction approaches the level of 95%."

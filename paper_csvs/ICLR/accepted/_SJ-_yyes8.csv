@@ -1,0 +1,558 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.004878048780487805,"We present DrQ-v2, a model-free reinforcement learning (RL) algorithm for visual
+continuous control. DrQ-v2 builds on DrQ, an off-policy actor-critic approach
+that uses data augmentation to learn directly from pixels. We introduce several
+improvements that yield state-of-the-art results on the DeepMind Control Suite.
+Notably, DrQ-v2 is able to solve complex humanoid locomotion tasks directly from
+pixel observations, previously unattained by model-free RL. DrQ-v2 is conceptually
+simple, easy to implement, and provides signiﬁcantly better computational footprint
+compared to prior work, with the majority of tasks taking just 8 hours to train on a
+single GPU. Finally, DrQ-v2’s implementation is publicly released to provide RL
+practitioners with a strong and computationally efﬁcient baseline."
+INTRODUCTION,0.00975609756097561,"1
+INTRODUCTION"
+INTRODUCTION,0.014634146341463415,"Creating sample-efﬁcient continuous control methods that observe high-dimensional images has
+been a long standing challenge in reinforcement learning (RL) . Over the last three years, the RL
+community has made signiﬁcant headway on this problem, improving sample-efﬁciency signiﬁcantly.
+The key insight to solving visual control is the learning of better low-dimensional representations,
+either through autoencoders (Yarats et al., 2019; Finn et al., 2015), variational inference (Hafner
+et al., 2018; 2019; Lee et al., 2019), contrastive learning (Srinivas et al., 2020; Yarats et al., 2021a),
+self-prediction (Schwarzer et al., 2020b), or data augmentations (Yarats et al., 2021b; Laskin et al.,
+2020). However, current state-of-the-art model-free methods are still limited in three ways. First, they
+are unable to solve the more challenging visual control problems such as quadruped and humanoid
+locomotion. Second, they often require signiﬁcant computational resources, i.e. lengthy training
+times using distributed multi-GPU infrastructure. Lastly, it is often unclear how different design
+choices affect overall system performance."
+INTRODUCTION,0.01951219512195122,"SAC
+CURL
+DrQ
+DrQ-v2 (Ours)"
+INTRODUCTION,0.024390243902439025,"Figure 1: DrQ-v2 demonstrates signiﬁcantly better sample efﬁciency and computational footprint
+compared to state-of-the-art model-free methods for visual continuous control while being conceptu-
+ally simple and easy to implement. (Left two) Average performance results across 12 challenging
+tasks from the DeepMind Control Suite (the set of tasks can be seen in Figure 8). (Right two)
+Performance on the Humanoid Walk task from visual input, previously unsolved by model-free
+methods. In both cases we report sample complexity and wall-clock time axes for evaluation, with
+time being measured on a single GPU machine and using ofﬁcial implementations for each method."
+INTRODUCTION,0.02926829268292683,Under review as a conference paper at ICLR 2022
+INTRODUCTION,0.03414634146341464,"In this paper we present DrQ-v2, a simple model-free algorithm that builds on the idea of using
+data augmentations (Yarats et al., 2021b; Laskin et al., 2020) to solve hard visual control problems.
+Most notably, it is the ﬁrst model-free method that solves complex humanoid tasks directly from
+pixels. Compared to previous state-of-the-art model-free methods, DrQ-v2 provides signiﬁcant
+improvements in sample efﬁciency across tasks from the DeepMind Control Suite (Tassa et al., 2018).
+Conceptually simple, DrQ-v2 is also computationally efﬁcient, which allows solving most tasks in
+DeepMind Control Suite in just 8 hours on a single GPU (see Figure 1). Recently, a model-based
+method, DreamerV2 (Hafner et al., 2020) was also shown to solve visual continuous control problems
+and it was ﬁrst to solve the humanoid locomotion problem from pixels. While our model-free
+DrQ-v2 matches DreamerV2 in terms sample efﬁciency and performance, it does so 4⇥faster in
+terms of wall-clock time to train. We believe this makes DrQ-v2 a more accessible approach to
+support research in visual continuous control and it reinforces the question on whether model-free or
+model-based is the more suitable approach to solve this type of tasks."
+INTRODUCTION,0.03902439024390244,"DrQ-v2, which is detailed in Section 3, improves upon DrQ (Yarats et al., 2021b) by making several
+algorithmic changes: (i) switching the base RL algorithm from SAC (Haarnoja et al., 2018a) to
+DDPG (Lillicrap et al., 2015a) with clipped double Q-learning from TD3 (Fujimoto et al., 2018), (ii)
+this allows us straightforwardly incorporating multi-step return, (iii) adding bilinear interpolation to
+the random shift image augmentation, (iv) introducing an exploration schedule, (v) selecting better
+hyper-parameters including a larger capacity of the replay buffer. A careful ablation study of these
+design choices is presented in Section 4.4. Furthermore, we re-examine the original implementation
+of DrQ and identify several computational bottlenecks such as replay buffer management, data
+augmentation processing, batch size, and frequency of learning updates (see Section 3.2). To remedy
+these, we have developed a new implementation that both achieves better performance and trains
+around 3.5 times faster with respect to wall-clock time than the previous implementation on the
+same hardware with an increase in environment frame throughput (FPS) from 28 to 96 (i.e., it takes
+106/96/3600 ⇡2.9 hours to train for 1M environment steps). DrQ-v2’s implementation is available
+at https://anonymous.4open.science/r/drqv2."
+BACKGROUND,0.04390243902439024,"2
+BACKGROUND"
+REINFORCEMENT LEARNING FROM IMAGES,0.04878048780487805,"2.1
+REINFORCEMENT LEARNING FROM IMAGES"
+REINFORCEMENT LEARNING FROM IMAGES,0.05365853658536585,"We formulate image-based control as an inﬁnite-horizon Markov Decision Process (MDP) (Bellman,
+1957). Generally, in such a setting, an image rendering of the system is not sufﬁcient to perfectly"
+REINFORCEMENT LEARNING FROM IMAGES,0.05853658536585366,"describe the system’s underlying state. To this end and per common practice (Mnih et al., 2013), we
+approximate the current state of the system by stacking three consecutive prior observations. With
+this in mind, such MDP can be described as a tuple (X, A, P, R, γ, d0), where X is the state space
+(a three-stack of image observations), A is the action space, P : X ⇥A ! ∆(X) is the transition
+function1 that deﬁnes a probability distribution over the next state given the current state and action,
+R : X ⇥A ! [0, 1] is the reward function, γ 2 [0, 1) is a discount factor, and d0 2 ∆(X) is the
+distribution of the initial state x0. The goal is to ﬁnd a policy ⇡: X ! ∆(A) that maximizes the
+expected discounted sum of rewards E⇡[P1"
+REINFORCEMENT LEARNING FROM IMAGES,0.06341463414634146,"t=0 γtrt], where x0 ⇠d0, and 8t we have at ⇠⇡(·|xt),
+xt+1 ⇠P(·|xt, at), and rt = R(xt, at)."
+DEEP DETERMINISTIC POLICY GRADIENT,0.06829268292682927,"2.2
+DEEP DETERMINISTIC POLICY GRADIENT"
+DEEP DETERMINISTIC POLICY GRADIENT,0.07317073170731707,"Deep Deterministic Policy Gradient (DDPG) (Lillicrap et al., 2015a) is an actor-critic algorithm for
+continuous control that concurrently learns a Q-function Q✓and a deterministic policy ⇡φ. For this,
+DDPG uses Q-learning (Watkins and Dayan, 1992) to learn Q✓by minimizing the one-step Bellman
+residual J✓(D) = E(xt,at,rt,xt+1)⇠D[(Q✓(xt, at) −rt −γQ¯✓(xt+1, ⇡φ(xt+1))2]. The policy ⇡φ is
+learned by employing Deterministic Policy Gradient (DPG) (Silver et al., 2014) and maximizing
+Jφ(D) = Ext⇠D[Q✓(xt, ⇡φ(xt))], so ⇡φ(xt) approximates argmaxaQ✓(xt, a). Here, D is a replay
+buffer of environment transitions and ¯✓is an exponential moving average of the weights. DDPG is
+amenable to incorporate n-step returns (Watkins, 1989; eng and Williams, 1996) when estimating
+TD error beyond a single step (Barth-Maron et al., 2018). In practice, n-step returns allow for faster"
+DEEP DETERMINISTIC POLICY GRADIENT,0.07804878048780488,"1Here, ∆(X) denotes a distribution over the state space X."
+DEEP DETERMINISTIC POLICY GRADIENT,0.08292682926829269,Under review as a conference paper at ICLR 2022
+DEEP DETERMINISTIC POLICY GRADIENT,0.08780487804878048,"Figure 2: (Left): DrQ-v2 is an off-policy actor-critic algorithm for image-based RL. It alleviates
+encoder overﬁtting by applying random shift augmentation to pixel observations sampled from the
+replay buffer. (Right): Examples of walking and standing behaviors learned by DrQ-v2 for a complex
+humanoid agent from DMC (Tassa et al., 2018) with 21 and 54 dimensional action and state spaces,
+respectively. DrQ-v2 does not have access to the internal state of the environment, only observing
+three consecutive pixel frames at a time. Despite this imperfect observational channel, our agent still
+manages to solve the tasks. To the best of our knowledge, this is the ﬁrst successful demonstration by
+a model-free method, using pixel-based inputs of these tasks."
+DEEP DETERMINISTIC POLICY GRADIENT,0.09268292682926829,"reward propagation and has been previously used in policy gradient and Q-learning methods (Mnih
+et al., 2016b; Barth-Maron et al., 2018; Hessel et al., 2017)."
+DATA AUGMENTATION IN REINFORCEMENT LEARNING,0.0975609756097561,"2.3
+DATA AUGMENTATION IN REINFORCEMENT LEARNING"
+DATA AUGMENTATION IN REINFORCEMENT LEARNING,0.1024390243902439,"Recently, it has been shown that data augmentation techniques, commonplace in Computer Vision,
+are also important for achieving the state-of-the-art performance in image-based RL (Yarats et al.,
+2021b; Laskin et al., 2020). For example, the state-of-the-art algorithm for visual RL, DrQ (Yarats
+et al., 2021b) builds on top of Soft Actor-Critic (Haarnoja et al., 2018a), a model-free actor-critic
+algorithm, by adding a convolutional encoder and data augmentation in the form of random shifts.
+The use of such data augmentations now forms an essential component of several recent visual RL
+algorithms (Srinivas et al., 2020; Raileanu et al., 2020; Yarats et al., 2021a; Stooke et al., 2020;
+Hansen and Wang, 2021; Schwarzer et al., 2020b)."
+DATA AUGMENTATION IN REINFORCEMENT LEARNING,0.1073170731707317,"3
+DRQ-V2: IMPROVED DATA-AUGMENTED REINFORCEMENT LEARNING"
+DATA AUGMENTATION IN REINFORCEMENT LEARNING,0.11219512195121951,"In this section, we describe DrQ-v2, a simple model-free actor-critic RL algorithm for image-based
+continuous control, that builds upon DrQ."
+ALGORITHMIC DETAILS,0.11707317073170732,"3.1
+ALGORITHMIC DETAILS"
+ALGORITHMIC DETAILS,0.12195121951219512,"Image Augmentation
+As in DrQ we apply random shifts image augmentation to pixel observations
+of the environment. In the settings of visual continuous control by DMC, this augmentation can be
+instantiated by ﬁrst padding each side of 84 ⇥84 observation rendering by 4 pixels (by repeating
+boundary pixels), and then selecting a random 84 ⇥84 crop, yielding the original image shifted by
+±4 pixels. We also ﬁnd it useful to apply bilinear interpolation on top of the shifted image (i.e, we
+replace each pixel value with the average of the four nearest pixel values). In our experiments, this
+modiﬁcation provides an additional performance boost across the board."
+ALGORITHMIC DETAILS,0.12682926829268293,"Image Encoder
+The augmented image observation is then embedded into a low-dimensional latent
+vector by applying a convolutional encoder. We use the same encoder architecture as in DrQ, which
+ﬁrst was introduced introduced in SAC-AE (Yarats et al., 2019). This process can be succinctly
+summarized as h = f⇠(aug(x)), where f⇠is the encoder, aug is the random shifts augmentation,
+and x is the original image observation."
+ALGORITHMIC DETAILS,0.13170731707317074,"Actor-Critic Algorithm
+We use DDPG (Lillicrap et al., 2015a) as a backbone actor-critic RL
+algorithm and, similarly to Barth-Maron et al. (2018), augment it with n-step returns to estimate TD
+error. This results into faster reward propagation and overall learning progress (Mnih et al., 2016a)."
+ALGORITHMIC DETAILS,0.13658536585365855,Under review as a conference paper at ICLR 2022
+ALGORITHMIC DETAILS,0.14146341463414633,"While some methods (Hafner et al., 2020) employ more sophisticated techniques such as TD(λ) or
+Retrace(λ) (Munos et al., 2016), they are often computationally demanding when n is large. We ﬁnd
+that using simple n-step returns, without an importance sampling correction, strikes a good balance
+between performance and efﬁciency. We also employ clipped double Q-learning (Fujimoto et al.,
+2018) to reduce overestimation bias in the target value. Practically, this requires training two Q-
+functions Q✓1 and Q✓2. For this, we sample a mini-batch of transitions ⌧= (xt, at, rt:t+n−1, xt+n)
+from the replay buffer D and compute the following two losses:"
+ALGORITHMIC DETAILS,0.14634146341463414,"L✓k,⇠(D) = E⌧⇠D ⇥"
+ALGORITHMIC DETAILS,0.15121951219512195,"(Q✓k(ht, at) −y)2⇤"
+ALGORITHMIC DETAILS,0.15609756097560976,"8k 2 {1, 2},
+(1)"
+ALGORITHMIC DETAILS,0.16097560975609757,"with the TD target y deﬁned as: y = n−1
+X i=0"
+ALGORITHMIC DETAILS,0.16585365853658537,γirt+i + γn min
+ALGORITHMIC DETAILS,0.17073170731707318,"k=1,2 Q¯✓k(ht+n, at+n),"
+ALGORITHMIC DETAILS,0.17560975609756097,"where ht = f⇠(aug(xt)), ht+n = f⇠(aug(xt+n)), at+n = ⇡φ(ht+n) + ✏, ¯✓1 and ¯✓2 are the slow-
+moving weights for the Q target networks. We note, that in contrast to DrQ, we do not employ a
+target network for the encoder f⇠and always use the most recent weights ⇠to embed xt and xt+n.
+The exploration noise ✏is sampled from clip(N(0, σ2), −c, c) similar to TD3 (Fujimoto et al., 2018),
+with the exception of decaying σ, which we describe below. Finally, we train the deterministic actor
+⇡φ using DPG with the following loss:"
+ALGORITHMIC DETAILS,0.18048780487804877,Lφ(D) = −Ext⇠D ⇥
+ALGORITHMIC DETAILS,0.18536585365853658,"min
+k=1,2 Q✓k(ht, at) ⇤ ,
+(2)"
+ALGORITHMIC DETAILS,0.1902439024390244,"where ht = f⇠(aug(xt)), at = ⇡φ(ht) + ✏, and ✏⇠clip(N(0, σ2), −c, c). Similar to DrQ, we do
+not use actor’s gradients to update the encoder’s parameters ⇠."
+ALGORITHMIC DETAILS,0.1951219512195122,"Scheduled Exploration Noise
+Empirically, we observe that it is helpful to have different levels of
+exploration at different stages of learning. At the beginning of training we want the agent to be more
+stochastic and explore the environment more effectively, while at the later stages of training, when
+the agent has already identiﬁed promising behaviors, it is better to be more deterministic and master
+those behaviors. Similar to Amos et al. (2020), we instantiate this idea by using linear decay σ(t) for
+the variance σ2 of the exploration noise deﬁned as:"
+ALGORITHMIC DETAILS,0.2,σ(t) = σinit + (1 −min( t
+ALGORITHMIC DETAILS,0.2048780487804878,"T , 1))(σﬁnal −σinit),
+(3)"
+ALGORITHMIC DETAILS,0.2097560975609756,"where σinit and σﬁnal are the initial and ﬁnal values for standard deviation, and T is the decay horizon."
+ALGORITHMIC DETAILS,0.2146341463414634,"Key Hyper-Parameters
+We conduct an extensive hyper-parameter search and identify several
+hyper-parameter changes compared to DrQ. The three most important hyper-parameters are: (i) the
+size of the replay buffer, (ii) mini-batch size, and (iii) learning rate. Speciﬁcally, we use a 10 times
+larger replay buffer than DrQ. We also use a smaller mini-batch size of 256 without any noticeable
+performance degradation. This is in contrast to CURL (Srinivas et al., 2020) and DrQ (Yarats et al.,
+2021b) that both use a larger batch size of 512 to attain more stable training in the expense of
+computational efﬁciency. Finally, we ﬁnd that using smaller learning rate of 1 ⇥10−4, rather than
+DrQ’s learning rate of 1 ⇥10−3, results into more stable training without any loss in learning speed."
+IMPLEMENTATION DETAILS,0.21951219512195122,"3.2
+IMPLEMENTATION DETAILS"
+IMPLEMENTATION DETAILS,0.22439024390243903,"Faster
+Image
+Augmentation
+We
+replace
+DrQ’s
+random
+shifts
+augmentation
+(i.e.,
+kornia.augmentation.RandomCrop) by a custom implementation that uses ﬂow-
+ﬁeld image sampling provided in PyTorch (i.e., grid_sample). This is done for two reasons. First,
+we noticed that Kornia’s implementation does not fully utilize GPU pipelining since it has some
+intermediate CPU to GPU data transferring which breaks the computational ﬂow. Second, using
+grid_sample allows straightforward addition of bilinear interpolation. Our custom random shifts
+augmentation improves training throughput by a factor of 2."
+IMPLEMENTATION DETAILS,0.22926829268292684,Under review as a conference paper at ICLR 2022
+IMPLEMENTATION DETAILS,0.23414634146341465,"Faster Replay Buffer
+Another computational bottleneck of DrQ was the replay buffer. The speciﬁc
+implementation had poor memory management which resulted in slow CPU to GPU data transfer,
+which also restricted the number of image-based transitions that could be stored. We reimplemented
+the replay buffer to address these issues which led to a ten-fold increase in storage capacity and faster
+data transfer. More details are available in our open-source release. We note that the improved training
+speed of DrQ-v2 was key to solving humanoid tasks as it enabled much faster experimentation."
+EXPERIMENTS,0.23902439024390243,"4
+EXPERIMENTS"
+EXPERIMENTS,0.24390243902439024,"In this section we provide empirical evaluation of DrQ-v2 on an extensive set of visual continuous
+control tasks from DMC (Tassa et al., 2018). We ﬁrst present comparison to prior methods, both
+model-free and model-based, in terms of sample efﬁciency and wall-clock time. We then present a
+large scale ablation study that guided the ﬁnal version of DrQ-v2."
+SETUP,0.24878048780487805,"4.1
+SETUP"
+SETUP,0.25365853658536586,"Environments
+We consider a set of MuJoCo tasks (Todorov et al., 2012) provided by DMC (Tassa
+et al., 2018), a widely used benchmark for continous control. DMC offers environments of various
+difﬁculty, ranging from the simple control problems such as the single degree of freedom (DOF)
+pendulum and cartpool, to the control of complex multi-joint bodies such as the humanoid (21 DOF).
+We consider learning from pixels. In this setting, environment observations are stacks of 3 consecutive
+RGB images of size 84 ⇥84, stacked along the channel dimension to enable inference of dynamic
+information like velocity and acceleration. In total, we consider 24 different tasks, which we group
+into three buckets, easy, medium, and hard, according to the sample complexity to reach near-optimal
+performance (see Appendix B). Our motivation for this is to encourage RL practitioners to focus on
+the medium and hard tasks and stop using the easy tasks for evaluation, as they are mostly solved at
+this point and may no longer provide any valuable signal in comparing different methods."
+SETUP,0.25853658536585367,"Training Details
+For all tasks in the suite an episode corresponds to 1000 steps, where a per-step
+reward is in the unit interval [0, 1]. This upper bounds the episode return to 1000 making it easier to
+compute aggregated performance measures across tasks. To facilitate fair wall-clock time comparison
+all algorithms are trained on the same hardware (i.e., a single NVIDIA V100 GPU machine) and
+evaluated with the same periodicity of 20000 environment steps. Each evaluation query averages
+episode returns over 10 episodes. Per common practice (Hafner et al., 2019), we employ action repeat
+of 2 and measure sample complexity in the environment steps, rather than the actor steps. In all the
+ﬁgures we plot the mean performance over 10 seeds together with the shaded regions which represent
+95% conﬁdence intervals. A full list of hyper-parameters can be found in Appendix E."
+SETUP,0.2634146341463415,"Comparison Axes
+In many real-world applications, taking a step in the environment incurs sig-
+niﬁcant computational cost making sample efﬁciency a critical feature of an RL algorithm. It is
+hence important to compare RL algorithms in terms of their sample efﬁciency. We facilitate this
+comparison by computing an algorithm’s performance measured by episode return with respect to
+environment steps. On the other end, striving low sample complexity often comes at the cost of a
+poor computational efﬁciency. Unfortunately, recent deep RL literature has paid very little attention
+to this important axis, which has led to skyrocketing hardware requirements. Such a trend has made
+it virtually impossible for an RL practitioner with modest hardware capacity to contribute to advance-
+ments in image-based RL, leaving research in this area to a few well-equipped labs. To democratize
+research in visual RL, we additionally propose to compare the agents in terms of wall-clock training
+time given the same single GPU hardware. We note that it is possible to adapt DrQ-v2 to a distributed
+setup, as has been done for DDPG in prior work (Barth-Maron et al., 2018; Hoffman et al., 2020)."
+COMPARISON TO MODEL-FREE METHODS,0.2682926829268293,"4.2
+COMPARISON TO MODEL-FREE METHODS"
+COMPARISON TO MODEL-FREE METHODS,0.2731707317073171,"Baselines
+We compare our method to several state-of-the-art model-free algorithms for visual RL
+including CURL (Srinivas et al., 2020), DrQ (Yarats et al., 2021b), and vanilla SAC (Haarnoja et al.,
+2018a) augmented with the convolutional encoder from SAC-AE (Yarats et al., 2019). Vanilla SAC is
+a weak baseline and only included as a ground point to showcase the recent progress in visual RL."
+COMPARISON TO MODEL-FREE METHODS,0.2780487804878049,Under review as a conference paper at ICLR 2022
+COMPARISON TO MODEL-FREE METHODS,0.28292682926829266,(a) Sample Efﬁciency.
+COMPARISON TO MODEL-FREE METHODS,0.28780487804878047,(b) Wall-clock Time.
+COMPARISON TO MODEL-FREE METHODS,0.2926829268292683,"SAC
+CURL
+DrQ
+DrQ-v2 (Ours)"
+COMPARISON TO MODEL-FREE METHODS,0.2975609756097561,"Figure 3: We compare DrQ-v2 on a subset of continuous control tasks that offer various challenges,
+including complex dynamics, sparse rewards, hard exploration, and more. (a) DrQ-v2 demonstrates
+favorable sample efﬁciency and comfortably outperforms leading model-free baselines, as well as
+requiring less wall-clock training image (b)."
+COMPARISON TO MODEL-FREE METHODS,0.3024390243902439,"Sample Efﬁciency Axis
+We present results on several medium and hard tasks in Figure 3a. Full
+results can be found in Appendix (Figure 6, Figure 8, and Figure 10). Our empirical study reveals
+that DrQ-v2 outperforms prior model-free methods in terms of sample efﬁciency across the three
+benchmarks with different levels of difﬁculty. Importantly, DrQ-v2’s advantage is more pronounced
+on harder tasks (i.e., acrobot, quadruped, and humanoid), where exploration is especially challenging.
+Finally, DrQ-v2 solves the DMC humanoid locomotion tasks directly from pixels, which, to the best
+of our knowledge, is the ﬁrst successful demonstration of such feat by a model-free method."
+COMPARISON TO MODEL-FREE METHODS,0.3073170731707317,"Compute Efﬁciency Axis
+To facilitate a fair comparison in terms of sheer wall-clock training time,
+besides employee the identical training protocol (see Section 4.1), we also use the same mini-batch
+size of 256 for each agent. In Figure 13, we evaluate DrQ-v2 on a subset of DMC tasks for the sake of
+brevity only, and note that the demonstrated results can be easily extrapolated to the other tasks given
+the linear dependency between training time and sample complexity. In our benchmarks, DrQ-v2
+is able to achieve a throughput of 96 FPS, which favorably compares to DrQ’s 28 FPS (a 3.4⇥
+increase), and CURL’s 16 FPS (a 6⇥increase) throughputs. Practically, DrQ-v2 solves easy, medium,
+and hard tasks within 2.9, 8.6, and 86 hours respectively. Full results can be found in Appendix
+(Figure 7, Figure 9, and Figure 11)."
+COMPARISON TO MODEL-BASED METHODS,0.3121951219512195,"4.3
+COMPARISON TO MODEL-BASED METHODS"
+COMPARISON TO MODEL-BASED METHODS,0.3170731707317073,"Baseline
+To see how DrQ-v2 stacks up against model-based methods, which tend to achieve better
+sample complexity in expense of a larger computational footprint, we also compare to recent and"
+COMPARISON TO MODEL-BASED METHODS,0.32195121951219513,Under review as a conference paper at ICLR 2022
+COMPARISON TO MODEL-BASED METHODS,0.32682926829268294,(a) Sample Efﬁciency.
+COMPARISON TO MODEL-BASED METHODS,0.33170731707317075,(b) Wall-clock Time.
+COMPARISON TO MODEL-BASED METHODS,0.33658536585365856,"Dreamer-v2
+DrQ-v2 (Ours)"
+COMPARISON TO MODEL-BASED METHODS,0.34146341463414637,"Figure 4: Model-based Dreamer-v2 needs to train a world model and thus performs more computations
+during training than model-free DrQ-v2. Still, (a) DrQ-v2 is able to match Dreamer-v2’s sample
+efﬁciency, while (b) requiring much less wall-clock training time."
+COMPARISON TO MODEL-BASED METHODS,0.3463414634146341,"unpublished2 improvements to Dreamer-v2 (Hafner et al., 2020), a leading model-based approach
+for visual continuous control. The recent update shows that the model-based approach can solve the
+DMC humanoid tasks directly from pixel inputs. The open-source implementation of Dreamer-v2
+(https://github.com/danijar/dreamerv2) only provides learning curves for Humanoid
+Walk. For this reason we run their code to obtain results on other DMC tasks. To limit hardware"
+COMPARISON TO MODEL-BASED METHODS,0.35121951219512193,"requirements of compute-expensive Dreamer-v2, we only run it on a subset of 12 out of 24 considered
+tasks. This subset, however, overlaps with all the three (i.e. easy, medium, and hard) benchmarks."
+COMPARISON TO MODEL-BASED METHODS,0.35609756097560974,"Sample Efﬁciency Axis
+Our empirical study in Figure 4a reveals that in many cases, DrQ-v2,
+despite being a model-free method, can rival sample efﬁciency of state-of-the-art model-based
+Dreamer-v2. We note, however, that on several tasks (for example Acrobot Swingup) Dreamer-v2
+outperforms DrQ-v2. We leave investigation of such discrepancy for future work. Full results are
+provided in Appendix D (Figure 12)."
+COMPARISON TO MODEL-BASED METHODS,0.36097560975609755,"Compute Efﬁciency Axis
+A different picture emerges if comparison is done with respect to wall-
+clock training time. Dreamer-v2, being a model-based method, performs signiﬁcantly more ﬂoating
+point operations to reach its sample efﬁciency. In our benchmarks, Dreamer-v2 records a throughput
+of 24 FPS, which is 4⇥less than DrQ-v2’s throughput of 96 FPS, measured on the same hardware.
+In Figure 4b we plot learning curves against wall-clock time and observe that DrQ-v2 takes less time
+to solve the tasks. Full results can be found in Appendix (Figure 13)."
+ABLATION STUDY,0.36585365853658536,"4.4
+ABLATION STUDY"
+ABLATION STUDY,0.37073170731707317,"In this section we present an extensive ablation study that guided us to the ﬁnal version of DrQ-v2.
+Here, for brevity we only discuss experiments that were most impactful and omit others that did not
+pan out. For computational reasons, we only ablate on 3 different control tasks of various difﬁculty
+levels. Our ﬁndings are summarized in Figure 5 and detailed below."
+ABLATION STUDY,0.375609756097561,"Switching from SAC to DDPG
+DrQ (Yarats et al., 2021b) leverages SAC (Haarnoja et al., 2018a)
+as the backbone RL algorithm. While it has been demonstrated by many works, including the
+original manuscripts (Haarnoja et al., 2018a;b) that SAC is superior to DDPG (Lillicrap et al., 2015b),
+our careful examination identiﬁes two shortcomings that preclude SAC (within DrQ) to solve hard
+exploration-wise image-based tasks. First, the automatic entropy adjustment strategy, introduced
+in Haarnoja et al. (2018b), is inadequate and in some cases leads to a premature entropy collapse."
+ABLATION STUDY,0.3804878048780488,"2ArXiv v3 revision from May 3, 2021 introduces a new result on the Humanoid Walk task in Appendix D."
+ABLATION STUDY,0.3853658536585366,Under review as a conference paper at ICLR 2022
+ABLATION STUDY,0.3902439024390244,"DrQ[SAC]
+DrQ[DDPG]"
+ABLATION STUDY,0.3951219512195122,"(a) DrQ (dotted silver) relies on SAC as a base RL algorithm. Replacing SAC with DDPG results in a
+signiﬁcant performance gain (blue)."
+ABLATION STUDY,0.4,"DrQ[DDPG,n=1]
+DrQ[DDPG,n=3]
+DrQ[DDPG,n=5]"
+ABLATION STUDY,0.40487804878048783,"(b) DDPG straightforwardly incorporates n-step returns, a critical tool for exploration. We observe that
+the 3 (blue) and 5 (red) steps variants provide additional improvements to the previous version that uses
+single step TD-targets (silver). Going forward, we adopt 3-step returns (blue)."
+ABLATION STUDY,0.4097560975609756,"DrQ[DDPG,n=3,B=105]
+DrQ[DDPG,n=3,B=5 · 105]
+DrQ[DDPG,n=3,B=106]"
+ABLATION STUDY,0.4146341463414634,"(c) Increasing the size of the replay buffer (B) improves performance, over the original 105 used by DrQ
+(silver). Going forward, we use a buffer size of 106 (red)."
+ABLATION STUDY,0.4195121951219512,"DrQ[DDPG,n=3,B=106,noise=ﬁxed]
+DrQ[DDPG,n=3,B=106,noise=decay] (DrQ-v2)"
+ABLATION STUDY,0.424390243902439,"(d) Finally, a decaying schedule for the variance of the exploration noise (blue) helps on hard exploration
+tasks, versus the ﬁxed variance variant (silver)."
+ABLATION STUDY,0.4292682926829268,"Figure 5: An ablation study that led us to the ﬁnal version of DrQ-v2. We incrementally show each
+of the four key improvements to DrQ that collectively form DrQ-v2. The silver dotted curves in the
+ﬁrst row show the original DrQ. In subsequent rows they show progressive improvements, using
+the optimal choice from the previous rows (i.e., the silver curve in the third row shows DrQ with a
+DDPG base RL algorithm and 3-step returns). The red and blue curves show the effect of individual
+modiﬁcations. In the last row the blue curve corresponds to DrQ-v2."
+ABLATION STUDY,0.43414634146341463,"This prevents the agent from ﬁnding more optimal behaviors due to the insufﬁcient exploration.
+In Figure 5a, we empirically verify our intuition and, indeed, observe that DDPG demonstrates better
+exploration properties than SAC. Here, DDPG uses constant σ = 0.2 for the exploration noise."
+ABLATION STUDY,0.43902439024390244,Under review as a conference paper at ICLR 2022
+ABLATION STUDY,0.44390243902439025,"N-step Returns
+The second issue concerns the inability of soft Q-learning to incorporate n-step
+returns to estimate TD error in a straightforward manner. The reason for this is that computing a target
+value for soft Q-function requires estimating per-step entropy of the policy, which is challenging
+to do for large n in the off-policy regime. In contrast, DDPG does not require estimating per-step
+entropy to compute targets and is more amenable for n-step returns. In Figure 5b we demonstrate that
+estimating TD error with n-step returns improves sample efﬁciency over vanilla DDPG. We select
+3-step returns as a sensible choice for our method."
+ABLATION STUDY,0.44878048780487806,"Replay Buffer Size
+We hypothesize that a larger replay buffer plays an important role in circum-
+venting the catastrophic forgetting problem (Fedus et al., 2020). This issue is especially prominent in
+tasks with more diverse initial state distributions (i.e., reacher or humanoid tasks), where the vast
+variety of possible behaviors requires signiﬁcantly larger memory. We conﬁrm this intuition by
+ablating the size of the replay buffer in Figure 5c, where we observe that a buffer size of 1M helps to
+improve performance on Reacher Hard considerably."
+ABLATION STUDY,0.45365853658536587,"Scheduled Exploration Noise
+Finally, we demonstrate that it is useful to decay the variance of the
+exploration noise over the course of training according to Equation (3). In Figure 5d, we compare two
+versions of our algorithm, where the ﬁrst variant uses a ﬁxed standard deviation of σ = 0.2, while the
+second variant employes the decaying schedule σ(t), with parameters σinit = 1.0, σﬁnal = 0.1, and
+T = 500000. Having the exploration noise to decay linearly over time turns out to be helpful and
+provide an additional performance boost, which was especially useful for solving humanoid tasks."
+RELATED WORK,0.4585365853658537,"5
+RELATED WORK"
+RELATED WORK,0.4634146341463415,"Visual Reinforcement Learning
+Successes of visual representation learning in computer vi-
+sion (Vincent et al., 2008; Doersch et al., 2015; Wang and Gupta, 2015; Noroozi and Favaro,
+2016; Zhang et al., 2017; Gidaris et al., 2018) has inspired successes in visual RL, where coherent
+representations are learned alongside RL. Works such as SAC-AE (Yarats et al., 2019), PlaNet (Hafner
+et al., 2018), and SLAC (Lee et al., 2019), demonstrated how auto-encoders (Finn et al., 2015) could
+improve visual RL. Following this, other self-supervised objectives such as contrastive learning
+in CURL (Srinivas et al., 2020) and ATC (Stooke et al., 2020), self-prediction in SPR (Schwarzer
+et al., 2020a), contrastive cluster assignment in Proto-RL (Yarats et al., 2021a), and augmented
+data in DrQ (Yarats et al., 2021b) and RAD (Laskin et al., 2020), have signiﬁcantly bridged the
+gap between state-based and image-based RL. Future prediction objectives (Hafner et al., 2018;
+2019; Yan et al., 2020; Finn et al., 2015; Pinto et al., 2016; Agrawal et al., 2016) and other auxiliary
+objectives (Jaderberg et al., 2016; Zhan et al., 2020; Young et al., 2020; Chen et al., 2020) have shown
+improvements on a variety of problems ranging from gameplay, continuous control, and robotics. In
+the context of visual control settings, clever use of augmented data (Yarats et al., 2021b; Laskin et al.,
+2020) currently produces state-of-the-art results on visual tasks from DMC (Tassa et al., 2018)."
+RELATED WORK,0.4682926829268293,"Humanoid Control
+The humanoid control problem ﬁrst presented in Tassa et al. (2012), has been
+studied as one of the hardest control problems due to its large state and action spaces. The earliest
+solutions to this problem use ideas in model-based optimal control to generate policies given an
+accurate model of the humanoid . Subsequent works in RL have shown that model-free policies can
+solve the humanoid control problem given access to proprioceptive state observations. However,
+solving such a problem from visual observations has been a challenging problem, with leading RL
+algorithms making little progress to solve the task (Tassa et al., 2018). Recently, Hafner et al. (2020)
+was able to solve this problem through a model-based technique in around 30M environment steps
+and 340 hours of training on a single GPU machine. DrQ-v2, presented in this paper, marks the ﬁrst
+model-free RL method that can solve humanoid control from visual observations, taking also around
+30M steps and 86 hours of training on the same hardware."
+CONCLUSION,0.47317073170731705,"6
+CONCLUSION"
+CONCLUSION,0.47804878048780486,"We have introduced a conceptually simple model-free actor-critic RL agent for image-based con-
+tinuous control – DrQ-v2. Our method provides signiﬁcantly better computational footprint and
+masters tasks from DMC directly from pixels, most notably the humanoid locomotion tasks that"
+CONCLUSION,0.48292682926829267,Under review as a conference paper at ICLR 2022
+CONCLUSION,0.4878048780487805,"were previously unsolved by model-free approaches. To support our empirical results and in-
+spire further research in visual RL we provide an efﬁcient PyTorch implementation of DrQ-v2 at
+https://anonymous.4open.science/r/drqv2."
+CONCLUSION,0.4926829268292683,Under review as a conference paper at ICLR 2022
+REFERENCES,0.4975609756097561,REFERENCES
+REFERENCES,0.5024390243902439,"Pulkit Agrawal, Ashvin Nair, Pieter Abbeel, Jitendra Malik, and Sergey Levine. Learning to poke"
+REFERENCES,0.5073170731707317,"by poking: experiential learning of intuitive physics. In Proceedings of the 30th International
+Conference on Neural Information Processing Systems, pages 5092–5100, 2016."
+REFERENCES,0.5121951219512195,"Brandon Amos, Samuel Stanton, Denis Yarats, and Andrew Gordon Wilson. On the model-based"
+REFERENCES,0.5170731707317073,"stochastic value gradient for continuous reinforcement learning. CoRR, 2020."
+REFERENCES,0.5219512195121951,"Gabriel Barth-Maron, Matthew W. Hoffman, David Budden, Will Dabney, Dan Horgan, Dhruva"
+REFERENCES,0.526829268292683,"TB, Alistair Muldal, Nicolas Heess, and Timothy Lillicrap. Distributional policy gradients. In
+International Conference on Learning Representations, 2018."
+REFERENCES,0.5317073170731708,"Richard Bellman. A markovian decision process. Indiana Univ. Math. J., 1957."
+REFERENCES,0.5365853658536586,"Bryan Chen, Alexander Sax, Gene Lewis, Iro Armeni, Silvio Savarese, Amir Roshan Zamir, Jitendra"
+REFERENCES,0.5414634146341464,"Malik, and Lerrel Pinto. Robust policies via mid-level visual representations: An experimental
+study in manipulation and navigation. CoRR, 2020."
+REFERENCES,0.5463414634146342,"Carl Doersch, Abhinav Gupta, and Alexei A Efros. Unsupervised visual representation learning by"
+REFERENCES,0.551219512195122,"context prediction. In Proceedings of the IEEE International Conference on Computer Vision,
+pages 1422–1430, 2015."
+REFERENCES,0.5560975609756098,"Jing eng and Ronald J. Williams. Incremental multi-step q-learning. Machine Learning, 1996."
+REFERENCES,0.5609756097560976,"William Fedus, Prajit Ramachandran, Rishabh Agarwal, Yoshua Bengio, Hugo Larochelle, Mark"
+REFERENCES,0.5658536585365853,"Rowland, and Will Dabney. Revisiting fundamentals of experience replay. CoRR, 2020."
+REFERENCES,0.5707317073170731,"Chelsea Finn, Xin Yu Tan, Yan Duan, Trevor Darrell, Sergey Levine, and Pieter Abbeel. Learning"
+REFERENCES,0.5756097560975609,"visual feature spaces for robotic manipulation with deep spatial autoencoders. CoRR, 2015."
+REFERENCES,0.5804878048780487,"Scott Fujimoto, Herke van Hoof, and David Meger. Addressing function approximation error in"
+REFERENCES,0.5853658536585366,"actor-critic methods. In Proceedings of the 35th International Conference on Machine Learning,
+ICML 2018, Stockholmsmassan, Stockholm, Sweden, July 10-15, 2018, 2018."
+REFERENCES,0.5902439024390244,"Spyros Gidaris, Praveer Singh, and Nikos Komodakis. Unsupervised representation learning by"
+REFERENCES,0.5951219512195122,"predicting image rotations, 2018."
+REFERENCES,0.6,"Tuomas Haarnoja, Aurick Zhou, Pieter Abbeel, and Sergey Levine. Soft actor-critic: Off-policy maxi-"
+REFERENCES,0.6048780487804878,"mum entropy deep reinforcement learning with a stochastic actor. arXiv preprint arXiv:1801.01290,
+2018a."
+REFERENCES,0.6097560975609756,"Tuomas Haarnoja, Aurick Zhou, Kristian Hartikainen, George Tucker, Sehoon Ha, Jie Tan, Vikash"
+REFERENCES,0.6146341463414634,"Kumar, Henry Zhu, Abhishek Gupta a nd Pieter Abbeel, and Sergey Levine. Soft actor-critic
+algorithms and applications. CoRR, 2018b."
+REFERENCES,0.6195121951219512,"Danijar Hafner, Timothy Lillicrap, Ian Fischer, Ruben Villegas, David Ha, Honglak Lee, and James"
+REFERENCES,0.624390243902439,"Davidson. Learning latent dynamics for planning from pixels. arXiv preprint arXiv:1811.04551,
+2018."
+REFERENCES,0.6292682926829268,"Danijar Hafner, Timothy Lillicrap, Jimmy Ba, and Mohammad Norouzi. Dream to control: Learning"
+REFERENCES,0.6341463414634146,"behaviors by latent imagination. arXiv preprint arXiv:1912.01603, 2019."
+REFERENCES,0.6390243902439025,"Danijar Hafner, Timothy P. Lillicrap, Mohammad Norouzi, and Jimmy Ba. Mastering atari with"
+REFERENCES,0.6439024390243903,"discrete world models. CoRR, 2020."
+REFERENCES,0.6487804878048781,Nicklas Hansen and Xiaolong Wang. Generalization in reinforcement learning by soft data augmen-
+REFERENCES,0.6536585365853659,"tation. In International Conference on Robotics and Automation, 2021."
+REFERENCES,0.6585365853658537,"Matteo Hessel, Joseph Modayil, Hado van Hasselt, Tom Schaul, Georg Ostrovski, Will Dabney,"
+REFERENCES,0.6634146341463415,"Daniel Horgan, Bilal Piot, Mohammad Gheshlaghi Azar, and David Silver. Rainbow: Combining
+improvements in deep reinforcement learning. arXiv preprint arXiv:1710.02298, 2017."
+REFERENCES,0.6682926829268293,Under review as a conference paper at ICLR 2022
+REFERENCES,0.6731707317073171,"Matt Hoffman, Bobak Shahriari, John Aslanides, Gabriel Barth-Maron, Feryal Behbahani, Tamara"
+REFERENCES,0.6780487804878049,"Norman, Abbas Abdolmaleki, Albin Cassirer, Fan Yang, Kate Baumli, Sarah Henderson, Alex
+Novikov, Sergio Gómez Colmenarejo, Serkan Cabi, Caglar Gulcehre, Tom Le Paine, Andrew
+Cowie, Ziyu Wang, Bilal Piot, and Nando de Freitas. Acme: A research framework for distributed
+reinforcement learning, 2020."
+REFERENCES,0.6829268292682927,"Max Jaderberg, Volodymyr Mnih, Wojciech Marian Czarnecki, Tom Schaul, Joel Z Leibo, David"
+REFERENCES,0.6878048780487804,"Silver, and Koray Kavukcuoglu. Reinforcement learning with unsupervised auxiliary tasks, 2016."
+REFERENCES,0.6926829268292682,"Michael Laskin, Kimin Lee, Adam Stooke, Lerrel Pinto, Pieter Abbeel, and Aravind Srinivas."
+REFERENCES,0.697560975609756,"Reinforcement learning with augmented data, 2020."
+REFERENCES,0.7024390243902439,"A. X. Lee, A. Nagabandi, P. Abbeel, and S. Levine. Stochastic latent actor-critic: Deep reinforcement"
+REFERENCES,0.7073170731707317,"learning with a latent variable model. arXiv e-prints, 2019."
+REFERENCES,0.7121951219512195,"Alex X Lee, Anusha Nagabandi, Pieter Abbeel, and Sergey Levine. Stochastic latent actor-critic:"
+REFERENCES,0.7170731707317073,"Deep reinforcement learning with a latent variable model. arXiv preprint arXiv:1907.00953, 2019."
+REFERENCES,0.7219512195121951,"Timothy P. Lillicrap, Jonathan J. Hunt, Alexander Pritzel, Nicolas Heess, Tom Erez, Yuval Tassa,"
+REFERENCES,0.7268292682926829,"David Silver, and Daan Wierstra. Continuous control with deep reinforcement learning. CoRR,
+2015a."
+REFERENCES,0.7317073170731707,"Timothy P. Lillicrap, Jonathan J. Hunt, Alexander Pritzel, Nicolas Manfred Otto Heess, Tom Erez,"
+REFERENCES,0.7365853658536585,"Yuval Tassa, David Silver, and Daan Wierstra. Continuous control with deep reinforcement"
+REFERENCES,0.7414634146341463,"learning. CoRR, abs/1509.02971, 2015b."
+REFERENCES,0.7463414634146341,"Volodymyr Mnih, Koray Kavukcuoglu, David Silver, Alex Graves, Ioannis Antonoglou, Daan"
+REFERENCES,0.751219512195122,"Wierstra, and Martin Riedmiller. Playing atari with deep reinforcement learning. arXiv e-prints,
+2013."
+REFERENCES,0.7560975609756098,"Volodymyr Mnih, Adria Puigdomenech Badia, Mehdi Mirza, Alex Graves, Timothy P. Lillicrap, Tim"
+REFERENCES,0.7609756097560976,"Harley, David Silver, and Koray Kavukcuoglu. Asynchronous methods for deep reinforcement
+learning. CoRR, 2016a."
+REFERENCES,0.7658536585365854,"Volodymyr Mnih, Adrià Puigdomènech Badia, Mehdi Mirza, Alex Graves, Timothy P. Lillicrap, Tim"
+REFERENCES,0.7707317073170732,"Harley, David Silver, and Koray Kavukcuoglu. Asynchronous methods for deep reinforcement
+learning, 2016b."
+REFERENCES,0.775609756097561,"Rémi Munos, Tom Stepleton, Anna Harutyunyan, and Marc G. Bellemare. Safe and efﬁcient"
+REFERENCES,0.7804878048780488,"off-policy reinforcement learning. CoRR, 2016."
+REFERENCES,0.7853658536585366,Mehdi Noroozi and Paolo Favaro. Unsupervised learning of visual representations by solving jigsaw
+REFERENCES,0.7902439024390244,"puzzles. In European Conference on Computer Vision, pages 69–84. Springer, 2016."
+REFERENCES,0.7951219512195122,"Lerrel Pinto, Dhiraj Gandhi, Yuanfeng Han, Yong-Lae Park, and Abhinav Gupta. The curious robot:"
+REFERENCES,0.8,"Learning visual representations via physical interactions. CoRR, 2016."
+REFERENCES,0.8048780487804879,"Roberta Raileanu, Max Goldstein, Denis Yarats, Ilya Kostrikov, and Rob Fergus. Automatic data"
+REFERENCES,0.8097560975609757,"augmentation for generalization in deep reinforcement learning. CoRR, 2020."
+REFERENCES,0.8146341463414634,"Max Schwarzer, Ankesh Anand, Rishab Goel, R Devon Hjelm, Aaron Courville, and Philip Bachman."
+REFERENCES,0.8195121951219512,"Data-efﬁcient reinforcement learning with momentum predictive representations. arXiv preprint
+arXiv:2007.05929, 2020a."
+REFERENCES,0.824390243902439,"Max Schwarzer, Ankesh Anand, Rishab Goel, R. Devon Hjelm, Aaron C. Courville, and Philip"
+REFERENCES,0.8292682926829268,"Bachman. Data-efﬁcient reinforcement learning with momentum predictive representations. CoRR,
+2020b."
+REFERENCES,0.8341463414634146,"David Silver, Guy Lever, Nicolas Heess, Thomas Degris, Daan Wierstra, and Martin Riedmiller."
+REFERENCES,0.8390243902439024,"Deterministic policy gradient algorithms. In Proceedings of the 31st International Conference on
+Machine Learning, 2014."
+REFERENCES,0.8439024390243902,"Aravind Srinivas, Michael Laskin, and Pieter Abbeel. Curl: Contrastive unsupervised representations"
+REFERENCES,0.848780487804878,"for reinforcement learning. arXiv preprint arXiv:2004.04136, 2020."
+REFERENCES,0.8536585365853658,Under review as a conference paper at ICLR 2022
+REFERENCES,0.8585365853658536,"Adam Stooke, Kimin Lee, Pieter Abbeel, and Michael Laskin. Decoupling representation learning"
+REFERENCES,0.8634146341463415,"from reinforcement learning. arXiv preprint arXiv, 2020."
+REFERENCES,0.8682926829268293,"Yuval Tassa, Tom Erez, and Emanuel Todorov. Synthesis and stabilization of complex behaviors"
+REFERENCES,0.8731707317073171,"through online trajectory optimization. In 2012 IEEE/RSJ International Conference on Intelligent
+Robots and Systems, 2012."
+REFERENCES,0.8780487804878049,"Yuval Tassa, Yotam Doron, Alistair Muldal, Tom Erez, Yazhe Li, Diego de Las Casas, David Budden,"
+REFERENCES,0.8829268292682927,"Abbas Abdolmaleki, Josh Merel, Andrew Lefrancq, et al. Deepmind control suite. arXiv preprint
+arXiv:1801.00690, 2018."
+REFERENCES,0.8878048780487805,"Emanuel Todorov, Tom Erez, and Yuval Tassa. Mujoco: A physics engine for model-based control."
+REFERENCES,0.8926829268292683,"In 2012 IEEE/RSJ International Conference on Intelligent Robots and Systems, 2012."
+REFERENCES,0.8975609756097561,"Pascal Vincent, Hugo Larochelle, Yoshua Bengio, and Pierre-Antoine Manzagol. Extracting and"
+REFERENCES,0.9024390243902439,"composing robust features with denoising autoencoders. In Proceedings of the 25th international
+conference on Machine learning, pages 1096–1103. ACM, 2008."
+REFERENCES,0.9073170731707317,Xiaolong Wang and Abhinav Gupta. Unsupervised learning of visual representations using videos.
+REFERENCES,0.9121951219512195,"In ICCV, 2015."
+REFERENCES,0.9170731707317074,"Christopher J. C. H. Watkins and Peter Dayan. Q-learning. Machine Learning, 1992."
+REFERENCES,0.9219512195121952,"Christopher John Cornish Hellaby Watkins. Learning from Delayed Rewards. PhD thesis, King’s"
+REFERENCES,0.926829268292683,"College, 1989."
+REFERENCES,0.9317073170731708,"Wilson Yan, Ashwin Vangipuram, Pieter Abbeel, and Lerrel Pinto. Learning predictive representations"
+REFERENCES,0.9365853658536586,"for deformable objects using contrastive estimation. arXiv preprint arXiv:2003.05436, 2020."
+REFERENCES,0.9414634146341463,"Denis Yarats, Amy Zhang, Ilya Kostrikov, Brandon Amos, Joelle Pineau, and Rob Fergus. Im-"
+REFERENCES,0.9463414634146341,"proving sample efﬁciency in model-free reinforcement learning from images. arXiv preprint
+arXiv:1910.01741, 2019."
+REFERENCES,0.9512195121951219,"Denis Yarats, Rob Fergus, Alessandro Lazaric, and Lerrel Pinto. Reinforcement learning with"
+REFERENCES,0.9560975609756097,"prototypical representations. CoRR, 2021a."
+REFERENCES,0.9609756097560975,"Denis Yarats, Ilya Kostrikov, and Rob Fergus. Image augmentation is all you need: Regularizing deep"
+REFERENCES,0.9658536585365853,"reinforcement learning from pixels. In 9th International Conference on Learning Representations,
+ICLR 2021, 2021b."
+REFERENCES,0.9707317073170731,"Sarah Young, Dhiraj Gandhi, Shubham Tulsiani, Abhinav Gupta, Pieter Abbeel, and Lerrel Pinto."
+REFERENCES,0.975609756097561,"Visual imitation made easy. CoRR, 2020."
+REFERENCES,0.9804878048780488,"Albert Zhan, Philip Zhao, Lerrel Pinto, Pieter Abbeel, and Michael Laskin. A framework for efﬁcient"
+REFERENCES,0.9853658536585366,"robotic manipulation. CoRR, 2020."
+REFERENCES,0.9902439024390244,"Richard Zhang, Phillip Isola, and Alexei A Efros. Split-brain autoencoders: Unsupervised learning"
+REFERENCES,0.9951219512195122,"by cross-channel prediction. In Proceedings of the IEEE Conference on Computer Vision and
+Pattern Recognition, pages 1058–1067, 2017."

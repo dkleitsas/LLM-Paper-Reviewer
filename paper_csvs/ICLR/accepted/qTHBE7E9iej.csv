@@ -1,0 +1,1210 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.0035842293906810036,"For robots operating in the real world, it is desirable to learn reusable behaviours
+that can effectively be transferred and adapted to numerous tasks and scenarios.
+We propose an approach to learn abstract motor skills from data using a hierar-
+chical mixture latent variable model. In contrast to existing work, our method
+exploits a three-level hierarchy of both discrete and continuous latent variables,
+to capture a set of high-level behaviours while allowing for variance in how they
+are executed. We demonstrate in manipulation domains that the method can effec-
+tively cluster ofﬂine data into distinct, executable behaviours, while retaining the
+ﬂexibility of a continuous latent variable model. The resulting skills can be trans-
+ferred and ﬁne-tuned on new tasks, unseen objects, and from state to vision-based
+policies, yielding better sample efﬁciency and asymptotic performance compared
+to existing skill- and imitation-based methods. We further analyse how and when
+the skills are most beneﬁcial: they encourage directed exploration to cover large
+regions of the state space relevant to the task, making them most effective in chal-
+lenging sparse-reward settings."
+INTRODUCTION,0.007168458781362007,"1
+INTRODUCTION"
+INTRODUCTION,0.010752688172043012,"Reinforcement learning is a powerful and ﬂexible paradigm to train embodied agents, but relies on
+large amounts of agent experience, computation, and time, on each individual task. Learning each
+task from scratch is inefﬁcient: it is desirable to learn a set of skills that can efﬁciently be reused and
+adapted to related downstream tasks. This is particularly pertinent for real-world robots, where inter-
+action is expensive and data-efﬁciency is crucial. There are numerous existing approaches to learn
+transferable embodied skills, usually formulated as a two-level hierarchy with a high-level controller
+and low-level skills. These methods predominantly represent skills as being either continuous, such
+as goal-conditioned (Lynch et al., 2019; Pertsch et al., 2020b) or latent space policies (Haarnoja
+et al., 2018; Merel et al., 2019; Singh et al., 2021); or discrete, such as mixture or option-based
+methods (Sutton et al., 1999; Daniel et al., 2012; Florensa et al., 2017; Wulfmeier et al., 2021). Our
+goal is to combine these perspectives to leverage their complementary advantages."
+INTRODUCTION,0.014336917562724014,"We propose an approach to learn a three-level skill hierarchy from an ofﬂine dataset, capturing both
+discrete and continuous variations at multiple levels of behavioural abstraction. The model com-
+prises a low-level latent-conditioned controller that can learn motor primitives, a set of continuous
+latent mid-level skills, and a discrete high-level controller that can compose and select among these
+abstract mid-level behaviours. Since the mid- and high-level form a mixture, we call our method
+Hierarchical Latent Mixtures of Skills (HeLMS). We demonstrate on challenging object manipula-
+tion tasks that our method can decompose a dataset into distinct, intuitive, and reusable behaviours.
+We show that these skills lead to improved sample efﬁciency and performance in numerous trans-
+fer scenarios: reusing skills for new tasks, generalising across unseen objects, and transferring from
+state to vision-based policies. Further analysis and ablations reveal that both continuous and discrete
+components are beneﬁcial, and that the learned hierarchical skills are most useful in sparse-reward
+settings, as they encourage directed exploration of task-relevant parts of the state space."
+INTRODUCTION,0.017921146953405017,"∗Corresponding author. Email: dushyantr@deepmind.com
+†Work done while at DeepMind"
+INTRODUCTION,0.021505376344086023,Published as a conference paper at ICLR 2022
+INTRODUCTION,0.025089605734767026,Our main contributions are as follows:
+INTRODUCTION,0.02867383512544803,"• We propose a novel approach to learn skills at different levels of abstraction from an ofﬂine
+dataset. The method captures both discrete behavioural modes and continuous variation
+using a hierarchical mixture latent variable model.
+• We present two techniques to reuse and adapt the learned skill hierarchy via reinforce-
+ment learning in downstream tasks, and perform extensive evaluation and benchmarking in
+different transfer settings: to new tasks and objects, and from state to vision-based policies.
+• We present a detailed analysis to interpret the learned skills, understand when they are most
+beneﬁcial, and evaluate the utility of both continuous and discrete skill representations."
+RELATED WORK,0.03225806451612903,"2
+RELATED WORK"
+RELATED WORK,0.035842293906810034,"A long-standing challenge in reinforcement learning is the ability to learn reusable motor skills that
+can be transferred efﬁciently to related settings. One way to learn such skills is via multi-task rein-
+forcement learning (Heess et al., 2016; James et al., 2018; Hausman et al., 2018; Riedmiller et al.,
+2018), with the intuition that behaviors useful for a given task should aid the learning of related tasks.
+However, this often requires careful curation of the task set, where each skill represents a separate
+task. Some approaches avoid this by learning skills in an unsupervised manner using intrinsic objec-
+tives that often maximize the entropy of visited states while keeping skills distinguishable (Gregor
+et al., 2017; Eysenbach et al., 2019; Sharma et al., 2019; Zhang et al., 2020)."
+RELATED WORK,0.03942652329749104,"A large body of work explores skills from the perspective of unsupervised segmentation of repeat-
+able behaviours in temporal data (Niekum & Barto, 2011; Ranchod et al., 2015; Kr¨uger et al., 2016;
+Lioutikov et al., 2017; Shiarlis et al., 2018; Kipf et al., 2019; Tanneberg et al., 2021). Other works
+investigate movement or motor primitives that can be selected or sequenced together to solve com-
+plex manipulation or locomotion tasks (M¨ulling et al., 2013; Rueckert et al., 2015; Lioutikov et al.,
+2015; Paraschos et al., 2018; Merel et al., 2020; Tosatto et al., 2021; Dalal et al., 2021). Some
+of these methods also employ mixture models to jointly model low-level motion primitives and a
+high-level primitive controller (Muelling et al., 2010; Colom´e & Torras, 2018; Pervez & Lee, 2018);
+the high-level controller can also be implicit and decentralised over the low-level primitives (Goyal
+et al., 2019)."
+RELATED WORK,0.043010752688172046,"Several existing approaches employ architectures in which the policy is comprised of two (or more)
+levels of hierarchy.
+Typically, a low-level controller represents the learned set of skills, and a
+high-level policy instructs the low-level controller via a latent variable or goal. Such latent vari-
+ables can be discrete (Florensa et al., 2017; Wulfmeier et al., 2020) or continuous (Nachum et al.,
+2018; Haarnoja et al., 2018) and regularization of the latent space is often crucial (Tirumala et al.,
+2019). The latent variable can represent the behaviour for one timestep, for a ﬁxed number of
+timesteps (Ajay et al., 2021), or options with different durations (Sutton et al., 1999; Bacon et al.,
+2017; Wulfmeier et al., 2021). One such approach that is particularly relevant (Florensa et al., 2017)
+learns a diverse set of skills, via a discrete latent variable that interacts multiplicatively with the state
+to enable continuous variation in a Stochastic Neural Network policy; this skill space is then trans-
+ferred to locomotion tasks by learning a new categorical controller. Our method differs in a few key
+aspects: our proposed three-level hierarchical architecture explicitly models abstract discrete skills
+while allowing for temporal dependence and lower-level latent variation in their execution, enabling
+diverse object-centric behaviours in challenging manipulation tasks."
+RELATED WORK,0.04659498207885305,"Our work is related to methods that learn robot policies from demonstrations (LfD, e.g. (Rajeswaran
+et al., 2018; Shiarlis et al., 2018; Strudel et al., 2020)) or more broadly from logged data (ofﬂine
+RL, e.g. (Wu et al., 2019; Kumar et al., 2020; Wang et al., 2020)). While many of these focus on
+learning single-task policies, several approaches learn skills ofﬂine that can be transferred online
+to new tasks (Merel et al., 2019; Lynch et al., 2019; Pertsch et al., 2020a; Ajay et al., 2021; Singh
+et al., 2021). These all train a two-level hierarchical model, with a high-level encoder that maps to
+a continuous latent space, and a low-level latent-conditioned controller. The high-level encoder can
+encode a whole trajectory (Pertsch et al., 2020a; 2021; Ajay et al., 2021); a short look-ahead state
+sequence (Merel et al., 2019); the current and ﬁnal goal state (Lynch et al., 2019); or can even be
+simple isotropic Gaussian noise (Singh et al., 2021) that can be ﬂexibly transformed by a ﬂow-based
+low-level controller. At transfer time, a new high-level policy is learned from scratch: this can be
+more efﬁcient with skill priors (Pertsch et al., 2020a) or temporal abstraction (Ajay et al., 2021)."
+RELATED WORK,0.05017921146953405,Published as a conference paper at ICLR 2022
+RELATED WORK,0.053763440860215055,"(a)
+(b)"
+RELATED WORK,0.05734767025089606,"Figure 1: (a) Graphical model for HeLMS, with solid lines indicating the underlying generative
+model (prior) and dashed lines indicating dependencies introduced by the inference model (poste-
+rior). (b) Network architecture, showing the high-, mid-, and low-level networks from left to right,
+respectively. As indicated by superscripts, different subsets of the input state x can be provided to
+the high level (HL), mid level (ML), and low level (LL) (information-asymmetry)."
+RELATED WORK,0.06093189964157706,"HeLMS builds on this large body of work by explicitly modelling both discrete and continuous
+behavioural structure via a three-level skill hierarchy. We use similar information asymmetry to
+Neural Probabilistic Motor Primitives (NPMP) (Merel et al., 2019; 2020), conditioning the high-
+level encoder on a short look-ahead trajectory. However HeLMS explicitly captures discrete modes
+of behaviour via the high-level controller, and learns an additional mid-level which is able to transfer
+abstract skills to downstream tasks, rather than learning a continuous latent policy from scratch."
+METHOD,0.06451612903225806,"3
+METHOD"
+METHOD,0.06810035842293907,"This paper examines a two-stage problem setup: an ofﬂine stage where a hierarchical skill space
+is learned from a dataset, and an online stage where these skills are transferred to a reinforcement
+learning setting. The dataset D comprises a set of trajectories, each a sequence of state-action pairs
+{xt, at}T
+t=0. The model incorporates a discrete latent variable yt ∈{1, . . . , K} as a high-level skill
+selector (for a ﬁxed number of skills K), and a mid-level continuous variable zt ∈Rnz conditioned
+on yt which parameterises each skill. Marginally, zt is then a latent mixture distribution represent-
+ing both a discrete set of skills and the variation in their execution. A sample of zt represents an
+abstract behaviour, which is then executed by a low-level controller p(at | zt, xt). The learned skill
+space can then be transferred to a reinforcement learning agent π in a Markov Decision Process de-
+ﬁned by tuple {S, A, T , R, γ}: these represent the state, action, and transition distributions, reward
+function, and discount factor respectively. When transferring, we train a new high-level controller
+that acts either at the level of discrete skills yt or continuous zt, and freeze lower levels of the policy."
+METHOD,0.07168458781362007,We explain our method in detail in the following sections.
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.07526881720430108,"3.1
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA"
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.07885304659498207,"Our method employs the generative model in Figure 1a. As shown, the state inputs can be different
+for each level of the hierarchy, but to keep notation uncluttered, we refer to all state inputs as xt and
+the speciﬁc input can be inferred from context. The joint distribution of actions and latents over a
+trajectory is decomposed into a latent prior p(y0:T , z1:T ) and a low-level controller p(at | zt, xt):"
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.08243727598566308,"p(a1:T , y0:T , z1:T | x1:T )
+=
+p(y0:T , z1:T ) T
+Y"
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.08602150537634409,"t=1
+p(at | zt, xt)"
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.08960573476702509,"p(y0:T , z1:T )
+=
+p(y0) T
+Y"
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.0931899641577061,"t=1
+p(yt | yt−1)p(zt | yt).
+(1)"
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.0967741935483871,"Intuitively, the categorical variable yt can capture discrete modes of behaviour, and the continuous
+latent zt is conditioned on this to vary the execution of each behaviour. Thus, zt follows a mixture"
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.1003584229390681,Published as a conference paper at ICLR 2022
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.1039426523297491,"distribution, encoding all the relevant information on desired abstract behaviour for the low-level
+controller p(at | zt, xt). Since each categorical latent yt is dependent on yt−1, and zt is only depen-
+dent on yt, this prior can be thought of as a Hidden Markov model over the sequence of z1:T ."
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.10752688172043011,"To perform inference over the latent variables, we introduce the variational approximation:"
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.1111111111111111,"q(y0:T , z1:T | x1:T ) = p(y0) T
+Y"
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.11469534050179211,"t=1
+q(yt | yt−1, xt)q(zt | yt, xt)
+(2)"
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.11827956989247312,"Here, the selection of a skill yt ∼q(yt | yt−1, xt) is dependent on that of the previous timestep
+(allowing for temporal consistency), as well as the input. The mid-level skill is then parameterised
+by zt ∼q(zt | yt, xt) based on the chosen skill and current input. p(y0) and p(yt | yt−1) model a
+skill prior and skill transition prior respectively, while p(zt | yt) represents a skill parameterisation
+prior to regularise each mid-level skill. While all of these priors can be learned in practice, we only
+found it necessary to learn the transition prior, with a uniform categorical for the initial skill prior
+and a simple ﬁxed N(0, I) prior for p(zt | yt)."
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.12186379928315412,"Training via the Evidence Lower Bound
+The proposed model contains a number of components
+with trainable parameters: the prior parameters ψ = {ψa, ψy} for the low-level controller and
+categorical transition prior respectively; and posterior parameters φ = {φy, φz} for the high-level
+controller and mid-level skills. For a trajectory {x1:T , a1:T } ∼D, we can compute the Evidence
+Lower Bound for the state-conditional action distribution, ELBO ≤p(a1:T | x1:T ), as follows:"
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.12544802867383512,"ELBO = Eqφ(y0:T ,z1:T | x1:T )
+h
+log pψ(a1:T , y0:T , z1:T | x1:T ) −log qφ(y0:T , z1:T | x1:T )
+i ≈ T
+X t=1 "" X"
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.12903225806451613,"yt
+q(yt | x1:t)
+
+per-component action recon
+z
+}|
+{
+log pψa(at | ˜z{yt}
+t
+, xt) −βz"
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.13261648745519714,"per-component KL regulariser
+z
+}|
+{
+KL(qφz(zt | yt, xt) || p(zt | yt))
+# −βy T
+X t=1 "" X"
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.13620071684587814,"yt−1
+q(yt−1 | x1:t−1) KL
+ 
+qφy(yt | yt−1, xt) || pψy(yt | yt−1)
+"
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.13978494623655913,"|
+{z
+}
+categorical regulariser # (3)"
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.14336917562724014,"where ˜z{yt}
+t
+∼q(zt | yt, xt). The coefﬁcients βy and βz can be used to weight the KL terms,
+and the cumulative component probability q(yt | x1:t) can be computed iteratively as q(yt | x1:t) =
+P
+yt−1 qφy(yt | yt−1, xt)q(yt−1 | x1:t−1). In other words, for each timestep t and each mixture
+component, we compute the latent sample and the corresponding action log-probability, and the
+KL-divergence between the component posterior and prior. This is then marginalised over all yt,
+with an additional KL over the categorical transitions. For more details, see Appendix C."
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.14695340501792115,"Information-asymmetry
+As noted in previous work (Tirumala et al., 2019; Galashov et al., 2019),
+hierarchical approaches often beneﬁt from information-asymmetry, with higher levels seeing addi-
+tional context or task-speciﬁc information. This ensures that the high-level remains responsible for
+abstract, task-related behaviours, while the low-level executes simpler motor primitives. We employ
+similar techniques in HeLMS: the low-level inputs xLL comprise the proprioceptive state of the em-
+bodied agent; the mid-level inputs xML also include the poses of objects in the environment; and the
+high-level xHL concatenates both object and proprioceptive state for a short number of lookahead
+timesteps. The high- and low-level are similar to (Merel et al., 2019), with the low-level controller
+enabling motor primitives based on proprioceptive information, and the high-level using the looka-
+head information to provide additional context regarding behavioural intent when specifying which
+skill to use. The key difference is the categorical high-level and the additional mid-level, with which
+HeLMS can learn more object-centric skills and transfer these to downstream tasks."
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.15053763440860216,"Network architectures
+The architecture and information ﬂow in HeLMS are shown in Figure 1b.
+The high-level network contains a gated head, which uses the previous skill yt−1 to index into one of
+K categorical heads, each of which specify a distribution over yt. For a given yt, the corresponding
+mid-level skill network is selected and used to sample a latent action zt, which is then used as input
+for the latent-conditioned low-level controller, which parameterises the action distribution. The skill
+transition prior p(yt | yt−1) is also learned, and is parameterised as a linear softmax layer which
+takes in a one-hot representation of yt−1 and outputs the distribution over yt. All components are
+trained end-to-end via the objective in Equation 3."
+LATENT MIXTURE SKILL SPACES FROM OFFLINE DATA,0.15412186379928317,Published as a conference paper at ICLR 2022
+REINFORCEMENT LEARNING WITH RELOADED SKILLS,0.15770609318996415,"3.2
+REINFORCEMENT LEARNING WITH RELOADED SKILLS"
+REINFORCEMENT LEARNING WITH RELOADED SKILLS,0.16129032258064516,"Once learned, we propose two methods to transfer the hierarchical skill space to downstream tasks.
+Following previous work (e.g. (Merel et al., 2019; Singh et al., 2021)), we freeze the low-level
+controller p(at | zt, xt), and learn a policy for either the continuous (zt) or discrete (yt) latent."
+REINFORCEMENT LEARNING WITH RELOADED SKILLS,0.16487455197132617,"Categorical agent
+One simple and effective technique is to additionally freeze the mid-level com-
+ponents q(zt | yt, xt), and learn a categorical high-level controller π(yt | xt) for the downstream
+task. The learning objective is given by:"
+REINFORCEMENT LEARNING WITH RELOADED SKILLS,0.16845878136200718,"J = Eπ ""X"
+REINFORCEMENT LEARNING WITH RELOADED SKILLS,0.17204301075268819,"t
+γt (rt −ηyKL(π(yt | xt) || π0(yt | xt))) # ,
+(4)"
+REINFORCEMENT LEARNING WITH RELOADED SKILLS,0.17562724014336917,"where the standard discounted return objective in RL is augmented by an additional term performing
+KL-regularisation to some prior π0 scaled by coefﬁcient ηy. This could be any categorical distribu-
+tion such as the previously learned transition prior p(yt | yt−1), but in this paper we regularise to the
+uniform categorical prior to encourage diversity. While any RL algorithm could be used to optimize
+π(yt | xt), in this paper we use MPO (Abdolmaleki et al., 2018) with a categorical action distribu-
+tion (see Appendix B for details). We hypothesise that this method improves sample efﬁciency by
+converting a continuous control problem into a discrete abstract action space, which may also aid in
+credit assignment. However, since both the mid-level components and low-level are frozen, it can
+limit ﬂexibility and plasticity, and also requires that all of the mid- and low-level input states are
+available in the downstream task. We call this method HeLMS-cat."
+REINFORCEMENT LEARNING WITH RELOADED SKILLS,0.17921146953405018,"Mixture agent
+A more ﬂexible method of transfer is to train a latent mixture policy, π(zt | xt) =
+P"
+REINFORCEMENT LEARNING WITH RELOADED SKILLS,0.1827956989247312,"yt π(yt | xt)π(zt | yt, xt). In this case, the learning objective is given by:"
+REINFORCEMENT LEARNING WITH RELOADED SKILLS,0.1863799283154122,"J = Eπ ""X t
+γt"
+REINFORCEMENT LEARNING WITH RELOADED SKILLS,0.18996415770609318,"rt −ηyKL(π(yt | xt) || π0(yt | xt)) −ηz
+X"
+REINFORCEMENT LEARNING WITH RELOADED SKILLS,0.1935483870967742,"yt
+KL(π(zt | yt, xt) || π0(zt | yt, xt)) !# , (5)"
+REINFORCEMENT LEARNING WITH RELOADED SKILLS,0.1971326164874552,"where in addition to the categorical prior, we also regularise each mid-level skill to a corresponding
+prior π0(zt | yt, xt). While the priors could be any policies, we set them to be the skill posteri-
+ors q(zt | yt, xt) learned ofﬂine, to ensure the mixture components remain close to the pre-learned
+skills. This is related to (Tirumala et al., 2019), which also applies KL-regularisation at multiple
+levels of a hierarchy. While the high-level controller π(yt | xt) is learned from scratch, the mixture
+components can also be initialised to q(zt | yt, xt), to allow for initial exploration over the space
+of skills. Alternatively, the mixture components can use different inputs, such as vision: this setup
+allows vision-based skills to be learned efﬁciently by regularising to state-based skills learned of-
+ﬂine. We optimise this using RHPO (Wulfmeier et al., 2020), which employs a similar underlying
+optimisation to MPO for mixture policies (see Appendix B for details). We call this HeLMS-mix."
+EXPERIMENTS,0.2007168458781362,"4
+EXPERIMENTS"
+EXPERIMENTS,0.20430107526881722,"Our experiments focus on the following questions: (1) Can we learn a hierarchical latent mixture
+skill space of distinct, interpretable behaviours? (2) How do we best reuse this skill space to improve
+sample efﬁciency and performance on downstream tasks? (3) Can the learned skills transfer effec-
+tively to multiple downstream scenarios: (i) different objects; (ii) different tasks; and (iii) different
+modalities such as vision-based policies? (4) How exactly do these skills aid learning of downstream
+manipulation tasks? Do they aid exploration? Are they useful in sparse or dense reward scenarios?"
+EXPERIMENTAL SETUP,0.2078853046594982,"4.1
+EXPERIMENTAL SETUP"
+EXPERIMENTAL SETUP,0.2114695340501792,"Environment and Tasks
+We focus on manipulation tasks, using a MuJoCo-based environment
+with a single Sawyer arm, and three objects coloured red, green, and blue. We follow the challenging
+object stacking benchmark of Lee et al. (2021), which speciﬁes ﬁve object sets (Figure 2), carefully
+designed to have diverse geometries and present different challenges for a stacking agent. These
+range from simple rectangular objects (object set 4), to geometries such as slanted faces (sets 1
+and 2) that make grasping or stacking the objects more challenging. This environment allows us"
+EXPERIMENTAL SETUP,0.21505376344086022,Published as a conference paper at ICLR 2022
+EXPERIMENTAL SETUP,0.21863799283154123,"(a) Set 1
+(b) Set 2
+(c) Set 3
+(d) Set 4
+(e) Set 5"
+EXPERIMENTAL SETUP,0.2222222222222222,"Figure 2: The object sets (triplets) used for our experiments, introduced by (Lee et al., 2021)."
+EXPERIMENTAL SETUP,0.22580645161290322,"(a)
+(b)
+(c)"
+EXPERIMENTAL SETUP,0.22939068100358423,"Figure 3: (a) Image sequences showing example rollouts when ﬁxing the discrete skill (different for
+each row) and running the mid- and low-level controllers in the environment. Each skill executes
+a different behaviour, such as lifting (top row), reach-to-red (middle row), or grasping (bottom) (b)
+The learned skill transition prior p(yt | yt−1). (c) Histogram showing the use of different skills."
+EXPERIMENTAL SETUP,0.23297491039426524,"to systematically evaluate generalisation of manipulation behaviours for different tasks interacting
+with geometrically different objects. For further information, we refer the reader to Appendix D.1 or
+to (Lee et al., 2021). Details of the rewards for the different tasks are also provided in Appendix F."
+EXPERIMENTAL SETUP,0.23655913978494625,"Datasets
+To evaluate our approach and baselines in the manipulation settings, we use two datasets:"
+EXPERIMENTAL SETUP,0.24014336917562723,"• red_on_blue_stacking: this data is collected by an agent trained to stack the red
+object on the blue object and ignore the green one, for the simplest object set, set4.
+• all_pairs_stacking: similar to the previous case, but with all six pairwise stacking
+combinations of {red, green, blue}, and covering all of the ﬁve object sets."
+EXPERIMENTAL SETUP,0.24372759856630824,"Baselines
+For evaluation in transfer scenarios, we compare HeLMS with a number of baselines:"
+EXPERIMENTAL SETUP,0.24731182795698925,"• From scratch: We learn the task from scratch with MPO, without an ofﬂine learning phase.
+• NPMP+KL: We compare against NPMP (Merel et al., 2019), which is the most simi-
+lar skill-based approach in terms of information-asymmetry and policy conditioning. We
+make some small changes to the originally proposed method, and also apply additional
+KL-regularisation to the latent prior: we found this to improve performance signiﬁcantly
+in our experiments. For more details and an ablation, see Appendix A.2.
+• Behaviour Cloning (BC): We apply behaviour cloning to the dataset, and ﬁne-tune this
+policy via MPO on the downstream task. While the actor is initialised to the solution
+obtained via BC, the critic still needs to be learned from scratch.
+• Hierarchical BC: We evaluate a hierarchical variant of BC with a similar latent space z
+to NPMP using a latent Gaussian high-level controller. However, rather than freezing the
+low-level and learning just a high-level policy, Hierarchical BC ﬁne-tunes the entire model.
+• Asymmetric actor-critic: For state-to-vision transfer, HeLMS uses prior skills that depend
+on object states to learn a purely vision-based policy. Thus, we also compare against a
+variant of MPO with an asymmetric actor-critic (Pinto et al., 2017) setup, which uses object
+states differently: to speed up learning of the critic, while still learning a vision-based actor."
+LEARNING SKILLS FROM OFFLINE DATA,0.25089605734767023,"4.2
+LEARNING SKILLS FROM OFFLINE DATA"
+LEARNING SKILLS FROM OFFLINE DATA,0.25448028673835127,"We ﬁrst aim to understand whether we can learn a set of distinct and interpretable skills from data
+(question (1)). For this, we train HeLMS on the red_on_blue_stacking dataset with 5 skills."
+LEARNING SKILLS FROM OFFLINE DATA,0.25806451612903225,Published as a conference paper at ICLR 2022
+LEARNING SKILLS FROM OFFLINE DATA,0.2616487455197133,"(a) Set 1
+(b) Set 2
+(c) Set 3
+(d) Set 5"
+LEARNING SKILLS FROM OFFLINE DATA,0.26523297491039427,"Figure 4: Performance when transferring to the red-on-blue stacking task using staged sparse reward
+with every unseen object set."
+LEARNING SKILLS FROM OFFLINE DATA,0.26881720430107525,"(a)
+(b)"
+LEARNING SKILLS FROM OFFLINE DATA,0.2724014336917563,"Figure 5: (a) Performance on pyramid task; and (b)
+image sequence showing episode rollout from a learned
+solution on this task (left-to-right, top-to-bottom)."
+LEARNING SKILLS FROM OFFLINE DATA,0.27598566308243727,"Figure
+6:
+Performance
+for
+vision-based stacking."
+LEARNING SKILLS FROM OFFLINE DATA,0.27956989247311825,"Figure 3a shows some example episode rollouts when the learned hierarchical agent is executed in
+the environment, holding the high-level categorical skill constant for an episode. Each row rep-
+resents a different skill component, and the resulting behaviours are both distinct and diverse: for
+example, a lifting skill (row 1) where the gripper closes and rises up, a reaching skill (row 2) where
+the gripper moves to the red object, or a grasping skill (row 3) where the gripper lowers and closes its
+ﬁngers. Furthermore, without explicitly encouraging this, the emergent skills capture temporal con-
+sistency: Figure 3b shows the learned prior p(yt | yt−1) (visualised as a transition matrix) assigns
+high probability along the diagonal (remaining in the same skill). Finally, Figure 3c demonstrates
+that all skills are used, without degeneracy."
+TRANSFER TO DOWNSTREAM TASKS,0.2831541218637993,"4.3
+TRANSFER TO DOWNSTREAM TASKS"
+TRANSFER TO DOWNSTREAM TASKS,0.2867383512544803,"Generalising to different objects
+We next evaluate whether the previously learned skills (i.e.
+trained on the simple objects in set 4) can effectively transfer to more challenging object interaction
+scenarios: the other four object sets proposed by (Lee et al., 2021). The task uses a sparse staged
+reward, with reward incrementally given after completing each sub-goal of the stacking task. As
+shown in Figure 4, both variants of HeLMS learn signiﬁcantly faster than baselines on the different
+object sets. Compared to the strongest baseline (NPMP), HeLMS reaches better average asymptotic
+performance (and much lower variance) on two object sets (1 and 3), performs similarly on set 5,
+and does poorer on object set 2. The performance on object set 2 potentially highlights a trade-off
+between incorporating higher-level abstract behaviours and maintaining low-level ﬂexibility: this
+object set often requires a reorientation of the bottom object due to its slanted faces, a behaviour that
+is not common in the ofﬂine dataset, which might require greater adaptation of mid- and low-level
+skills. This is an interesting investigation we leave for future work."
+TRANSFER TO DOWNSTREAM TASKS,0.2903225806451613,"Compositional reuse of skills
+To evaluate whether the learned skills are composable for new
+tasks, we train HeLMS on the all_pairs_stacking dataset with 10 skills, and transfer to a
+pyramid task. In this setting, the agent has to place the red object adjacent to the green object, and
+stack the blue object on top to construct a pyramid. The task is speciﬁed via a sparse staged reward"
+TRANSFER TO DOWNSTREAM TASKS,0.2939068100358423,Published as a conference paper at ICLR 2022
+TRANSFER TO DOWNSTREAM TASKS,0.2974910394265233,"(a) Dense reward
+(b) Sparse staged reward
+(c) Sparse reward"
+TRANSFER TO DOWNSTREAM TASKS,0.3010752688172043,"Figure 7: Transfer performance on a stacking task with different reward sparsities. Left: dense
+reward, Centre: staged sparse reward, Right: sparse reward"
+TRANSFER TO DOWNSTREAM TASKS,0.3046594982078853,"for each stage or sub-task: reaching, grasping, lifting, and placing the red object, and subsequently
+the blue object. In Figure 5(a), we plot the performance of both variants of our approach, as well as
+NPMP and MPO; we omit the BC baselines as this involves transferring to a fundamentally different
+task. Both HeLMS-mix and HeLMS-cat reach a higher asymptotic performance than both NPMP
+and MPO, indicating that the learned skills can be better transferred to a different task. We show an
+episode rollout in Figure 5(b) in which the learned agent can successfully solve the task."
+TRANSFER TO DOWNSTREAM TASKS,0.30824372759856633,"From state to vision-based policies
+While our method learns skills from proprioception and ob-
+ject state, we evaluate whether these skills can be used to more efﬁciently learn a vision-based policy.
+This is invaluable for practical real-world scenarios, since the agent acts from pure visual observa-
+tion at test time without requiring privileged and often difﬁcult-to-obtain object state information."
+TRANSFER TO DOWNSTREAM TASKS,0.3118279569892473,"We use the HeLMS-mix variant to transfer skills to a vision-based policy, by reusing the low-level
+controller, initialising a new high-level controller and mid-level latent skills (with vision and pro-
+prioception as input), and KL-regularising these to the previously learned state-based skills. While
+the learned policy is vision-based, this KL-regularisation still assumes access to object states during
+training. For a fair comparison, we additionally compare our approach with a version of MPO using
+an asymmetric critic (Pinto et al., 2017), which exploits object state information instead of vision in
+the critic, and also use this for HeLMS. As shown in Figure 6, learning a vision-based policy with
+MPO from scratch is very slow and computationally intensive, but an asymmetric critic signiﬁcantly
+speeds up learning, supporting the empirical ﬁndings of Pinto et al. (2017). However, HeLMS once
+again demonstrates better sample efﬁciency, and reaches slightly better asymptotic performance. We
+note that this uses the same ofﬂine model as for the object generalisation experiments, showing that
+the same state-based skill space can be reused in numerous settings, even for vision-based tasks."
+TRANSFER TO DOWNSTREAM TASKS,0.3154121863799283,"4.4
+WHERE AND HOW CAN HIERARCHICAL SKILL REUSE BE EFFECTIVE?"
+TRANSFER TO DOWNSTREAM TASKS,0.31899641577060933,"Sparse reward tasks
+We ﬁrst investigate how HeLMS performs for different rewards: a dense
+shaped reward, the sparse staged reward from the object generalisation experiments, and a fully
+sparse reward that is only provided after the agent stacks the object. For this experiment, we use the
+skill space trained on red_on_blue_stacking and transfer it to the same RL task of stacking
+on object set 4. The results are shown in Figure 7. With a dense reward (and no object transfer
+required), all of the approaches can successfully learn the task. With the sparse staged reward, the
+baselines all plateau at a lower performance, with the exception of NPMP, as previously discussed.
+However, for the challenging fully-sparse scenario, HeLMS is the only method that achieves non-
+zero reward. This neatly illustrates the beneﬁt of the proposed hierarchy of skills: it allows for
+directed exploration which ensures that even sparse rewards can be encountered. This is consistent
+with observations from prior work in hierarchical reinforcement learning (Florensa et al., 2017;
+Nachum et al., 2019), and we next investigate this claim in more depth for our manipulation setting."
+TRANSFER TO DOWNSTREAM TASKS,0.3225806451612903,"Exploration
+To measure whether the proposed approach leads to more directed exploration, we
+record the average coverage in state space at the start of RL (i.e. zero-shot transfer). This is com-
+puted as the variance (over an episode) of the state xt, separated into three interpretable groups:"
+TRANSFER TO DOWNSTREAM TASKS,0.32616487455197135,Published as a conference paper at ICLR 2022
+TRANSFER TO DOWNSTREAM TASKS,0.32974910394265233,"Method
+Reward
+State coverage (×10−2)
+Dense
+Staged
+Joints
+Grasp
+Objects
+MPO
+3.16
+0.0
+8.72
+0.004
+1.21
+NPMP
+3.67
+0.0
+3.43
+0.0
+1.45
+BC
+31.68
+0.004
+4.22
+0.05
+1.52
+Hier. BC
+16.42
+0.004
+2.61
+0.04
+1.31
+HeLMS
+20.46
+0.05
+2.98
+1.10
+1.61"
+TRANSFER TO DOWNSTREAM TASKS,0.3333333333333333,"Table 1: Analysis of zero-shot exploration at the start
+of RL, in terms of reward and state coverage (vari-
+ance over an episode of different subsets of the agent’s
+state). Results are averaged over 1000 episodes."
+TRANSFER TO DOWNSTREAM TASKS,0.33691756272401435,"(a)
+(b)"
+TRANSFER TO DOWNSTREAM TASKS,0.34050179211469533,"Figure 8: Ablation for continuous and dis-
+crete components during ofﬂine learning,
+when transferring to the (a) easy case (ob-
+ject set 4) and (b) hard case (object set 3)."
+TRANSFER TO DOWNSTREAM TASKS,0.34408602150537637,"joints (angles and velocity), grasp (a simulated grasp sensor), and object poses. We also record the
+total reward (dense and sparse staged). The results are reported in Table 1. While all approaches
+achieve some zero-shot dense reward (with BC the most effective), HeLMS1 receives a sparse staged
+reward an order of magnitude greater. Further, in this experiment we found it was able to achieve
+the fully sparse reward (stacked) in one episode. Analysing the state coverage results, while other
+methods are able to cover the joint space more (e.g. by randomly moving the joints), HeLMS is
+nearly two orders of magnitude higher for grasp states. This indicates the utility of hierarchical
+skills: by acting over the space of abstract skills rather than low-level actions, HeLMS performs
+directed exploration and targets particular states of interest, such as grasping an object."
+ABLATION STUDIES,0.34767025089605735,"4.5
+ABLATION STUDIES"
+ABLATION STUDIES,0.35125448028673834,"Capturing continuous and discrete structure
+To evaluate the beneﬁt of both continuous and dis-
+crete components, we train our method with a ﬁxed variance of zero for each latent component (i.e.
+‘discrete-only’) and transfer to the stacking task with sparse staged reward in an easy case (object set
+4) and hard case (object set 3), as shown in Figure 8(a) and (b). We also evaluate the ‘continuous-
+only’ case with just a single Gaussian to represent the high- and mid-level skills: this is equivalent
+to the NPMP+KL baseline. We observe the the discrete component alone leads to improved sam-
+ple efﬁciency in both cases, but modelling both discrete and continuous latent behaviours makes a
+signiﬁcant difference in the hard case. In other words, when adapting to challenging objects, it is
+important to capture discrete skills, but allow for latent variation in how they are executed."
+ABLATION STUDIES,0.3548387096774194,"KL-regularisation
+We also perform an ablation for KL-regularisation during the ofﬂine phase
+(via βz) and online RL (via ηz), to gauge the impact on transfer; see Appendix A.1 for details."
+CONCLUSION,0.35842293906810035,"5
+CONCLUSION"
+CONCLUSION,0.36200716845878134,"We present HeLMS, an approach to learn transferable and reusable skills from ofﬂine data using a
+hierarchical mixture latent variable model. We analyse the learned skills to show that they effectively
+cluster data into distinct, interpretable behaviours. We demonstrate that the learned skills can be
+ﬂexibly transferred to different tasks, unseen objects, and to different modalities (such as from state
+to vision). Ablation studies indicate that it is beneﬁcial to model both discrete modes and continuous
+variation in behaviour, and highlight the importance of KL-regularisation when transferring to RL
+and ﬁne-tuning the entire mixture of skills. We also perform extensive analysis to understand where
+and how the proposed skill hierarchy can be most useful: we ﬁnd that it is particularly invaluable in
+sparse reward settings due to its ability to perform directed exploration."
+CONCLUSION,0.3655913978494624,"There are a number of interesting avenues for future work. While our model demonstrated temporal
+consistency, it would be useful to more actively encourage and exploit this for sample-efﬁcient
+transfer. It would also be useful to extend this work to better ﬁne-tune lower level behaviours, to
+allow for ﬂexibility while exploiting high-level behavioural abstractions."
+CONCLUSION,0.36917562724014336,"1Note that HeLMS-cat and HeLMS-mix are identical for this analysis: at the start of reinforcement learning,
+both variants transfer the mid-level skills while initialising a new high-level controller."
+CONCLUSION,0.3727598566308244,Published as a conference paper at ICLR 2022
+CONCLUSION,0.3763440860215054,ACKNOWLEDGMENTS
+CONCLUSION,0.37992831541218636,"The authors would like to thank Coline Devin for detailed comments on the paper and for generating
+the all_pairs_stacking dataset. We would also like to thank Alex X. Lee and Konstantinos
+Bousmalis for help with setting up manipulation experiments. We are also grateful to reviewers for
+their feedback."
+REFERENCES,0.3835125448028674,REFERENCES
+REFERENCES,0.3870967741935484,"Abbas Abdolmaleki, Jost Tobias Springenberg, Yuval Tassa, Remi Munos, Nicolas Heess, and Mar-
+tin Riedmiller. Maximum a posteriori policy optimisation. In International Conference on Learn-
+ing Representations, 2018."
+REFERENCES,0.3906810035842294,"Anurag Ajay, Aviral Kumar, Pulkit Agrawal, Sergey Levine, and Oﬁr Nachum. OPAL: Ofﬂine
+primitive discovery for accelerating ofﬂine reinforcement learning. In International Conference
+on Learning Representations, 2021."
+REFERENCES,0.3942652329749104,"Pierre-Luc Bacon, Jean Harb, and Doina Precup. The option-critic architecture. In Proceedings of
+the AAAI Conference on Artiﬁcial Intelligence, volume 31, 2017."
+REFERENCES,0.3978494623655914,"Adri`a Colom´e and Carme Torras. Dimensionality reduction in learning gaussian mixture models
+of movement primitives for contextualized action selection and adaptation. IEEE Robotics and
+Automation Letters, 3(4):3922–3929, 2018."
+REFERENCES,0.4014336917562724,"Murtaza Dalal, Deepak Pathak, and Ruslan Salakhutdinov.
+Accelerating robotic reinforcement
+learning via parameterized action primitives. In Thirty-Fifth Conference on Neural Information
+Processing Systems, 2021."
+REFERENCES,0.4050179211469534,"Christian Daniel, Gerhard Neumann, and Jan Peters. Hierarchical relative entropy policy search. In
+Artiﬁcial Intelligence and Statistics, pp. 273–281. PMLR, 2012."
+REFERENCES,0.40860215053763443,"Benjamin Eysenbach, Abhishek Gupta, Julian Ibarz, and Sergey Levine. Diversity is all you need:
+Learning skills without a reward function. In International Conference on Learning Representa-
+tions (ICLR), 2019."
+REFERENCES,0.4121863799283154,"Carlos Florensa, Yan Duan, and Pieter Abbeel. Stochastic neural networks for hierarchical rein-
+forcement learning. arXiv preprint arXiv:1704.03012, 2017."
+REFERENCES,0.4157706093189964,"Alexandre Galashov, Siddhant Jayakumar, Leonard Hasenclever, Dhruva Tirumala, Jonathan
+Schwarz, Guillaume Desjardins, Wojtek M Czarnecki, Yee Whye Teh, Razvan Pascanu, and
+Nicolas Heess. Information asymmetry in KL-regularized RL. In International Conference on
+Learning Representations, 2019."
+REFERENCES,0.41935483870967744,"Anirudh Goyal, Shagun Sodhani, Jonathan Binas, Xue Bin Peng, Sergey Levine, and Yoshua Ben-
+gio. Reinforcement learning with competitive ensembles of information-constrained primitives.
+In International Conference on Learning Representations, 2019."
+REFERENCES,0.4229390681003584,"Karol Gregor, Danilo Jimenez Rezende, and Daan Wierstra. Variational intrinsic control. In Inter-
+national Conference on Learning Representations, 2017."
+REFERENCES,0.4265232974910394,"Tuomas Haarnoja, Kristian Hartikainen, Pieter Abbeel, and Sergey Levine. Latent space policies
+for hierarchical reinforcement learning. In International Conference on Machine Learning, pp.
+1851–1860, 2018."
+REFERENCES,0.43010752688172044,"Karol Hausman, Jost Tobias Springenberg, Ziyu Wang, Nicolas Heess, and Martin Riedmiller.
+Learning an embedding space for transferable robot skills. In International Conference on Learn-
+ing Representations (ICLR), 2018."
+REFERENCES,0.4336917562724014,"Nicolas Heess, Greg Wayne, Yuval Tassa, Timothy Lillicrap, Martin Riedmiller, and David Silver.
+Learning and transfer of modulated locomotor controllers. arXiv preprint arXiv:1610. 05182,
+2016."
+REFERENCES,0.43727598566308246,"Stephen James, Michael Bloesch, and Andrew J Davison. Task-Embedded control networks for
+Few-Shot imitation learning. In Conference on Robot Learning (CoRL), 2018."
+REFERENCES,0.44086021505376344,Published as a conference paper at ICLR 2022
+REFERENCES,0.4444444444444444,"Thomas Kipf, Yujia Li, Hanjun Dai, Vinicius Zambaldi, Alvaro Sanchez-Gonzalez, Edward Grefen-
+stette, Pushmeet Kohli, and Peter Battaglia.
+Compile: Compositional imitation learning and
+execution. In International Conference on Machine Learning, pp. 3418–3428. PMLR, 2019."
+REFERENCES,0.44802867383512546,"Bj¨orn Kr¨uger, Anna V¨ogele, Tobias Willig, Angela Yao, Reinhard Klein, and Andreas Weber. Efﬁ-
+cient unsupervised temporal segmentation of motion data. IEEE Transactions on Multimedia, 19
+(4):797–812, 2016."
+REFERENCES,0.45161290322580644,"Aviral Kumar, Aurick Zhou, George Tucker, and Sergey Levine. Conservative q-learning for ofﬂine
+reinforcement learning. arXiv preprint arXiv:2006.04779, 2020."
+REFERENCES,0.4551971326164875,"Alex X. Lee, Coline Manon Devin, Yuxiang Zhou, Thomas Lampe, Jost Tobias Springenberg, Kon-
+stantinos Bousmalis, Arunkumar Byravan, Abbas Abdolmaleki, Nimrod Gileadi, David Khosid,
+Claudio Fantacci, Jose Enrique Chen, Akhil Raju, Rae Jeong, Michael Neunert, Antoine Laurens,
+Stefano Saliceti, Federico Casarini, Martin Riedmiller, Raia Hadsell, and Francesco Nori. Beyond
+pick-and-place: Tackling robotic stacking of diverse shapes. In 5th Annual Conference on Robot
+Learning, 2021."
+REFERENCES,0.45878136200716846,"Rudolf Lioutikov, Gerhard Neumann, Guilherme Maeda, and Jan Peters. Probabilistic segmentation
+applied to an assembly task. In 2015 IEEE-RAS 15th International Conference on Humanoid
+Robots (Humanoids), pp. 533–540. IEEE, 2015."
+REFERENCES,0.46236559139784944,"Rudolf Lioutikov, Gerhard Neumann, Guilherme Maeda, and Jan Peters. Learning movement primi-
+tive libraries through probabilistic segmentation. The International Journal of Robotics Research,
+36(8):879–894, 2017."
+REFERENCES,0.4659498207885305,"Corey Lynch, Mohi Khansari, Ted Xiao, Vikash Kumar, Jonathan Tompson, Sergey Levine, and
+Pierre Sermanet. Learning latent plans from play. In Conference on Robot Learning (CoRL),
+2019."
+REFERENCES,0.46953405017921146,"Josh Merel, Leonard Hasenclever, Alexandre Galashov, Arun Ahuja, Vu Pham, Greg Wayne,
+Yee Whye Teh, and Nicolas Heess. Neural probabilistic motor primitives for humanoid control.
+In International Conference on Learning Representations (ICLR), 2019."
+REFERENCES,0.4731182795698925,"Josh Merel, Saran Tunyasuvunakool, Arun Ahuja, Yuval Tassa, Leonard Hasenclever, Vu Pham,
+Tom Erez, Greg Wayne, and Nicolas Heess. Catch & carry: Reusable neural controllers for
+vision-guided Whole-Body tasks. In SIGGRAPH 2020, 2020."
+REFERENCES,0.4767025089605735,"Katharina Muelling, Jens Kober, and Jan Peters. Learning table tennis with a mixture of motor
+primitives. In 2010 10th IEEE-RAS International Conference on Humanoid Robots, pp. 411–416.
+IEEE, 2010."
+REFERENCES,0.48028673835125446,"Katharina M¨ulling, Jens Kober, Oliver Kroemer, and Jan Peters. Learning to select and generalize
+striking movements in robot table tennis. The International Journal of Robotics Research, 32(3):
+263–279, 2013."
+REFERENCES,0.4838709677419355,"Oﬁr Nachum, Shixiang Gu, Honglak Lee, and Sergey Levine. Data-efﬁcient hierarchical reinforce-
+ment learning. In NeurIPS, 2018."
+REFERENCES,0.4874551971326165,"Oﬁr Nachum, Haoran Tang, Xingyu Lu, Shixiang Gu, Honglak Lee, and Sergey Levine. Why does
+hierarchy (sometimes) work so well in reinforcement learning? arXiv preprint arXiv:1909.10618,
+2019."
+REFERENCES,0.4910394265232975,"Scott Niekum and Andrew G Barto. Clustering via dirichlet process mixture models for portable
+skill discovery. In Workshops at the Twenty-Fifth AAAI Conference on Artiﬁcial Intelligence,
+2011."
+REFERENCES,0.4946236559139785,"Alexandros Paraschos, Christian Daniel, Jan Peters, and Gerhard Neumann. Using probabilistic
+movement primitives in robotics. Autonomous Robots, 42(3):529–551, 2018."
+REFERENCES,0.4982078853046595,"Karl Pertsch, Youngwoon Lee, and Joseph J Lim. Accelerating reinforcement learning with learned
+skill priors. arXiv preprint arXiv:2010.11944, 2020a."
+REFERENCES,0.5017921146953405,Published as a conference paper at ICLR 2022
+REFERENCES,0.5053763440860215,"Karl Pertsch, Oleh Rybkin, Frederik Ebert, Shenghao Zhou, Dinesh Jayaraman, Chelsea Finn, and
+Sergey Levine. Long-horizon visual planning with goal-conditioned hierarchical predictors. Ad-
+vances in Neural Information Processing Systems, 33, 2020b."
+REFERENCES,0.5089605734767025,"Karl Pertsch, Youngwoon Lee, Yue Wu, and Joseph J Lim. Demonstration-Guided reinforcement
+learning with learned skills. July 2021."
+REFERENCES,0.5125448028673835,"Affan Pervez and Dongheui Lee. Learning task-parameterized dynamic movement primitives using
+mixture of gmms. Intelligent Service Robotics, 11(1):61–78, 2018."
+REFERENCES,0.5161290322580645,"Lerrel Pinto, Marcin Andrychowicz, Peter Welinder, Wojciech Zaremba, and Pieter Abbeel. Asym-
+metric actor critic for image-based robot learning. arXiv preprint arXiv:1710.06542, 2017."
+REFERENCES,0.5197132616487455,"Aravind Rajeswaran, Vikash Kumar, Abhishek Gupta, Giulia Vezzani, John Schulman, Emanuel
+Todorov, and Sergey Levine. Learning complex dexterous manipulation with deep reinforcement
+learning and demonstrations.
+In Robotics: Science and Systems XIV. Robotics: Science and
+Systems Foundation, June 2018."
+REFERENCES,0.5232974910394266,"Pravesh Ranchod, Benjamin Rosman, and George Konidaris. Nonparametric bayesian reward seg-
+mentation for skill discovery using inverse reinforcement learning. In 2015 IEEE/RSJ Interna-
+tional Conference on Intelligent Robots and Systems (IROS), pp. 471–477. IEEE, 2015."
+REFERENCES,0.5268817204301075,"Martin Riedmiller, Roland Hafner, Thomas Lampe, Michael Neunert, Jonas Degrave, Tom van de
+Wiele, Vlad Mnih, Nicolas Heess, and Jost Tobias Springenberg. Learning by playing solving
+sparse reward tasks from scratch. In Proceedings of the 35th International Conference on Machine
+Learning, pp. 4344–4353, 2018."
+REFERENCES,0.5304659498207885,"Elmar Rueckert, Jan Mundo, Alexandros Paraschos, Jan Peters, and Gerhard Neumann. Extracting
+low-dimensional control variables for movement primitives. In 2015 IEEE International Confer-
+ence on Robotics and Automation (ICRA), pp. 1511–1518. IEEE, 2015."
+REFERENCES,0.5340501792114696,"Archit Sharma, Shixiang Gu, Sergey Levine, Vikash Kumar, and Karol Hausman. Dynamics-aware
+unsupervised discovery of skills. arXiv preprint arXiv:1907. 01657, 2019."
+REFERENCES,0.5376344086021505,"Kyriacos Shiarlis, Markus Wulfmeier, Sasha Salter, Shimon Whiteson, and Ingmar Posner. Taco:
+Learning task decomposition via temporal alignment for control. In International Conference on
+Machine Learning, pp. 4654–4663. PMLR, 2018."
+REFERENCES,0.5412186379928315,"Avi Singh, Huihan Liu, Gaoyue Zhou, Albert Yu, Nicholas Rhinehart, and Sergey Levine. Par-
+rot: Data-Driven behavioral priors for reinforcement learning. In International Conference on
+Learning Representations, 2021."
+REFERENCES,0.5448028673835126,"Robin A M Strudel, Alexander Pashevich, Igor Kalevatykh, Ivan Laptev, Josef Sivic, and Cordelia
+Schmid. Learning to combine primitive skills: A step towards versatile robotic manipulation. In
+International Conference on Robotics and Automation (ICRA), 2020."
+REFERENCES,0.5483870967741935,"Richard S Sutton, Doina Precup, and Satinder Singh. Between mdps and semi-mdps: A frame-
+work for temporal abstraction in reinforcement learning. Artiﬁcial intelligence, 112(1-2):181–
+211, 1999."
+REFERENCES,0.5519713261648745,"Daniel Tanneberg, Kai Ploeger, Elmar Rueckert, and Jan Peters. Skid raw: Skill discovery from raw
+trajectories. IEEE Robotics and Automation Letters, 6(3):4696–4703, 2021."
+REFERENCES,0.5555555555555556,"D Tirumala, H Noh, A Galashov, L Hasenclever, and others. Exploiting hierarchy for learning and
+transfer in kl-regularized rl. arXiv preprint arXiv, 2019."
+REFERENCES,0.5591397849462365,"Samuele Tosatto, Georgia Chalvatzaki, and Jan Peters.
+Contextual latent-movements off-policy
+optimization for robotic manipulation skills. In 2021 IEEE International Conference on Robotics
+and Automation (ICRA), pp. 10815–10821. IEEE, 2021."
+REFERENCES,0.5627240143369175,"Ziyu Wang, Alexander Novikov, Konrad Zolna, Josh S Merel, Jost Tobias Springenberg, Scott E
+Reed, Bobak Shahriari, Noah Siegel, Caglar Gulcehre, Nicolas Heess, et al. Critic regularized
+regression. Advances in Neural Information Processing Systems, 33, 2020."
+REFERENCES,0.5663082437275986,Published as a conference paper at ICLR 2022
+REFERENCES,0.5698924731182796,"Yifan Wu, George Tucker, and Oﬁr Nachum. Behavior regularized ofﬂine reinforcement learning.
+arXiv preprint arXiv:1911.11361, 2019."
+REFERENCES,0.5734767025089605,"Markus Wulfmeier, Abbas Abdolmaleki, Roland Hafner, Jost Tobias Springenberg, Michael Ne-
+unert, Tim Hertweck, Thomas Lampe, Noah Siegel, Nicolas Heess, and Martin A Riedmiller.
+Compositional transfer in hierarchical reinforcement learning. In Robotics: Science and Systems,
+2020."
+REFERENCES,0.5770609318996416,"Markus Wulfmeier, Dushyant Rao, Roland Hafner, Thomas Lampe, Abbas Abdolmaleki, Tim Her-
+tweck, Michael Neunert, Dhruva Tirumala, Noah Siegel, Nicolas Heess, et al. Data-efﬁcient hind-
+sight off-policy option learning. In International Conference on Machine Learning, pp. 11340–
+11350. PMLR, 2021."
+REFERENCES,0.5806451612903226,"Jesse Zhang, Haonan Yu, and Wei Xu. Hierarchical reinforcement learning by discovering intrinsic
+options. In International Conference on Learning Representations, 2020."
+REFERENCES,0.5842293906810035,Published as a conference paper at ICLR 2022
+REFERENCES,0.5878136200716846,APPENDIX
+REFERENCES,0.5913978494623656,"A
+ADDITIONAL EXPERIMENTS"
+REFERENCES,0.5949820788530465,"A.1
+ABLATIONS FOR KL-REGULARISATION"
+REFERENCES,0.5985663082437276,"In these experiments, we investigate the effect of KL-regularisation on the mid-level components,
+both for the ofﬂine learning phase (regularising each component to p(zt | yt) = N(0, I) via coefﬁ-
+cient βz), and the online reinforcement learning stage via HeLMS-mix (regularising each component
+to the mid-level skills learned ofﬂine, via coefﬁcient ηz)). The results are reported in Figure 9, where
+each plot represents a different setting for ofﬂine KL-regularisation (either regularisation to N(0, I)
+with βz = 0.01, or no regularisation with βz = 0) and a different transfer case (the easy case of
+transferring to object set 4, or the hard case of transferring to object set 3). Each plot shows the
+downstream performance when varying the strength of KL-regularisation during RL via coefﬁcient
+ηz. The HeLMS-cat approach represents the extreme case where the skills are entirely frozen (i.e.
+full regularisation)."
+REFERENCES,0.6021505376344086,"The results suggest some interesting properties of the latent skill space based on regularisation.
+When regularising the mid-level components to the N(0, I) prior, it is important to regularise dur-
+ing online RL; this is especially true for the hard transfer case, where HeLMS-cat performs much
+better, and the performance degrades signiﬁcantly with lower regularisation values. However, when
+removing mid-level regularisation during ofﬂine learning, the method is insensitive to regularisation
+during RL over the entire range evaluated, from 0.01 to 100.0. We conjecture that with mid-level
+skills regularised to N(0, I), the different mid-level skills are drawn closer together and occupy a
+more compact region in latent space, such that KL-regularisation is necessary during RL for a skill
+to avoid drifting and overlapping with the latent distribution of other skills (i.e. skill degeneracy). In
+contrast, without ofﬂine KL-regularisation, the skills are free to expand and occupy more distant re-
+gions of the latent space, rendering further regularisation unnecessary during RL. Such latent space
+properties could be further analysed to improve learning and transfer of skills; we leave this as an
+interesting direction for future work."
+REFERENCES,0.6057347670250897,"(a) βz = 0.01, easy
+(b) βz = 0.01, hard
+(c) βz = 0, easy
+(d) βz = 0, hard"
+REFERENCES,0.6093189964157706,"Figure 9: Ablations for KL-regularisation, showing downstream performance with different degrees
+of online KL-regularisation. Performance is evaluated for easy (object set 4) and hard (object set
+3) transfer cases, with sparse staged rewards; when using different ofﬂine regularisation coefﬁcient
+(βz) values for the mid-level components."
+REFERENCES,0.6129032258064516,"A.2
+NPMP ABLATION"
+REFERENCES,0.6164874551971327,"The Neural Probabilistic Motor Primitives (NPMP) work (Merel et al., 2019) presents a strong base-
+line approach to learning transferable motor behaviours, and we run ablations to ensure a fair com-
+parison to the strongest possible result. As discussed in the main text, NPMP employs a Gaussian
+high-level latent encoder with a AR(1) prior in the latent space. We also try a ﬁxed N(0, I) prior
+(this is equivalent to an AR(1) prior with a coefﬁcient of 0, so can be considered a hyperparameter
+choice). Since our method beneﬁts from KL-regularisation during RL, we apply this to NPMP as
+well."
+REFERENCES,0.6200716845878136,Published as a conference paper at ICLR 2022
+REFERENCES,0.6236559139784946,"As shown in Figure 10, we ﬁnd that both changes lead to substantial improvements in the manipu-
+lation domain, on all ﬁve object sets. Consequently, in our main experiments, we report results with
+the best variant, using a N(0, I) prior with KL-regularisation during RL."
+REFERENCES,0.6272401433691757,"(a) Object set 1
+(b) Object set 2
+(c) Object set 3"
+REFERENCES,0.6308243727598566,"(d) Object set 4
+(e) Object set 5"
+REFERENCES,0.6344086021505376,"Figure 10: Ablation for NPMP (Merel et al., 2019) using staged sparse reward, with all object sets.
+We ﬁnd that using N(0, I) prior with KL-regularisation performs much better in the manipulation
+domain compared to the original AR(1) prior, so we use this modiﬁed baseline."
+REFERENCES,0.6379928315412187,"B
+REINFORCEMENT LEARNING WITH MPO AND RHPO"
+REFERENCES,0.6415770609318996,"As discussed in Section 3.2, the hierarchy of skills are transferred to RL in two ways: HeLMS-
+cat, which learns a new high-level categorical policy π(yt | xt) via MPO (Abdolmaleki et al.,
+2018); or HeLMS-mix, which learns a mixture policy π(zt | xt) = P"
+REFERENCES,0.6451612903225806,"yt π(yt | xt)π(zt | yt, xt) via
+RHPO (Wulfmeier et al., 2020). We describe the optimisation for both of these cases in the follow-
+ing subsections. For clarity of notation, we omit the additional KL-regularisation terms introduced
+in Section 3.2 and describe just the base methods of MPO and RHPO when applied to the RL setting
+in this paper. These KL-terms are incorporated as additional loss terms in the policy improvement
+stage."
+REFERENCES,0.6487455197132617,"B.1
+HELMS-CAT VIA MPO"
+REFERENCES,0.6523297491039427,"Maximum a posteriori Policy Optimisation (MPO) is an Expectation-Maximisation-based algorithm
+that performs off-policy updates in three steps: (1) updating the critic; (2) creating a non-parametric
+intermediate policy by weighting sampled actions using the critic; and (3) updating the parametric
+policy to ﬁt the critic-reweighted non-parametric policy, with trust region constraints to improve
+stability. We detail each of these steps below. Note that while the original MPO operates in the
+environment’s action space, we use it here for the high-level controller, to set the categorical variable
+yt."
+REFERENCES,0.6559139784946236,"Policy evaluation
+First, the critic is updated via a TD(0) objective as:"
+REFERENCES,0.6594982078853047,"min
+θ
+L(θ) = Ext,yt∼B
+h 
+QT −Qφ(xt, yt))2i
+,
+(6)"
+REFERENCES,0.6630824372759857,"Here, QT
+= rt + γExt+1,yt+1[Q′(st+1, yt+1)] is the 1-step target with the state transition
+(xt, yt, xt+1) returned from the replay buffer B, and next action sampled from yt+1 ∼π′(·|xt+1).
+π′ and Q′ are target networks for the policy and the critic, used to stabilise learning."
+REFERENCES,0.6666666666666666,Published as a conference paper at ICLR 2022
+REFERENCES,0.6702508960573477,"Policy improvement
+Next, we proceed with the ﬁrst step of policy improvement by constructing
+an intermediate non-parametric policy q(yt|xt), and optimising the following constrained objective:"
+REFERENCES,0.6738351254480287,"max
+q
+J(q) = Eyt∼q,xt∼B
+
+Qφ(xt, yt)
+
+, s.t. Ext∼B
+h
+KL
+ 
+q(·|xt)∥πθk(·|xt)
+i
+≤ϵE,
+(7)"
+REFERENCES,0.6774193548387096,"where ϵE deﬁnes a bound on the KL divergence between the non-parametric and parametric policies
+at the current learning step k. This constrained optimisation problem has the following closed-form
+solution:"
+REFERENCES,0.6810035842293907,"q(yt | xt) ∝πθk(yt | xt) exp (Qφ(xt, yt)/η) .
+(8)"
+REFERENCES,0.6845878136200717,"In other words, this step constructs an intermediate policy which reweights samples from the pre-
+vious policy using exponentiated temperature-scaled critic values. The temperature parameter η is
+derived based on the dual of the Lagrangian; for futher details please refer to (Abdolmaleki et al.,
+2018)."
+REFERENCES,0.6881720430107527,"Finally, we can ﬁt a parametric policy to the non-parametric distribution q(yt | xt) by minimising
+their KL-divergence, subject to a trust-region constraint on the parametric policy:"
+REFERENCES,0.6917562724014337,"θk+1 = arg min
+θ
+Ext∼B
+h
+KL(q(yt | xt) || πθ(yt|xt))
+i
+,"
+REFERENCES,0.6953405017921147,"s.t. Ext∼B
+h
+KL
+ 
+πθk+1(yt | xt) || πθk(yt | xt)
+i
+≤ϵM.
+(9)"
+REFERENCES,0.6989247311827957,"This optimisation problem can be solved via Lagrangian relaxation, with the Lagrangian multiplier
+ϵM modulating the strength of the trust-region constraint. For further details and full derivations,
+please refer to (Abdolmaleki et al., 2018)."
+REFERENCES,0.7025089605734767,"B.2
+HELMS-MIX VIA RHPO"
+REFERENCES,0.7060931899641577,"RHPO (Wulfmeier et al., 2020) follows a similar optimisation procedure as MPO, but ex-
+tends it to mixture policies and multi-task settings.
+We do not exploit the multi-task capabil-
+ity in this work, but utilise RHPO to optimise the mixture policy in latent space, π(zt | xt) =
+P"
+REFERENCES,0.7096774193548387,"yt π(yt | xt)π(zt | yt, xt). The Q-function Qφ(xt, zt) and parametric policy πθk(zt | xt) use the
+continuous latents zt as actions instead of the categorical yt. This is also in contrast to the original
+formulation of RHPO, which uses the environment’s action space. Compared to MPO, the policy
+improvement stage of the non-parametric policy is minimally adapted to take into account the new
+mixture policy. The key difference is in the parametric policy update step, which optimises the
+following:"
+REFERENCES,0.7132616487455197,"θk+1 = arg min
+θ
+Ext∼B
+h
+KL(q(zt | xt) || πθ(zt|xt))
+i
+,"
+REFERENCES,0.7168458781362007,"s.t. Ext∼B
+h
+KL
+ 
+πθk+1(yt | xt) || πθk(yt | xt)
+ +
+X"
+REFERENCES,0.7204301075268817,"yt
+KL
+ 
+πθk+1(zt | yt, xt) || πθk(zt | yt, xt)
+i
+≤ϵM.
+(10)"
+REFERENCES,0.7240143369175627,"In other words, separate trust-region constraints are applied to a sum of KL-divergences: for the
+high-level categorical and for each of the mixture components. Following the original RHPO, we
+separate the single constraint into decoupled constraints that set a different ϵ for the means, covari-
+ances, and categorical (ϵµ, ϵσ, and ϵcat, respectively). This allows the optimiser to independently
+modulate how much the categorical distribution, component means, and component variances can
+change. For further details and full derivations, please refer to (Wulfmeier et al., 2020)."
+REFERENCES,0.7275985663082437,Published as a conference paper at ICLR 2022
+REFERENCES,0.7311827956989247,"C
+ELBO DERIVATION AND INTUITIONS"
+REFERENCES,0.7347670250896058,"We can compute the Evidence Lower Bound for the state-conditional action distribution,
+p(a1:T | x1:T ) ≥ELBO, as follows:"
+REFERENCES,0.7383512544802867,"ELBO
+=
+p(a1:T | x1:T ) −KL(q(y0:T , z1:T | x1:T ) || p(y0:T , z1:T | x1:T ))"
+REFERENCES,0.7419354838709677,"=
+Eq(y0:T ,z1:T | x1:T )
+h
+log p(a1:T , y0:T , z1:T | x1:T ) −log q(y0:T , z1:T | x1:T )
+i"
+REFERENCES,0.7455197132616488,"=
+Eq1:T ""
+T
+X"
+REFERENCES,0.7491039426523297,"t=1
+log p(at | zt, xt) + log p(zt | yt) + log p(yt | yt−1)"
+REFERENCES,0.7526881720430108,"−log q(zt | yt, xt) −log q(yt | yt−1, x) # = T
+X"
+REFERENCES,0.7562724014336918,"t=1
+Eq1:T """
+REFERENCES,0.7598566308243727,"log p(at | zt, xt) −KL(q(zt | yt, xt) || p(zt | yt))"
+REFERENCES,0.7634408602150538,"−KL(q(yt | yt−1, xt) || p(yt | yt−1)) # (11)"
+REFERENCES,0.7670250896057348,"We note that the ﬁrst two terms in the expectation depend only on timestep t, so we can simplify and
+marginalise exactly over all discrete {y1:T }\ yt. For the ﬁnal term, we note that the KL at timestep
+t is constant with respect to yt (as it already marginalises over the whole distribution), and only
+depends on yt−1. Lastly, we will use sampling to approximate the expectation over zt. This yields
+the following:"
+REFERENCES,0.7706093189964157,"ELBO
+= T
+X"
+REFERENCES,0.7741935483870968,"t=1
+Eq(zt | yt,xt) "" X"
+REFERENCES,0.7777777777777778,"y0:T
+q(y0:T | x1:T )
+
+log p(at | zt, xt) −KL(q(zt | yt, xt) || p(zt | yt))"
+REFERENCES,0.7813620071684588,"−KL(q(yt | yt−1, xt) || p(yt | yt−1))
+#"
+REFERENCES,0.7849462365591398,"ELBO
+≈ T
+X t=1 "" X"
+REFERENCES,0.7885304659498208,"yt
+q(yt | x1:t)
+
+per-component recon loss
+z
+}|
+{
+log p(at | ˜z{yt}
+t
+, xt) −βz"
+REFERENCES,0.7921146953405018,"per-component KL regulariser
+z
+}|
+{
+KL(q(zt | yt, xt) || p(zt | yt))
+# −βy T
+X t=1 "" X"
+REFERENCES,0.7956989247311828,"yt−1
+q(yt−1 | x1:t−1) KL(q(yt | yt−1, xt) || p(yt | yt−1))
+|
+{z
+}
+discrete regulariser # (12)"
+REFERENCES,0.7992831541218638,"where ˜z{yt}
+t
+∼q(zt | yt, xt), the coefﬁcients βy and βz can be used to weight the KL terms, and the
+cumulative component probability q(yt | x1:t) can be computed iteratively as:"
+REFERENCES,0.8028673835125448,"q(yt | x1:t) =
+X"
+REFERENCES,0.8064516129032258,"yt−1
+q(yt | yt−1, xt)q(yt−1 | x1:t−1)
+(13)"
+REFERENCES,0.8100358422939068,"In other words, for each timestep t and each mixture component, we compute the latent sample
+and the corresponding action log-probability, and the KL-divergence between the component pos-
+terior and prior. This is then marginalised over all yt, with an additional KL over the categorical
+transitions."
+REFERENCES,0.8136200716845878,"Structuring the graphical model and ELBO in this form has a number of useful properties. First, the
+ELBO terms include an action reconstruction loss and KL term for each mixture component, scaled
+by the posterior probability of each component given the history. For a given state, this pressures
+the model to assign higher posterior probability to components that have low reconstruction cost or
+KL, which allows different components to specialise for different parts of the state space. Second,
+the categorical KL between posterior and prior categorical transition distributions is scaled by the"
+REFERENCES,0.8172043010752689,Published as a conference paper at ICLR 2022
+REFERENCES,0.8207885304659498,"posterior probability of the previous component given history q(yt−1 | x1:t−1): this allows the rel-
+ative probabilities of past skill transitions along a trajectory to be considered when regularising the
+current skill distribution. Finally, this formulation does not require any sampling or backpropagation
+through the categorical variable: starting from t = 0, the terms for each timestep can be efﬁciently
+computed by recursively updating the posterior over components given history (q(yt | x1:t)), and
+summing over all possible categorical values at each timestep."
+REFERENCES,0.8243727598566308,"D
+ENVIRONMENT PARAMETERS"
+REFERENCES,0.8279569892473119,"As discussed earlier in the paper, all experiments take place in a MuJoCo-based object manipulation
+environment using a Sawyer robot manipulator and three objects: red, green, and blue. The state
+variables in the Sawyer environment are shown in Table 3. All state variables are stacked for 3 frames
+for all agents. The object states are only provided to the mid-level and high-level for HeLMS runs,
+and the camera images are only used by the high- and mid-level controller in the vision transfer
+experiments (without object states)."
+REFERENCES,0.8315412186379928,"The action space is also shown in Table 4. Since the action dimensions vary signiﬁcantly in range,
+they are normalised to be between [−1, 1] for all methods during learning."
+REFERENCES,0.8351254480286738,"When learning via RL, we apply domain randomisation to physics (but not visual randomisation),
+and a randomly sampled action delay of 0-2 timesteps. This is applied for all approaches, and
+ensures that we can learn a policy that is robust to small changes in the environment."
+REFERENCES,0.8387096774193549,"Proprioception
+State
+Dims
+Joint angles
+7
+Joint velocities
+7
+Joint torque
+7
+TCP pose
+7
+TCP velocity
+6
+Wrist angle
+1
+Wrist velocity
+1
+Wrist force
+3
+Wrist torque
+3
+Binary grasp sensor
+1"
+REFERENCES,0.8422939068100358,"Object states
+State
+Dims
+Absolute pose (red)
+7
+Absolute pose (green)
+7
+Absolute pose (blue)
+7
+Distance to pinch (red)
+7
+Distance to pinch (green)
+7
+Distance to pinch (blue)
+7"
+REFERENCES,0.8458781362007168,"Vision
+State
+Dims
+Camera images
+64 × 64 × 3"
+REFERENCES,0.8494623655913979,Table 3: Details of state variables used by the agent.
+REFERENCES,0.8530465949820788,"Action
+Dims
+Range
+Gripper translational velocity (x-y-z)
+3
+[−0.07, 0.07] m/s
+Wrist rotation velocity
+1
+[−1, 1] rad/s
+Finger speed
+1
+[−255, 255] tics/s"
+REFERENCES,0.8566308243727598,Table 4: Action space details for the Sawyer environment.
+REFERENCES,0.8602150537634409,Published as a conference paper at ICLR 2022
+REFERENCES,0.8637992831541219,"Figure 11: The ﬁve object sets (triplets) used in the paper. This image has been taken directly from
+(Lee et al., 2021) for clarity."
+REFERENCES,0.8673835125448028,"D.1
+OBJECT SETS"
+REFERENCES,0.8709677419354839,"As discussed in the main paper, we use the object sets deﬁned by Lee et al. (2021), which are care-
+fully designed to cover different object geometries and affordances, presenting different challenges
+for object interaction tasks. The object sets are shown in Figure 11 (the image has been taken directly
+from (Lee et al., 2021) for clarity), and feature both simulated and real-world versions; in this paper
+we focus on the simulated versions. As discussed in detail by (Lee et al., 2021), each object set has
+a different degree of difﬁculty and presents a different challenge to the task of stacking red-on-blue:"
+REFERENCES,0.8745519713261649,"• In object set 1, the red object has slanted surfaces that make it difﬁcult to grasp, while the
+blue object is an octagonal prism that can roll.
+• In object set 2, the blue object has slanted surfaces, such that the red object will likely slide
+off unless the blue object is ﬁrst reoriented.
+• In object set 3, the red object is long and narrow, requiring a precise grasp and careful
+placement.
+• Object set 4 is the easiest case with rectangular prisms for both red and blue.
+• Object set 5 is also relatively easy, but the blue object has ten faces, meaning limited surface
+area for stacking."
+REFERENCES,0.8781362007168458,"For more details about the object sets and the rationale behind their design, we refer the reader to
+(Lee et al., 2021)."
+REFERENCES,0.8817204301075269,"E
+NETWORK ARCHITECTURES AND HYPERPARAMETERS"
+REFERENCES,0.8853046594982079,"The network architecture details and hyperparameters for HeLMS are shown in Table 5. Parameter
+sweeps were performed for the β coefﬁcients during ofﬂine learning and the η coefﬁcients during
+RL. Small sweeps were also performed for the RHPO ϵ parameters (refer to (Wulfmeier et al., 2020)
+for details), but these were found to be fairly insensitive. All other parameters were kept ﬁxed, and
+used for all methods except where highlighted in the following subsections. All RL experiments
+were run with 3 seeds to capture variation in each method."
+REFERENCES,0.8888888888888888,"For network architectures, all experiments except for vision used simple 2-layer MLPs for the high-
+and low-level controllers, and for each mid-level mixture component. An input representation net-
+work was used to encode the inputs before passing them to the networks that were learned from
+scratch: i.e. the high-level for state-based experiments, and both high- and mid-level for vision (re-"
+REFERENCES,0.8924731182795699,Published as a conference paper at ICLR 2022
+REFERENCES,0.8960573476702509,"call that while the state-based experiments can reuse the mid-level components conditioned on object
+state, the vision-based policy learned them from scratch and KL-regularised to the ofﬂine mid-level
+skills). The critic network was a 3-layer MLP, applied to the output of another input representation
+network (separate to the actor, but with the same architecture) with concatenated action."
+REFERENCES,0.899641577060932,"Ofﬂine learning parameters
+Name
+Value
+Latent space dimension
+8
+Number of mid-level components, K
+5 for red_on_blue data, 10 for all_pairs data
+Low-level network
+2-hidden layer MLP, {256, 256} units
+Low-level head
+Gaussian, tanh-on-mean, ﬁxed σ = 0.1
+Mid-level network
+2-hidden layer MLP for each component, {256, 256} units
+Mid-level head
+Gaussian, learned σ ∈[0.01, 1.0]
+High-level network
+2-hidden layer MLP, {256, 256} units
+High-level head
+K-way softmax
+Activation function
+elu
+Encoder look-ahead duration
+5 timesteps
+βy
+1.0
+βz
+0.1, 0.0 (object generalisation)
+Batch size
+128
+Learning rate
+10−4"
+REFERENCES,0.9032258064516129,"Dataset trajectory length
+25"
+REFERENCES,0.9068100358422939,"Online RL parameters
+Name
+Value
+Number of seeds
+3 (all experiments)"
+REFERENCES,0.910394265232975,Input representation network (state)
+REFERENCES,0.9139784946236559,"Input normalizer layer (linear layer with 256 units,
+layer-norm, and tanh-on-output)"
+REFERENCES,0.9175627240143369,"High-level network (state)
+2-hidden layer MLP, {256, 256} units"
+REFERENCES,0.921146953405018,Input representation network (vision)
+REFERENCES,0.9247311827956989,"MLP on proprio and ResNet with three layers of {2, 2, 2} blocks
+corresponding to {32, 64, 128} channels"
+REFERENCES,0.9283154121863799,"High-level network (vision)
+2-hidden layer MLP, {256, 256} units
+Mid-level network (vision)
+2-hidden layer MLP for each component, {256, 256} units
+Critic network
+3-hidden layer MLP, {256, 256, 256} units with RNN
+Activation function
+elu
+ηy
+0.1 (vision), 0.01
+ηz
+0.1 (pyramid and vision), 0.01 (object generalisation)
+Number of actors
+1500
+Batch size
+512
+Trajectory length
+10
+Learning rate
+2 × 10−4"
+REFERENCES,0.931899641577061,"Number of action samples
+20
+RHPO categorical constraint ϵcat
+1.0
+RHPO mean constraint ϵµ
+5 × 10−3"
+REFERENCES,0.9354838709677419,"RHPO covariance constraint ϵσ
+10−4"
+REFERENCES,0.9390681003584229,"Table 5: Hyperparameters and architecture details for HeLMS, for both ofﬂine training and RL."
+REFERENCES,0.942652329749104,"F
+REWARDS"
+REFERENCES,0.946236559139785,"Throughout the experiments, we employ different reward functions for different tasks and to study
+the efﬁcacy of our method in sparse versus dense reward scenarios."
+REFERENCES,0.9498207885304659,"Reward stages and primitive functions
+The reward functions for stacking and pyramid tasks use
+various reward primitives and staged rewards for completing sub-tasks. Each of these rewards are
+within the range of [0, 1]"
+REFERENCES,0.953405017921147,These include:
+REFERENCES,0.956989247311828,Published as a conference paper at ICLR 2022
+REFERENCES,0.9605734767025089,"• reach(obj): a shaped distance reward to bring the TCP to within a certain tolerance of
+obj.
+• grasp(): a binary reward for triggering the gripper’s grasp sensor.
+• close_fingers(): a shaped distance reward to bring the ﬁngers inwards.
+• lift(obj): shaped reward for lifting the gripper sufﬁciently high above obj.
+• hover(obj1,obj2): shaped reward for holding obj1 above obj2.
+• stack(obj1,obj2): a sparse reward, only provided if obj1 is on top of obj2 to
+within both a horizontal and vertical tolerance.
+• above(obj,dist): shaped reward for being dist above obj, but anywhere horizon-
+tally.
+• pyramid(obj1,obj2,obj3): a sparse reward, only provided if obj3 is on top of the
+point midway between obj1 and obj2, to within both a horizontal and vertical tolerance.
+• place_near(obj1,obj2): sparse reward provided if obj1 is sufﬁciently near obj2."
+REFERENCES,0.96415770609319,"Dense stacking reward
+The dense stacking reward contains a number of stages, where each stage
+represents a sub-task and has a maximum reward of 1. The stages are:"
+REFERENCES,0.967741935483871,"• reach(red) AND grasp(): Reach and grasp the red object.
+• lift(red) AND grasp(): Lift the red object.
+• hover(red,blue): Hover with the red object above the blue object.
+• stack(red,blue): Place the red object on top of the blue one.
+• stack(red,blue) AND above(red): Move the gripper above after a completed
+stack."
+REFERENCES,0.9713261648745519,"At each timestep, the latest stage to receive non-zero reward is considered to be the current stage,
+and all previous stages are assigned a reward of 1. The reward for this timestep is then obtained by
+summing rewards for all stages, and scaling by the number of stages, to ensure the highest possible
+reward on any timestep is 1."
+REFERENCES,0.974910394265233,"Sparse staged stacking reward
+The sparse staged stacking reward is similar to the dense reward
+variant, but each stage is sparsiﬁed by only providing the reward for the stage once it exceeds a value
+of 0.95."
+REFERENCES,0.978494623655914,"This scenario emulates an important real-world problem: that it may be difﬁcult in certain cases to
+specify carefully shaped meaningful rewards, and it can often be easier to specify (sparsely) whether
+a condition (such as stacking) has been met."
+REFERENCES,0.982078853046595,"Sparse stacking reward
+This fully sparse reward uses the stack(red,blue) function to pro-
+vide reward only when conditions for stacking red on blue have been met."
+REFERENCES,0.985663082437276,"Pyramid reward
+The pyramid-building reward uses a staged sparse reward, where each stage
+represents a sub-task and has a maximum reward of 1. If a stage has dense reward, it is sparsiﬁed by
+only providing the reward once it exceeds a value of 0.95. The stages are:"
+REFERENCES,0.989247311827957,"• reach(red) AND grasp(): Reach and grasp the red object.
+• lift(red) AND grasp(): Lift the red object.
+• hover(red,green): Hover with the red object above the green object (with a larger
+horizontal tolerance, as it does not need to be directly above).
+• place_near(red,green): Place the red object sufﬁciently close to the green object.
+• reach(blue) AND grasp(): Reach and grasp the blue object.
+• lift(blue) AND grasp(): Lift the blue object.
+• hover(blue,green) AND hover(blue,red): Hover with the blue object above
+the central position between red and green objects.
+• pyramid(blue,red,green): Place the blue object on top to make a pyramid.
+• pyramid(blue,red,green) AND above(blue): Move the gripper above after a
+completed stack."
+REFERENCES,0.992831541218638,Published as a conference paper at ICLR 2022
+REFERENCES,0.996415770609319,"At each timestep, the latest stage to receive non-zero reward is considered to be the current stage,
+and all previous stages are assigned a reward of 1. The reward for this timestep is then obtained by
+summing rewards for all stages, and scaling by the number of stages, to ensure the highest possible
+reward on any timestep is 1."

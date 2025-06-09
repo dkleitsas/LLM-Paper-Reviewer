@@ -1,0 +1,1016 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.005780346820809248,"We show how to derive state-of-the-art unsupervised neural machine translation
+systems from generatively pre-trained language models. Our method consists of
+three steps: few-shot ampliﬁcation, distillation, and backtranslation. We ﬁrst use
+the zero-shot translation ability of large pretrained language models to generate
+translations for a small set of unlabeled sentences. We then amplify these zero-
+shot translations by using them as few-shot demonstrations for sampling a larger
+synthetic dataset. This dataset is then distilled by discarding the few-shot demon-
+strations and then ﬁne-tuning. During backtranslation, we repeatedly generate
+translations for a set of inputs and then ﬁne-tune a single language model on both
+directions of the translation task at once, ensuring cycle-consistency by swapping
+the roles of gold monotext and generated translations when ﬁne-tuning. By us-
+ing our method to leverage GPT-3’s zero-shot translation capability, we achieve
+a new state-of-the-art in unsupervised translation on the WMT14 English-French
+benchmark, attaining a BLEU score of 42.1."
+INTRODUCTION,0.011560693641618497,"1
+INTRODUCTION"
+INTRODUCTION,0.017341040462427744,"Recent work on generative pre-training has shown that with sufﬁcient data and scale (Kaplan et al.,
+2020; Henighan et al., 2020; Radford et al., 2019), large language models (LMs) acquire remarkable
+in-context metalearning abilities (Brown et al., 2020). One of the most striking ways this capability
+manifests is via few-shot learning, where the model picks up patterns from multiple training exam-
+ples placed in context. While few-shot prompting is ﬂexible and enables strong performance on a
+diverse suite of NLP tasks to be coaxed out of generatively pre-trained LMs, its beneﬁts are most
+pronounced with larger models, with commensurate training, inference, compute, and data costs.
+The desire to reduce these costs motivates our present work, which allows us to continue ﬁnetun-
+ing our models, obtaining more performance from smaller models and pushing our larger models
+even further, without resorting to few-shot prompting at test time or any additional supervision at
+train time."
+INTRODUCTION,0.023121387283236993,"We target the domain of unsupervised neural machine translation (NMT), which typically involves
+bootstrapping a weak translation model before amplifying its translation ability via backtransla-
+tion. Recent work in unsupervised NMT has been dominated by large encoder-decoder architectures
+where the bootstrap is implemented by denoising/autoencoding tasks (e.g., multilingual Cloze (De-
+vlin et al., 2019; Conneau & Lample, 2019), masked-span prediction (Raffel et al., 2020; Xue et al.,
+2021), reconstruction from corrupted inputs (Wang et al., 2019; Liu et al., 2020)) intended to pro-
+duce strong encoders and aligned multilingual representations for decoding. In our present work, we
+show that generative language modeling alone can implement the entire unsupervised NMT pipeline,
+and derive state-of-the-art unsupervised NMT systems using only generatively pre-trained language
+models. We implement the bootstrap by ﬁrst sampling a small number of zero-shot translations from
+GPT-3. These are then used as few-shot prompts to sample a larger dataset of synthetic translations.
+The few-shot prompts are then discarded and the generated samples are distilled by ﬁne-tuning the
+model on these synthetic data in the zero-shot format. This produces a language model aligned to
+our translation format and amenable to large-scale backtranslation. By using our method to leverage
+GPT-3’s zero-shot translation capability, we achieve a new state-of-the-art in unsupervised transla-
+tion on the WMT14 English-French benchmark, attaining a BLEU score of 42.1."
+INTRODUCTION,0.028901734104046242,Under review as a conference paper at ICLR 2022
+BACKGROUND AND RELATED WORK,0.03468208092485549,"2
+BACKGROUND AND RELATED WORK"
+BACKGROUND AND RELATED WORK,0.04046242774566474,"The modern approach to unsupervised neural machine translation typically involves encoder-
+decoder architectures jointly trained via denoising autoencoding / reconstruction tasks (Vincent
+et al., 2008; Conneau & Lample, 2019; Liu et al., 2020; Ma et al., 2020; Raffel et al., 2020; Xue
+et al., 2021; Wang et al., 2019; Liu et al., 2020; Song et al., 2019) and backtranslation (Sennrich
+et al., 2016; Edunov et al., 2018; Cotterell & Kreutzer, 2018). This approach to unsupervised NMT
+is codiﬁed by Artetxe et al. (2018) and Lample et al. (2018), although various ideas can be traced
+back further: unsupervised machine translation was framed as a deciphering task by Ravi & Knight
+(2011) and backtranslation was ﬁrst introduced for machine translation as a method for data aug-
+mentation using target-side monolingual data by Sennrich et al. (2016). Denoising autoencoding
+with a bilingual encoder can be viewed as a kind of latent bilingual lexicon induction, necessary for
+producing sufﬁciently aligned embeddings to kick-start backtranslation; such techniques have been
+extensively studied in the context of machine translation (Artetxe et al., 2017; Klementiev et al.,
+2012; Vulic & Moens, 2015; Hu et al., 2017; Goyal et al., 2016; Shen et al., 2017)."
+BACKGROUND AND RELATED WORK,0.046242774566473986,"At the same time, recent work on large-scale generative pre-training (Kaplan et al., 2020; Henighan
+et al., 2020; Radford et al., 2019) has demonstrated that with sufﬁcient data and model scale, strong
+performance on a diverse suite of NLP tasks can be coaxed from transformer language models using
+few-shot prompts. Our present work uniﬁes these two lines of research by using generative lan-
+guage modeling to simplify unsupervised NMT even further: we show how with sufﬁcient scale,
+pre-training, and clever prompting, a single generative language model can implement the entire
+unsupervised neural machine translation pipeline, avoiding optimizations such as denoising autoen-
+coding, auxiliary / adversarial losses in latent space, or ad-hoc bilingual dictionaries."
+BACKGROUND AND RELATED WORK,0.05202312138728324,"Our reliance on large-scale generative pre-trainingis similar to prior work in unsupervised NMT
+which uses large-scale language modeling tasks on internet data as part of the bootstrap (Conneau &
+Lample, 2019; Conneau et al., 2020; Liu et al., 2020). The role of few-shot prompting and distillation
+in our method is related to recent work on unsupervised data augmentation using language models
+(Anaby-Tavor et al., 2020; Schick et al., 2021; Kumar et al., 2020; Papanikolaou & Pierleoni, 2020;
+Schick & Sch¨utze, 2021; Yang et al., 2020) and is also in the same spirit as recent work on self-
+training and noisy-student training (Mi et al., 2021; Vu et al., 2021; Xie et al., 2020). The few-shot
+distillation component of our method is similar to contemporaneous work by Wang et al. (2021b)
+which uses few-shot prompting for unsupervised data augmentation, though they focus only on
+inference for text classiﬁcation rather than generation for sequence-to-sequence tasks like machine
+translation and they do not study the phenomena of self-ampliﬁcation nor few-shot data efﬁciency
+(Section 6) as we do."
+BACKTRANSLATION VIA LANGUAGE MODELING,0.057803468208092484,"3
+BACKTRANSLATION VIA LANGUAGE MODELING"
+BACKTRANSLATION VIA LANGUAGE MODELING,0.06358381502890173,"Algorithm 1 Iterated backtranslation using a single generative language model
+Input: Source monotext MS; target monotext MT ; number of iterations I; number of samples per
+iteration J; monotext formatter f(·); bitext formatter g(·, ·); parameters θ of language model
+pθ(·) trained to complete outputs of f to outputs of g.
+Output: Final model parameters θ."
+BACKTRANSLATION VIA LANGUAGE MODELING,0.06936416184971098,"1: for i = 1 to I do
+2:
+Bback ←∅
+3:
+for j = 1 to J do
+4:
+y ∼MS ∪MT
+5:
+˜x ∼pθ(· | f(y))
+6:
+Bback ←Bback ∪{⟨˜x, y⟩}"
+BACKTRANSLATION VIA LANGUAGE MODELING,0.07514450867052024,"7:
+estimate θ by maximizing log pθ of g(˜x, y) for ⟨˜x, y⟩∈Bback"
+BACKTRANSLATION VIA LANGUAGE MODELING,0.08092485549132948,"Backtranslation was ﬁrst introduced in the context of machine translation as a method for data aug-
+mentation using target-side monolingual data (Bojar & Tamchyna, 2011; Sennrich et al., 2016; Pon-
+celas et al., 2018), by sampling synthetic source-to-target data from another target-to-source trans-
+lation model. In our present work, we cast machine translation as a language modeling task and"
+BACKTRANSLATION VIA LANGUAGE MODELING,0.08670520231213873,Under review as a conference paper at ICLR 2022
+BACKTRANSLATION VIA LANGUAGE MODELING,0.09248554913294797,"jointly train and sample from a single language model for both source-to-target and target-to-source
+translation."
+BACKTRANSLATION VIA LANGUAGE MODELING,0.09826589595375723,"Given bitext 〈seq1, seq2〉in languages L1 and L2, we format the translation task as follows:"
+BACKTRANSLATION VIA LANGUAGE MODELING,0.10404624277456648,[L1] <seq1> [[TRANSLATE]] [L2] <seq2>
+BACKTRANSLATION VIA LANGUAGE MODELING,0.10982658959537572,"At test-time, the LM is prompted with [L1] <seq> [[TRANSLATE]] [L2] and we parse
+a candidate translation <sampledSeq> from the sampled completion.
+Backtranslation is
+implemented by reversing the roles of seq and sampledSeq and ﬁnetuning on the bitext
+〈sampledSeq, seq〉."
+BACKTRANSLATION VIA LANGUAGE MODELING,0.11560693641618497,"We remark that in contrast to the interpretation of backtranslation as a wake-sleep algorithm (Cot-
+terell & Kreutzer, 2018), where the forwards and backwards translators are trained alternately, we
+use a single language model for both forwards and backwards translation and train on both directions
+jointly at every iteration."
+BACKTRANSLATION VIA LANGUAGE MODELING,0.12138728323699421,"There are various ways to train a model using backtranslation, e.g., completely online (interleaving
+minibatch gradient updates and sampling) versus ofﬂine (backtranslating the entire training dataset
+at each epoch; potentially re-training the model from scratch after sampling new backtranslations).
+In practice, we ﬁnd that data scaling of a model’s optimal test loss and BLEU score quickly saturates
+on backtranslations from previous versions of the model, and opt for a semi-online setup where we
+synchronously sample a relatively small number of L1-L2 and L2-L1 pairs before resuming training
+for a single epoch on the newly sampled data. We refer to this as a single iteration of backtranslation."
+BACKTRANSLATION VIA LANGUAGE MODELING,0.12716763005780346,"Formally, Algorithm 1 describes our implemention of backtranslation using a single generative
+language model pθ(·).
+We assume that pθ(·) has already been trained to complete format-
+ted monotext ([L1] <seq1> [[TRANSLATE]] [L2]) to formatted bitext ([L1] <seq1>
+[[TRANSLATE]] [L2] <seq2>)."
+BACKTRANSLATION VIA LANGUAGE MODELING,0.1329479768786127,"4
+THE BOOTSTRAP: GENERATIVE PRE-TRAINING, FEW-SHOT
+AMPLIFICATION, AND DISTILLATION [en] [fr] [en] [fr] [en] [fr] [en] [fr]"
+BACKTRANSLATION VIA LANGUAGE MODELING,0.13872832369942195,prompt
+BACKTRANSLATION VIA LANGUAGE MODELING,0.14450867052023122,"sample
+}"
+BACKTRANSLATION VIA LANGUAGE MODELING,0.15028901734104047,"few-shot prompting
+finetuning"
+BACKTRANSLATION VIA LANGUAGE MODELING,0.15606936416184972,"[en] I'll pursue solitary pathways through twilit meadows with
+only this one dream: you come too. [[TRANSLATE]] [fr] Je
+m'éloigne seul dans des chemins obscurs, dans les champs
+de l'ombre, avec seulement ce seul rêve : tu viens aussi."
+BACKTRANSLATION VIA LANGUAGE MODELING,0.16184971098265896,"[en]
+[fr]
+[[TRANSLATE]]"
+BACKTRANSLATION VIA LANGUAGE MODELING,0.1676300578034682,"Figure 1: Illustration of our bootstrap procedure, which we call few-shot distillation. We use few-
+shot prompts sampled from GPT-3 to generate an initial dataset of synthetic translations from a
+generatively pretrained language model (left). The few-shot examples are then discarded and the
+synthetic bitext reformatted for ﬁnetuning on the autoregressive language modeling objective (right)."
+BACKTRANSLATION VIA LANGUAGE MODELING,0.17341040462427745,"The modern approach to unsupervised NMT is parametrized by a choice of initialization or boot-
+strap. The bootstrap has typically relied on some form of unsupervised cross-lingual representation
+learning, e.g., bilingual dictionaries initialized from unsupervised cross-lingual word embeddings
+(Lample et al., 2018; Artetxe et al., 2018) or multilingual masked language modeling followed by
+denoising autoencoding with a shared encoder and decoder (Conneau & Lample, 2019)."
+BACKTRANSLATION VIA LANGUAGE MODELING,0.1791907514450867,Under review as a conference paper at ICLR 2022
+BACKTRANSLATION VIA LANGUAGE MODELING,0.18497109826589594,"In Section 3, we formulated iterative backtranslation in terms of language modeling, assuming a lan-
+guage model which has already been trained to follow a particular instruction format for translation.
+To complete our procedure, we must supply such a language model. Unlike previous work on un-
+supervised NMT, we use language models from the GPT-3 family (Brown et al., 2020) which have
+been generatively pre-trained on a large corpus of Internet data. A key observation from the body
+of work around GPT-3 is that generative pre-training at scale induces strong in-context metalearning
+abilities, two special cases of which are (1) instruction following and (2) few-shot prompting: a
+sufﬁciently trained large language model beneﬁts from both detailed natural language descriptions
+of tasks and, when given in-context examples, can achieve strong performance on a diverse suite of
+tasks (e.g., question-answering, natural language inference, translation.) We implement the boot-
+strap by exploiting both of these abilities, by using natural language instruction to produce zero-shot
+translations and few-shot prompting during ampliﬁcation."
+FEW-SHOT AMPLIFICATION AND DISTILLATION,0.1907514450867052,"4.1
+FEW-SHOT AMPLIFICATION AND DISTILLATION"
+FEW-SHOT AMPLIFICATION AND DISTILLATION,0.19653179190751446,"It thus remains to adapt our generatively pre-trained models’ few-shot translation ability to the
+zero-shot format speciﬁed in Section 3. We do this in a two-stage process. We ﬁrst sample a small
+number of zero-shot translations from GPT-3. Given bitext 〈srcSeq, tgtSeq〉in srcLang
+and tgtLang, and a stop-sequence <sep>, we use the following format for zero-shot prompting:"
+FEW-SHOT AMPLIFICATION AND DISTILLATION,0.2023121387283237,"<sep> Given the following passage in <srcLang>: <sep> <srcSeq> <sep>
+a good <tgtLang> translation is: <sep> <tgtSeq> <sep>."
+FEW-SHOT AMPLIFICATION AND DISTILLATION,0.20809248554913296,"At test-time, we sample a completion until the stop-sequence <sep> is detected; throughout we set
+<sep> to be \n---\n."
+FEW-SHOT AMPLIFICATION AND DISTILLATION,0.2138728323699422,"We amplify these zero-shot translations by using them as few-shot prompts to sample a much larger
+synthetic dataset from a smaller model. We then distill this dataset by discarding the few-shot
+prompts and ﬁne-tuning on formatted bitext, producing a language model aligned with our task
+format and amenable to backtranslation. In detail, we implement the bootstrap as follows:"
+FEW-SHOT AMPLIFICATION AND DISTILLATION,0.21965317919075145,1. Generatively pre-train a language model pθ(·) on a large corpus of Internet data.
+SAMPLE A POOL OF NS SYNTHETIC TARGET-SIDE TRANSLATIONS AND NS TARGET-SIDE TRANSLATIONS ZERO-,0.2254335260115607,"2. Sample a pool of NS synthetic target-side translations and NS target-side translations zero-
+shot from another language model q(·) for few-shot prompting. Using k few-shot examples
+randomly drawn from NS (resp. NT ), sample CS synthetic target-side translations (resp.
+CT synthetic source-side translations) from pθ(·), using the monolingual source-side cor-
+pus MS (resp. target-side corpus MT )."
+SAMPLE A POOL OF NS SYNTHETIC TARGET-SIDE TRANSLATIONS AND NS TARGET-SIDE TRANSLATIONS ZERO-,0.23121387283236994,"3. Discard the few-shot prompts, reformat the (gold prompt, sampled translation) data as spec-
+iﬁed in Section 3, and ﬁnetune the language model pθ(·) on these data."
+SAMPLE A POOL OF NS SYNTHETIC TARGET-SIDE TRANSLATIONS AND NS TARGET-SIDE TRANSLATIONS ZERO-,0.23699421965317918,"4. Reverse all data and continue ﬁnetuning the language model pθ(·) on the backtranslations
+(sampled translation, gold prompt)."
+SAMPLE A POOL OF NS SYNTHETIC TARGET-SIDE TRANSLATIONS AND NS TARGET-SIDE TRANSLATIONS ZERO-,0.24277456647398843,"Why amplify and distill?
+While few-shot prompting is ﬂexible and enables strong performance
+on a diverse suite of NLP tasks to be coaxed out of generatively pre-trained LMs, its beneﬁts are most
+pronounced with larger models, with commensurate training, inference, compute, and data costs. It
+is also unclear how to iteratively ﬁnetune a language model in a way that preserves its few-shot
+ability while remaining aligned with a zero-format like in Section 3. Few-shot ampliﬁcation allows
+us to generate data for the bootstrap in an unsupervised fashion, possibly avoiding the overhead of
+few-shot sampling from GPT-3 itself by few-shot prompting a smaller model pθ(·), while distillation
+enables iterative backtranslation."
+RESULTS,0.24855491329479767,"5
+RESULTS"
+RESULTS,0.2543352601156069,"Experimental setup
+For our experiments, we focus on the well-studied WMT14 English-French
+benchmark. In the notation of Algorithm 1, we obtain source and target monotext MS and MT
+by splitting the WMT14 English-French training set in half, each with approximately twenty mil-
+lion examples, and use only the English text from one half and only French text from the other to
+avoid implicit sentence-level alignment between source and target monotext. At each iteration of"
+RESULTS,0.26011560693641617,Under review as a conference paper at ICLR 2022
+RESULTS,0.2658959537572254,"backtranslation, we sample one million translations in either direction, i.e,. J = 2e6, and train for
+one epoch on the newly sampled data. For all of our results, unless otherwise speciﬁed, we run 40
+iterations of backtranslation after the bootstrap and report BLEU using the ﬁnal model checkpoint."
+RESULTS,0.27167630057803466,"To implement the bootstrap, we additionally set aside 2048 training examples, and sample NS =
+1024 English-French (resp. NT = 1024 French-English) translations zero-shot from GPT-3 to
+use as few-shot prompts. During few-shot ampliﬁcation, we sample four million initial target- and
+source-side translations respectively using few-shot prompts, i.e., CS = CT = 4e6 in the notation
+of Section 4.1, drawing monolingual prompts from as MS and MT deﬁned above. We ﬁnetune
+for two epochs in the forwards direction (distillation) and for another two epochs in the backwards
+direction (initial backtranslation). For few-shot prompting, we use k = 3 in-context examples. In
+Section 6.3.1 we will see that we can minimize the number of few-shot examples to NS = NT = 3
+with little effect on evaluation BLEU score after iterative backtranslation."
+RESULTS,0.2774566473988439,"We use the same training setup and BPE tokenizer as GPT-3. During ﬁnetuning, we use a constant
+learning rate of 0.05 · ℓ, where ℓis the pre-training learning rate, a weight decay of 0.1, and residual
+dropout 0.1. When sampling during the bootstrap or during backtranslation, we default to using
+temperature τ = 0.3. We ablate other values of τ in Section 6.1."
+RESULTS,0.2832369942196532,"We report BLEU score on the ofﬁcial WMT14 English-French test set with greedy (argmax) sam-
+pling and sacreBLEU1 (Post, 2018). In Table 3 we give a comparison to previous work on unsuper-
+vised NMT using multi-bleu.perl and the XLM (Conneau & Lample, 2019) tokenizer."
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.28901734104046245,"5.1
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION"
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.2947976878612717,"small
+medium
+large
+xl"
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.30057803468208094,"few-shot (τ = 0.0)
+en-fr
+1.15
+7.71
+13.07
+14.28
+fr-en
+5.04
+16.87
+20.25
+23.0"
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.3063583815028902,"few-shot (τ = 0.3)
+en-fr
+1.02
+7.36
+11.89
+13.58
+fr-en
+4.46
+16.13
+20.7
+22.07"
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.31213872832369943,"few-shot (τ = 1.0)
+en-fr
+0.25
+2.12
+2.68
+3.38
+fr-en
+1.22
+5.45
+6.14
+9.32"
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.3179190751445087,"distillation
+en-fr
+0.61
+9.51
+17.68
+22.19
+fr-en
+4.31
+23.67
+29.38
+31.12"
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.3236994219653179,"initial backtranslation
+en-fr
+7.94
+29.84
+33.59
+34.71
+fr-en
+1.5
+23.12
+28.58
+30.52"
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.32947976878612717,"after backtranslation
+en-fr
+30.48
+36.53
+37.59
+39.12
+fr-en
+27.24
+32.15
+34.79
+35.43"
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.3352601156069364,"Table 1: English-French (top) and French-English (bottom) test BLEU throughout the few-shot
+self-distillation bootstrap across multiple model scales."
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.34104046242774566,"We ﬁrst report results using self-distillation, i.e., where during the bootstrap (Section 4) we sam-
+ple from a single model which is then trained to imitate and then backtranslate its own few-shot
+prompted generations; for these experiments, the few-shot demonstrations themselves are generated
+zero-shot by GPT-3. This is then followed by the iterative backtranslation procedure described in
+Section 3. We apply this methodology to the small, medium, large, and xl models from the
+GPT-3 family (Brown et al., 2020), with 125M, 350M, 760M, and 1.3B parameters respectively.
+Table 1 displays test BLEU throughout our procedure for all model sizes. We see that translation
+out of English beneﬁts signiﬁcantly from the backtranslation part of the bootstrap alone. We also
+see that our models are much stronger at the translation task compared to few-shot prompting after
+only self-distillation. Finally, all models beneﬁt signiﬁcantly from iterative backtranslation, with
+English-French BLEU always converging to a slightly higher value than the reverse direction."
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.3468208092485549,1SacreBLEU signature: BLEU+case.mixed+numrefs.1+smooth.exp+tok.intl+version.1.2.20.
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.35260115606936415,Under review as a conference paper at ICLR 2022
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.3583815028901734,"5.2
+DISTILLING SELF-AMPLIFIED GPT-3 INTO SMALLER MODELS"
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.36416184971098264,"small
+medium
+large
+xl"
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.3699421965317919,"distillation
+en-fr
+34.13
+36.03
+37.21
+37.08
+fr-en
+32.34
+34.96
+36.12
+36.34"
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.37572254335260113,"initial backtranslation
+en-fr
+34.71
+36.31
+38.89
+39.05
+fr-en
+30.95
+33.73
+35.16
+36.51"
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.3815028901734104,"after backtranslation
+en-fr
+35.62
+37.79
+38.91
+39.79
+fr-en
+31.28
+34.08
+35.57
+35.97"
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.3872832369942196,"after backtranslation (+CC100)
+en-fr
+39.02
+41.31
+41.97
+42.08
+fr-en
+33.43
+35.69
+36.85
+37.09"
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.3930635838150289,"Table 2: English-French (top) and French-English (bottom) test BLEU throughout the bootstrap
+and after iterative backtranslation, this time using generations from self-ampliﬁed GPT-3 for the
+bootstrap. We observe the best performance by mixing in monotext from the English and French
+components of the CC100 dataset (Wenzek et al., 2020; Conneau et al., 2020) during backtranslation."
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.3988439306358382,"Although we do not apply our full methodology to the 175B parameter GPT-3 model due to compute
+constraints, we observe that for few-shot distillation, instead of training a model on few-shot samples
+from itself, we can just as well distill on few-shot samples from a much larger model instead—in
+this case, the full-size 175B parameter GPT-3 model (henceforth just “GPT-3”). That is, we use
+GPT-3 to self-amplify its own zero-shot translations to produce an initial dataset for distillation."
+FEW-SHOT SELF-DISTILLATION AND BACKTRANSLATION,0.4046242774566474,"We now proceed to apply the same method as in Section 5.1 to all model sizes, but this time using
+few-shot samples from GPT-3 for the bootstrap. We display the evaluation BLEU scores throughout
+the bootstrap and after iterative backtranslation in Table 2. Interestingly, the higher-quality samples
+from GPT-3 appear to saturate the smaller models and they improve very little. Motivated by the
+possibility that our models are beginning to overﬁt to the WMT14 English-French training data,
+we attempt another experiment where 50% of the monotext for backtranslation is sampled from the
+English and French components of the CC100 dataset (Conneau et al., 2020). The extra monolingual
+data signiﬁcantly beneﬁts all model scales, improving English-French BLEU by approximately 3
+points compared to iterative backtranslation on WMT data alone. With this setup, the xl attains a
+new unsupervised state-of-art of 42.1 BLEU on the WMT14 English-French benchmark."
+DISCUSSION AND FURTHER ABLATIONS,0.41040462427745666,"6
+DISCUSSION AND FURTHER ABLATIONS"
+DISCUSSION AND FURTHER ABLATIONS,0.4161849710982659,"Bias towards English generation
+Previous work (Brown et al., 2020) has shown that after genera-
+tive pre-training on a corpus of English-dominated Internet text, GPT-3 models are far more capable
+of translating into English than translating out of English. This is reﬂected by the disparity between
+English-French and French-English BLEU scores immediately after few-shot distillation and before
+backtranslation on the few-shot prompted data. Interestingly, after only two epochs of backtransla-
+tion on the relatively scarce few-shot prompted data, this gap is reversed, with all models achieving
+signiﬁcantly higher English-French BLEU than French-English BLEU. The data efﬁciency of the
+bootstrap suggests that coming out of pre-training, the models are merely misaligned rather than
+deﬁcient in knowledge about French, and that their latent knowledge about translation out of En-
+glish can be surfaced using backtranslation. Relatedly, high-quality samples in one language in the
+previous round of backtranslation lead to higher-quality synthetic bitext for training the reverse di-
+rection in the next. This turns the asymmetry towards English generation into an advantage during
+backtranslation. However, if the initial disparity between the quality of the translation directions is
+extreme (as with the self-distilled small, which achieves < 2 BLEU for English-French few-shot
+compared to ≈10 BLEU for French-English), then we see that the evaluation BLEU for either
+direction is unstable and oscillates between iterations, though they eventually converge upwards as
+backtranslation continues."
+DISCUSSION AND FURTHER ABLATIONS,0.42196531791907516,"Comparison to previous work
+In Table 3, we compare the BLEU scores attained by our best
+model (an xl distilled on self-ampliﬁed GPT-3 followed by 40 rounds of backtranslation) to prior"
+DISCUSSION AND FURTHER ABLATIONS,0.4277456647398844,Under review as a conference paper at ICLR 2022
+DISCUSSION AND FURTHER ABLATIONS,0.43352601156069365,"work in unsupervised neural machine translation on the WMT14 English-French benchmark. To
+ensure comparability to prior work, we report tokenized BLEU using multi-bleu.perl and the
+XLM tokenizer. This was used to report the few- and zero-shot performance of GPT-3 in Brown
+et al. (2020), which we also include in Table 3 for completeness."
+DISCUSSION AND FURTHER ABLATIONS,0.4393063583815029,"XLM
+MASS
+CUNMT
+XLM+
+CBD
+xl
+GPT-3 (fs)
+GPT-3 (zs)"
+DISCUSSION AND FURTHER ABLATIONS,0.44508670520231214,"en-fr
+33.4
+37.5
+37.6
+40.2
+38.2
+41.7
+32.6
+25.2
+fr-en
+33.3
+34.9
+35.2
+36.9
+35.5
+38.0
+39.2
+21.2"
+DISCUSSION AND FURTHER ABLATIONS,0.4508670520231214,"Table 3: Comparison of our best model—an xl distilled on self-ampliﬁed GPT-3 followed by 40
+rounds of iterative backtranslation—to prior work (Conneau & Lample, 2019; Song et al., 2019;
+Wang et al., 2021a; Keung et al., 2020; Nguyen et al., 2021) in unsupervised NMT on the WMT14
+English-French benchmark. Bold indicates unsupervised state-of-the-art and underline indicates
+few-shot state-of-the-art."
+ABLATING TEMPERATURE FOR FEW-SHOT DISTILLATION,0.45664739884393063,"6.1
+ABLATING TEMPERATURE FOR FEW-SHOT DISTILLATION"
+ABLATING TEMPERATURE FOR FEW-SHOT DISTILLATION,0.4624277456647399,"self-distill
+backtrans. τ = 0.0
+backtrans. τ = 0.3
+backtrans. τ = 1.0"
+ABLATING TEMPERATURE FOR FEW-SHOT DISTILLATION,0.4682080924855491,"τ = 0.0
+en-fr
+20.3
+34.4
+34.7
+27.8
+fr-en
+29.9
+29.3
+29.6
+24.7"
+ABLATING TEMPERATURE FOR FEW-SHOT DISTILLATION,0.47398843930635837,"τ = 0.3
+en-fr
+20.6
+33.9
+35.1
+27.6
+fr-en
+29.2
+28.9
+29.9
+24.4"
+ABLATING TEMPERATURE FOR FEW-SHOT DISTILLATION,0.4797687861271676,"τ = 1.0
+en-fr
+20.2
+34.9
+34.6
+27.6
+fr-en
+29.0
+29.2
+29.2
+24.9"
+ABLATING TEMPERATURE FOR FEW-SHOT DISTILLATION,0.48554913294797686,"Table 4: English-French (top) and French-English (bottom) test BLEU using few-shot prompted
+samples generated with temperatures τ = 0.0, 0.3, 1.0 throughout the bootstrap. We see that the
+temperature used for sampling has little effect on evaluation BLEU after few-shot distillation, while
+high-temperature samples are harmful during the backtranslation part of the bootstrap."
+ABLATING TEMPERATURE FOR FEW-SHOT DISTILLATION,0.4913294797687861,"It was shown by Edunov et al. (2018) that backtranslation is more effective when the translations are
+slightly noisy, i.e., sampled with nonzero temperature or via a noised beam search. This motivated
+our use of the temperature τ = 0.3 throughout. We ablate this choice of temperature when sampling
+data for few-shot distillation, and study the effect of using τ = 0.0 and τ = 1.0 during the bootstrap
+using a large model. We display the results in Table 4. We see that lower temperatures lead
+to marginally higher test BLEU scores during distillation while τ = 1.0 results in lower test loss
+and no overﬁtting after two epochs of training. However, regardless of the temperature of samples
+used for self-distillation, the differences in both test BLEU and test loss almost vanish after the
+backtranslation part of the bootstrap when training to backtranslate low temperature samples (τ =
+0.0 or τ = 0.3)."
+FEW-SHOT SELF-AMPLIFICATION,0.49710982658959535,"6.2
+FEW-SHOT SELF-AMPLIFICATION"
+FEW-SHOT SELF-AMPLIFICATION,0.5028901734104047,"We observed that few-shot prompting GPT-3 with its own zero-shot translations produced better
+translations than zero-shot prompting alone. We investigate this further by comparing the BLEU
+scores of zero-shot translations (sampled using the same prompt described in Section 4) to the BLEU
+scores of self-ampliﬁed few-shot prompted translations (i.e., where the few-shot demonstrations are
+the zero-shot translations sampled from the same model) for all the model sizes studied in this paper.
+Our results are displayed in Table 5. We see that self-ampliﬁcation improves translation quality at
+all model scales."
+USING REAL FEW-SHOT EXAMPLES,0.5086705202312138,"6.3
+USING REAL FEW-SHOT EXAMPLES"
+USING REAL FEW-SHOT EXAMPLES,0.5144508670520231,"So far our results have been completely unsupervised, but few-shot learning is typically studied
+in the context of semi-supervised learning (Wang et al., 2020), where the few-shot demonstrations"
+USING REAL FEW-SHOT EXAMPLES,0.5202312138728323,Under review as a conference paper at ICLR 2022
+USING REAL FEW-SHOT EXAMPLES,0.5260115606936416,"small
+medium
+large
+xl
+GPT-3"
+USING REAL FEW-SHOT EXAMPLES,0.5317919075144508,"zero-shot
+en-fr
+0.57
+1.23
+1.90
+2.84
+26.19
+fr-en
+2.00
+13.92
+8.14
+19.60
+25.49"
+USING REAL FEW-SHOT EXAMPLES,0.5375722543352601,"self-ampliﬁed
+en-fr
+1.39
+8.98
+12.46
+14.32
+29.96
+fr-en
+5.76
+16.75
+21.75
+23.98
+31.75"
+USING REAL FEW-SHOT EXAMPLES,0.5433526011560693,"Table 5: Zero-shot versus few-shot self-ampliﬁed test BLEU for all model sizes studied in this paper.
+For zero-shot generation we use the same prompt format described in Section 4. For self-ampliﬁed
+generation, we use the model’s own zero-shot generations as in-context few-shot examples."
+USING REAL FEW-SHOT EXAMPLES,0.5491329479768786,"small
+medium
+large
+xl"
+USING REAL FEW-SHOT EXAMPLES,0.5549132947976878,"few-shot (τ = 0.0)
+en-fr
+1.09
+7.19
+11.8
+13.35
+fr-en
+3.86
+14.58
+20.34
+23.01"
+USING REAL FEW-SHOT EXAMPLES,0.5606936416184971,"few-shot (τ = 0.3)
+en-fr
+1.09
+6.83
+11.38
+13.08
+fr-en
+4.13
+14.86
+19.92
+22.04"
+USING REAL FEW-SHOT EXAMPLES,0.5664739884393064,"few-shot (τ = 1.0)
+en-fr
+0.33
+1.74
+2.34
+2.94
+fr-en
+0.94
+4.18
+4.64
+7.25"
+USING REAL FEW-SHOT EXAMPLES,0.5722543352601156,"distillation
+en-fr
+0.39
+7.63
+17.27
+19.81
+fr-en
+3.9
+20.29
+27.65
+30.89"
+USING REAL FEW-SHOT EXAMPLES,0.5780346820809249,"initial backtranslation
+en-fr
+7.77
+24.71
+29.64
+33.78
+fr-en
+1.7
+18.9
+26.61
+30.93"
+USING REAL FEW-SHOT EXAMPLES,0.5838150289017341,"after backtranslation
+en-fr
+31.23
+34.42
+37.86
+39.39
+fr-en
+27.45
+29.96
+34.23
+34.97"
+USING REAL FEW-SHOT EXAMPLES,0.5895953757225434,"Table 6: English-French (top) and French-English (bottom) test BLEU throughout the few-shot self-
+distillation bootstrap across multiple model scales, this time using real few-shot examples. We see
+that performance after backtranslation is equivalent to that reported in Table 1."
+USING REAL FEW-SHOT EXAMPLES,0.5953757225433526,"small
+large"
+USING REAL FEW-SHOT EXAMPLES,0.6011560693641619,"distillation
+en-fr
+32.95
+36.0
+fr-en
+32.45
+36.29"
+USING REAL FEW-SHOT EXAMPLES,0.6069364161849711,"initial backtranslation
+en-fr
+36.32
+38.72
+fr-en
+32.43
+36.61"
+USING REAL FEW-SHOT EXAMPLES,0.6127167630057804,"after backtranslation
+en-fr
+36.38
+39.36
+fr-en
+32.66
+35.67"
+USING REAL FEW-SHOT EXAMPLES,0.6184971098265896,"after backtranslation (+CC100)
+en-fr
+39.01
+42.03
+fr-en
+34.17
+36.94"
+USING REAL FEW-SHOT EXAMPLES,0.6242774566473989,"Table 7: English-French (top) and French-English (bottom) test BLEU of the small and large
+models throughout the bootstrap and after iterative backtranslation, where for the bootstrap we use
+generations from 175B GPT-3 prompted using real few-shot examples. Similarly to Table 2, we
+observe a boost in ﬁnal BLEU score when, after the bootstrap, we additionally sample monolingual
+text from the English and French portions of the CC100 dataset."
+USING REAL FEW-SHOT EXAMPLES,0.630057803468208,"are real training data. In this section, we ablate the usage of synthetic few-shot translations in our
+methodology and reproduce our experiments from Section 5 using real few-shot demonstrations.
+We observe virtually no difference in BLEU score after iterative backtranslation."
+USING REAL FEW-SHOT EXAMPLES,0.6358381502890174,Under review as a conference paper at ICLR 2022
+USING REAL FEW-SHOT EXAMPLES,0.6416184971098265,"We modify the few-shot prompting described in Section 5 as follows. Rather than sampling zero-
+shot translations for each half of our held-out pool of N=2048 training examples, we sample from
+these examples directly during few-shot prompting."
+USING REAL FEW-SHOT EXAMPLES,0.6473988439306358,"Table 6 displays test BLEU throughout the bootstrap and after iterative backtranslation for the same
+model sizes studied in Section 5.1. We see that our models converge to the same test BLEU (c.f. Sec-
+tion 5.1). Table 7 displays analogous results when distilling samples from GPT-3 with the small
+and large models, this time few-shot prompted using real examples. We again see that using real
+rather than synthetic few-shot demonstrations to sample the initial bootstrap data from GPT-3 has
+no effect on ﬁnal BLEU score after iterative backtranslation."
+ALMOST-UNSUPERVISED MACHINE TRANSLATION WITH THREE EXAMPLES ONLY,0.653179190751445,"6.3.1
+ALMOST-UNSUPERVISED MACHINE TRANSLATION WITH THREE EXAMPLES ONLY"
+ALMOST-UNSUPERVISED MACHINE TRANSLATION WITH THREE EXAMPLES ONLY,0.6589595375722543,"N=3
+N=8
+N=16
+N=32
+N=64
+N=128
+N=256
+N=512
+N=1024
+N=2048"
+ALMOST-UNSUPERVISED MACHINE TRANSLATION WITH THREE EXAMPLES ONLY,0.6647398843930635,"en-fr
+12.6
+12.4
+12.7
+13.1
+13.2
+13.0
+12.7
+12.9
+12.7
+12.8
+fr-en
+21.5
+21.3
+22.1
+22.4
+21.9
+22.3
+22.1
+22.1
+22.2
+22.1"
+ALMOST-UNSUPERVISED MACHINE TRANSLATION WITH THREE EXAMPLES ONLY,0.6705202312138728,"Table 8: BLEU scores (calculated over 4096 random training examples) for the few-shot prompted
+translations from a large model, as the total number of available few-shot examples varies from
+N = 3 to N = 2048. We see that N has minimal impact on the BLEU score of the sampled
+translations. Moreover, the difference in BLEU between the models bootstrapped using N = 3
+versus N = 2048 disappears after iterative backtranslation."
+ALMOST-UNSUPERVISED MACHINE TRANSLATION WITH THREE EXAMPLES ONLY,0.6763005780346821,"Finally, we show that even in the semi-supervised setting, we can minimize the supervision available
+from few-shot demonstrations with no difference in test BLEU after backtranslation coverges. Ta-
+ble 8 displays the BLEU scores of few-shot sampled translations across various orders of magnitude
+of N, the number of available few-shot examples. Remarkably, even when N is decreased to 3, there
+is only a slight negative impact on the BLEU score of the few-shot sampled translations. We do not
+ablate lower values of N in order to maintain the assumption of k=3 distinct in-context examples
+for few-shot prompting. We then run our entire procedure with a large model, using N=3 real
+few-shot demonstrations for the bootstrap followed by iterative backtranslation. We observe a ﬁnal
+English-French BLEU of 38.0 and French-English BLEU of 34.2, on par with the ﬁnal BLEU scores
+reported in Table 6."
+CONCLUSION AND FUTURE DIRECTIONS,0.6820809248554913,"7
+CONCLUSION AND FUTURE DIRECTIONS"
+CONCLUSION AND FUTURE DIRECTIONS,0.6878612716763006,"We remark that backtranslation, like reinforcement learning, is simply a way of exchanging com-
+pute for data. Instead of grounding the model with a reward signal from an environment, however,
+backtranslation exploits the symmetry of the translation task to ground the model by training it
+to cross-lingually denoise its own samples. Our present work can be viewed as part of a recent
+trend towards data-driven architecture engineering, where task-speciﬁc inductive biases, if any, are
+engineered into and learned from the training data instead of being hardcoded into the model archi-
+tecture. In formulating the translation task in terms of language modeling, we see that the input-
+output inductive bias imposed by an encoder-decoder architecture can be simulated with prompt
+formatting. Similarly, we see that generative language modeling at sufﬁcient scale combined with
+clever prompting for automated data generation can attain state-of-the-art results in unsupervised
+translation, rendering methods intended to produce strong encoders and aligned multilingual repre-
+sentations unnecessary."
+CONCLUSION AND FUTURE DIRECTIONS,0.6936416184971098,"Although we have focused solely on the domain of machine translation in this work, our methodol-
+ogy is applicable to any sequence-to-sequence task whose forwards and inverse directions are (1) to
+be jointly learned by an autoregressive decoder-only transformer and (2) are amenable to few-shot
+prompting after large-scale generative pre-training. Backtranslation is simply reverse self-training
+(Bojar & Tamchyna, 2011) and is fundamentally untied to the translation domain; we invite the re-
+search community at large to further explore this technique, moving beyond translation and towards
+applications reﬂecting the full generality of the transformer architecture."
+CONCLUSION AND FUTURE DIRECTIONS,0.6994219653179191,Under review as a conference paper at ICLR 2022
+REFERENCES,0.7052023121387283,REFERENCES
+REFERENCES,0.7109826589595376,"Ateret Anaby-Tavor, Boaz Carmeli, Esther Goldbraich, Amir Kantor, George Kour, Segev Shlo-
+mov, Naama Tepper, and Naama Zwerdling. Do not have enough data? deep learning to the
+rescue! In The Thirty-Fourth AAAI Conference on Artiﬁcial Intelligence, AAAI 2020, The Thirty-
+Second Innovative Applications of Artiﬁcial Intelligence Conference, IAAI 2020, The Tenth AAAI
+Symposium on Educational Advances in Artiﬁcial Intelligence, EAAI 2020, New York, NY, USA,
+February 7-12, 2020, pp. 7383–7390. AAAI Press, 2020. URL https://aaai.org/ojs/
+index.php/AAAI/article/view/6233."
+REFERENCES,0.7167630057803468,"Mikel Artetxe, Gorka Labaka, and Eneko Agirre. Learning bilingual word embeddings with (almost)
+no bilingual data. In Regina Barzilay and Min-Yen Kan (eds.), Proceedings of the 55th Annual
+Meeting of the Association for Computational Linguistics, ACL 2017, Vancouver, Canada, July
+30 - August 4, Volume 1: Long Papers, pp. 451–462. Association for Computational Linguistics,
+2017. doi: 10.18653/v1/P17-1042. URL https://doi.org/10.18653/v1/P17-1042."
+REFERENCES,0.7225433526011561,"Mikel Artetxe, Gorka Labaka, Eneko Agirre, and Kyunghyun Cho. Unsupervised neural machine
+translation. In 6th International Conference on Learning Representations, ICLR 2018, Vancouver,
+BC, Canada, April 30 - May 3, 2018, Conference Track Proceedings. OpenReview.net, 2018.
+URL https://openreview.net/forum?id=Sy2ogebAW."
+REFERENCES,0.7283236994219653,"Ondrej Bojar and Ales Tamchyna. Improving translation model by monolingual data. In Chris
+Callison-Burch, Philipp Koehn, Christof Monz, and Omar Zaidan (eds.), Proceedings of the Sixth
+Workshop on Statistical Machine Translation, WMT@EMNLP 2011, Edinburgh, Scotland, UK,
+July 30-31, 2011, pp. 330–336. Association for Computational Linguistics, 2011. URL https:
+//aclanthology.org/W11-2138/."
+REFERENCES,0.7341040462427746,"Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhari-
+wal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agar-
+wal, Ariel Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh,
+Daniel M. Ziegler, Jeffrey Wu, Clemens Winter, Christopher Hesse, Mark Chen, Eric Sigler,
+Mateusz Litwin, Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner, Sam McCan-
+dlish, Alec Radford, Ilya Sutskever, and Dario Amodei.
+Language models are few-shot
+learners.
+In Hugo Larochelle, Marc’Aurelio Ranzato, Raia Hadsell, Maria-Florina Balcan,
+and Hsuan-Tien Lin (eds.), Advances in Neural Information Processing Systems 33: Annual
+Conference on Neural Information Processing Systems 2020, NeurIPS 2020, December 6-12,
+2020, virtual, 2020. URL https://proceedings.neurips.cc/paper/2020/hash/
+1457c0d6bfcb4967418bfb8ac142f64a-Abstract.html."
+REFERENCES,0.7398843930635838,"Alexis Conneau and Guillaume Lample. Cross-lingual language model pretraining. In Hanna M.
+Wallach, Hugo Larochelle, Alina Beygelzimer, Florence d’Alch´e-Buc, Emily B. Fox, and Roman
+Garnett (eds.), Advances in Neural Information Processing Systems 32: Annual Conference on
+Neural Information Processing Systems 2019, NeurIPS 2019, December 8-14, 2019, Vancouver,
+BC, Canada, pp. 7057–7067, 2019. URL https://proceedings.neurips.cc/paper/
+2019/hash/c04c19c2c2474dbf5f7ac4372c5b9af1-Abstract.html."
+REFERENCES,0.7456647398843931,"Alexis Conneau, Kartikay Khandelwal, Naman Goyal, Vishrav Chaudhary, Guillaume Wenzek,
+Francisco Guzm´an, Edouard Grave, Myle Ott, Luke Zettlemoyer, and Veselin Stoyanov. Un-
+supervised cross-lingual representation learning at scale.
+In Dan Jurafsky, Joyce Chai, Na-
+talie Schluter, and Joel R. Tetreault (eds.), Proceedings of the 58th Annual Meeting of the As-
+sociation for Computational Linguistics, ACL 2020, Online, July 5-10, 2020, pp. 8440–8451.
+Association for Computational Linguistics, 2020. doi: 10.18653/v1/2020.acl-main.747. URL
+https://doi.org/10.18653/v1/2020.acl-main.747."
+REFERENCES,0.7514450867052023,"Ryan Cotterell and Julia Kreutzer. Explaining and generalizing back-translation through wake-sleep.
+CoRR, abs/1806.04402, 2018. URL http://arxiv.org/abs/1806.04402."
+REFERENCES,0.7572254335260116,"Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. BERT: pre-training of deep
+bidirectional transformers for language understanding.
+In Jill Burstein, Christy Doran, and
+Thamar Solorio (eds.), Proceedings of the 2019 Conference of the North American Chapter of
+the Association for Computational Linguistics: Human Language Technologies, NAACL-HLT"
+REFERENCES,0.7630057803468208,Under review as a conference paper at ICLR 2022
+REFERENCES,0.7687861271676301,"2019, Minneapolis, MN, USA, June 2-7, 2019, Volume 1 (Long and Short Papers), pp. 4171–
+4186. Association for Computational Linguistics, 2019.
+doi: 10.18653/v1/n19-1423.
+URL
+https://doi.org/10.18653/v1/n19-1423."
+REFERENCES,0.7745664739884393,"Sergey Edunov, Myle Ott, Michael Auli, and David Grangier. Understanding back-translation at
+scale. In Ellen Riloff, David Chiang, Julia Hockenmaier, and Jun’ichi Tsujii (eds.), Proceedings of
+the 2018 Conference on Empirical Methods in Natural Language Processing, Brussels, Belgium,
+October 31 - November 4, 2018, pp. 489–500. Association for Computational Linguistics, 2018.
+doi: 10.18653/v1/d18-1045. URL https://doi.org/10.18653/v1/d18-1045."
+REFERENCES,0.7803468208092486,"Anirudh Goyal, Alex Lamb, Ying Zhang, Saizheng Zhang, Aaron C. Courville, and Yoshua
+Bengio.
+Professor forcing: A new algorithm for training recurrent networks.
+In Daniel D.
+Lee, Masashi Sugiyama, Ulrike von Luxburg, Isabelle Guyon, and Roman Garnett (eds.),
+Advances in Neural Information Processing Systems 29:
+Annual Conference on Neu-
+ral Information Processing Systems 2016, December 5-10, 2016, Barcelona, Spain, pp.
+4601–4609, 2016. URL https://proceedings.neurips.cc/paper/2016/hash/
+16026d60ff9b54410b3435b403afd226-Abstract.html."
+REFERENCES,0.7861271676300579,"Tom Henighan, Jared Kaplan, Mor Katz, Mark Chen, Christopher Hesse, Jacob Jackson, Heewoo
+Jun, Tom B. Brown, Prafulla Dhariwal, Scott Gray, Chris Hallacy, Benjamin Mann, Alec Rad-
+ford, Aditya Ramesh, Nick Ryder, Daniel M. Ziegler, John Schulman, Dario Amodei, and Sam
+McCandlish. Scaling laws for autoregressive generative modeling. CoRR, abs/2010.14701, 2020.
+URL https://arxiv.org/abs/2010.14701."
+REFERENCES,0.791907514450867,"Zhiting Hu, Zichao Yang, Xiaodan Liang, Ruslan Salakhutdinov, and Eric P. Xing. Controllable text
+generation. CoRR, abs/1703.00955, 2017. URL http://arxiv.org/abs/1703.00955."
+REFERENCES,0.7976878612716763,"Jared Kaplan, Sam McCandlish, Tom Henighan, Tom B. Brown, Benjamin Chess, Rewon Child,
+Scott Gray, Alec Radford, Jeffrey Wu, and Dario Amodei. Scaling laws for neural language
+models. CoRR, abs/2001.08361, 2020. URL https://arxiv.org/abs/2001.08361."
+REFERENCES,0.8034682080924855,"Phillip Keung, Julian Salazar, Yichao Lu, and Noah A. Smith. Unsupervised bitext mining and
+translation via self-trained contextual embeddings. Trans. Assoc. Comput. Linguistics, 8:828–
+841, 2020. URL https://transacl.org/ojs/index.php/tacl/article/view/
+2233."
+REFERENCES,0.8092485549132948,"Alexandre Klementiev, Ivan Titov, and Binod Bhattarai. Inducing crosslingual distributed represen-
+tations of words. In Martin Kay and Christian Boitet (eds.), COLING 2012, 24th International
+Conference on Computational Linguistics, Proceedings of the Conference: Technical Papers,
+8-15 December 2012, Mumbai, India, pp. 1459–1474. Indian Institute of Technology Bombay,
+2012. URL https://aclanthology.org/C12-1089/."
+REFERENCES,0.815028901734104,"Varun Kumar, Ashutosh Choudhary, and Eunah Cho. Data augmentation using pre-trained trans-
+former models.
+CoRR, abs/2003.02245, 2020.
+URL https://arxiv.org/abs/2003.
+02245."
+REFERENCES,0.8208092485549133,"Guillaume Lample, Alexis Conneau, Ludovic Denoyer, and Marc’Aurelio Ranzato. Unsupervised
+machine translation using monolingual corpora only. In 6th International Conference on Learn-
+ing Representations, ICLR 2018, Vancouver, BC, Canada, April 30 - May 3, 2018, Conference
+Track Proceedings. OpenReview.net, 2018. URL https://openreview.net/forum?id=
+rkYTTf-AZ."
+REFERENCES,0.8265895953757225,"Yinhan Liu, Jiatao Gu, Naman Goyal, Xian Li, Sergey Edunov, Marjan Ghazvininejad, Mike
+Lewis, and Luke Zettlemoyer. Multilingual denoising pre-training for neural machine transla-
+tion. Trans. Assoc. Comput. Linguistics, 8:726–742, 2020. URL https://transacl.org/
+ojs/index.php/tacl/article/view/2107."
+REFERENCES,0.8323699421965318,"Shuming Ma, Jian Yang, Haoyang Huang, Zewen Chi, Li Dong, Dongdong Zhang, Hany Hassan
+Awadalla, Alexandre Muzio, Akiko Eriguchi, Saksham Singhal, Xia Song, Arul Menezes, and
+Furu Wei.
+XLM-T: scaling up multilingual machine translation with pretrained cross-lingual
+transformer encoders.
+CoRR, abs/2012.15547, 2020.
+URL https://arxiv.org/abs/
+2012.15547."
+REFERENCES,0.838150289017341,Under review as a conference paper at ICLR 2022
+REFERENCES,0.8439306358381503,"Fei Mi, Wanhao Zhou, Fengyu Cai, Lingjing Kong, Minlie Huang, and Boi Faltings.
+Self-
+training improves pre-training for few-shot learning in task-oriented dialog systems.
+CoRR,
+abs/2108.12589, 2021. URL https://arxiv.org/abs/2108.12589."
+REFERENCES,0.8497109826589595,"Xuan-Phi Nguyen, Shaﬁq R. Joty, Thanh-Tung Nguyen, Kui Wu, and Ai Ti Aw.
+Cross-model
+back-translated distillation for unsupervised machine translation.
+In Marina Meila and Tong
+Zhang (eds.), Proceedings of the 38th International Conference on Machine Learning, ICML
+2021, 18-24 July 2021, Virtual Event, volume 139 of Proceedings of Machine Learning Re-
+search, pp. 8073–8083. PMLR, 2021. URL http://proceedings.mlr.press/v139/
+nguyen21c.html."
+REFERENCES,0.8554913294797688,"Yannis Papanikolaou and Andrea Pierleoni. DARE: data augmented relation extraction with GPT-2.
+CoRR, abs/2004.13845, 2020. URL https://arxiv.org/abs/2004.13845."
+REFERENCES,0.861271676300578,"Alberto Poncelas, Dimitar Sht. Shterionov, Andy Way, Gideon Maillette de Buy Wenniger, and Pey-
+man Passban. Investigating backtranslation in neural machine translation. CoRR, abs/1804.06189,
+2018. URL http://arxiv.org/abs/1804.06189."
+REFERENCES,0.8670520231213873,"Matt Post. A call for clarity in reporting BLEU scores. In Ondrej Bojar, Rajen Chatterjee, Chris-
+tian Federmann, Mark Fishel, Yvette Graham, Barry Haddow, Matthias Huck, Antonio Jimeno-
+Yepes, Philipp Koehn, Christof Monz, Matteo Negri, Aur´elie N´ev´eol, Mariana L. Neves, Matt
+Post, Lucia Specia, Marco Turchi, and Karin Verspoor (eds.), Proceedings of the Third Con-
+ference on Machine Translation: Research Papers, WMT 2018, Belgium, Brussels, October
+31 - November 1, 2018, pp. 186–191. Association for Computational Linguistics, 2018. doi:
+10.18653/v1/w18-6319. URL https://doi.org/10.18653/v1/w18-6319."
+REFERENCES,0.8728323699421965,"Alec Radford, Jeffrey Wu, Rewon Chield, David Luan, Dario Amodei, and Ilya Sutskever. Language
+models are unsupervised multitask learners. OpenAI blog, 1(8):9, 2019."
+REFERENCES,0.8786127167630058,"Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang, Michael Matena, Yanqi
+Zhou, Wei Li, and Peter J. Liu. Exploring the limits of transfer learning with a uniﬁed text-to-
+text transformer. J. Mach. Learn. Res., 21:140:1–140:67, 2020. URL http://jmlr.org/
+papers/v21/20-074.html."
+REFERENCES,0.884393063583815,"Sujith Ravi and Kevin Knight. Deciphering foreign language. In Dekang Lin, Yuji Matsumoto,
+and Rada Mihalcea (eds.), The 49th Annual Meeting of the Association for Computational Lin-
+guistics: Human Language Technologies, Proceedings of the Conference, 19-24 June, 2011,
+Portland, Oregon, USA, pp. 12–21. The Association for Computer Linguistics, 2011.
+URL
+https://aclanthology.org/P11-1002/."
+REFERENCES,0.8901734104046243,"Timo Schick and Hinrich Sch¨utze. Generating datasets with pretrained language models. CoRR,
+abs/2104.07540, 2021. URL https://arxiv.org/abs/2104.07540."
+REFERENCES,0.8959537572254336,"Timo Schick, Sahana Udupa, and Hinrich Sch¨utze. Self-diagnosis and self-debiasing: A proposal
+for reducing corpus-based bias in NLP. CoRR, abs/2103.00453, 2021. URL https://arxiv.
+org/abs/2103.00453."
+REFERENCES,0.9017341040462428,"Rico Sennrich, Barry Haddow, and Alexandra Birch. Improving neural machine translation mod-
+els with monolingual data. In Proceedings of the 54th Annual Meeting of the Association for
+Computational Linguistics, ACL 2016, August 7-12, 2016, Berlin, Germany, Volume 1: Long
+Papers. The Association for Computer Linguistics, 2016. doi: 10.18653/v1/p16-1009. URL
+https://doi.org/10.18653/v1/p16-1009."
+REFERENCES,0.9075144508670521,"Tianxiao Shen, Tao Lei, Regina Barzilay, and Tommi S. Jaakkola.
+Style transfer from non-
+parallel text by cross-alignment.
+In Isabelle Guyon, Ulrike von Luxburg, Samy Bengio,
+Hanna M. Wallach, Rob Fergus, S. V. N. Vishwanathan, and Roman Garnett (eds.), Ad-
+vances in Neural Information Processing Systems 30:
+Annual Conference on Neural In-
+formation Processing Systems 2017, December 4-9, 2017, Long Beach, CA, USA, pp.
+6830–6841, 2017. URL https://proceedings.neurips.cc/paper/2017/hash/
+2d2c8394e31101a261abf1784302bf75-Abstract.html."
+REFERENCES,0.9132947976878613,Under review as a conference paper at ICLR 2022
+REFERENCES,0.9190751445086706,"Kaitao Song, Xu Tan, Tao Qin, Jianfeng Lu, and Tie-Yan Liu. MASS: masked sequence to se-
+quence pre-training for language generation. In Kamalika Chaudhuri and Ruslan Salakhutdinov
+(eds.), Proceedings of the 36th International Conference on Machine Learning, ICML 2019, 9-
+15 June 2019, Long Beach, California, USA, volume 97 of Proceedings of Machine Learning
+Research, pp. 5926–5936. PMLR, 2019. URL http://proceedings.mlr.press/v97/
+song19d.html."
+REFERENCES,0.9248554913294798,"Pascal Vincent, Hugo Larochelle, Yoshua Bengio, and Pierre-Antoine Manzagol. Extracting and
+composing robust features with denoising autoencoders. In William W. Cohen, Andrew McCal-
+lum, and Sam T. Roweis (eds.), Machine Learning, Proceedings of the Twenty-Fifth International
+Conference (ICML 2008), Helsinki, Finland, June 5-9, 2008, volume 307 of ACM International
+Conference Proceeding Series, pp. 1096–1103. ACM, 2008. doi: 10.1145/1390156.1390294.
+URL https://doi.org/10.1145/1390156.1390294."
+REFERENCES,0.930635838150289,"Tu Vu, Minh-Thang Luong, Quoc V. Le, Grady Simon, and Mohit Iyyer. Strata: Self-training with
+task augmentation for better few-shot learning. CoRR, abs/2109.06270, 2021. URL https:
+//arxiv.org/abs/2109.06270."
+REFERENCES,0.9364161849710982,"Ivan Vulic and Marie-Francine Moens. Bilingual word embeddings from non-parallel document-
+aligned data applied to bilingual lexicon induction. In Proceedings of the 53rd Annual Meeting
+of the Association for Computational Linguistics and the 7th International Joint Conference on
+Natural Language Processing of the Asian Federation of Natural Language Processing, ACL
+2015, July 26-31, 2015, Beijing, China, Volume 2: Short Papers, pp. 719–725. The Association
+for Computer Linguistics, 2015. doi: 10.3115/v1/p15-2118. URL https://doi.org/10.
+3115/v1/p15-2118."
+REFERENCES,0.9421965317919075,"Liang Wang, Wei Zhao, Ruoyu Jia, Sujian Li, and Jingming Liu. Denoising based sequence-to-
+sequence pre-training for text generation.
+In Kentaro Inui, Jing Jiang, Vincent Ng, and Xi-
+aojun Wan (eds.), Proceedings of the 2019 Conference on Empirical Methods in Natural Lan-
+guage Processing and the 9th International Joint Conference on Natural Language Process-
+ing, EMNLP-IJCNLP 2019, Hong Kong, China, November 3-7, 2019, pp. 4001–4013. Asso-
+ciation for Computational Linguistics, 2019.
+doi: 10.18653/v1/D19-1412.
+URL https:
+//doi.org/10.18653/v1/D19-1412."
+REFERENCES,0.9479768786127167,"Mingxuan Wang, Hongxiao Bai, Lei Li, and Hai Zhao. Cross-lingual supervision improves un-
+supervised neural machine translation.
+In Young-bum Kim, Yunyao Li, and Owen Rambow
+(eds.), Proceedings of the 2021 Conference of the North American Chapter of the Associa-
+tion for Computational Linguistics: Human Language Technologies: Industry Papers, NAACL-
+HLT 2021, Online, June 6-11, 2021, pp. 89–96. Association for Computational Linguistics,
+2021a. doi: 10.18653/v1/2021.naacl-industry.12. URL https://doi.org/10.18653/v1/
+2021.naacl-industry.12."
+REFERENCES,0.953757225433526,"Yaqing Wang, Quanming Yao, James T. Kwok, and Lionel M. Ni. Generalizing from a few ex-
+amples: A survey on few-shot learning.
+ACM Comput. Surv., 53(3):63:1–63:34, 2020.
+doi:
+10.1145/3386252. URL https://doi.org/10.1145/3386252."
+REFERENCES,0.9595375722543352,"Zirui Wang, Adams Wei Yu, Orhan Firat, and Yuan Cao. Towards zero-label language learning.
+CoRR, abs/2109.09193, 2021b. URL https://arxiv.org/abs/2109.09193."
+REFERENCES,0.9653179190751445,"Guillaume Wenzek, Marie-Anne Lachaux, Alexis Conneau, Vishrav Chaudhary, Francisco Guzm´an,
+Armand Joulin, and Edouard Grave. Ccnet: Extracting high quality monolingual datasets from
+web crawl data.
+In Nicoletta Calzolari, Fr´ed´eric B´echet, Philippe Blache, Khalid Choukri,
+Christopher Cieri, Thierry Declerck, Sara Goggi, Hitoshi Isahara, Bente Maegaard, Joseph Mar-
+iani, H´el`ene Mazo, Asunci´on Moreno, Jan Odijk, and Stelios Piperidis (eds.), Proceedings
+of The 12th Language Resources and Evaluation Conference, LREC 2020, Marseille, France,
+May 11-16, 2020, pp. 4003–4012. European Language Resources Association, 2020.
+URL
+https://aclanthology.org/2020.lrec-1.494/."
+REFERENCES,0.9710982658959537,"Qizhe Xie, Minh-Thang Luong, Eduard H. Hovy, and Quoc V. Le.
+Self-training with
+noisy student improves imagenet classiﬁcation.
+In 2020 IEEE/CVF Conference on
+Computer
+Vision
+and
+Pattern
+Recognition,
+CVPR
+2020,
+Seattle,
+WA,
+USA,
+June
+13-19,
+2020,
+pp. 10684–10695. Computer Vision Foundation / IEEE, 2020.
+doi:"
+REFERENCES,0.976878612716763,Under review as a conference paper at ICLR 2022
+REFERENCES,0.9826589595375722,"10.1109/CVPR42600.2020.01070.
+URL
+https://openaccess.thecvf.com/
+content_CVPR_2020/html/Xie_Self-Training_With_Noisy_Student_
+Improves_ImageNet_Classification_CVPR_2020_paper.html."
+REFERENCES,0.9884393063583815,"Linting Xue, Noah Constant, Adam Roberts, Mihir Kale, Rami Al-Rfou, Aditya Siddhant, Aditya
+Barua, and Colin Raffel. mt5: A massively multilingual pre-trained text-to-text transformer. In
+Kristina Toutanova, Anna Rumshisky, Luke Zettlemoyer, Dilek Hakkani-T¨ur, Iz Beltagy, Steven
+Bethard, Ryan Cotterell, Tanmoy Chakraborty, and Yichao Zhou (eds.), Proceedings of the 2021
+Conference of the North American Chapter of the Association for Computational Linguistics:
+Human Language Technologies, NAACL-HLT 2021, Online, June 6-11, 2021, pp. 483–498. As-
+sociation for Computational Linguistics, 2021.
+doi: 10.18653/v1/2021.naacl-main.41.
+URL
+https://doi.org/10.18653/v1/2021.naacl-main.41."
+REFERENCES,0.9942196531791907,"Yiben Yang, Chaitanya Malaviya, Jared Fernandez, Swabha Swayamdipta, Ronan Le Bras, Ji-
+Ping Wang, Chandra Bhagavatula, Yejin Choi, and Doug Downey. G-daug: Generative data
+augmentation for commonsense reasoning.
+In Trevor Cohn, Yulan He, and Yang Liu (eds.),
+Findings of the Association for Computational Linguistics: EMNLP 2020, Online Event, 16-
+20 November 2020, volume EMNLP 2020 of Findings of ACL, pp. 1008–1025. Association for
+Computational Linguistics, 2020.
+doi: 10.18653/v1/2020.ﬁndings-emnlp.90.
+URL https:
+//doi.org/10.18653/v1/2020.findings-emnlp.90."

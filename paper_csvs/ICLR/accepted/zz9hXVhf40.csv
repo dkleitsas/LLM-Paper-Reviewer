@@ -1,0 +1,4268 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.0006939625260235947,"Ofﬂine reinforcement learning enables agents to leverage large pre-collected
+datasets of environment transitions to learn control policies, circumventing the
+need for potentially expensive or unsafe online data collection. Signiﬁcant progress
+has been made recently in ofﬂine model-based reinforcement learning, approaches
+which leverage a learned dynamics model. This typically involves constructing a
+probabilistic model, and using the model uncertainty to penalize rewards where
+there is insufﬁcient data, solving for a pessimistic MDP that lower bounds the
+true MDP. Existing methods, however, exhibit a breakdown between theory and
+practice, whereby pessimistic return ought to be bounded by the total variation
+distance of the model from the true dynamics, but is instead implemented through a
+penalty based on estimated model uncertainty. This has spawned a variety of uncer-
+tainty heuristics, with little to no comparison between differing approaches. In this
+paper, we compare these heuristics, and design novel protocols to investigate their
+interaction with other hyperparameters, such as the number of models, or imaginary
+rollout horizon. Using these insights, we show that selecting these key hyperparam-
+eters using Bayesian Optimization produces superior conﬁgurations that are vastly
+different to those currently used in existing hand-tuned state-of-the-art methods,
+and result in drastically stronger performance."
+INTRODUCTION,0.0013879250520471894,"1
+INTRODUCTION"
+INTRODUCTION,0.002081887578070784,"In ofﬂine (or batch) reinforcement learning (RL) (Ernst et al., 2005; Levine et al., 2020), the goal is
+to leverage ofﬂine datasets of transitions in an environment to train a policy that transfers to an online
+task. This could have vast implications for using RL in real-world settings, as agents can make use
+of ever-increasing amounts of data without the need for an accurate simulator, while also avoiding
+expensive and potentially even unsafe exploration in the environment."
+INTRODUCTION,0.002775850104094379,"Model-based reinforcement learning (MBRL) has recently shown promise in this paradigm, obtaining
+state-of-the-art performance on ofﬂine RL benchmarks (Kidambi et al., 2020; Yu et al., 2021),
+improving upon powerful model-free approaches (e.g. Kumar et al. (2020)). MBRL works by
+training a dynamics model from the ofﬂine data, then optimizing a policy using imaginary rollouts
+from the model. This allows the agent to learn from on-policy experience, as the model is agnostic
+to the policy used to generate data, making it possible to achieve high returns using data collected
+from even a random policy. Furthermore, recent work has demonstrated the utility of world models
+beyond maximizing return, such as generalizing to unseen variations in an environment (Ball et al.,
+2021), transferring to new tasks (Yu et al., 2020), and learning with safety constraints (Argenson &
+Dulac-Arnold, 2021). Therefore, the case for MBRL in ofﬂine RL is clear: not only does it represent
+state-of-the-art in terms of performance, but it also provides the opportunity to maximize the signal
+in the ofﬂine data to generalize onto tasks beyond those encoded by the behavior policy. This is
+crucial for ofﬂine RL to be useful for real-world tasks (Dulac-Arnold et al., 2021), where there will
+inevitably be differences between the data and desired task."
+INTRODUCTION,0.0034698126301179735,"However, a common failure mode of MBRL is when policies exploit the model in parts of the
+state-action space where the model is inaccurate. Thus, naïve application of MBRL to ofﬂine data"
+INTRODUCTION,0.004163775156141568,"∗Joint ﬁrst authors. Correspondence: cong.lu@stats.ox.ac.uk, ball@robots.ox.ac.uk"
+INTRODUCTION,0.004857737682165163,Published as a conference paper at ICLR 2022
+INTRODUCTION,0.005551700208188758,"0
+25
+50
+75
+100
+Time Steps in Model 0 100 101"
+INTRODUCTION,0.006245662734212352,Log Norm. Scale
+INTRODUCTION,0.006939625260235947,"Dynamics Error
+Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var."
+INTRODUCTION,0.007633587786259542,(a) Uncertainty vs. True Errors
+INTRODUCTION,0.008327550312283136,0.4 0.5 0.6 0.7 0.8 0.9 1.0
+INTRODUCTION,0.009021512838306732,P[Optimized > MOPO]
+INTRODUCTION,0.009715475364330326,MuJoCo
+INTRODUCTION,0.010409437890353921,Adroit
+INTRODUCTION,0.011103400416377515,"(b) Probability of Improvement
+Figure 1: a) The variation of different uncertainty penalties against true dynamics error during a model rollout
+of Hopper Medium-Expert. The canonical ensemble variance penalty most closely ﬁts the true dynamics error.
+b) Tuning key hyperparameters (an approach we call Optimized) can lead to large gains over state-of-the-art
+methods (MOPO) on the D4RL benchmark, as we show in this summary using rliable (Agarwal et al., 2021)."
+INTRODUCTION,0.01179736294240111,"can result in suboptimal performance. To prevent this, concurrent works (Yu et al., 2020; Kidambi
+et al., 2020) have approached the problem by training a policy in a pessimistic MDP (P-MDP). The
+P-MDP lower bounds the true MDP, and discourages the policy from regions where there is large
+discrepancy between the true and learned dynamics; this often provides a theoretical guarantee of
+improvement over cloning the behavior policy that generated the ofﬂine data. This is made practically
+possible by adding a penalty correlated with the uncertainty in the dynamics model. However, while
+these recent successes are similar in principle, in practice they differ in a series of design choices.
+First and foremost, they make use of different heuristics to measure model uncertainty, in some cases
+deviating from simpler metrics which are more consistent with the theory."
+INTRODUCTION,0.012491325468424705,"In this paper, we conduct a rigorous investigation into a series of these design choices. We begin by
+focusing on the choice of uncertainty metric, comparing both recent state-of-the-art ofﬂine approaches
+(Kidambi et al., 2020; Yu et al., 2020; Rafailov et al., 2020) with additional metrics used in the online
+setting (Ball et al., 2020; Pan et al., 2020; Cowen-Rivers et al., 2022). We also explore the interaction
+with a series of other hyperparameters, such as the number of models and imaginary rollout length.
+Interestingly, the relationship between these variables and model uncertainty varies signiﬁcantly
+depending on the choice of uncertainty penalty. Furthermore, we compare these uncertainty heuristics
+under new evaluation protocols that, for the ﬁrst time, capture the speciﬁc covariate shift induced by
+model-based RL. This allows us to assess calibration to model exploitation in MBRL, observing that
+some existing penalties are surprisingly successful at capturing the errors in predicted dynamics, as
+seen in Fig. 1a (see App. D for details). Then, using the insights gained from sections 4 and 5, we
+then achieve a 43% gain over a previously grid-searched method by using a single hyperparameter
+value across all environments. We then jointly ﬁne-tune our identiﬁed key variables using a powerful
+Bayesian Optimization algorithm (Wan et al., 2021) and ﬁnd the simpler uncertainty measures can
+provide state-of-the-art results in continuous control ofﬂine benchmarks, and that the chosen optimal
+hyperparameters continue to align with our analysis. Finally, we rigorously conﬁrm the aggregate
+improvement of our results using the rliable framework (Agarwal et al., 2021) in Fig. 1b, and
+show that the improvements over existing methods are signiﬁcant (see App. H for details). This work
+is intended to beneﬁt both researchers and practitioners in ofﬂine RL. Our main ﬁndings include:"
+INTRODUCTION,0.0131852879944483,"• Longer horizon rollouts with larger penalties can improve existing methods. Contrary to
+common wisdom, conducting signiﬁcantly longer rollouts inside the model, coupled with larger
+uncertainty penalties, typically improves performance.
+• Penalties that use canonical forms of uncertainty estimation achieve better correlation with
+OOD measures. The uncertainty estimation approach of Lakshminarayanan et al. (2017) often
+outperforms the penalty from state-of-the-art methods (Yu et al., 2020; Kidambi et al., 2020).
+We observe that the ensemble standard deviation is statistically strikingly similar to that used in
+Kidambi et al. (2020), but has improved correlation and scaling behavior.
+• Uncertainty is more correlated with dynamics error than distribution shift. We ﬁnd that suc-
+cessful penalties measure the discrepancy in dynamics, and can in fact assign high certainty to data
+far away from the ofﬂine data."
+RELATED WORK,0.013879250520471894,"2
+RELATED WORK"
+RELATED WORK,0.01457321304649549,"Two recent works concurrently demonstrated the effectiveness of model-based reinforcement learning
+(MBRL) in the ofﬂine setting. MOPO (Yu et al., 2020) follows the successful online RL algorithm
+MBPO (Janner et al., 2019) but trains inside a conservative MDP, penalizing the reward based on the
+maximum aleatoric uncertainty over the ensemble members. MOReL (Kidambi et al., 2020) achieves"
+RELATED WORK,0.015267175572519083,Published as a conference paper at ICLR 2022
+RELATED WORK,0.015961138098542677,"even stronger performance, penalizing the rewards by a penalty based on the maximum pair-wise
+difference in ensemble member predictions. For pixel-based tasks, LOMPO (Rafailov et al., 2020)
+also proposed a novel penalty, using the variance of ensemble log-likelihoods. Outside the ofﬂine
+setting, probabilistic dynamics models leveraging uncertainty have underpinned a series of successes
+(Chua et al., 2018; Kurutach et al., 2018; Buckman et al., 2018; Pan et al., 2020; Pacchiano et al.,
+2021). Uncertainty can also be measured in MBRL without the use of neural networks (Deisenroth &
+Rasmussen, 2011), although these methods tend to be harder to scale and thus lack widespread use."
+RELATED WORK,0.016655100624566273,"Effective hyperparameter selection in RL has been shown to be crucial to the success of popular
+algorithms (Engstrom et al., 2020; Andrychowicz et al., 2021). This becomes even more challenging
+in MBRL with additional hyperparameters/design-choices for the dynamics model. Recent work has
+shown that carefully optimizing these hyperparameters for online MBRL can signiﬁcantly improve
+performance, with the tuned agent breaking the MuJoCo simulator (Zhang et al., 2021). In contrast,
+we focus on the ofﬂine setting, and investigate parameters speciﬁcally related to uncertainty estimation.
+Previous work studied the impact of hyperparameters in ofﬂine RL (Paine et al., 2020), ﬁnding ofﬂine
+RL algorithms to be brittle to hyperparameter choices. However, unlike our work they only consider
+model-free approaches, whereas we speciﬁcally investigate model-based ofﬂine algorithms. Abbas
+et al. (2020) investigates the impact of different uncertainty estimation methods in online MBRL;
+they too ﬁnd penalizing with combined aleatoric and epistemic uncertainty improves performance."
+RELATED WORK,0.01734906315058987,"Our work also relates to the rich literature on deep ensembles (Lakshminarayanan et al., 2017), which
+train multiple deep neural networks with different initializations and dataset orderings, and generally
+outperform variational Bayes methods (Mackay, 1992; Blundell et al., 2015). Achieving effective
+calibration with neural networks is notoriously difﬁcult (Guo et al., 2017; Kuleshov et al., 2018;
+Maddox et al., 2019), and furthermore we require calibration under co-variate shift (Ovadia et al.,
+2019), as the policy learned in the model will likely deviate from the behavior policy that generated
+the ofﬂine data. Recent work has highlighted this issue in ofﬂine RL (Kumar et al., 2020; Yu et al.,
+2021) and has reported superior performance when eschewing model uncertainty entirely, and instead
+performing “conservative"" Q-updates. However, it is unclear if this improvement is due to poor
+uncertainty calibration, implementation details, or a limitation in the pessimistic-MDP formulation."
+BACKGROUND,0.018043025676613464,"3
+BACKGROUND"
+BACKGROUND,0.018736988202637056,"All of the methods we investigate in this paper model the environment as a Markov Decision Process
+(MDP), deﬁned as a tuple M = (S, A, P, R, ρ0, γ), where S and A denote the state and action
+spaces respectively, P(s′|s, a) the transition dynamics, R(s, a) the reward function, ρ0 the initial
+state distribution, and γ ∈(0, 1) the discount factor. The goal is to optimize a policy π(a|s) that
+maximizes the expected discounted return Eπ,P,ρ0 [P∞
+t=0 γtR(st, at)]."
+BACKGROUND,0.01943095072866065,"In ofﬂine RL, the policy is not deployed in the environment until test time. Instead, the algorithm only
+has access to a static dataset Denv = {(sj, aj, rj, sj+1)}J
+j=1, collected by one or more behavioral
+policies πb. Following the notation in Yu et al. (2020) we refer to the distribution from which Denv
+was sampled as the behavioral distribution. The canonical approach in ofﬂine MBRL is to train
+an ensemble of N probabilistic dynamics models (Nix & Weigend, 1994). These usually learn to
+predict both the next state st+1 and reward rt from a state-action pair, and are trained on Denv
+using supervised learning. Concretely, each of the N models output a Gaussian bP i
+φ(st+1, rt|st, at) =
+N(µi
+φ(st, at), Σi
+φ(st, at)) parameterized by φ. The resulting learned dynamics model bP and reward
+model bR deﬁne a model MDP c
+M = (S, A, bP, bR, ρ0, γ). To train the policy, we use k-step rollouts
+inside c
+M to generate trajectories (Sutton, 1991)."
+BACKGROUND,0.020124913254684247,"To prevent policy exploitation in a model, a pessimistic MDP (P-MDP) is constructed by lower
+bounding the true-expected return, ηM(π), using some error between the true and estimated models.
+For instance, in Yu et al. (2020), the authors show that a lower bound on the return can be established
+by penalizing the reward by a measure that corresponds to estimated model error:"
+BACKGROUND,0.020818875780707843,"ηM(π) ≥
+E
+(s,a)∼ρπ
+ˆ
+P"
+BACKGROUND,0.021512838306731435,"
+R(s, a) −γ|Gπ
+ˆ
+M(s, a)|
+
+(1)"
+BACKGROUND,0.02220680083275503,"where ρπ
+ˆ
+P represents transitioning under the dynamics model ˆP and policy π. Several potential
+choices for |Gπ
+ˆ
+M(s, a)| are proposed, including an upper bound based on the total variation distance"
+BACKGROUND,0.022900763358778626,Published as a conference paper at ICLR 2022
+BACKGROUND,0.02359472588480222,"between the learned and true dynamics. However, for their practical algorithm, the authors elect
+to use a heuristic based on impressive empirical results. Concurrent to MOPO, MOReL (Kidambi
+et al., 2020) in theory constructs a P-MDP by augmenting a standard MDP with a negative valued
+absorbing state that is transitioned to when total variation distance between true and learned dynamics
+is exceeded. They show that a policy learned in this P-MDP exceeds simple behavior cloning.
+However, while dynamics-based total variation distance has desirable theoretical properties, the
+practical algorithm relies on another heuristic to approximate this quantity. This motivates the study
+of penalties used, as well as other under-used candidates, and their overall effectiveness."
+UNCERTAINTY PENALTY,0.024288688410825817,"4
+UNCERTAINTY PENALTY"
+UNCERTAINTY PENALTY,0.02498265093684941,"The key idea underpinning recent success in ofﬂine MBRL is the introduction of a P-MDP, penalized
+by some uncertainty penalty. The theory dictates this should be some distance measure between the
+true and predicted dynamics. Of course, this cannot be truly estimated without access to an oracle,
+so a proxy for this quantity is constructed instead based on uncertainty heuristics. In this paper, we
+compare the following uncertainty heuristics, from recent works in both ofﬂine and online MBRL:"
+UNCERTAINTY PENALTY,0.025676613462873005,"Max Aleatoric (Yu et al., 2020): maxi=1,...,N||Σi
+φ(s, a)||F, which corresponds to the maximum
+aleatoric error, computed over the variance heads of the model ensemble.
+Max Pairwise Diff (Kidambi et al., 2020): maxi,j||µi
+φ(s, a) −µj
+φ(s, a)||2, which corresponds to
+the pairwise maximum difference of the ensemble predictions.
+LL Var (Log-Likelihood Variance) (Rafailov et al., 2020)): Var({log bP i
+φ(s′|s, a), i = 1, . . . , N}),
+where s′ is a next state sampled from a single ensemble member. We evaluate its log-likelihood under
+each ensemble member and take the variance.
+LOO KL (Leave-One-Out KL Divergence (Pan et al., 2020): DKL[ bPφi(·|s, a)|| bPφ−i(·|s, a)],
+which corresponds to the KL divergence between the Gaussian parameterized by a randomly selected
+ensemble member, and the aggregated Gaussian of the remaining ensemble members.
+Ensemble Standard Deviation/Variance (Lakshminarayanan et al., 2017): The variance is given
+as: Σ∗(s, a) = 1"
+UNCERTAINTY PENALTY,0.0263705759888966,"N
+PN
+i ((Σi
+φ(s, a))2 + (µi
+φ(s, a))2) −(µ∗(s, a))2 where µ∗is the mean of the means
+(µ∗(s, a) = 1"
+UNCERTAINTY PENALTY,0.027064538514920196,"N
+PN
+i µi
+φ(s, a)). This corresponds to a combination of epistemic and aleatoric model
+uncertainty. This is surprisingly under-utilized in ofﬂine MBRL, and is a canonical method of
+uncertainty estimation used in the Bayesian inference literature (Ovadia et al., 2019; Filos et al., 2019;
+Scalia et al., 2020). We choose to evaluate both standard deviation (the square root of the above) and
+variance, as this will provide intuition about the importance of penalty distribution shape."
+UNCERTAINTY PENALTY,0.027758501040943788,"These can all be computed using the output from an ensemble of probabilistic dynamics models
+(Lakshminarayanan et al., 2017), so we are able to compare them in a controlled manner."
+UNCERTAINTY PENALTY,0.028452463566967384,"4.1
+HOW WELL DO ENSEMBLE PENALTIES DETECT OUT OF DISTRIBUTION ERRORS?"
+UNCERTAINTY PENALTY,0.02914642609299098,"We begin by assessing how well uncertainty penalties correlate with next state MSE (we justify the
+MSE under deterministic dynamics in App. A.2). This is crucial in penalizing the policy from visiting
+parts of the state-action space where the model is inaccurate, and therefore exploitable. Using D4RL
+(Fu et al., 2021a), we train models on each dataset, then evaluate them on other datasets from the
+same environment, but collected under different policies. These form our “Transfer” experiments
+as they directly measure the ability of uncertainty penalties at detecting errors on unseen data. We
+compare the penalties against true MSE for a variety of settings in App. A.3, and summarize this
+in the “Transfer” column of Table 1. We measure Spearman rank (ρ) and Pearson bivariate (r)
+correlations, and justify their use in App. A.1. Full details of all experiments and hyperparameters
+are given in App. G. We will analyze these results in detail in the next section, after introducing a
+novel protocol for assessing our penalties under the out-of-distribution (OOD) data induced by model
+exploitation."
+UNCERTAINTY PENALTY,0.029840388619014575,"4.2
+HOW DO THESE PERFORM DURING AN IMAGINARY ROLLOUT?"
+UNCERTAINTY PENALTY,0.030534351145038167,"We additionally design an experiment aimed at capturing the OOD data generated by the actual
+ofﬂine MBRL process, which we call our “True Model-Based” experiments. First, we train a set of
+policies with 4 different starting seeds without a penalty inside the model for 500 iterations. We"
+UNCERTAINTY PENALTY,0.031228313671061762,Published as a conference paper at ICLR 2022
+UNCERTAINTY PENALTY,0.031922276197085354,"Table 1: Correlation statistics of penalties against true mean-sq. model error, averaged over all datasets (i.e.,
+Random through to Expert) showing ± 1 SD over 12 seeds. The best in each column is bolded. The ensemble
+penalties generally perform best."
+UNCERTAINTY PENALTY,0.03261623872310895,"Transfer
+True Model-Based"
+UNCERTAINTY PENALTY,0.033310201249132546,"HalfCheetah
+Hopper
+HalfCheetah
+Hopper"
+UNCERTAINTY PENALTY,0.034004163775156145,"Penalty
+ρ
+r
+ρ
+r
+ρ
+r
+ρ
+r"
+UNCERTAINTY PENALTY,0.03469812630117974,"Max Aleatoric
+0.78±0.00
+0.55±0.01
+0.71±0.01
+0.41±0.01
+0.58±0.01
+0.42±0.01
+0.73±0.03
+0.48±0.01
+Max Pairwise Diff.
+0.79±0.01
+0.62±0.00
+0.77±0.00
+0.57±0.00
+0.58±0.01
+0.52±0.01
+0.75±0.02
+0.55±0.02
+Ens. Std.
+0.82±0.01
+0.64±0.01
+0.79±0.00
+0.56±0.00
+0.61±0.01
+0.52±0.00
+0.79±0.02
+0.55±0.02
+Ens. Var.
+0.82±0.01
+0.67±0.00
+0.79±0.00
+0.59±0.00
+0.60±0.01
+0.49±0.01
+0.77±0.02
+0.55±0.02
+LL Var.
+0.13±0.05
+0.14±0.02
+0.36±0.04
+0.12±0.02
+0.04±0.16
+0.07±0.06
+0.50±0.02
+0.16±0.02
+LOO KL
+0.03±0.02
+0.11±0.02
+0.11±0.02
+0.08±0.02
+-0.02±0.12
+0.06±0.06
+0.22±0.02
+0.10±0.02"
+UNCERTAINTY PENALTY,0.03539208882720333,"then measure the difference between the return predicted by the model over a rollout, and the true
+return in the real environment. We deﬁne a policy to be “exploitative” if the model signiﬁcantly
+over-estimates the return compared to the true return. It is these exploitative policies that induce the
+types of extrapolation errors which cause MBRL methods to fail in the ofﬂine setting. It is therefore
+important that the penalty is able to accurately determine when the model is being exploited in this
+way. We use a subset of the 5 most exploitative policies to generate trajectories in the model, and
+record the uncertainty predicted by each penalty at every time step. To generate the True Model-Based
+data, we then “replay” these trajectories in the true environment, loading the state and action taken in
+the model into the environment, and record the “true” next state according to the MuJoCo simulator
+(Todorov et al., 2012). True Model-Based therefore calculates the MSE between the predicted and
+actual next states. Table 1 summarizes the results from both the Transfer and True Model-Based
+experiments. Additional details are provided in App. D along with full correlation plots in App. A.3."
+UNCERTAINTY PENALTY,0.03608605135322693,"We are now in a position to analyze the results in Table 1. It is immediately obvious that the LOO KL
+and LL Var penalties have very weak correlation with MSE. We believe this is because LL Var relies
+on likelihood statistics, which are notoriously sensitive; it was designed for use with a KL-regularized
+latent state space model which has well-behaved dynamics. Regarding LOO KL, we note that this
+penalty was designed for the online setting with signiﬁcantly less data, and becomes quite uncorrelated
+in this larger data setting. This advocates penalties that are less reliant on distributional information
+concerning the separate Gaussians in the ensemble, as such penalties appear sensitive to the quality
+of their estimated distributions. We observe that Max Aleatoric, Max Pairwise Diff and the Ensemble
+penalties perform broadly similarly despite their different analytical forms; Ensemble measures do
+however exhibit noticeably higher rank correlation. We also observe a signiﬁcant performance loss
+between the Transfer and True Model-Based HalfCheetah settings, with the latter being relatively
+poor. This implies further work is needed to develop penalties that can successfully detect the type
+of dynamics discrepancies that actually arise in ofﬂine MBRL. Finally, we observe that despite the
+similar rank correlations ρ, the bivariate correlations r can vary considerably, and observe from the
+scatter plots that Max Aleatoric exhibits low kurtosis, having large penalty values “bunched” at its
+extreme; we provide 3rd and 4th order moment statistics to facilitate shape comparisons in App. C."
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.03678001387925052,"5
+KEY HYPERPARAMETERS IN OFFLINE MBRL"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.03747397640527411,"5.1
+HOW MANY MODELS DO WE NEED?"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.03816793893129771,"At present the number of models used has not been discussed since MBPO, which trains seven
+probabilistic dynamics models of the same architecture (with different initializations), using only the
+top ﬁve models based on validation accuracy (referred to as “Elites” in the Evolutionary community,
+e.g. Mouret & Clune (2015)). The reason or justiﬁcation for this is not discussed, but it has seemingly
+been adopted in the wider MBRL setting (Shen et al., 2020; Omer et al., 2021; Pineda et al., 2021).
+However, ofﬂine RL is a totally different paradigm, where it is possible that access to compute is less
+of a bottleneck and it may be preferable to use more models to extract the most signal possible from
+the static dataset. Inevitably, many of the ensemble penalties are dependent on the number of models;
+for example, it is easy to see that the Max Aleatoric value could scale poorly with more models."
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.0388619014573213,"How Does Penalty Distribution Change with Model Count? We now vary the number of models
+used in the calculation of the penalties and plot their respective distributions; an illustrative example
+is shown in Fig. 2 with full results in App. B. The scaling of penalties relying on max over sets is most
+affected with increasing the number of models due to admitting more extreme values, and we observe
+that the distribution shape of Max Aleatoric changes signiﬁcantly as we admit more models, which"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.0395558639833449,"Published as a conference paper at ICLR 2022 3
+4
+5"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.040249826509368494,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.040943789035392086,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.041637751561415685,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.04233171408743928,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.04302567661346287,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.04371963913948647,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.04441360166551006,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.04510756419153366,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.04580152671755725,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.046495489243580844,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.04718945176960444,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.047883414295628035,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.048577376821651634,"Max Aleatoric 5
+10"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.049271339347675226,Max Pairw. Diff.
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.04996530187369882,"0.6
+0.8"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.05065926439972242,"Ensemble Std. 1
+2"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.05135322692574601,Ensemble Var.
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.0520471894517696,100 200 300
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.0527411519777932,LL Var.
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.05343511450381679,"5
+10
+15"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.05412907702984039,LOO KL
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.054823039555863984,"0.5
+1.0
+1.5"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.055517002081887576,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.056210964607911175,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.05690492713393477,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.05759888965995836,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.05829285218598196,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.05898681471200555,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.05968077723802915,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.06037473976405274,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.061068702290076333,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.06176266481609993,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.062456627342123525,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.06315058986814712,"20
+15
+10 7
+5
+3"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.06384455239417071,"5
+10
+0.5
+1.0
+0
+1
+2
+0
+200000
+20
+40"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.06453851492019431,Number of Models
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.0652324774462179,"Penalty
+Figure 2: Box Plots showing D4RL Medium transferred to Random. We show IQR limits and the median value
+denoted by the black vertical line. Green = HalfCheetah, Blue = Hopper. Max Aleatoric, Max Pairw. Diff. and
+LOO KL are unstable w.r.t. ensemble member count. In contrast, ensemble variance and std. are far more stable."
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.0659264399722415,"we validate in App. C. This impacts the tuning of this hyperparameter, as we have to contend with a
+changing distribution along with calibration quality (which we explore in the next section). Finally,
+we observe that the Ensemble penalties change the least with differing model count, highlighting
+their ease of tuning; this is clearly a desirable property for designing such metrics going forward."
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.06662040249826509,"5
+10
+15
+20
+Number of Models 0.2 0.4 0.6 0.8"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.06731436502428868,Spearman:
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.06800832755031229,"5
+10
+15
+20
+Number of Models 0.2 0.4"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.06870229007633588,Pearson: r
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.06939625260235947,"Max Aleatoric
+Max Pairwise Diff."
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.07009021512838307,"Ensemble Std.
+Ensemble Var."
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.07078417765440666,"LL Var.
+KL LOO
+Figure 3: Plot of how error and penalty correlation
+changes with model number in Hopper across all
+datasets (i.e., Random through to Expert)."
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.07147814018043026,"How does Penalty Performance Scale with Model
+Count? Empirically, there exists an optimal number
+of models to use in an ensemble for model-based RL
+(Kurutach et al., 2018; Matsushima et al., 2021). Up
+to now, heuristics have been used to select how many
+models we use for uncertainty estimation, despite it
+being possible to use a different number of models for
+dynamics prediction and uncertainty estimation. For
+instance, in MOPO, transitions are generated with
+ﬁve Elite models, but all seven models are used to
+calculate the penalty. In MOReL, four models are
+used for both transitions and penalty prediction. Therefore, we wish to understand if there is merit to
+using a larger number of models for uncertainty estimation compared with next state prediction. We
+provide a snapshot in Fig. 3, showing the aggregated results on the True Model-Based data in Hopper,
+with full results in App. B. We see there is no clear consensus, and that the optimal number of models
+is highly dependent on environment, the behavior data, and penalty type, with some settings showing
+improved calibration with model count and vice-versa. This clearly justiﬁes treating the number of
+models as a hyperparameter that is important to tune, especially on transfer tasks. Interestingly, we
+observe that it is possible to simultaneously improve rank (ρ) correlation, but reduce bivariate (r)
+correlation, especially with the MOPO penalty. This again suggests that the number of models not
+only affects the quality of the estimation, but also its distributional shape."
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.07217210270645386,"5.2
+THE WEIGHT OF UNCERTAINTY λ"
+KEY HYPERPARAMETERS IN OFFLINE MBRL,0.07286606523247745,"To weight penalty against reward, MOPO introduces a parameter λ that trades off between the two
+terms. In their paper, the authors sweep over λ ∈{1, 5} for each environment. However, the optimal
+values may lie outside this region. Furthermore, we have shown this value will need to drastically
+change to account for using a different penalty or even number of models."
+THE ROLLOUT HORIZON H,0.07356002775850104,"5.3
+THE ROLLOUT HORIZON h"
+THE ROLLOUT HORIZON H,0.07425399028452463,"The horizon h of the rollouts plays a crucial role in ofﬂine RL. Longer horizon rollouts increase the
+likelihood of errors in the transitions (we verify this intuition in App. D), but conversely can improve
+performance when errors are properly managed (Janner et al., 2019; Pan et al., 2020). Furthermore,
+as highlighted in Fig. 1a, the model can generalize, and dynamics error does not necessarily increase
+with drift away from the ofﬂine dataset. Instead, we observe spikes, and note it is possible to recover
+from these to valid states and transitions. It is therefore imperative that a penalty captures these spikes
+over the course of an entire model rollout with horizon h, and down-weights the reward accordingly."
+THE ROLLOUT HORIZON H,0.07494795281054822,"Using this observation, we design a novel experiment that treats these spikes as “positive” labels,
+and normalize each penalty to [0, 1]. This converts the penalties into a probabilistic classiﬁer, and
+we evaluate how well they classify these events that occur increasingly under longer h. This is
+precisely the intuition behind the LOO KL and LL Var approaches, whereby the penalty acts as an"
+THE ROLLOUT HORIZON H,0.07564191533657183,Published as a conference paper at ICLR 2022
+THE ROLLOUT HORIZON H,0.07633587786259542,"Table 2: Performance of different penalties as OOD event detectors averaged over all datasets in Hopper and
+HalfCheetah (i.e., Random through to Expert) showing ± 1 SD over 12 seeds. AUC is “Area Under Curve” and
+AP is “Average Precision”. The best (highest) in each column is highlighted in bold."
+THE ROLLOUT HORIZON H,0.07702984038861901,Percentile
+TH,0.0777238029146426,"90th
+95th
+99th"
+TH,0.0784177654406662,"Dynamics
+Distribution
+Dynamics
+Distribution
+Dynamics
+Distribution"
+TH,0.0791117279666898,"Penalty
+AUC
+AP
+AUC
+AP
+AUC
+AP
+AUC
+AP
+AUC
+AP
+AUC
+AP"
+TH,0.0798056904927134,"Max Aleatoric
+0.89±0.01
+0.50±0.02
+0.76±0.01
+0.35±0.01
+0.89±0.00
+0.35±0.02
+0.80±0.01
+0.27±0.01
+0.92±0.00
+0.20±0.04
+0.89±0.03
+0.16±0.04
+Max Pairwise Diff.
+0.90±0.00
+0.54±0.01
+0.77±0.01
+0.34±0.01
+0.91±0.00
+0.40±0.02
+0.81±0.01
+0.28±0.01
+0.93±0.00
+0.26±0.01
+0.89±0.02
+0.15±0.02
+Ensemble Std.
+0.90±0.00
+0.55±0.01
+0.79±0.01
+0.38±0.01
+0.91±0.00
+0.40±0.02
+0.83±0.01
+0.31±0.01
+0.93±0.00
+0.25±0.02
+0.90±0.02
+0.18±0.02
+Ensemble Var.
+0.90±0.00
+0.56±0.01
+0.78±0.01
+0.35±0.01
+0.91±0.00
+0.42±0.02
+0.82±0.01
+0.29±0.01
+0.93±0.00
+0.27±0.01
+0.89±0.02
+0.16±0.02
+LL Var.
+0.66±0.03
+0.33±0.00
+0.74±0.02
+0.33±0.00
+0.67±0.02
+0.21±0.02
+0.76±0.02
+0.25±0.02
+0.73±0.03
+0.09±0.01
+0.81±0.02
+0.11±0.01
+LOO KL
+0.59±0.03
+0.21±0.01
+0.68±0.00
+0.24±0.02
+0.60±0.02
+0.12±0.00
+0.70±0.01
+0.14±0.02
+0.65±0.03
+0.04±0.00
+0.72±0.02
+0.05±0.00"
+TH,0.08049965301873699,"anomaly detector, removing detrimental transitions that lie above a threshold. This is the regime
+we focus on here, where binary detection is more important than correlation. Finally, we assess
+two “True Model-Based” errors: the dynamics error as before, and introduce the distance from the
+ofﬂine distribution trained on, which we calculate as the 2-norm between a state-action tuple and its
+nearest point in the ofﬂine data (Dadashi et al., 2021); these are called “Dynamics” and “Distribution”
+respectively. We provide precision-recall curves and more details on this experiment in App. D and E."
+TH,0.08119361554476058,"We observe in Table 2 that the penalties are powerful at identifying dynamics discrepancy, but not as
+accurate at identifying when the world-model data is out-of-distribution with respect to the ofﬂine
+data. This is a well-known phenomenon in deep neural networks and has been recently investigated in
+terms of feature collapse (Van Amersfoort et al., 2020), where latent representations of points far away
+in the input space get mapped close together. On the other hand, this shows an important distinction
+between the regularization induced by MBRL uncertainty and explicit state-action regularization
+in model-free approaches, such as Kumar et al. (2020); Wu et al. (2021). In the latter approaches,
+policies are penalized for taking out of distribution actions w.r.t. the ofﬂine dataset, but this is
+not always the case with policies trained under MBRL and uncertainty penalties. The success of
+MBRL methods in RL may therefore lie in the generation of state-action samples that are OOD but
+represent accurate dynamics, thus facilitating dynamics generalization in policies; recent work has
+shown that augmenting dynamics improves ofﬂine RL policy generalization (Ball et al., 2021). We
+believe future work understanding the implications of this property is vitally important."
+TESTING THE LIMITS OF CURRENT APPROACHES,0.08188757807078417,"6
+TESTING THE LIMITS OF CURRENT APPROACHES"
+TESTING THE LIMITS OF CURRENT APPROACHES,0.08258154059680778,"Given our previous analysis, in this section we seek to answer the following question: how well can
+existing methods perform with a more optimal selection of the discussed hyperparameters? To answer
+this, we consider, ﬁrst, a naïve selection of one hyperparameter set across all environments (based
+on our previous analysis), and then more deﬁnitively, tuning the conﬁguration for each individual
+D4RL MuJoCo environment using a state-of-the-art Bayesian Optimization (BO) algorithm (Wan
+et al., 2021). Our ﬁrst set of results show that following our analysis can provide signiﬁcant gains
+over existing baselines, whilst the second beats the current SoTA. Note, previous analysis focused on
+HalfCheetah and Hopper environments, so we extend our evaluation to Walker2d as a held-out test."
+TESTING THE LIMITS OF CURRENT APPROACHES,0.08327550312283137,"General applicability of our insights.
+Two of our main takeaways in Sections 4 and 5 are that
+we should favor the canonical Ensemble penalties and longer rollout horizons. To test these claims,
+we design an experiment where we ﬁx h = 20 for the horizon (c.f. h = 5 in MOPO at most), and
+only use Ensemble Std. as our penalty (see App. G for details). Since tuning the penalty weight
+λ per environment is unrealistic, we employ an automatic penalty tuning scheme, analogous to the
+automatic entropy tuning used in Haarnoja et al. (2018). We tune the penalty weight on-the-ﬂy to a
+constraint value of Λ = 1, meaning we use only a single hyperparameter across all environments.
+Full details on the penalty weight tuning are provided in App. I. With this approach, we get an
+average reward of 49.0 in the D4RL locomotion test suite (Fu et al., 2021a), an increase of 43% over
+MOPO, which was grid-searched per environment."
+TESTING THE LIMITS OF CURRENT APPROACHES,0.08396946564885496,"This clearly shows that applying the ﬁndings from our analysis provides large performance gains
+generally. This result is the best we know for a single hyperparameter setup, and is particularly
+signiﬁcant as other ofﬂine MBRL algorithms tune many hyperparameters per environment. This
+‘zero-shot’ hyperparameter restriction is also the most realistic application of ofﬂine RL to real world
+problems. If we were to allow ourselves to take the maximum over just 2 hyperparameter setups (the
+second setup being h = 10, Λ = 0.5), we achieve an average reward of 57.8, an increase of 69%
+over MOPO. We show the full results in Table 8 in App. I with improvement probabilities."
+TESTING THE LIMITS OF CURRENT APPROACHES,0.08466342817487855,Published as a conference paper at ICLR 2022
+TESTING THE LIMITS OF CURRENT APPROACHES,0.08535739070090215,"Table 3: Best hyperparameters discovered by our BO algorithm, followed by a comparative evaluation on the
+D4RL benchmark suite against other model-based RL algorithms. We use D4RL v0 datasets. The raw score for
+Optimized† and MOPO† was taken to be the average over the last 10 iterations of policy training, averaged over
+4 seeds and showing ± 1 SD. Results of MOPO and COMBO were taken from the COMBO paper. Results for
+MOReL were taken from its paper. ⋆indicates p < 0.05 for Welch’s t-test for gain over MOPO. †Run on our
+codebase. ‡Authors’ reported scores. ◦Authors used D4RL v2, which has more performant ofﬂine data."
+TESTING THE LIMITS OF CURRENT APPROACHES,0.08605135322692574,"Environment
+Discovered Hyperparameters
+Optimized†
+MOPO†
+MOPO‡
+MOReL◦
+COMBO
+N
+λ
+h
+Penalty"
+TESTING THE LIMITS OF CURRENT APPROACHES,0.08674531575294935,HalfCheetah
+TESTING THE LIMITS OF CURRENT APPROACHES,0.08743927827897294,"random
+10
+6.64
+12
+Ensemble Std
+31.7 ±1.5
+32.7 ±1.7
+35.4
+25.6
+38.8
+mixed
+11
+0.96
+37
+Ensemble Var
+58.0 ±2.5
+52.8 ±1.1
+53.1
+40.2
+55.1
+medium
+12
+5.92
+6
+Ensemble Var
+45.7 ±2.6
+46.5 ±0.7
+42.3
+42.1
+54.2
+med.-exp.
+7
+4.56
+5
+Max Aleatoric
+104.2 ±5.7 ⋆
+67.6 ±23.6
+63.3
+53.3
+90.0"
+TESTING THE LIMITS OF CURRENT APPROACHES,0.08813324080499653,Hopper
+TESTING THE LIMITS OF CURRENT APPROACHES,0.08882720333102012,"random
+6
+4.46
+47
+Ensemble Std
+12.1 ±0.2 ⋆
+4.2 ±1.5
+11.7
+53.6
+17.8
+mixed
+7
+5.90
+5
+Max Aleatoric
+90.8 ±11.1 ⋆
+66.7 ±27.8
+67.5
+93.6
+73.1
+medium
+7
+37.28
+42
+Ensemble Std
+69.3 ±15.2 ⋆
+17.3 ±6.3
+28.0
+95.4
+94.9
+med.-exp.
+12
+39.08
+43
+Max Aleatoric
+105.8 ±1.2 ⋆
+24.9 ±5.5
+23.7
+108.7
+111.1"
+TESTING THE LIMITS OF CURRENT APPROACHES,0.08952116585704371,Walker2d
+TESTING THE LIMITS OF CURRENT APPROACHES,0.09021512838306732,"random
+10
+0.21
+12
+Ensemble Var
+21.7 ±0.1 ⋆
+13.6 ±1.4
+13.6
+37.3
+7.0
+mixed
+13
+2.48
+47
+Ensemble Std
+65.8 ±17.4 ⋆
+37.6 ±20.6
+39.0
+49.8
+56.0
+medium
+8
+5.28
+14
+Ensemble Std
+79.7 ±2.3 ⋆
+-0.1 ±0.0
+17.8
+77.8
+75.5
+med.-exp.
+12
+0.99
+37
+Ensemble Std
+97.1 ±4.9 ⋆
+46.2 ±27.0
+44.6
+95.6
+96.1"
+TESTING THE LIMITS OF CURRENT APPROACHES,0.09090909090909091,"Average Score
+-
+-
+-
+-
+65.2 ±5.4 ⋆
+34.2 ±9.8
+36.7
+64.4
+64.1"
+TESTING THE LIMITS OF CURRENT APPROACHES,0.0916030534351145,"Testing the limits of current approaches. Next, we wish to further validate that our earlier theoret-
+ical analysis can correspond to strong empirical performance gains by performing BO over the key
+hyperparameters. Details on the BO algorithm are listed in App. G. We deﬁne our search space over
+hyperparameters most related to uncertainty quantiﬁcation:"
+TESTING THE LIMITS OF CURRENT APPROACHES,0.0922970159611381,"• Penalty type (categorical): taking values over {Max Aleatoric, Max Pairwise Diff, LOO KL, LL
+Var, Ensemble Std, Ensemble Variance}.
+• Penalty scale λ (continuous): taking values over [1, 100].
+• h (integer): taking values over {1, 2, . . . , 50}.
+• Models N (integer): taking values over {1, 2, . . . , 15}."
+TESTING THE LIMITS OF CURRENT APPROACHES,0.09299097848716169,"Table 3 shows the optimal hyperparameters under BO. We note that Ensemble penalties are mainly
+selected, corroborating the ﬁndings in our analysis that these are most correlated with model error. We
+observe that Max Pairwise Diff is not chosen, likely because ensemble penalties are better correlated
+with true dynamics error, and are more stable under tuning since their scaling changes less with
+model number; we know that Max Pairwise Diff has very similar shape statistics to Ensemble Std.
+(App. C). Finally, we also observe these solutions have lower performance variance than MOPO."
+TESTING THE LIMITS OF CURRENT APPROACHES,0.0936849410131853,"The selection of Max Aleatoric is also explainable; we observe it displays signiﬁcantly lower skew
+and kurtosis than all other metrics (App. C), while still maintaining strong rank correlation. We
+also found that in all Hopper experiments, Ensemble Var. never achieved high performance, despite
+the only difference with Ensemble Std. being its distributional shape. Interestingly, in HalfCheetah,
+the opposite is true, with Ensemble Var. delivering signiﬁcant performance gains. This implies
+that distributional shape may play as important a role as calibration, and advocates the learning of
+meta-parameters that control for this. Finally, in Walker2d, the well-grounded ensemble penalties
+win in all cases. We note that values of the rollout horizon h and penalty weight λ differ greatly from
+those chosen in the original MOPO paper, which chooses both from {1, 5}. Notably, the Hopper
+and Walker2d environments can prefer a much longer rollout length and higher penalty weight, even
+accounting for penalty magnitudes. Again this is backed up by our analysis; along a single rollout,
+dynamics errors do not necessarily accumulate, they simply become more likely to occur. Therefore,
+as long as we penalize errors appropriately, we can handle longer rollouts and, as a result, generate
+more on-policy data. The number of models used to compute the uncertainty estimates can also
+differ greatly from the standard 7. This again aligns with our ﬁndings that using more models for
+uncertainty estimation can be beneﬁcial, but is dependent on environment, data, and penalty."
+TESTING THE LIMITS OF CURRENT APPROACHES,0.09437890353920889,"Table 3 also demonstrates how these unconventional hyperparameter choices fare against state-of-
+the-art ofﬂine MBRL algorithms. We spent considerable effort ensuring that our implementation
+of MOPO matched the authors’ results using the same hyperparameters. We note the two are very
+similar1, thereby allowing us to make a faithful comparison when modifying hyperparameters. Our
+approach, labeled “Optimized†”, achieves statistically signiﬁcant improvements over MOPO on 9"
+TESTING THE LIMITS OF CURRENT APPROACHES,0.09507286606523248,"1There was a disparity in Walker2d-medium, but this was also noted in Ball et al. (2021)"
+TESTING THE LIMITS OF CURRENT APPROACHES,0.09576682859125607,Published as a conference paper at ICLR 2022
+TESTING THE LIMITS OF CURRENT APPROACHES,0.09646079111727966,"0
+50
+100
+150
+200
+250
+300
+Offline Epochs 20 40 60 80 100"
+TESTING THE LIMITS OF CURRENT APPROACHES,0.09715475364330327,Normalized Score
+TESTING THE LIMITS OF CURRENT APPROACHES,0.09784871616932686,"pp
+ 
+p 
+p"
+TESTING THE LIMITS OF CURRENT APPROACHES,0.09854267869535045,"Optimized
+MOPO (Ours)
+MOPO (Authors)"
+TESTING THE LIMITS OF CURRENT APPROACHES,0.09923664122137404,"Figure 4: MOPO performance on the
+Hopper medium-expert environment."
+TESTING THE LIMITS OF CURRENT APPROACHES,0.09993060374739764,"Environment
+MOPO†
+Optimized†
+CQL"
+TESTING THE LIMITS OF CURRENT APPROACHES,0.10062456627342123,"pen
+cloned
+5.4 ±10.8
+23.0 ±4.2
+39.2
+human
+6.2 ±7.8
+19.0 ±7.9
+37.5
+expert
+15.1 ±9.7
+50.6 ±10.5
+107.0"
+TESTING THE LIMITS OF CURRENT APPROACHES,0.10131852879944483,"hammer
+cloned
+0.2 ±0.1
+5.2 ±1.5
+2.1
+human
+0.2 ±0.0
+0.5 ±0.8
+4.4
+expert
+6.2 ±8.4
+23.3 ±4.1
+86.7"
+TESTING THE LIMITS OF CURRENT APPROACHES,0.10201249132546843,"Table 4: Comparative evaluation on the D4RL Adroit
+v0 dataset against Model Free CQL"
+TESTING THE LIMITS OF CURRENT APPROACHES,0.10270645385149202,"out of 12 environments, validating our prior analysis over the key design choices. As an additional
+bonus, and it is not the stated aim of this work, our approach achieves state-of-the-art performance
+on ﬁve HalfCheetah and Walker2d environments by a considerable margin. Further notable results
+include the Hopper mixed and Hopper medium-expert environments, in which we show we are able
+to tune the MOPO-like method up to the performance of COMBO (Yu et al., 2021) and MOReL. The
+importance of good uncertainty estimation and hyperparameter selection is shown visually in Fig. 4
+where we improve MOPO performance by over 5× whilst obtaining a stable solution."
+TESTING THE LIMITS OF CURRENT APPROACHES,0.10340041637751561,"As aforementioned, we found our policies are more stable than previous works and consequently do
+not need to cherry-pick high performing checkpoints2. Instead, we report the average performance
+over our ﬁnal 10 policy-improvement iterations. It should be noted that stability during training (Chan
+et al., 2020) is paramount for successful policy deployment in ofﬂine RL, and we should therefore
+prioritize hyperparameters that ensure this. We further conﬁrm the reliability of our evaluation using
+the rliable framework (Agarwal et al., 2021) in Fig. 1b, showing that the improvement over
+MOPO (with 95% bootstrap CIs shaded) is clear in both MuJoCo and Adroit."
+TESTING THE LIMITS OF CURRENT APPROACHES,0.1040943789035392,"Results on Adroit dexterous hand manipulation tasks. We present results in Table 4 on the Adroit
+Pen and Hammer environments which, as far as we are aware, have not previously been used in
+ofﬂine MBRL, and present very different challenges to the locomotion tasks. These tasks feature
+sparse rewards, real human demonstrations and narrow data distributions. We compare against the
+current state-of-the-art model-free algorithm (CQL, Kumar et al. (2020)) and ﬁnd that ofﬂine MBRL
+can learn useful policies in the Adroit domains, providing the best performance seen so far on the
+hammer-cloned setting. Best found penalties and hyperparameters are listed in App. J, and mirror
+the ﬁndings in the locomotion experiments. We believe issues with the world model not accurately
+capturing sparse rewards may account for any major performance difference. Our work is therefore
+an important step towards bridging the gap between model-based and model-free methods for sparse
+reward tasks, especially in the ofﬂine setting where exploration is not possible. We deﬁne MOPO to
+be the best performance with the Max Aleatoric penalty, searching λ, h in {1, 5}2."
+CONCLUSION,0.10478834142956281,"7
+CONCLUSION"
+CONCLUSION,0.1054823039555864,"In this paper, we rigorously evaluated the impact of various key design choices on ofﬂine MBRL,
+comparing for the ﬁrst time a number of different uncertainty penalties used in the literature. By
+proposing novel evaluation protocols, we have also gained key insights into the nature of uncertainty in
+ofﬂine MBRL that we believe beneﬁts the RL community. We demonstrated the impact of this analysis
+by signiﬁcantly improving upon existing ofﬂine MBRL by using vastly different key hyperparameters,
+obtaining statistically signiﬁcant performance improvements in almost all benchmarks."
+CONCLUSION,0.10617626648161,"Going forward, we are excited by developments in ofﬂine evaluation (Chen et al., 2021; Fu et al.,
+2021b) to accurately assess agent performance without querying the environment. This would open
+the door for population-based training methods (Jaderberg et al., 2017; Parker-Holder et al., 2020),
+which have shown great success in online MBRL (Zhang et al., 2021). Furthermore, throughout the
+paper we have highlighted potential areas of interest, from better understanding the generalization
+provided by world models, through to the development of meta-parameters controlling penalty
+distribution shape. We also highlight key issues in implementation in App. F as we strongly believe
+this is a vital frontier for disentangling the effect of algorithmic innovations from code-level details.
+Finally, Ofﬂine MBRL so far has only focused on determinstic environments; the ensemble penalties
+we investigate support the modeling of stochastic dynamics, and the novel tools for analysis we
+develop here can be readily applied to such settings."
+CONCLUSION,0.10687022900763359,2It is unclear what procedure is used in some prior work (indeed issues have been raised about this).
+CONCLUSION,0.10756419153365718,Published as a conference paper at ICLR 2022
+CONCLUSION,0.10825815405968078,ACKNOWLEDGMENTS
+CONCLUSION,0.10895211658570438,"The authors would like to acknowledge Rishabh Agarwal for helpful feedback during the project. We
+would also like to thank the anonymous reviewers for their constructive feedback, which helped to
+improve the paper. Cong Lu is funded by the Engineering and Physical Sciences Research Council
+(EPSRC). Philip J. Ball is funded through the Willowgrove Studentship."
+REFERENCES,0.10964607911172797,REFERENCES
+REFERENCES,0.11034004163775156,"Zaheer Abbas, Samuel Sokota, Erin Talvitie, and Martha White. Selective Dyna-style planning
+under limited model capacity. In ICML, pp. 1–10, 2020. URL http://proceedings.mlr.
+press/v119/abbas20a.html."
+REFERENCES,0.11103400416377515,"Rishabh Agarwal, Max Schwarzer, Pablo Samuel Castro, Aaron C Courville, and Marc Bellemare.
+Deep reinforcement learning at the edge of the statistical precipice. In Advances in Neural
+Information Processing Systems, volume 34. 2021."
+REFERENCES,0.11172796668979876,"Marcin Andrychowicz, Anton Raichuk, Piotr Sta´nczyk, Manu Orsini, Sertan Girgin, Raphaël Marinier,
+Leonard Hussenot, Matthieu Geist, Olivier Pietquin, Marcin Michalski, Sylvain Gelly, and Olivier
+Bachem. What matters for on-policy deep actor-critic methods? a large-scale study. In International
+Conference on Learning Representations, 2021. URL https://openreview.net/forum?
+id=nIAxjsniDzg."
+REFERENCES,0.11242192921582235,"Arthur Argenson and Gabriel Dulac-Arnold. Model-based ofﬂine planning. In International Confer-
+ence on Learning Representations, 2021. URL https://openreview.net/forum?id=
+OMNB1G5xzd4."
+REFERENCES,0.11311589174184594,"Philip Ball, Jack Parker-Holder, Aldo Pacchiano, Krzysztof Choromanski, and Stephen Roberts.
+Ready policy one: World building through active learning. In Proceedings of the 37th International
+Conference on Machine Learning, ICML. 2020."
+REFERENCES,0.11380985426786953,"Philip J Ball, Cong Lu, Jack Parker-Holder, and Stephen Roberts. Augmented world models facilitate
+zero-shot dynamics generalization from a single ofﬂine environment. In Marina Meila and Tong
+Zhang (eds.), Proceedings of the 38th International Conference on Machine Learning, volume
+139 of Proceedings of Machine Learning Research, pp. 619–629. PMLR, 18–24 Jul 2021. URL"
+REFERENCES,0.11450381679389313,http://proceedings.mlr.press/v139/ball21a.html.
+REFERENCES,0.11519777931991672,"Charles Blundell, Julien Cornebise, Koray Kavukcuoglu, and Daan Wierstra. Weight uncertainty
+in neural network. In Francis Bach and David Blei (eds.), Proceedings of the 32nd International
+Conference on Machine Learning, volume 37 of Proceedings of Machine Learning Research,
+pp. 1613–1622, Lille, France, 07–09 Jul 2015. PMLR. URL http://proceedings.mlr.
+press/v37/blundell15.html."
+REFERENCES,0.11589174184594032,"Jacob Buckman, Danijar Hafner, George Tucker, Eugene Brevdo, and Honglak Lee. Sample-
+efﬁcient reinforcement learning with stochastic ensemble value expansion. In Advances in Neural
+Information Processing Systems. 07 2018."
+REFERENCES,0.11658570437196392,"Stephanie C.Y. Chan, Samuel Fishman, Anoop Korattikara, John Canny, and Sergio Guadarrama. Mea-
+suring the reliability of reinforcement learning algorithms. In International Conference on Learning
+Representations, 2020. URL https://openreview.net/forum?id=SJlpYJBKvH."
+REFERENCES,0.11727966689798751,"Yutian Chen, Liyuan Xu, Caglar Gulcehre, Tom Le Paine, Arthur Gretton, Nando de Freitas, and
+Arnaud Doucet. On instrumental variable regression for deep ofﬂine policy evaluation, 2021."
+REFERENCES,0.1179736294240111,"Kurtland Chua, Roberto Calandra, Rowan McAllister, and Sergey Levine. Deep reinforcement
+learning in a handful of trials using probabilistic dynamics models. In Advances in Neural
+Information Processing Systems 31, pp. 4754–4765. 2018."
+REFERENCES,0.11866759195003469,"Alexander Cowen-Rivers, Daniel Palenicek, Vincent Moens, Mohammed Abdullah, Aivar Sootla,
+Jun Wang, and Haitham Bou Ammar. Samba: safe model-based & active reinforcement learning.
+Machine Learning, pp. 1–31, 01 2022. doi: 10.1007/s10994-021-06103-6."
+REFERENCES,0.1193615544760583,Published as a conference paper at ICLR 2022
+REFERENCES,0.12005551700208189,"Robert Dadashi, Leonard Hussenot, Matthieu Geist, and Olivier Pietquin. Primal Wasserstein
+imitation learning. In International Conference on Learning Representations, 2021. URL https:
+//openreview.net/forum?id=TtYSU29zgR."
+REFERENCES,0.12074947952810548,"Marc Peter Deisenroth and Carl Edward Rasmussen. PILCO: A model-based and data-efﬁcient
+approach to policy search. In Proceedings of the 28th International Conference on International
+Conference on Machine Learning, pp. 465–472, 2011."
+REFERENCES,0.12144344205412907,"Gabriel Dulac-Arnold, Nir Levine, Daniel J Mankowitz, Jerry Li, Cosmin Paduraru, Sven Gowal,
+and Todd Hester. Challenges of real-world reinforcement learning: deﬁnitions, benchmarks and
+analysis. Machine Learning, pp. 1–50, 2021."
+REFERENCES,0.12213740458015267,"Logan Engstrom, Andrew Ilyas, Shibani Santurkar, Dimitris Tsipras, Firdaus Janoos, Larry Rudolph,
+and Aleksander Madry. Implementation matters in deep RL: A case study on PPO and TRPO. In
+International Conference on Learning Representations, 2020."
+REFERENCES,0.12283136710617627,"Damien Ernst, Pierre Geurts, and Louis Wehenkel. Tree-based batch mode reinforcement learning.
+Journal of Machine Learning Research, 6(18):503–556, 2005. URL http://jmlr.org/
+papers/v6/ernst05a.html."
+REFERENCES,0.12352532963219987,"Angelos Filos, Sebastian Farquhar, Aidan N. Gomez, Tim G. J. Rudner, Zachary Kenton, Lewis
+Smith, Milad Alizadeh, Arnoud de Kroon, and Yarin Gal. A systematic comparison of bayesian
+deep learning robustness in diabetic retinopathy tasks, 2019."
+REFERENCES,0.12421929215822346,"Justin Fu, Aviral Kumar, Oﬁr Nachum, George Tucker, and Sergey Levine. D4{RL}: Datasets for
+deep data-driven reinforcement learning, 2021a."
+REFERENCES,0.12491325468424705,"Justin Fu, Mohammad Norouzi, Oﬁr Nachum, George Tucker, ziyu wang, Alexander Novikov,
+Mengjiao Yang, Michael R Zhang, Yutian Chen, Aviral Kumar, Cosmin Paduraru, Sergey
+Levine, and Thomas Paine. Benchmarks for deep off-policy evaluation. In International Confer-
+ence on Learning Representations, 2021b. URL https://openreview.net/forum?id=
+kWSeGEeHvF8."
+REFERENCES,0.12560721721027066,"Chuan Guo, Geoff Pleiss, Yu Sun, and Kilian Q. Weinberger. On calibration of modern neural
+networks. In Doina Precup and Yee Whye Teh (eds.), Proceedings of the 34th International
+Conference on Machine Learning, volume 70 of Proceedings of Machine Learning Research,
+pp. 1321–1330. PMLR, 06–11 Aug 2017. URL http://proceedings.mlr.press/v70/
+guo17a.html."
+REFERENCES,0.12630117973629423,"Tuomas Haarnoja, Aurick Zhou, Kristian Hartikainen, George Tucker, Sehoon Ha, Jie Tan, Vikash
+Kumar, Henry Zhu, Abhishek Gupta, Pieter Abbeel, and Sergey Levine. Soft actor-critic algorithms
+and applications. CoRR, abs/1812.05905, 2018."
+REFERENCES,0.12699514226231784,"Max Jaderberg, Valentin Dalibard, Simon Osindero, Wojciech M. Czarnecki, Jeff Donahue, Ali
+Razavi, Oriol Vinyals, Tim Green, Iain Dunning, Karen Simonyan, Chrisantha Fernando, and
+Koray Kavukcuoglu. Population based training of neural networks, 2017."
+REFERENCES,0.12768910478834142,"Michael Janner, Justin Fu, Marvin Zhang, and Sergey Levine. When to trust your model: Model-based
+policy optimization. In Advances in Neural Information Processing Systems. 2019."
+REFERENCES,0.12838306731436502,"Sham M Kakade.
+A natural policy gradient.
+In T. Dietterich,
+S. Becker,
+and
+Z. Ghahramani (eds.), Advances in Neural Information Processing Systems, volume 14.
+MIT Press, 2002.
+URL https://proceedings.neurips.cc/paper/2001/file/
+4b86abe48d358ecf194c56c69108433e-Paper.pdf."
+REFERENCES,0.12907702984038863,"Rahul Kidambi, Aravind Rajeswaran, Praneeth Netrapalli, and Thorsten Joachims. MOReL : Model-
+based ofﬂine reinforcement learning. In Advances in Neural Information Processing Systems.
+2020."
+REFERENCES,0.1297709923664122,"Ilya Kostrikov, Ashvin Nair, and Sergey Levine. Ofﬂine reinforcement learning with implicit
+Q-learning, 2021."
+REFERENCES,0.1304649548924358,Published as a conference paper at ICLR 2022
+REFERENCES,0.1311589174184594,"Volodymyr Kuleshov, Nathan Fenner, and Stefano Ermon. Accurate uncertainties for deep learning
+using calibrated regression. In Jennifer Dy and Andreas Krause (eds.), Proceedings of the 35th
+International Conference on Machine Learning, volume 80 of Proceedings of Machine Learn-
+ing Research, pp. 2796–2804. PMLR, 10–15 Jul 2018. URL http://proceedings.mlr.
+press/v80/kuleshov18a.html."
+REFERENCES,0.131852879944483,"Aviral Kumar, Aurick Zhou, George Tucker, and Sergey Levine. Conservative Q-learning for ofﬂine
+reinforcement learning. In Advances in Neural Information Processing Systems. 2020."
+REFERENCES,0.1325468424705066,"Thanard Kurutach, Ignasi Clavera, Yan Duan, Aviv Tamar, and Pieter Abbeel. Model-ensemble
+trust-region policy optimization. In International Conference on Learning Representations, 2018."
+REFERENCES,0.13324080499653018,"Balaji Lakshminarayanan, Alexander Pritzel, and Charles Blundell. Simple and scalable predictive
+uncertainty estimation using deep ensembles. In Proceedings of the 31st International Conference
+on Neural Information Processing Systems, NIPS’17, pp. 6405–6416, Red Hook, NY, USA, 2017.
+Curran Associates Inc. ISBN 9781510860964."
+REFERENCES,0.1339347675225538,"Sergey Levine, Aviral Kumar, George Tucker, and Justin Fu. Ofﬂine reinforcement learning: Tutorial,
+review, and perspectives on open problems, 2020."
+REFERENCES,0.13462873004857737,"David John Cameron Mackay. Bayesian Methods for Adaptive Models. PhD thesis, USA, 1992. UMI
+Order No. GAX92-32200."
+REFERENCES,0.13532269257460097,"Wesley J Maddox, Pavel Izmailov, Timur Garipov, Dmitry P Vetrov, and Andrew Gordon Wilson. A
+simple baseline for bayesian uncertainty in deep learning. In H. Wallach, H. Larochelle, A. Beygelz-
+imer, F. d'Alché-Buc, E. Fox, and R. Garnett (eds.), Advances in Neural Information Processing
+Systems, volume 32. Curran Associates, Inc., 2019. URL https://proceedings.neurips.
+cc/paper/2019/file/118921efba23fc329e6560b27861f0c2-Paper.pdf."
+REFERENCES,0.13601665510062458,"Tatsuya Matsushima, Hiroki Furuta, Yutaka Matsuo, Oﬁr Nachum, and Shixiang Gu. Deployment-
+efﬁcient reinforcement learning via model-based ofﬂine optimization. In International Confer-
+ence on Learning Representations, 2021. URL https://openreview.net/forum?id=
+3hGNqpI4WS."
+REFERENCES,0.13671061762664816,"Jean-Baptiste Mouret and Jeff Clune. Illuminating search spaces by mapping elites, 2015."
+REFERENCES,0.13740458015267176,"D. A. Nix and A. S. Weigend. Estimating the mean and variance of the target probability distribution.
+In Proceedings of 1994 IEEE International Conference on Neural Networks (ICNN’94), volume 1,
+pp. 55–60 vol.1, 1994."
+REFERENCES,0.13809854267869534,"Muhammad Omer, Rami Ahmed, Benjamin Rosman, and Sharief F. Babikir. Model predictive-actor
+critic reinforcement learning for dexterous manipulation. In 2020 International Conference on
+Computer, Control, Electrical, and Electronics Engineering (ICCCEEE), pp. 1–6, 2021. doi:
+10.1109/ICCCEEE49695.2021.9429677."
+REFERENCES,0.13879250520471895,"Yaniv Ovadia, Emily Fertig, Jie Ren, Zachary Nado, D. Sculley, Sebastian Nowozin, Joshua Dillon,
+Balaji Lakshminarayanan, and Jasper Snoek. Can you trust your model's uncertainty? evalu-
+ating predictive uncertainty under dataset shift. In H. Wallach, H. Larochelle, A. Beygelzimer,
+F. d'Alché-Buc, E. Fox, and R. Garnett (eds.), Advances in Neural Information Processing Systems,
+volume 32. Curran Associates, Inc., 2019. URL https://proceedings.neurips.cc/
+paper/2019/file/8558cb408c1d76621371888657d2eb1d-Paper.pdf."
+REFERENCES,0.13948646773074255,"Aldo Pacchiano, Philip Ball, Jack Parker-Holder, Krzysztof Choromanski, and Stephen Roberts.
+Towards tractable optimism in model-based reinforcement learning. In Uncertainty in Artiﬁcial
+Intelligence. 2021."
+REFERENCES,0.14018043025676613,"Tom Le Paine, Cosmin Paduraru, Andrea Michi, Çaglar Gülçehre, Konrad Zolna, Alexander Novikov,
+Ziyu Wang, and Nando de Freitas. Hyperparameter selection for ofﬂine reinforcement learning.
+CoRR, abs/2007.09055, 2020. URL https://arxiv.org/abs/2007.09055."
+REFERENCES,0.14087439278278974,"Feiyang Pan, Jia He, Dandan Tu, and Qing He. Trust the model when it is conﬁdent: Masked
+model-based actor-critic. In H. Larochelle, M. Ranzato, R. Hadsell, M. F. Balcan, and H. Lin
+(eds.), Advances in Neural Information Processing Systems, volume 33, pp. 10537–10546. Cur-
+ran Associates, Inc., 2020. URL https://proceedings.neurips.cc/paper/2020/
+file/77133be2e96a577bd4794928976d2ae2-Paper.pdf."
+REFERENCES,0.14156835530881332,Published as a conference paper at ICLR 2022
+REFERENCES,0.14226231783483692,"Jack Parker-Holder, Vu Nguyen, and Stephen J Roberts. Provably efﬁcient online hyperparameter
+optimization with population-based bandits. In Advances in Neural Information Processing
+Systems, volume 33, pp. 17200–17211. Curran Associates, Inc., 2020."
+REFERENCES,0.14295628036086053,"Luis Pineda, Brandon Amos, Amy Zhang, Nathan O. Lambert, and Roberto Calandra. MBRL-
+Lib: A modular library for model-based reinforcement learning. Arxiv, 2021. URL https:
+//arxiv.org/abs/2104.10159."
+REFERENCES,0.1436502428868841,"Rafael Rafailov, Tianhe Yu, Aravind Rajeswaran, and Chelsea Finn. Ofﬂine reinforcement learning
+from images with latent space models. In Ofﬂine Reinforcement Learning Workshop at Neural
+Information Processing Systems, 2020."
+REFERENCES,0.1443442054129077,"Binxin Ru, Ahsan Alvi, Vu Nguyen, Michael A Osborne, and Stephen Roberts. Bayesian optimisation
+over multiple continuous and categorical inputs. In International Conference on Machine Learning,
+pp. 8276–8285. PMLR, 2020."
+REFERENCES,0.1450381679389313,"Gabriele Scalia, Colin A Grambow, Barbara Pernici, Yi-Pei Li, and William H Green. Evaluating
+scalable uncertainty estimation methods for deep learning-based molecular property prediction.
+Journal of chemical information and modeling, 60(6):2697–2717, 2020."
+REFERENCES,0.1457321304649549,"Jian Shen, Han Zhao, Weinan Zhang, and Yong Yu. Model-based policy optimization with unsu-
+pervised model adaptation. In H. Larochelle, M. Ranzato, R. Hadsell, M. F. Balcan, and H. Lin
+(eds.), Advances in Neural Information Processing Systems, volume 33, pp. 2823–2834. Curran As-
+sociates, Inc., 2020. URL https://proceedings.neurips.cc/paper/2020/file/
+1dc3a89d0d440ba31729b0ba74b93a33-Paper.pdf."
+REFERENCES,0.14642609299097847,"Richard S. Sutton. Dyna, an integrated architecture for learning, planning, and reacting. SIGART
+Bull., 2(4):160–163, July 1991. ISSN 0163-5719. doi: 10.1145/122344.122377. URL https:
+//doi.org/10.1145/122344.122377."
+REFERENCES,0.14712005551700208,"Emanuel Todorov, Tom Erez, and Yuval Tassa. Mujoco: A physics engine for model-based control.
+In 2012 IEEE/RSJ International Conference on Intelligent Robots and Systems, pp. 5026–5033,
+2012. doi: 10.1109/IROS.2012.6386109."
+REFERENCES,0.14781401804302569,"Joost Van Amersfoort, Lewis Smith, Yee Whye Teh, and Yarin Gal. Uncertainty estimation using a
+single deep deterministic neural network. In Proceedings of the 37th International Conference on
+Machine Learning, volume 119 of Proceedings of Machine Learning Research, pp. 9690–9700.
+PMLR, 13–18 Jul 2020."
+REFERENCES,0.14850798056904926,"Laurens van der Maaten and Geoffrey Hinton. Visualizing data using t-SNE. Journal of Ma-
+chine Learning Research, 9(86):2579–2605, 2008. URL http://jmlr.org/papers/v9/
+vandermaaten08a.html."
+REFERENCES,0.14920194309507287,"Xingchen Wan, Vu Nguyen, Huong Ha, Binxin Ru, Cong Lu, and Michael A. Osborne. Think global
+and act local: Bayesian optimisation over high-dimensional categorical and mixed search spaces.
+In Marina Meila and Tong Zhang (eds.), Proceedings of the 38th International Conference on
+Machine Learning, volume 139 of Proceedings of Machine Learning Research, pp. 10663–10674.
+PMLR, 18–24 Jul 2021."
+REFERENCES,0.14989590562109645,"Yifan Wu, George Tucker, and Oﬁr Nachum. Behavior regularized ofﬂine reinforcement learning. In
+To Appear: The International Conference on Learning Representations (ICLR). 2021."
+REFERENCES,0.15058986814712005,"Tianhe Yu, Garrett Thomas, Lantao Yu, Stefano Ermon, James Zou, Sergey Levine, Chelsea Finn, and
+Tengyu Ma. MOPO: Model-based ofﬂine policy optimization. In Advances in Neural Information
+Processing Systems. 2020."
+REFERENCES,0.15128383067314366,"Tianhe Yu, Aviral Kumar, Rafael Rafailov, Aravind Rajeswaran, Sergey Levine, and Chelsea Finn.
+COMBO: Conservative ofﬂine model-based policy optimization. In Advances in Neural Informa-
+tion Processing Systems, 2021."
+REFERENCES,0.15197779319916724,"Baohe Zhang, Raghu Rajan, Luis Pineda, Nathan Lambert, André Biedenkapp, Kurtland Chua,
+Frank Hutter, and Roberto Calandra. On the importance of hyperparameter optimization for
+model-based reinforcement learning. In Proceedings of The 24th International Conference on
+Artiﬁcial Intelligence and Statistics, 2021."
+REFERENCES,0.15267175572519084,Published as a conference paper at ICLR 2022
+REFERENCES,0.15336571825121442,"A
+CALIBRATION"
+REFERENCES,0.15405968077723803,"A.1
+CHOICE OF CALIBRATION METRICS"
+REFERENCES,0.15475364330326163,"We consider both the Spearman rank (ρ) correlation and Pearson bivariate (r) correlation. We believe
+that the former better represents the actual statistical power of the metric compared to the true
+distributional shift value, as it is robust to outliers and isn’t impacted by distributional shape (i.e.,
+skewness, kurtosis). After all, we do not know if some ‘true’ |Gπ
+ˆ
+M(s, a)| is even linearly correlated
+with the MSE values that we report, so naïvely comparing based on bivariate correlation may result
+in incorrect assessment of penalty efﬁcacy. However, we do also include the Pearson bivariate
+correlation to gain insight into how the penalty distribution shape changes with design choices. For
+instance, consider two metrics that have identical Spearman coefﬁcients, but vastly different Pearson
+coefﬁcients–this implies they have signiﬁcantly different distributional shapes whilst having the same
+statistical ranking power. The two correlation coefﬁcients have the further advantage that they are
+unaffected by the scale of the uncertainty penalty, which can vary widely. Furthermore, algorithms
+such as MOPO and MOReL will often scale the penalty by some coefﬁcient λ and thus the raw
+unscaled value is hard to interpret."
+REFERENCES,0.1554476058292852,"A.2
+THE USE OF MSE AS THE GROUND TRUTH FOR DETERMINISTIC DYNAMICS"
+REFERENCES,0.15614156835530882,"Following Yu et al. (2020), it is possible upper bound the expected performance ηM of a policy π in
+the true MDP M under training in a world model MDP ˆ
+M as follows:"
+REFERENCES,0.1568355308813324,"ηM(π) ≥
+E
+(s,a)∼ρπ
+ˆ
+P"
+REFERENCES,0.157529493407356,"
+R(s, a) −γ|Gπ
+ˆ
+M(s, a)|
+
+(2)"
+REFERENCES,0.1582234559333796,"where R(·, ·) is the reward function, ρπ
+ˆ
+P represents transitioning under the world model dynamics ˆP
+and policy π. The quantity |Gπ
+ˆ
+M(s, a)| can be upper-bounded by an integral probability metric (IPM):"
+REFERENCES,0.1589174184594032,"|Gπ
+ˆ
+M(s, a)| ≤sup
+f∈F"
+REFERENCES,0.1596113809854268,"Es′∼ˆ
+P (s,a)[f(s′)] −Es′∼P (s,a)[f(s′)]
+ =: dF( ˆP(s, a), P(s, a))
+(3)"
+REFERENCES,0.16030534351145037,"where F is some set of functions mapping S to R, and P is the dynamics under the true MDP M. As
+noted in Yu et al. (2020), making assumptions over the functional form of F induces different distance
+measures. Restricting F to the set of 1-Lipschitz functions results in an IPM with the following form:"
+REFERENCES,0.16099930603747398,"|Gπ
+ˆ
+M(s, a)| ≤cW1( ˆP(s, a), P(s, a))
+(4)"
+REFERENCES,0.16169326856349758,"which is the 1-Wasserstein distance, where the constant c is the Lipschitz constant of the value function
+V π
+M with respect to a norm || · ||. Recalling that the environments we evaluate have deterministic
+dynamics (Todorov et al., 2012), this means the dynamics distributions P and ˆP in Eq. 4 are Dirac
+delta functions. In this case, the 1-Wasserstein distance simply reduces to the 2-norm between some
+‘true dynamics’ T(s, a) and the ‘estimated dynamics’ ˆT(s, a). This justiﬁes the use of MSE between
+the oracle dynamics (as detailed in Sec. 4.1 and App. D.1) and the world model dynamics as the
+ground truth measure under which we assess calibration."
+REFERENCES,0.16238723108952116,Published as a conference paper at ICLR 2022
+REFERENCES,0.16308119361554477,"A.3
+OFFLINE DATASET TRANSFER CALIBRATION"
+REFERENCES,0.16377515614156835,"We present the full calibration scatter plots described in Sec. 4.2. Concretely, we plot penalty values
+on the y-axis, and ground-truth MSE on the x-axis. First, we present the transfer performance of
+training sets onto ofﬂine datasets. Then, we present the results for all training datasets under the True
+Model-Based experiment under the adversarial policies."
+REFERENCES,0.16446911866759195,"A.3.1
+HALFCHEETAH"
+REFERENCES,0.16516308119361556,"0
+20
+40
+0 1 2 3"
+REFERENCES,0.16585704371963914,r: 0.398
+REFERENCES,0.16655100624566274,: 0.754
+REFERENCES,0.16724496877168632,Max Aleatoric
+REFERENCES,0.16793893129770993,"0
+20
+40 0 10 20 30 40"
+REFERENCES,0.16863289382373353,r: 0.495
+REFERENCES,0.1693268563497571,: 0.768
+REFERENCES,0.17002081887578072,Max Pairwise Diff.
+REFERENCES,0.1707147814018043,"0
+20
+40
+0.0 0.5 1.0 1.5 2.0"
+REFERENCES,0.1714087439278279,r: 0.557
+REFERENCES,0.17210270645385148,: 0.820
+REFERENCES,0.17279666897987508,Ensemble Std.
+REFERENCES,0.1734906315058987,"0
+20
+40 0 5 10"
+REFERENCES,0.17418459403192227,r: 0.543
+REFERENCES,0.17487855655794587,: 0.814
+REFERENCES,0.17557251908396945,Ensemble Var.
+REFERENCES,0.17626648160999306,"0
+20
+40 0 2 4 6 8 1e7"
+REFERENCES,0.17696044413601666,r: 0.013
+REFERENCES,0.17765440666204024,: 0.411
+REFERENCES,0.17834836918806385,LL Var.
+REFERENCES,0.17904233171408743,"0
+20
+40 0 100 200 300"
+REFERENCES,0.17973629424011103,r: 0.060
+REFERENCES,0.18043025676613464,: 0.541
+REFERENCES,0.18112421929215822,KL LOO
+REFERENCES,0.18181818181818182,Penalty MSE
+REFERENCES,0.1825121443442054,(a) Random transferred to Expert
+REFERENCES,0.183206106870229,"0
+50
+100 2 4 6"
+REFERENCES,0.1839000693962526,r: 0.270
+REFERENCES,0.1845940319222762,: 0.507
+REFERENCES,0.1852879944482998,Max Aleatoric
+REFERENCES,0.18598195697432338,"0
+50
+100
+0 20 40 60"
+REFERENCES,0.18667591950034698,r: 0.404
+REFERENCES,0.1873698820263706,: 0.507
+REFERENCES,0.18806384455239417,Max Pairwise Diff.
+REFERENCES,0.18875780707841777,"0
+50
+100
+0 1 2 3 4"
+REFERENCES,0.18945176960444135,r: 0.463
+REFERENCES,0.19014573213046496,: 0.575
+REFERENCES,0.19083969465648856,Ensemble Std.
+REFERENCES,0.19153365718251214,"0
+50
+100 0 10 20 30 40"
+REFERENCES,0.19222761970853575,r: 0.453
+REFERENCES,0.19292158223455932,: 0.565
+REFERENCES,0.19361554476058293,Ensemble Var.
+REFERENCES,0.19430950728660654,"0
+50
+100 0.0 0.5 1.0 1e8"
+REFERENCES,0.19500346981263011,r: 0.366
+REFERENCES,0.19569743233865372,: 0.491
+REFERENCES,0.1963913948646773,LL Var.
+REFERENCES,0.1970853573907009,"0
+50
+100 0 100 200"
+REFERENCES,0.19777931991672448,r: 0.590
+REFERENCES,0.1984732824427481,: 0.598
+REFERENCES,0.1991672449687717,KL LOO
+REFERENCES,0.19986120749479527,Penalty MSE
+REFERENCES,0.20055517002081888,(b) Medium transferred to Expert
+REFERENCES,0.20124913254684246,"0
+5
+10
+15 2 4 6"
+REFERENCES,0.20194309507286606,r: 0.513
+REFERENCES,0.20263705759888967,: 0.677
+REFERENCES,0.20333102012491325,Max Aleatoric
+REFERENCES,0.20402498265093685,"0
+5
+10
+15
+0 10 20 30"
+REFERENCES,0.20471894517696043,r: 0.610
+REFERENCES,0.20541290770298404,: 0.719
+REFERENCES,0.20610687022900764,Max Pairwise Diff.
+REFERENCES,0.20680083275503122,"0
+5
+10
+15
+0 1 2"
+REFERENCES,0.20749479528105483,r: 0.611
+REFERENCES,0.2081887578070784,: 0.750
+REFERENCES,0.208882720333102,Ensemble Std.
+REFERENCES,0.20957668285912562,"0
+5
+10
+15 0 5 10 15"
+REFERENCES,0.2102706453851492,r: 0.639
+REFERENCES,0.2109646079111728,: 0.755
+REFERENCES,0.21165857043719638,Ensemble Var.
+REFERENCES,0.21235253296322,"0
+5
+10
+15 0 50000"
+REFERENCES,0.2130464954892436,100000
+REFERENCES,0.21374045801526717,r: 0.248
+REFERENCES,0.21443442054129078,: 0.126
+REFERENCES,0.21512838306731435,LL Var.
+REFERENCES,0.21582234559333796,"0
+5
+10
+15
+0 10 20 30"
+REFERENCES,0.21651630811936157,r: 0.175
+REFERENCES,0.21721027064538515,: -0.034
+REFERENCES,0.21790423317140875,KL LOO
+REFERENCES,0.21859819569743233,Penalty MSE
+REFERENCES,0.21929215822345594,(c) Medium transferred to Random
+REFERENCES,0.21998612074947954,"0
+10
+20 2 4 6"
+REFERENCES,0.22068008327550312,r: 0.492
+REFERENCES,0.22137404580152673,: 0.697
+REFERENCES,0.2220680083275503,Max Aleatoric
+REFERENCES,0.2227619708535739,"0
+10
+20
+0 10 20 30"
+REFERENCES,0.22345593337959752,r: 0.622
+REFERENCES,0.2241498959056211,: 0.734
+REFERENCES,0.2248438584316447,Max Pairwise Diff.
+REFERENCES,0.22553782095766828,"0
+10
+20
+0 1 2"
+REFERENCES,0.22623178348369188,r: 0.619
+REFERENCES,0.22692574600971546,: 0.765
+REFERENCES,0.22761970853573907,Ensemble Std.
+REFERENCES,0.22831367106176267,"0
+10
+20 0 5 10 15"
+REFERENCES,0.22900763358778625,r: 0.661
+REFERENCES,0.22970159611380986,: 0.771
+REFERENCES,0.23039555863983344,Ensemble Var.
+REFERENCES,0.23108952116585704,"0
+10
+20 0 10000 20000 30000"
+REFERENCES,0.23178348369188065,r: 0.206
+REFERENCES,0.23247744621790423,: -0.035
+REFERENCES,0.23317140874392783,LL Var.
+REFERENCES,0.2338653712699514,"0
+10
+20
+0 10 20 30"
+REFERENCES,0.23455933379597502,r: 0.009
+REFERENCES,0.23525329632199862,: -0.243
+REFERENCES,0.2359472588480222,KL LOO
+REFERENCES,0.2366412213740458,Penalty MSE
+REFERENCES,0.23733518390006939,(d) Expert transferred to Random
+REFERENCES,0.238029146426093,Figure 5: Scatter Plots showing HalfCheetah D4RL transfer tasks.
+REFERENCES,0.2387231089521166,Published as a conference paper at ICLR 2022
+REFERENCES,0.23941707147814018,"A.3.2
+HOPPER"
+REFERENCES,0.24011103400416378,"0
+20
+40
+60
+0.0 0.5 1.0 1.5"
+REFERENCES,0.24080499653018736,r: 0.170
+REFERENCES,0.24149895905621097,: 0.503
+REFERENCES,0.24219292158223457,Max Aleatoric
+REFERENCES,0.24288688410825815,"0
+20
+40
+60 0 10 20 30 40"
+REFERENCES,0.24358084663428176,r: 0.522
+REFERENCES,0.24427480916030533,: 0.726
+REFERENCES,0.24496877168632894,Max Pairwise Diff.
+REFERENCES,0.24566273421235255,"0
+20
+40
+60 0 1 2"
+REFERENCES,0.24635669673837612,r: 0.485
+REFERENCES,0.24705065926439973,: 0.743
+REFERENCES,0.2477446217904233,Ensemble Std.
+REFERENCES,0.24843858431644691,"0
+20
+40
+60 0 5 10 15 20"
+REFERENCES,0.24913254684247052,r: 0.536
+REFERENCES,0.2498265093684941,: 0.740
+REFERENCES,0.2505204718945177,Ensemble Var.
+REFERENCES,0.2512144344205413,"0
+20
+40
+60 0.0 0.5 1.0 1.5 2.0 1e12"
+REFERENCES,0.25190839694656486,r: 0.028
+REFERENCES,0.25260235947258847,: 0.372
+REFERENCES,0.2532963219986121,LL Var.
+REFERENCES,0.2539902845246357,"0
+20
+40
+60
+0 50 100 150"
+REFERENCES,0.2546842470506593,r: 0.151
+REFERENCES,0.25537820957668284,: 0.257
+REFERENCES,0.25607217210270644,KL LOO
+REFERENCES,0.25676613462873005,Penalty MSE
+REFERENCES,0.25746009715475365,(a) Random transferred to Expert
+REFERENCES,0.25815405968077726,"0.0
+0.2
+0.4
+0.00 0.25 0.50 0.75 1.00"
+REFERENCES,0.2588480222068008,r: 0.455
+REFERENCES,0.2595419847328244,: 0.772
+REFERENCES,0.260235947258848,Max Aleatoric
+REFERENCES,0.2609299097848716,"0.0
+0.2
+0.4
+0 1 2 3"
+REFERENCES,0.26162387231089523,r: 0.570
+REFERENCES,0.2623178348369188,: 0.806
+REFERENCES,0.2630117973629424,Max Pairwise Diff.
+REFERENCES,0.263705759888966,"0.0
+0.2
+0.4
+0.0 0.1 0.2"
+REFERENCES,0.2643997224149896,r: 0.571
+REFERENCES,0.2650936849410132,: 0.823
+REFERENCES,0.26578764746703676,Ensemble Std.
+REFERENCES,0.26648160999306036,"0.0
+0.2
+0.4 0.00 0.05 0.10 0.15"
+REFERENCES,0.26717557251908397,r: 0.596
+REFERENCES,0.2678695350451076,: 0.818
+REFERENCES,0.2685634975711312,Ensemble Var.
+REFERENCES,0.26925746009715473,"0.0
+0.2
+0.4 0"
+REFERENCES,0.26995142262317834,200000
+REFERENCES,0.27064538514920194,400000
+REFERENCES,0.27133934767522555,r: 0.267
+REFERENCES,0.27203331020124916,: 0.488
+REFERENCES,0.2727272727272727,LL Var.
+REFERENCES,0.2734212352532963,"0.0
+0.2
+0.4
+0 20 40 60"
+REFERENCES,0.2741151977793199,r: 0.067
+REFERENCES,0.2748091603053435,: 0.107
+REFERENCES,0.27550312283136713,KL LOO
+REFERENCES,0.2761970853573907,Penalty MSE
+REFERENCES,0.2768910478834143,(b) Medium transferred to Expert
+REFERENCES,0.2775850104094379,"0
+20
+40
+0.0 0.5 1.0 1.5"
+REFERENCES,0.2782789729354615,r: 0.508
+REFERENCES,0.2789729354614851,: 0.896
+REFERENCES,0.27966689798750866,Max Aleatoric
+REFERENCES,0.28036086051353226,"0
+20
+40 0 5 10 15"
+REFERENCES,0.28105482303955587,r: 0.739
+REFERENCES,0.2817487855655795,: 0.909
+REFERENCES,0.2824427480916031,Max Pairwise Diff.
+REFERENCES,0.28313671061762663,"0
+20
+40 0.0 0.5 1.0 1.5"
+REFERENCES,0.28383067314365024,r: 0.734
+REFERENCES,0.28452463566967384,: 0.908
+REFERENCES,0.28521859819569745,Ensemble Std.
+REFERENCES,0.28591256072172105,"0
+20
+40 0 2 4"
+REFERENCES,0.2866065232477446,r: 0.759
+REFERENCES,0.2873004857737682,: 0.912
+REFERENCES,0.2879944482997918,Ensemble Var.
+REFERENCES,0.2886884108258154,"0
+20
+40 0 2 4 1e8"
+REFERENCES,0.28938237335183903,r: -0.062
+REFERENCES,0.2900763358778626,: 0.042
+REFERENCES,0.2907702984038862,LL Var.
+REFERENCES,0.2914642609299098,"0
+20
+40
+0 20 40"
+REFERENCES,0.2921582234559334,r: 0.163
+REFERENCES,0.29285218598195695,: 0.046
+REFERENCES,0.29354614850798055,KL LOO
+REFERENCES,0.29424011103400416,Penalty MSE
+REFERENCES,0.29493407356002777,"(c) Medium transferred to Random 0
+1
+2 0.2 0.4 0.6"
+REFERENCES,0.29562803608605137,r: 0.391
+REFERENCES,0.2963219986120749,: 0.613
+REFERENCES,0.2970159611380985,Max Aleatoric
+REFERENCES,0.29770992366412213,"0
+1
+2
+0 2 4 6 8"
+REFERENCES,0.29840388619014574,r: 0.535
+REFERENCES,0.29909784871616935,: 0.649
+REFERENCES,0.2997918112421929,Max Pairwise Diff.
+REFERENCES,0.3004857737682165,"0
+1
+2
+0.0 0.2 0.4 0.6"
+REFERENCES,0.3011797362942401,r: 0.546
+REFERENCES,0.3018736988202637,: 0.684
+REFERENCES,0.3025676613462873,"Ensemble Std. 0
+1
+2 0.00 0.25 0.50 0.75"
+REFERENCES,0.30326162387231087,r: 0.537
+REFERENCES,0.3039555863983345,: 0.679
+REFERENCES,0.3046495489243581,"Ensemble Var. 0
+1
+2 0 2 4 1e7"
+REFERENCES,0.3053435114503817,r: 0.090
+REFERENCES,0.3060374739764053,: 0.051
+REFERENCES,0.30673143650242884,LL Var.
+REFERENCES,0.30742539902845245,"0
+1
+2
+0 50 100"
+REFERENCES,0.30811936155447606,r: 0.097
+REFERENCES,0.30881332408049966,: 0.054
+REFERENCES,0.30950728660652327,KL LOO
+REFERENCES,0.3102012491325468,Penalty MSE
+REFERENCES,0.3108952116585704,(d) Expert transferred to Random
+REFERENCES,0.31158917418459403,Figure 6: Scatter Plots showing Hopper D4RL transfer tasks.
+REFERENCES,0.31228313671061764,Published as a conference paper at ICLR 2022
+REFERENCES,0.31297709923664124,"A.4
+TRUE MODEL-BASED ERROR CALIBRATION"
+REFERENCES,0.3136710617626648,"A.4.1
+HALFCHEETAH"
+REFERENCES,0.3143650242886884,"0.0
+0.5
+1.0
+1.5
+1e6 0 1 2 3"
+REFERENCES,0.315058986814712,r: 0.302
+REFERENCES,0.3157529493407356,: 0.792
+REFERENCES,0.3164469118667592,Max Aleatoric
+REFERENCES,0.31714087439278277,"0.0
+0.5
+1.0
+1.5
+1e6 0 200 400"
+REFERENCES,0.3178348369188064,r: 0.711
+REFERENCES,0.31852879944483,: 0.789
+REFERENCES,0.3192227619708536,Max Pairwise Diff.
+REFERENCES,0.3199167244968772,"0.0
+0.5
+1.0
+1.5
+1e6 0 20 40"
+REFERENCES,0.32061068702290074,r: 0.706
+REFERENCES,0.32130464954892435,: 0.810
+REFERENCES,0.32199861207494795,Ensemble Std.
+REFERENCES,0.32269257460097156,"0.0
+0.5
+1.0
+1.5
+1e6 0 1000 2000 3000"
+REFERENCES,0.32338653712699517,r: 0.709
+REFERENCES,0.3240804996530187,: 0.815
+REFERENCES,0.3247744621790423,Ensemble Var.
+REFERENCES,0.32546842470506593,"0.0
+0.5
+1.0
+1.5
+1e6 0 1 2 3 1e13"
+REFERENCES,0.32616238723108953,r: 0.659
+REFERENCES,0.32685634975711314,: 0.301
+REFERENCES,0.3275503122831367,LL Var.
+REFERENCES,0.3282442748091603,"0.0
+0.5
+1.0
+1.5
+1e6 0 50 100"
+REFERENCES,0.3289382373351839,r: 0.650
+REFERENCES,0.3296321998612075,: 0.239
+REFERENCES,0.3303261623872311,KL LOO
+REFERENCES,0.33102012491325467,Penalty MSE
+REFERENCES,0.33171408743927827,(a) Random
+REFERENCES,0.3324080499653019,"0
+5
+10
+0 2 4 6"
+REFERENCES,0.3331020124913255,r: 0.550
+REFERENCES,0.3337959750173491,: 0.736
+REFERENCES,0.33448993754337264,Max Aleatoric
+REFERENCES,0.33518390006939625,"0
+5
+10
+0 5 10 15"
+REFERENCES,0.33587786259541985,r: 0.604
+REFERENCES,0.33657182512144346,: 0.760
+REFERENCES,0.33726578764746706,Max Pairwise Diff.
+REFERENCES,0.3379597501734906,"0
+5
+10
+0.0 0.5 1.0"
+REFERENCES,0.3386537126995142,r: 0.620
+REFERENCES,0.3393476752255378,: 0.778
+REFERENCES,0.34004163775156143,Ensemble Std.
+REFERENCES,0.34073560027758504,"0
+5
+10 0 2 4"
+REFERENCES,0.3414295628036086,r: 0.641
+REFERENCES,0.3421235253296322,: 0.779
+REFERENCES,0.3428174878556558,Ensemble Var.
+REFERENCES,0.3435114503816794,"0
+5
+10 0 10000 20000 30000"
+REFERENCES,0.34420541290770296,r: 0.069
+REFERENCES,0.34489937543372656,: 0.063
+REFERENCES,0.34559333795975017,LL Var.
+REFERENCES,0.3462873004857738,"0
+5
+10
+0 10 20 30"
+REFERENCES,0.3469812630117974,r: -0.172
+REFERENCES,0.34767522553782093,: -0.201
+REFERENCES,0.34836918806384454,KL LOO
+REFERENCES,0.34906315058986814,Penalty MSE
+REFERENCES,0.34975711311589175,(b) Mixed
+REFERENCES,0.35045107564191535,"0
+10
+20
+0 2 4 6"
+REFERENCES,0.3511450381679389,r: 0.464
+REFERENCES,0.3518390006939625,: 0.651
+REFERENCES,0.3525329632199861,Max Aleatoric
+REFERENCES,0.3532269257460097,"0
+10
+20
+0 10 20"
+REFERENCES,0.35392088827203333,r: 0.506
+REFERENCES,0.3546148507980569,: 0.649
+REFERENCES,0.3553088133240805,Max Pairwise Diff.
+REFERENCES,0.3560027758501041,"0
+10
+20
+0.0 0.5 1.0 1.5"
+REFERENCES,0.3566967383761277,r: 0.531
+REFERENCES,0.3573907009021513,: 0.698
+REFERENCES,0.35808466342817485,Ensemble Std.
+REFERENCES,0.35877862595419846,"0
+10
+20 0 2 4 6"
+REFERENCES,0.35947258848022207,r: 0.551
+REFERENCES,0.36016655100624567,: 0.694
+REFERENCES,0.3608605135322693,Ensemble Var.
+REFERENCES,0.36155447605829283,"0
+10
+20 0 20000 40000"
+REFERENCES,0.36224843858431643,r: 0.078
+REFERENCES,0.36294240111034004,: 0.001
+REFERENCES,0.36363636363636365,LL Var.
+REFERENCES,0.36433032616238725,"0
+10
+20
+0 10 20 30"
+REFERENCES,0.3650242886884108,r: -0.028
+REFERENCES,0.3657182512144344,: -0.137
+REFERENCES,0.366412213740458,KL LOO
+REFERENCES,0.3671061762664816,Penalty MSE
+REFERENCES,0.3678001387925052,(c) Medium
+REFERENCES,0.3684941013185288,"0
+10
+20
+0 2 4 6"
+REFERENCES,0.3691880638445524,r: 0.359
+REFERENCES,0.369882026370576,: 0.321
+REFERENCES,0.3705759888965996,Max Aleatoric
+REFERENCES,0.3712699514226232,"0
+10
+20
+0 5 10 15"
+REFERENCES,0.37196391394864675,r: 0.358
+REFERENCES,0.37265787647467036,: 0.327
+REFERENCES,0.37335183900069396,Max Pairwise Diff.
+REFERENCES,0.37404580152671757,"0
+10
+20
+0.00 0.25 0.50 0.75 1.00"
+REFERENCES,0.3747397640527412,r: 0.345
+REFERENCES,0.3754337265787647,: 0.332
+REFERENCES,0.37612768910478833,Ensemble Std.
+REFERENCES,0.37682165163081194,"0
+10
+20 0 1 2 3"
+REFERENCES,0.37751561415683554,r: 0.281
+REFERENCES,0.37820957668285915,: 0.327
+REFERENCES,0.3789035392088827,Ensemble Var.
+REFERENCES,0.3795975017349063,"0
+10
+20 0 1000 2000 3000 4000"
+REFERENCES,0.3802914642609299,r: 0.050
+REFERENCES,0.3809854267869535,: -0.020
+REFERENCES,0.3816793893129771,LL Var.
+REFERENCES,0.3823733518390007,"0
+10
+20
+0 5 10 15 20"
+REFERENCES,0.3830673143650243,r: -0.120
+REFERENCES,0.3837612768910479,: -0.132
+REFERENCES,0.3844552394170715,KL LOO
+REFERENCES,0.3851492019430951,Penalty MSE
+REFERENCES,0.38584316446911865,(d) Medium Expert
+REFERENCES,0.38653712699514226,"0
+10
+20
+0 2 4"
+REFERENCES,0.38723108952116586,r: 0.413
+REFERENCES,0.38792505204718947,: 0.388
+REFERENCES,0.3886190145732131,Max Aleatoric
+REFERENCES,0.3893129770992366,"0
+10
+20
+0.0 2.5 5.0 7.5 10.0"
+REFERENCES,0.39000693962526023,r: 0.413
+REFERENCES,0.39070090215128384,: 0.415
+REFERENCES,0.39139486467730744,Max Pairwise Diff.
+REFERENCES,0.39208882720333105,"0
+10
+20
+0.0 0.2 0.4 0.6 0.8"
+REFERENCES,0.3927827897293546,r: 0.400
+REFERENCES,0.3934767522553782,: 0.441
+REFERENCES,0.3941707147814018,Ensemble Std.
+REFERENCES,0.3948646773074254,"0
+10
+20 0.0 0.5 1.0 1.5"
+REFERENCES,0.39555863983344897,r: 0.274
+REFERENCES,0.39625260235947257,: 0.419
+REFERENCES,0.3969465648854962,Ensemble Var.
+REFERENCES,0.3976405274115198,"0
+10
+20 0 2000 4000"
+REFERENCES,0.3983344899375434,r: -0.174
+REFERENCES,0.39902845246356694,: -0.177
+REFERENCES,0.39972241498959055,LL Var.
+REFERENCES,0.40041637751561415,"0
+10
+20
+0 20 40"
+REFERENCES,0.40111034004163776,r: -0.019
+REFERENCES,0.40180430256766136,: 0.170
+REFERENCES,0.4024982650936849,KL LOO
+REFERENCES,0.4031922276197085,Penalty MSE
+REFERENCES,0.4038861901457321,(e) Expert
+REFERENCES,0.40458015267175573,Figure 7: Scatter Plots showing HalfCheetah D4RL true model-based error calibration.
+REFERENCES,0.40527411519777934,Published as a conference paper at ICLR 2022
+REFERENCES,0.4059680777238029,"A.4.2
+HOPPER"
+REFERENCES,0.4066620402498265,"0
+1
+2
+0.0 0.5 1.0 1.5"
+REFERENCES,0.4073560027758501,r: 0.460
+REFERENCES,0.4080499653018737,: 0.751
+REFERENCES,0.4087439278278973,"Max Aleatoric 0
+1
+2 0 5 10"
+REFERENCES,0.40943789035392086,r: 0.515
+REFERENCES,0.41013185287994447,: 0.791
+REFERENCES,0.4108258154059681,"Max Pairwise Diff. 0
+1
+2 0.0 0.2 0.4 0.6 0.8"
+REFERENCES,0.4115197779319917,r: 0.548
+REFERENCES,0.4122137404580153,: 0.817
+REFERENCES,0.41290770298403884,"Ensemble Std. 0
+1
+2 0.0 0.5 1.0 1.5 2.0"
+REFERENCES,0.41360166551006244,r: 0.468
+REFERENCES,0.41429562803608605,: 0.804
+REFERENCES,0.41498959056210966,"Ensemble Var. 0
+1
+2 0.0 0.5 1.0 1e11"
+REFERENCES,0.41568355308813326,r: 0.085
+REFERENCES,0.4163775156141568,: 0.689
+REFERENCES,0.4170714781401804,"LL Var. 0
+1
+2 0 200 400 600 800"
+REFERENCES,0.417765440666204,r: 0.096
+REFERENCES,0.41845940319222763,: 0.471
+REFERENCES,0.41915336571825124,KL LOO
+REFERENCES,0.4198473282442748,Penalty MSE
+REFERENCES,0.4205412907702984,(a) Random
+REFERENCES,0.421235253296322,"0.00
+0.25
+0.50
+0.75
+0.0 0.5 1.0 1.5"
+REFERENCES,0.4219292158223456,r: 0.500
+REFERENCES,0.4226231783483692,: 0.665
+REFERENCES,0.42331714087439276,Max Aleatoric
+REFERENCES,0.42401110340041637,"0.00
+0.25
+0.50
+0.75 0 2 4"
+REFERENCES,0.42470506592644,r: 0.552
+REFERENCES,0.4253990284524636,: 0.701
+REFERENCES,0.4260929909784872,Max Pairwise Diff.
+REFERENCES,0.42678695350451074,"0.00
+0.25
+0.50
+0.75
+0.0 0.1 0.2 0.3 0.4"
+REFERENCES,0.42748091603053434,r: 0.529
+REFERENCES,0.42817487855655795,: 0.738
+REFERENCES,0.42886884108258155,Ensemble Std.
+REFERENCES,0.42956280360860516,"0.00
+0.25
+0.50
+0.75 0.0 0.2 0.4"
+REFERENCES,0.4302567661346287,r: 0.550
+REFERENCES,0.4309507286606523,: 0.713
+REFERENCES,0.4316446911866759,Ensemble Var.
+REFERENCES,0.4323386537126995,"0.00
+0.25
+0.50
+0.75 0"
+REFERENCES,0.43303261623872313,200000
+REFERENCES,0.4337265787647467,400000
+REFERENCES,0.4344205412907703,600000
+REFERENCES,0.4351145038167939,r: 0.157
+REFERENCES,0.4358084663428175,: 0.312
+REFERENCES,0.4365024288688411,LL Var.
+REFERENCES,0.43719639139486466,"0.00
+0.25
+0.50
+0.75
+0 10 20 30"
+REFERENCES,0.43789035392088826,r: 0.077
+REFERENCES,0.43858431644691187,: 0.112
+REFERENCES,0.4392782789729355,KL LOO
+REFERENCES,0.4399722414989591,Penalty MSE
+REFERENCES,0.44066620402498263,(b) Mixed
+REFERENCES,0.44136016655100624,"0.0
+0.2
+0.4
+0.0 0.5 1.0"
+REFERENCES,0.44205412907702984,r: 0.468
+REFERENCES,0.44274809160305345,: 0.640
+REFERENCES,0.44344205412907706,Max Aleatoric
+REFERENCES,0.4441360166551006,"0.0
+0.2
+0.4 0 1 2 3"
+REFERENCES,0.4448299791811242,r: 0.550
+REFERENCES,0.4455239417071478,: 0.687
+REFERENCES,0.4462179042331714,Max Pairwise Diff.
+REFERENCES,0.44691186675919503,"0.0
+0.2
+0.4
+0.0 0.1 0.2"
+REFERENCES,0.4476058292852186,r: 0.550
+REFERENCES,0.4482997918112422,: 0.737
+REFERENCES,0.4489937543372658,Ensemble Std.
+REFERENCES,0.4496877168632894,"0.0
+0.2
+0.4 0.00 0.05 0.10 0.15 0.20"
+REFERENCES,0.45038167938931295,r: 0.548
+REFERENCES,0.45107564191533656,: 0.701
+REFERENCES,0.45176960444136016,Ensemble Var.
+REFERENCES,0.45246356696738377,"0.0
+0.2
+0.4 0.0 0.5 1.0 1e7"
+REFERENCES,0.4531575294934074,r: 0.201
+REFERENCES,0.4538514920194309,: 0.407
+REFERENCES,0.45454545454545453,LL Var.
+REFERENCES,0.45523941707147814,"0.0
+0.2
+0.4
+0 25 50 75"
+REFERENCES,0.45593337959750174,r: 0.130
+REFERENCES,0.45662734212352535,: 0.180
+REFERENCES,0.4573213046495489,KL LOO
+REFERENCES,0.4580152671755725,Penalty MSE
+REFERENCES,0.4587092297015961,(c) Medium
+REFERENCES,0.4594031922276197,"0.0
+0.2
+0.4
+0.00 0.25 0.50 0.75 1.00"
+REFERENCES,0.4600971547536433,r: 0.557
+REFERENCES,0.4607911172796669,: 0.794
+REFERENCES,0.4614850798056905,Max Aleatoric
+REFERENCES,0.4621790423317141,"0.0
+0.2
+0.4 0 1 2 3 4"
+REFERENCES,0.4628730048577377,r: 0.586
+REFERENCES,0.4635669673837613,: 0.806
+REFERENCES,0.46426092990978485,Max Pairwise Diff.
+REFERENCES,0.46495489243580845,"0.0
+0.2
+0.4
+0.0 0.1 0.2 0.3"
+REFERENCES,0.46564885496183206,r: 0.567
+REFERENCES,0.46634281748785567,: 0.839
+REFERENCES,0.46703678001387927,Ensemble Std.
+REFERENCES,0.4677307425399028,"0.0
+0.2
+0.4 0.0 0.1 0.2 0.3"
+REFERENCES,0.46842470506592643,r: 0.573
+REFERENCES,0.46911866759195003,: 0.825
+REFERENCES,0.46981263011797364,Ensemble Var.
+REFERENCES,0.47050659264399725,"0.0
+0.2
+0.4 0"
+REFERENCES,0.4712005551700208,200000
+REFERENCES,0.4718945176960444,400000
+REFERENCES,0.472588480222068,600000
+REFERENCES,0.4732824427480916,800000
+REFERENCES,0.4739764052741152,r: 0.163
+REFERENCES,0.47467036780013877,: 0.509
+REFERENCES,0.4753643303261624,LL Var.
+REFERENCES,0.476058292852186,"0.0
+0.2
+0.4 0 50 100"
+REFERENCES,0.4767522553782096,r: 0.041
+REFERENCES,0.4774462179042332,: 0.187
+REFERENCES,0.47814018043025674,KL LOO
+REFERENCES,0.47883414295628035,Penalty MSE
+REFERENCES,0.47952810548230396,(d) Medium Expert
+REFERENCES,0.48022206800832756,"0.0
+0.2
+0.0 0.2 0.4 0.6"
+REFERENCES,0.48091603053435117,r: 0.508
+REFERENCES,0.4816099930603747,: 0.772
+REFERENCES,0.4823039555863983,Max Aleatoric
+REFERENCES,0.48299791811242193,"0.0
+0.2 0 1 2"
+REFERENCES,0.48369188063844554,r: 0.585
+REFERENCES,0.48438584316446914,: 0.794
+REFERENCES,0.4850798056904927,Max Pairwise Diff.
+REFERENCES,0.4857737682165163,"0.0
+0.2
+0.00 0.05 0.10 0.15"
+REFERENCES,0.4864677307425399,r: 0.546
+REFERENCES,0.4871616932685635,: 0.826
+REFERENCES,0.4878556557945871,Ensemble Std.
+REFERENCES,0.48854961832061067,"0.0
+0.2 0.000 0.025 0.050 0.075 0.100"
+REFERENCES,0.4892435808466343,r: 0.585
+REFERENCES,0.4899375433726579,: 0.815
+REFERENCES,0.4906315058986815,Ensemble Var.
+REFERENCES,0.4913254684247051,"0.0
+0.2 0 50000"
+REFERENCES,0.49201943095072864,100000
+REFERENCES,0.49271339347675225,150000
+REFERENCES,0.49340735600277585,r: 0.221
+REFERENCES,0.49410131852879946,: 0.452
+REFERENCES,0.49479528105482307,LL Var.
+REFERENCES,0.4954892435808466,"0.0
+0.2
+0 20 40 60 80"
+REFERENCES,0.4961832061068702,r: 0.056
+REFERENCES,0.49687716863289383,: 0.166
+REFERENCES,0.49757113115891743,KL LOO
+REFERENCES,0.49826509368494104,Penalty MSE
+REFERENCES,0.4989590562109646,(e) Expert
+REFERENCES,0.4996530187369882,Figure 8: Scatter Plots showing Hopper D4RL true model-based error calibration.
+REFERENCES,0.5003469812630118,"A.5
+ADDITIONAL LOG PROBABILITY CORRELATION ANALYSIS"
+REFERENCES,0.5010409437890354,"Table 5 shows correlation between reward penalties and the negative log-likelihood of the true data
+under the model in the Transfer experiments."
+REFERENCES,0.501734906315059,"Table 5: Correlation statistics of penalties against model negative log-likelihood of the true data, averaged over
+all datasets (i.e., Random through to Expert) showing ± 1 SD over 12 seeds. The best in each column is bolded."
+REFERENCES,0.5024288688410826,Transfer
+REFERENCES,0.5031228313671062,"HalfCheetah
+Hopper"
+REFERENCES,0.5038167938931297,"Penalty
+ρ
+r
+ρ
+r"
+REFERENCES,0.5045107564191533,"Max Aleatoric
+0.87±0.00
+0.82±0.01
+0.81±0.01
+0.57±0.01
+Max Pairwise Diff.
+0.79±0.01
+0.62±0.00
+0.79±0.01
+0.51±0.00
+Ens. Std.
+0.93±0.00
+0.86±0.01
+0.89±0.01
+0.61±0.01
+Ens. Var.
+0.90±0.01
+0.74±0.01
+0.82±0.00
+0.59±0.00
+LL Var.
+0.04±0.07
+0.07±0.03
+0.25±0.03
+0.10±0.01
+LOO KL
+-0.04±0.06
+-0.02±0.04
+0.08±0.03
+0.05±0.01"
+REFERENCES,0.5052047189451769,Published as a conference paper at ICLR 2022
+REFERENCES,0.5058986814712005,"B
+FULL RESULTS INCREASING MODELS"
+REFERENCES,0.5065926439972241,"B.1
+PENALTY DISTRIBUTION"
+REFERENCES,0.5072866065232478,"In this section we provide the full set of results showing the impact of increasing model count on the
+distribution quantile statistics as introduced in Sec. 5.1. We show inter-quartile range and the median
+(the latter being denoted by a black vertical line) of each penalty as a function of increasing model
+number across all training domains and test settings. First, we present the transfer performance of all
+training sets onto all ofﬂine datasets. Then, we present the results for all training datasets under the
+True Model-Based experiment under the adversarial policies."
+REFERENCES,0.5079805690492714,"B.1.1
+OFFLINE DATASET TRANSFER DISTRIBUTION"
+REFERENCES,0.508674531575295,"3.0
+3.5"
+REFERENCES,0.5093684941013186,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5100624566273422,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5107564191533657,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5114503816793893,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5121443442054129,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5128383067314365,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5135322692574601,Max Aleatoric
+REFERENCES,0.5142262317834837,"5
+10
+15"
+REFERENCES,0.5149201943095073,Max Pairwise Diff.
+REFERENCES,0.5156141568355309,"0.75
+1.00
+1.25"
+REFERENCES,0.5163081193615545,"Ensemble Std. 1
+2
+3"
+REFERENCES,0.5170020818875781,"Ensemble Var. 0
+5e9"
+REFERENCES,0.5176960444136016,LL Var.
+REFERENCES,0.5183900069396252,"25
+50
+75"
+REFERENCES,0.5190839694656488,KL LOO
+REFERENCES,0.5197779319916724,Number of Models
+REFERENCES,0.520471894517696,Penalty
+REFERENCES,0.5211658570437196,(a) Random transferred to Expert
+REFERENCES,0.5218598195697433,"5.75
+6.00
+6.25"
+REFERENCES,0.5225537820957669,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5232477446217905,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5239417071478141,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5246356696738376,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5253296321998612,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5260235947258848,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5267175572519084,"Max Aleatoric 20
+40"
+REFERENCES,0.527411519777932,"Max Pairwise Diff. 2
+3"
+REFERENCES,0.5281054823039556,"Ensemble Std. 10
+20"
+REFERENCES,0.5287994448299792,"Ensemble Var. 0
+1
+2 1e7"
+REFERENCES,0.5294934073560028,LL Var.
+REFERENCES,0.5301873698820264,"100
+200"
+REFERENCES,0.5308813324080499,KL LOO
+REFERENCES,0.5315752949340735,Number of Models
+REFERENCES,0.5322692574600971,Penalty
+REFERENCES,0.5329632199861207,"(b) Medium transferred to Expert 3
+4
+5"
+REFERENCES,0.5336571825121443,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5343511450381679,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5350451075641915,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5357390700902152,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5364330326162388,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5371269951422624,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5378209576682859,"Max Aleatoric 5
+10"
+REFERENCES,0.5385149201943095,Max Pairwise Diff.
+REFERENCES,0.5392088827203331,"0.6
+0.8"
+REFERENCES,0.5399028452463567,"Ensemble Std. 1
+2"
+REFERENCES,0.5405968077723803,Ensemble Var.
+REFERENCES,0.5412907702984039,"200
+400"
+REFERENCES,0.5419847328244275,LL Var.
+REFERENCES,0.5426786953504511,"5
+10
+15"
+REFERENCES,0.5433726578764747,KL LOO
+REFERENCES,0.5440666204024983,Number of Models
+REFERENCES,0.5447605829285218,Penalty
+REFERENCES,0.5454545454545454,"(c) Medium transferred to Random 4
+6"
+REFERENCES,0.546148507980569,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5468424705065926,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5475364330326162,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5482303955586398,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5489243580846634,"20
+15
+10 7
+5
+3"
+REFERENCES,0.549618320610687,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5503122831367107,Max Aleatoric
+REFERENCES,0.5510062456627343,"5
+10
+15"
+REFERENCES,0.5517002081887578,Max Pairwise Diff.
+REFERENCES,0.5523941707147814,"0.75
+1.00
+1.25"
+REFERENCES,0.553088133240805,"Ensemble Std. 2
+4"
+REFERENCES,0.5537820957668286,Ensemble Var.
+REFERENCES,0.5544760582928522,"100
+200
+300"
+REFERENCES,0.5551700208188758,"LL Var. 5
+10"
+REFERENCES,0.5558639833448994,KL LOO
+REFERENCES,0.556557945870923,Number of Models
+REFERENCES,0.5572519083969466,Penalty
+REFERENCES,0.5579458709229702,(d) Expert transferred to Random
+REFERENCES,0.5586398334489937,Figure 9: Box Plots showing HalfCheetah D4RL transfer tasks.
+REFERENCES,0.5593337959750173,Published as a conference paper at ICLR 2022
+REFERENCES,0.5600277585010409,"1.40
+1.45"
+REFERENCES,0.5607217210270645,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5614156835530881,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5621096460791117,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5628036086051353,"20
+15
+10 7
+5
+3"
+REFERENCES,0.563497571131159,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5641915336571826,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5648854961832062,"Max Aleatoric 10
+20"
+REFERENCES,0.5655794587092297,Max Pairwise Diff.
+REFERENCES,0.5662734212352533,"0.5
+1.0
+1.5"
+REFERENCES,0.5669673837612769,Ensemble Std.
+REFERENCES,0.5676613462873005,"2.5
+5.0
+7.5"
+REFERENCES,0.5683553088133241,"Ensemble Var. 0
+5e9"
+REFERENCES,0.5690492713393477,LL Var.
+REFERENCES,0.5697432338653713,"50
+100"
+REFERENCES,0.5704371963913949,KL LOO
+REFERENCES,0.5711311589174185,Number of Models
+REFERENCES,0.5718251214434421,Penalty
+REFERENCES,0.5725190839694656,(a) Random transferred to Expert
+REFERENCES,0.5732130464954892,"0.2
+0.4"
+REFERENCES,0.5739070090215128,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5746009715475364,"20
+15
+10 7
+5
+3"
+REFERENCES,0.57529493407356,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5759888965995836,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5766828591256072,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5773768216516308,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5780707841776545,"Max Aleatoric 1
+2"
+REFERENCES,0.5787647467036781,Max Pairwise Diff.
+REFERENCES,0.5794587092297016,0.025 0.050 0.075
+REFERENCES,0.5801526717557252,Ensemble Std.
+REFERENCES,0.5808466342817488,"0.00
+0.02"
+REFERENCES,0.5815405968077724,Ensemble Var.
+REFERENCES,0.582234559333796,"1000
+2000"
+REFERENCES,0.5829285218598196,LL Var.
+REFERENCES,0.5836224843858432,"10
+20
+30"
+REFERENCES,0.5843164469118668,KL LOO
+REFERENCES,0.5850104094378904,Number of Models
+REFERENCES,0.5857043719639139,Penalty
+REFERENCES,0.5863983344899375,(b) Medium transferred to Expert
+REFERENCES,0.5870922970159611,"0.5
+1.0
+1.5"
+REFERENCES,0.5877862595419847,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5884802220680083,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5891741845940319,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5898681471200555,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5905621096460791,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5912560721721027,"20
+15
+10 7
+5
+3"
+REFERENCES,0.5919500346981263,"Max Aleatoric 5
+10"
+REFERENCES,0.5926439972241498,Max Pairwise Diff.
+REFERENCES,0.5933379597501734,"0.5
+1.0"
+REFERENCES,0.594031922276197,"Ensemble Std. 0
+1
+2"
+REFERENCES,0.5947258848022207,Ensemble Var.
+REFERENCES,0.5954198473282443,"0
+200000
+400000"
+REFERENCES,0.5961138098542679,"LL Var. 20
+40"
+REFERENCES,0.5968077723802915,KL LOO
+REFERENCES,0.5975017349063151,Number of Models
+REFERENCES,0.5981956974323387,Penalty
+REFERENCES,0.5988896599583623,(c) Medium transferred to Random
+REFERENCES,0.5995836224843858,"0.2
+0.4
+0.6"
+REFERENCES,0.6002775850104094,"20
+15
+10 7
+5
+3"
+REFERENCES,0.600971547536433,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6016655100624566,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6023594725884802,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6030534351145038,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6037473976405274,"20
+15
+10 7
+5
+3"
+REFERENCES,0.604441360166551,"Max Aleatoric 2
+4"
+REFERENCES,0.6051353226925746,Max Pairwise Diff.
+REFERENCES,0.6058292852185982,"0.1
+0.2"
+REFERENCES,0.6065232477446217,Ensemble Std.
+REFERENCES,0.6072172102706453,"0.05
+0.10
+0.15"
+REFERENCES,0.607911172796669,Ensemble Var.
+REFERENCES,0.6086051353226926,"0
+100000 200000"
+REFERENCES,0.6092990978487162,"LL Var. 20
+40"
+REFERENCES,0.6099930603747398,KL LOO
+REFERENCES,0.6106870229007634,Number of Models
+REFERENCES,0.611380985426787,Penalty
+REFERENCES,0.6120749479528106,(d) Expert transferred to Random
+REFERENCES,0.6127689104788342,Figure 10: Box Plots showing Hopper D4RL transfer tasks.
+REFERENCES,0.6134628730048577,Published as a conference paper at ICLR 2022
+REFERENCES,0.6141568355308813,"B.1.2
+TRUE MODEL-BASED ERROR DISTRIBUTION 2
+3"
+REFERENCES,0.6148507980569049,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6155447605829285,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6162387231089521,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6169326856349757,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6176266481609993,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6183206106870229,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6190145732130465,"Max Aleatoric 5
+10"
+REFERENCES,0.6197085357390701,Max Pairwise Diff.
+REFERENCES,0.6204024982650936,"0.2
+0.4
+0.6"
+REFERENCES,0.6210964607911172,Ensemble Std.
+REFERENCES,0.6217904233171409,"0.5
+1.0"
+REFERENCES,0.6224843858431645,Ensemble Var.
+REFERENCES,0.6231783483691881,"0
+1000"
+REFERENCES,0.6238723108952117,"LL Var. 10
+20"
+REFERENCES,0.6245662734212353,KL LOO
+REFERENCES,0.6252602359472589,Number of Models
+REFERENCES,0.6259541984732825,Penalty
+REFERENCES,0.6266481609993061,"(a) Random 2
+4"
+REFERENCES,0.6273421235253296,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6280360860513532,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6287300485773768,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6294240111034004,"20
+15
+10 7
+5
+3"
+REFERENCES,0.630117973629424,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6308119361554476,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6315058986814712,"Max Aleatoric 5
+10"
+REFERENCES,0.6321998612074948,Max Pairwise Diff.
+REFERENCES,0.6328938237335184,"0.25
+0.50
+0.75"
+REFERENCES,0.6335877862595419,Ensemble Std.
+REFERENCES,0.6342817487855655,"0.5
+1.0
+1.5"
+REFERENCES,0.6349757113115891,Ensemble Var.
+REFERENCES,0.6356696738376127,500 1000 1500
+REFERENCES,0.6363636363636364,"LL Var. 10
+20"
+REFERENCES,0.63705759888966,KL LOO
+REFERENCES,0.6377515614156836,Number of Models
+REFERENCES,0.6384455239417072,Penalty
+REFERENCES,0.6391394864677308,"(b) Mixed 3
+4
+5"
+REFERENCES,0.6398334489937544,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6405274115197779,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6412213740458015,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6419153365718251,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6426092990978487,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6433032616238723,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6439972241498959,Max Aleatoric
+REFERENCES,0.6446911866759195,"5
+10
+15"
+REFERENCES,0.6453851492019431,Max Pairwise Diff.
+REFERENCES,0.6460791117279667,"0.50
+0.75
+1.00"
+REFERENCES,0.6467730742539903,"Ensemble Std. 1
+2
+3"
+REFERENCES,0.6474670367800138,Ensemble Var.
+REFERENCES,0.6481609993060374,"250
+500
+750"
+REFERENCES,0.648854961832061,"LL Var. 10
+15"
+REFERENCES,0.6495489243580846,KL LOO
+REFERENCES,0.6502428868841083,Number of Models
+REFERENCES,0.6509368494101319,Penalty
+REFERENCES,0.6516308119361555,"(c) Medium 1
+2"
+REFERENCES,0.6523247744621791,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6530187369882027,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6537126995142263,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6544066620402498,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6551006245662734,"20
+15
+10 7
+5
+3"
+REFERENCES,0.655794587092297,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6564885496183206,"Max Aleatoric 2
+4"
+REFERENCES,0.6571825121443442,Max Pairwise Diff.
+REFERENCES,0.6578764746703678,"0.1
+0.2"
+REFERENCES,0.6585704371963914,Ensemble Std.
+REFERENCES,0.659264399722415,"0.0
+0.1
+0.2"
+REFERENCES,0.6599583622484386,Ensemble Var.
+REFERENCES,0.6606523247744622,"100
+200"
+REFERENCES,0.6613462873004857,"LL Var. 5
+10"
+REFERENCES,0.6620402498265093,KL LOO
+REFERENCES,0.6627342123525329,Number of Models
+REFERENCES,0.6634281748785565,Penalty
+REFERENCES,0.6641221374045801,(d) Medium Expert
+REFERENCES,0.6648160999306038,"0.5
+1.0
+1.5"
+REFERENCES,0.6655100624566274,"20
+15
+10 7
+5
+3"
+REFERENCES,0.666204024982651,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6668979875086746,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6675919500346982,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6682859125607217,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6689798750867453,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6696738376127689,"Max Aleatoric 1
+2
+3"
+REFERENCES,0.6703678001387925,Max Pairwise Diff.
+REFERENCES,0.6710617626648161,"0.05
+0.10
+0.15"
+REFERENCES,0.6717557251908397,Ensemble Std.
+REFERENCES,0.6724496877168633,0.0250.0500.075
+REFERENCES,0.6731436502428869,Ensemble Var.
+REFERENCES,0.6738376127689105,"250
+500
+750"
+REFERENCES,0.6745315752949341,"LL Var. 10
+20"
+REFERENCES,0.6752255378209576,KL LOO
+REFERENCES,0.6759195003469812,Number of Models
+REFERENCES,0.6766134628730048,Penalty
+REFERENCES,0.6773074253990284,(e) Expert
+REFERENCES,0.678001387925052,Figure 11: Boxplots showing HalfCheetah D4RL true model-based error penalty distributions.
+REFERENCES,0.6786953504510757,Published as a conference paper at ICLR 2022
+REFERENCES,0.6793893129770993,0.25 0.50 0.75
+REFERENCES,0.6800832755031229,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6807772380291465,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6814712005551701,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6821651630811936,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6828591256072172,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6835530881332408,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6842470506592644,"Max Aleatoric 1
+2
+3"
+REFERENCES,0.684941013185288,Max Pairwise Diff.
+REFERENCES,0.6856349757113116,"0.05
+0.10
+0.15"
+REFERENCES,0.6863289382373352,Ensemble Std.
+REFERENCES,0.6870229007633588,"0.00
+0.05"
+REFERENCES,0.6877168632893824,Ensemble Var.
+REFERENCES,0.6884108258154059,"0
+250000 500000"
+REFERENCES,0.6891047883414295,"LL Var. 25
+50"
+REFERENCES,0.6897987508674531,KL LOO
+REFERENCES,0.6904927133934767,Number of Models
+REFERENCES,0.6911866759195003,Penalty
+REFERENCES,0.6918806384455239,(a) Random
+REFERENCES,0.6925746009715475,"0.2
+0.4"
+REFERENCES,0.6932685634975712,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6939625260235948,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6946564885496184,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6953504510756419,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6960444136016655,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6967383761276891,"20
+15
+10 7
+5
+3"
+REFERENCES,0.6974323386537127,Max Aleatoric
+REFERENCES,0.6981263011797363,"0.5
+1.0"
+REFERENCES,0.6988202637057599,Max Pairwise Diff.
+REFERENCES,0.6995142262317835,"0.02
+0.04"
+REFERENCES,0.7002081887578071,Ensemble Std.
+REFERENCES,0.7009021512838307,0.000 0.005 0.010
+REFERENCES,0.7015961138098543,Ensemble Var.
+REFERENCES,0.7022900763358778,"100
+200
+300"
+REFERENCES,0.7029840388619014,"LL Var. 5
+10"
+REFERENCES,0.703678001387925,KL LOO
+REFERENCES,0.7043719639139486,Number of Models
+REFERENCES,0.7050659264399722,Penalty
+REFERENCES,0.7057598889659958,(b) Mixed
+REFERENCES,0.7064538514920194,"0.1
+0.2
+0.3"
+REFERENCES,0.707147814018043,"20
+15
+10 7
+5
+3"
+REFERENCES,0.7078417765440667,"20
+15
+10 7
+5
+3"
+REFERENCES,0.7085357390700903,"20
+15
+10 7
+5
+3"
+REFERENCES,0.7092297015961138,"20
+15
+10 7
+5
+3"
+REFERENCES,0.7099236641221374,"20
+15
+10 7
+5
+3"
+REFERENCES,0.710617626648161,"20
+15
+10 7
+5
+3"
+REFERENCES,0.7113115891741846,Max Aleatoric
+REFERENCES,0.7120055517002082,0.25 0.50 0.75
+REFERENCES,0.7126995142262318,Max Pairwise Diff.
+REFERENCES,0.7133934767522554,"0.01
+0.02
+0.03"
+REFERENCES,0.714087439278279,Ensemble Std.
+REFERENCES,0.7147814018043026,0.00000.00250.0050
+REFERENCES,0.7154753643303262,Ensemble Var.
+REFERENCES,0.7161693268563497,"250
+500"
+REFERENCES,0.7168632893823733,"LL Var. 10
+20"
+REFERENCES,0.7175572519083969,KL LOO
+REFERENCES,0.7182512144344205,Number of Models
+REFERENCES,0.7189451769604441,Penalty
+REFERENCES,0.7196391394864677,(c) Medium
+REFERENCES,0.7203331020124913,"0.1
+0.2
+0.3"
+REFERENCES,0.721027064538515,"20
+15
+10 7
+5
+3"
+REFERENCES,0.7217210270645386,"20
+15
+10 7
+5
+3"
+REFERENCES,0.7224149895905622,"20
+15
+10 7
+5
+3"
+REFERENCES,0.7231089521165857,"20
+15
+10 7
+5
+3"
+REFERENCES,0.7238029146426093,"20
+15
+10 7
+5
+3"
+REFERENCES,0.7244968771686329,"20
+15
+10 7
+5
+3"
+REFERENCES,0.7251908396946565,Max Aleatoric
+REFERENCES,0.7258848022206801,"0.25
+0.50
+0.75"
+REFERENCES,0.7265787647467037,Max Pairwise Diff.
+REFERENCES,0.7272727272727273,0.01 0.02 0.03
+REFERENCES,0.7279666897987509,Ensemble Std.
+REFERENCES,0.7286606523247745,0.00000.00250.0050
+REFERENCES,0.7293546148507981,Ensemble Var.
+REFERENCES,0.7300485773768216,"200
+400"
+REFERENCES,0.7307425399028452,LL Var.
+REFERENCES,0.7314365024288688,"5
+10
+15"
+REFERENCES,0.7321304649548924,KL LOO
+REFERENCES,0.732824427480916,Number of Models
+REFERENCES,0.7335183900069396,Penalty
+REFERENCES,0.7342123525329632,(d) Medium Expert
+REFERENCES,0.7349063150589868,"0.1
+0.2"
+REFERENCES,0.7356002775850105,"20
+15
+10 7
+5
+3"
+REFERENCES,0.7362942401110341,"20
+15
+10 7
+5
+3"
+REFERENCES,0.7369882026370576,"20
+15
+10 7
+5
+3"
+REFERENCES,0.7376821651630812,"20
+15
+10 7
+5
+3"
+REFERENCES,0.7383761276891048,"20
+15
+10 7
+5
+3"
+REFERENCES,0.7390700902151284,"20
+15
+10 7
+5
+3"
+REFERENCES,0.739764052741152,Max Aleatoric
+REFERENCES,0.7404580152671756,"0.25
+0.50"
+REFERENCES,0.7411519777931992,Max Pairwise Diff.
+REFERENCES,0.7418459403192228,"0.01
+0.02
+0.03"
+REFERENCES,0.7425399028452464,Ensemble Std.
+REFERENCES,0.7432338653712699,"0.000
+0.002
+0.004"
+REFERENCES,0.7439278278972935,Ensemble Var.
+REFERENCES,0.7446217904233171,"250
+500
+750"
+REFERENCES,0.7453157529493407,"LL Var. 10
+20"
+REFERENCES,0.7460097154753643,KL LOO
+REFERENCES,0.7467036780013879,Number of Models
+REFERENCES,0.7473976405274115,Penalty
+REFERENCES,0.7480916030534351,(e) Expert
+REFERENCES,0.7487855655794587,Figure 12: Boxplots showing Hopper D4RL true model-based error penalty distributions.
+REFERENCES,0.7494795281054824,Published as a conference paper at ICLR 2022
+REFERENCES,0.7501734906315058,"B.2
+PENALTY PERFORMANCE"
+REFERENCES,0.7508674531575295,"In this section, we provide the full set of results showing the impact of increasing model count on the
+correlation statistics of each penalty, as described in Sec. 5.1. We show the Spearman and Pearson
+correlation between penalty and ground truth MSE for all training datasets. First, we present the
+transfer performance of all training sets onto all ofﬂine datasets. Then, we present the results for all
+training datasets under the True Model-Based experiment under the adversarial policies."
+REFERENCES,0.7515614156835531,"B.2.1
+HALFCHEETAH D4RL: TRANSFER 0.00 0.25 0.50 0.75"
+REFERENCES,0.7522553782095767,"Random
+Random
+Random
+Mixed
+Random
+Med.
+Random
+Med.-Exp.
+Random
+Exp. 0.00 0.25 0.50 0.75"
+REFERENCES,0.7529493407356003,"Mixed
+Random
+Mixed
+Mixed
+Mixed
+Med.
+Mixed
+Med.-Exp.
+Mixed
+Exp. 0.00 0.25 0.50 0.75"
+REFERENCES,0.7536433032616239,"Med.
+Random
+Med.
+Mixed
+Med.
+Med.
+Med.
+Med.-Exp.
+Med.
+Exp. 0.00 0.25 0.50 0.75"
+REFERENCES,0.7543372657876475,"Med.-Exp.
+Random
+Med.-Exp.
+Mixed
+Med.-Exp.
+Med.
+Med.-Exp.
+Med.-Exp.
+Med.-Exp.
+Exp."
+REFERENCES,0.7550312283136711,"5
+10
+15
+20 0.00 0.25 0.50 0.75"
+REFERENCES,0.7557251908396947,"Exp.
+Random"
+REFERENCES,0.7564191533657183,"5
+10
+15
+20"
+REFERENCES,0.7571131158917418,"Exp.
+Mixed"
+REFERENCES,0.7578070784177654,"5
+10
+15
+20"
+REFERENCES,0.758501040943789,"Exp.
+Med."
+REFERENCES,0.7591950034698126,"5
+10
+15
+20"
+REFERENCES,0.7598889659958362,"Exp.
+Med.-Exp."
+REFERENCES,0.7605829285218598,"5
+10
+15
+20"
+REFERENCES,0.7612768910478834,"Exp.
+Exp."
+REFERENCES,0.761970853573907,Spearman:
+REFERENCES,0.7626648160999306,Number of Models
+REFERENCES,0.7633587786259542,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var.
+LL Var.
+KL LOO"
+REFERENCES,0.7640527411519777,Figure 13: HalfCheetah Spearman Statistics
+REFERENCES,0.7647467036780013,Published as a conference paper at ICLR 2022 0.00 0.25 0.50 0.75
+REFERENCES,0.765440666204025,"Random
+Random
+Random
+Mixed
+Random
+Med.
+Random
+Med.-Exp.
+Random
+Exp. 0.00 0.25 0.50 0.75"
+REFERENCES,0.7661346287300486,"Mixed
+Random
+Mixed
+Mixed
+Mixed
+Med.
+Mixed
+Med.-Exp.
+Mixed
+Exp. 0.00 0.25 0.50 0.75"
+REFERENCES,0.7668285912560722,"Med.
+Random
+Med.
+Mixed
+Med.
+Med.
+Med.
+Med.-Exp.
+Med.
+Exp. 0.00 0.25 0.50 0.75"
+REFERENCES,0.7675225537820958,"Med.-Exp.
+Random
+Med.-Exp.
+Mixed
+Med.-Exp.
+Med.
+Med.-Exp.
+Med.-Exp.
+Med.-Exp.
+Exp."
+REFERENCES,0.7682165163081194,"5
+10
+15
+20 0.00 0.25 0.50 0.75"
+REFERENCES,0.768910478834143,"Exp.
+Random"
+REFERENCES,0.7696044413601666,"5
+10
+15
+20"
+REFERENCES,0.7702984038861902,"Exp.
+Mixed"
+REFERENCES,0.7709923664122137,"5
+10
+15
+20"
+REFERENCES,0.7716863289382373,"Exp.
+Med."
+REFERENCES,0.7723802914642609,"5
+10
+15
+20"
+REFERENCES,0.7730742539902845,"Exp.
+Med.-Exp."
+REFERENCES,0.7737682165163081,"5
+10
+15
+20"
+REFERENCES,0.7744621790423317,"Exp.
+Exp."
+REFERENCES,0.7751561415683553,Pearson: r
+REFERENCES,0.7758501040943789,Number of Models
+REFERENCES,0.7765440666204025,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var.
+LL Var.
+KL LOO"
+REFERENCES,0.7772380291464261,Figure 14: HalfCheetah Pearson Statistics
+REFERENCES,0.7779319916724496,Published as a conference paper at ICLR 2022
+REFERENCES,0.7786259541984732,"B.2.2
+HOPPER D4RL: TRANSFER 0.00 0.25 0.50 0.75"
+REFERENCES,0.7793199167244969,"Random
+Random
+Random
+Mixed
+Random
+Med.
+Random
+Med.-Exp.
+Random
+Exp. 0.00 0.25 0.50 0.75"
+REFERENCES,0.7800138792505205,"Mixed
+Random
+Mixed
+Mixed
+Mixed
+Med.
+Mixed
+Med.-Exp.
+Mixed
+Exp. 0.00 0.25 0.50 0.75"
+REFERENCES,0.7807078417765441,"Med.
+Random
+Med.
+Mixed
+Med.
+Med.
+Med.
+Med.-Exp.
+Med.
+Exp. 0.00 0.25 0.50 0.75"
+REFERENCES,0.7814018043025677,"Med.-Exp.
+Random
+Med.-Exp.
+Mixed
+Med.-Exp.
+Med.
+Med.-Exp.
+Med.-Exp.
+Med.-Exp.
+Exp."
+REFERENCES,0.7820957668285913,"5
+10
+15
+20 0.00 0.25 0.50 0.75"
+REFERENCES,0.7827897293546149,"Exp.
+Random"
+REFERENCES,0.7834836918806385,"5
+10
+15
+20"
+REFERENCES,0.7841776544066621,"Exp.
+Mixed"
+REFERENCES,0.7848716169326856,"5
+10
+15
+20"
+REFERENCES,0.7855655794587092,"Exp.
+Med."
+REFERENCES,0.7862595419847328,"5
+10
+15
+20"
+REFERENCES,0.7869535045107564,"Exp.
+Med.-Exp."
+REFERENCES,0.78764746703678,"5
+10
+15
+20"
+REFERENCES,0.7883414295628036,"Exp.
+Exp."
+REFERENCES,0.7890353920888272,Spearman:
+REFERENCES,0.7897293546148508,Number of Models
+REFERENCES,0.7904233171408744,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var.
+LL Var.
+KL LOO"
+REFERENCES,0.7911172796668979,Figure 15: Hopper Spearman Statistics
+REFERENCES,0.7918112421929215,Published as a conference paper at ICLR 2022 0.00 0.25 0.50 0.75
+REFERENCES,0.7925052047189451,"Random
+Random
+Random
+Mixed
+Random
+Med.
+Random
+Med.-Exp.
+Random
+Exp. 0.00 0.25 0.50 0.75"
+REFERENCES,0.7931991672449688,"Mixed
+Random
+Mixed
+Mixed
+Mixed
+Med.
+Mixed
+Med.-Exp.
+Mixed
+Exp. 0.00 0.25 0.50 0.75"
+REFERENCES,0.7938931297709924,"Med.
+Random
+Med.
+Mixed
+Med.
+Med.
+Med.
+Med.-Exp.
+Med.
+Exp. 0.00 0.25 0.50 0.75"
+REFERENCES,0.794587092297016,"Med.-Exp.
+Random
+Med.-Exp.
+Mixed
+Med.-Exp.
+Med.
+Med.-Exp.
+Med.-Exp.
+Med.-Exp.
+Exp."
+REFERENCES,0.7952810548230396,"5
+10
+15
+20 0.00 0.25 0.50 0.75"
+REFERENCES,0.7959750173490632,"Exp.
+Random"
+REFERENCES,0.7966689798750868,"5
+10
+15
+20"
+REFERENCES,0.7973629424011104,"Exp.
+Mixed"
+REFERENCES,0.7980569049271339,"5
+10
+15
+20"
+REFERENCES,0.7987508674531575,"Exp.
+Med."
+REFERENCES,0.7994448299791811,"5
+10
+15
+20"
+REFERENCES,0.8001387925052047,"Exp.
+Med.-Exp."
+REFERENCES,0.8008327550312283,"5
+10
+15
+20"
+REFERENCES,0.8015267175572519,"Exp.
+Exp."
+REFERENCES,0.8022206800832755,Pearson: r
+REFERENCES,0.8029146426092991,Number of Models
+REFERENCES,0.8036086051353227,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var.
+LL Var.
+KL LOO"
+REFERENCES,0.8043025676613463,Figure 16: Hopper Pearson Statistics
+REFERENCES,0.8049965301873698,Published as a conference paper at ICLR 2022
+REFERENCES,0.8056904927133934,"B.2.3
+HALFCHEETAH D4RL: TRUE MODEL-BASED ERROR"
+REFERENCES,0.806384455239417,"5
+10
+15
+20 0.25 0.00 0.25 0.50 0.75"
+REFERENCES,0.8070784177654406,Random
+REFERENCES,0.8077723802914643,"5
+10
+15
+20 Mixed"
+REFERENCES,0.8084663428174879,"5
+10
+15
+20 Med."
+REFERENCES,0.8091603053435115,"5
+10
+15
+20"
+REFERENCES,0.8098542678695351,Med.-Exp.
+REFERENCES,0.8105482303955587,"5
+10
+15
+20 Exp."
+REFERENCES,0.8112421929215823,Spearman:
+REFERENCES,0.8119361554476058,Number of Models
+REFERENCES,0.8126301179736294,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var.
+LL Var.
+KL LOO"
+REFERENCES,0.813324080499653,Figure 17: HalfCheetah Spearman Statistics
+REFERENCES,0.8140180430256766,"5
+10
+15
+20 0.00 0.25 0.50 0.75"
+REFERENCES,0.8147120055517002,Random
+REFERENCES,0.8154059680777238,"5
+10
+15
+20 Mixed"
+REFERENCES,0.8160999306037474,"5
+10
+15
+20 Med."
+REFERENCES,0.816793893129771,"5
+10
+15
+20"
+REFERENCES,0.8174878556557946,Med.-Exp.
+REFERENCES,0.8181818181818182,"5
+10
+15
+20 Exp."
+REFERENCES,0.8188757807078417,Pearson: r
+REFERENCES,0.8195697432338653,Number of Models
+REFERENCES,0.8202637057598889,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var.
+LL Var.
+KL LOO"
+REFERENCES,0.8209576682859125,Figure 18: HalfCheetah Pearson Statistics
+REFERENCES,0.8216516308119362,"B.2.4
+HOPPER D4RL: TRUE MODEL-BASED ERROR"
+REFERENCES,0.8223455933379598,"5
+10
+15
+20 0.2 0.4 0.6 0.8"
+REFERENCES,0.8230395558639834,Random
+REFERENCES,0.823733518390007,"5
+10
+15
+20 Mixed"
+REFERENCES,0.8244274809160306,"5
+10
+15
+20 Med."
+REFERENCES,0.8251214434420542,"5
+10
+15
+20"
+REFERENCES,0.8258154059680777,Med.-Exp.
+REFERENCES,0.8265093684941013,"5
+10
+15
+20 Exp."
+REFERENCES,0.8272033310201249,Spearman:
+REFERENCES,0.8278972935461485,Number of Models
+REFERENCES,0.8285912560721721,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var.
+LL Var.
+KL LOO"
+REFERENCES,0.8292852185981957,Figure 19: Hopper Spearman Statistics
+REFERENCES,0.8299791811242193,"5
+10
+15
+20 0.2 0.4 0.6"
+REFERENCES,0.8306731436502429,Random
+REFERENCES,0.8313671061762665,"5
+10
+15
+20 Mixed"
+REFERENCES,0.8320610687022901,"5
+10
+15
+20 Med."
+REFERENCES,0.8327550312283136,"5
+10
+15
+20"
+REFERENCES,0.8334489937543372,Med.-Exp.
+REFERENCES,0.8341429562803608,"5
+10
+15
+20 Exp."
+REFERENCES,0.8348369188063844,Pearson: r
+REFERENCES,0.835530881332408,Number of Models
+REFERENCES,0.8362248438584317,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var.
+LL Var.
+KL LOO"
+REFERENCES,0.8369188063844553,Figure 20: Hopper Pearson Statistics
+REFERENCES,0.8376127689104789,Published as a conference paper at ICLR 2022
+REFERENCES,0.8383067314365025,"B.2.5
+ALL AGGREGATED"
+REFERENCES,0.8390006939625261,"5
+10
+15
+20
+Number of Models 0.0 0.2 0.4 0.6"
+REFERENCES,0.8396946564885496,Spearman:
+REFERENCES,0.8403886190145732,"5
+10
+15
+20
+Number of Models 0.2 0.4"
+REFERENCES,0.8410825815405968,Pearson: r
+REFERENCES,0.8417765440666204,"5
+10
+15
+20
+Number of Models 0.2 0.4 0.6 0.8"
+REFERENCES,0.842470506592644,Spearman:
+REFERENCES,0.8431644691186676,"5
+10
+15
+20
+Number of Models 0.2 0.4"
+REFERENCES,0.8438584316446912,Pearson: r
+REFERENCES,0.8445523941707148,"HalfCheetah
+Hopper"
+REFERENCES,0.8452463566967384,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var.
+LL Var.
+KL LOO"
+REFERENCES,0.8459403192227619,"Figure 21: Aggregated True Model-Based correlation statistics over all datasets (i.e., Random through to
+Expert); Left: HalfCheetah; Right: Hopper"
+REFERENCES,0.8466342817487855,"C
+SKEWNESS AND KURTOSIS COMPARISONS"
+REFERENCES,0.8473282442748091,"C.1
+SKEWNESS AND KURTOSIS OVERALL"
+REFERENCES,0.8480222068008327,"Here we present the 3rd and 4th order statistics (skew and kurtosis respectively) of each penalty,
+illustrating that even with identical model counts, the shape statistics between penalties are vastly
+different."
+REFERENCES,0.8487161693268563,"Table 6: Skew (γ1) and Kurtosis (γ2) statistics of all experiments averaged over all datasets (i.e., Random
+through to Expert) using the MOPO Default of 7 models."
+REFERENCES,0.84941013185288,"Transfer
+True Model-Based"
+REFERENCES,0.8501040943789036,"HalfCheetah
+Hopper
+HalfCheetah
+Hopper"
+REFERENCES,0.8507980569049272,"Penalty
+γ1
+γ2
+γ1
+γ2
+γ1
+γ2
+γ1
+γ2
+Max Aleatoric
+-0.010
+0.580
+0.689
+1.377
+0.671
+0.920
+1.873
+2.864
+Max Pairwise Diff.
+0.919
+0.957
+1.967
+4.578
+1.661
+3.081
+2.571
+7.465
+Ensemble Std.
+0.794
+0.806
+2.136
+6.560
+1.656
+3.178
+2.739
+9.061
+Ensemble Var.
+1.823
+4.830
+3.436
+15.983
+2.612
+8.800
+4.517
+25.380
+LL Var.
+6.893
+114.843
+10.920
+180.716
+5.100
+37.865
+14.415
+251.705
+LOO KL
+1.778
+5.729
+3.729
+29.606
+1.840
+4.600
+4.008
+28.089"
+REFERENCES,0.8514920194309508,"C.2
+SKEW AND KURTOSIS SCALING WITH MODEL COUNT"
+REFERENCES,0.8521859819569744,"We omit LL Var. and LOO KL due to the fact that their changes were so signiﬁcant as to obfuscate
+the changes of the more performant penalties."
+REFERENCES,0.8528799444829979,"We choose 7 models, as in Table 6, to act as our ’baseline’ (following the default MOPO setting),
+and we measure the change in the skew and kurtosis relative to this, hence 7 models always has a
+0% change in our graphs. For brevity, in the transfer experiments, we average over all ‘transferred
+to’ environments, e.g., Random, Medium, etc.; the graph title refers to the data that the model was
+trained on."
+REFERENCES,0.8535739070090215,"Again, we observe the environment and setting dependency of these metrics, sometimes having
+increasing skewness and kurtosis with model count, and other times decreasing. This further justiﬁes
+using a ranking metric to compare penalties, as the overall penalty shape can vary hugely and
+unpredictably w.r.t. co-dependent hyperparameters. We do observe however in the True Model-Based
+experiments that ensemble standard deviation appears to be most robust to scaling with models. We
+also observe that the Max Aleatoric penalty can change shape signiﬁcantly w.r.t. model count, and no
+penalties are fully immune to this. This further advocates the use of shape meta-parameters to control
+for changing distribution properties when adjusting the number of models as a hyperparameter, as
+well as selecting penalties that are relatively invariant to model count to make tuning easier."
+REFERENCES,0.8542678695350451,"Published as a conference paper at ICLR 2022 10
+20 150 100 50 0"
+REFERENCES,0.8549618320610687,Random
+REFERENCES,0.8556557945870923,"10
+20
+40 20 0 Mixed 10
+20 0 20 40 Med. 10
+20 50 0 50"
+REFERENCES,0.8563497571131159,"Med.-Exp. 10
+20 100 50 0 50 Exp."
+REFERENCES,0.8570437196391395,"Skewness: 
+1 % Change"
+REFERENCES,0.8577376821651631,Number of Models
+REFERENCES,0.8584316446911867,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var."
+REFERENCES,0.8591256072172103,"(a) Skewness Scaling 10
+20 0 100 200 300"
+REFERENCES,0.8598195697432338,"Random 10
+20 100 0 Mixed 10
+20 0 100 Med."
+REFERENCES,0.8605135322692574,"10
+20
+60 40 20 0 20"
+REFERENCES,0.861207494795281,"Med.-Exp. 10
+20 0 50 Exp."
+REFERENCES,0.8619014573213046,"Kurtosis: 
+2 % Change"
+REFERENCES,0.8625954198473282,Number of Models
+REFERENCES,0.8632893823733518,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var."
+REFERENCES,0.8639833448993754,(b) Kurtosis Scaling
+REFERENCES,0.864677307425399,"Figure 22: HalfCheetah Transfer. 10
+20 150 100 50 0"
+REFERENCES,0.8653712699514227,Random
+REFERENCES,0.8660652324774463,"10
+20
+40 20 0 Mixed 10
+20 0 20 40 Med. 10
+20 50 0 50"
+REFERENCES,0.8667591950034698,"Med.-Exp. 10
+20 100 50 0 50 Exp."
+REFERENCES,0.8674531575294934,"Skewness: 
+1 % Change"
+REFERENCES,0.868147120055517,Number of Models
+REFERENCES,0.8688410825815406,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var."
+REFERENCES,0.8695350451075642,"(a) Skewness Scaling 10
+20 0 100 200 300"
+REFERENCES,0.8702290076335878,"Random 10
+20 100 0 Mixed 10
+20 0 100 Med."
+REFERENCES,0.8709229701596114,"10
+20
+60 40 20 0 20"
+REFERENCES,0.871616932685635,"Med.-Exp. 10
+20 0 50 Exp."
+REFERENCES,0.8723108952116586,"Kurtosis: 
+2 % Change"
+REFERENCES,0.8730048577376822,Number of Models
+REFERENCES,0.8736988202637057,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var."
+REFERENCES,0.8743927827897293,(b) Kurtosis Scaling
+REFERENCES,0.8750867453157529,Figure 23: Hopper Transfer.
+REFERENCES,0.8757807078417765,"Published as a conference paper at ICLR 2022 10
+20 20 0 20 40"
+REFERENCES,0.8764746703678001,"Random 10
+20 100 0 100 200 Mixed 10
+20 50 0 50 100 Med. 10
+20 10 0 10"
+REFERENCES,0.8771686328938237,"Med.-Exp. 10
+20 30 20 10 0 Exp."
+REFERENCES,0.8778625954198473,"Skewness: 
+1 % Change"
+REFERENCES,0.878556557945871,Number of Models
+REFERENCES,0.8792505204718946,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var."
+REFERENCES,0.8799444829979182,"(a) Skewness Scaling 10
+20 20 0 20"
+REFERENCES,0.8806384455239417,"Random 10
+20 50 0 50 100 Mixed"
+REFERENCES,0.8813324080499653,"10
+20
+200 0 200 400 Med."
+REFERENCES,0.8820263705759889,"10
+20
+40 20 0 20"
+REFERENCES,0.8827203331020125,"Med.-Exp. 10
+20 60 40 20 0 Exp."
+REFERENCES,0.8834142956280361,"Kurtosis: 
+2 % Change"
+REFERENCES,0.8841082581540597,Number of Models
+REFERENCES,0.8848022206800833,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var."
+REFERENCES,0.8854961832061069,(b) Kurtosis Scaling
+REFERENCES,0.8861901457321305,"Figure 24: HalfCheetah True Model-Based. 10
+20 20 0 20"
+REFERENCES,0.8868841082581541,"Random 10
+20 10 0 10 Mixed 10
+20 0 10 20 30 Med. 10
+20 20 10 0"
+REFERENCES,0.8875780707841776,"Med.-Exp. 10
+20 20 10 0 10 Exp."
+REFERENCES,0.8882720333102012,"Skewness: 
+1 % Change"
+REFERENCES,0.8889659958362248,Number of Models
+REFERENCES,0.8896599583622484,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var."
+REFERENCES,0.890353920888272,"(a) Skewness Scaling 10
+20 100 0 100"
+REFERENCES,0.8910478834142956,Random
+REFERENCES,0.8917418459403192,"10
+20
+40 20 0 20 40 Mixed 10
+20 0 50 100 Med. 10
+20 60 40 20 0"
+REFERENCES,0.8924358084663429,"Med.-Exp. 10
+20 50 25 0 25 Exp."
+REFERENCES,0.8931297709923665,"Kurtosis: 
+2 % Change"
+REFERENCES,0.8938237335183901,Number of Models
+REFERENCES,0.8945176960444136,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var."
+REFERENCES,0.8952116585704372,(b) Kurtosis Scaling
+REFERENCES,0.8959056210964608,Figure 25: Hopper True Model-Based.
+REFERENCES,0.8965995836224844,Published as a conference paper at ICLR 2022
+REFERENCES,0.897293546148508,"D
+FURTHER DETAILS ON TRUE MODEL-BASED EXPERIMENTS"
+REFERENCES,0.8979875086745316,"D.1
+METHODOLOGICAL DETAILS"
+REFERENCES,0.8986814712005552,"We leverage the MuJoCo (Todorov et al., 2012) simulator to provide us with ground truth dynamics
+that we can use to compare against our model predictions and penalties. This is done by providing
+the state and action inputs given to the model to the simulator through the set_state method in
+the simulator API. It must be noted that this method also requires an addition ‘displacement’ value
+which is not modelled by the world models (nor is it provided in the D4RL data), however we found
+in practice this did not affect the dynamics predicted by the simulator, and simply setting this to 0
+was sufﬁcient to generate ground truth predictions."
+REFERENCES,0.8993754337265788,"This makes it possible to provide the simulator the hallucinated model states, and provide a true proxy
+to the dynamics discrepancy. We note that since the states are ‘hallucinated’ by the model, it might be
+the case that they may not be admissible under the true environment, but in reality the simulator was
+able to process almost any combination of state and action, barring settings that featured anomalously
+large magnitudes. To handle such cases, we found it necessary to clip the model states to the range
+[−10, 10]."
+REFERENCES,0.9000693962526024,"In order to assess the permissibility of states, as well as measure the accuracy of the penalties as
+OOD input detectors, we provide an alternative distance measure based on the distance away from
+the training set. We use this measure for our analysis in Section 5.3, and is calculated as the distance
+from the ofﬂine training dataset, which we deﬁne to be the 2-norm between a given state-action tuple
+and its nearest point in the ofﬂine data, a similar metric to those used in recent works on imitation
+learning (Dadashi et al., 2021). We describe this quantity henceforth as ‘Distribution Error’."
+REFERENCES,0.9007633587786259,"D.2
+ON THE NATURE OF OOD DATA ALONG HALLUCINATED TRAJECTORIES"
+REFERENCES,0.9014573213046495,"Here we discuss the nature of OOD data along a single hallucinated trajectory (in the model) in
+ofﬂine MBRL, analyzing the inductive bias that some ‘error’ increases with increasing rollout
+length in the model. We ﬁnd that there is merit to this assumption, and show this in Fig. 26 for all
+HalfCheetah and Hopper environments in D4RL. Here, we plot the median error at each time-step
+across 30, 000 aggregated trajectories in the model. Note that for all plots, we re-normalize all
+penalties by subtracting their mean and dividing by their standard deviation to facilitate comparison;
+this normalization was also applied in the analysis performed in Fig. 1a. Concretely, each time step
+corresponds to the normalized median value of 30, 000 data-points. 5 0 5"
+REFERENCES,0.9021512838306731,HalfCheetah
+REFERENCES,0.9028452463566967,"Random
+Mixed
+Med.
+Med.-Exp.
+Exp."
+REFERENCES,0.9035392088827203,"0
+50
+100 2 0 2 4"
+REFERENCES,0.9042331714087439,Hopper
+REFERENCES,0.9049271339347675,"0
+50
+100
+0
+50
+100
+0
+50
+100
+0
+50
+100"
+REFERENCES,0.9056210964607911,Normalized Medians
+REFERENCES,0.9063150589868147,Time Steps in Model
+REFERENCES,0.9070090215128384,"Dynamics
+Distribution"
+REFERENCES,0.9077029840388618,Figure 26: Median True Model-Based Errors as a function of rollout timestep
+REFERENCES,0.9083969465648855,"We observe indeed that both median dynamics and distribution errors increase with increasing time
+step in the model. The only real exception is HalfCheetah Medium-Expert, which we believe to be
+due to our trained policy not being able to successfully exploit this environment."
+REFERENCES,0.9090909090909091,"The above analysis captures overall trends in the error over a large number of trajectories. However,
+the way errors manifest during an individual rollout is not so straightforward. To illustrate this,"
+REFERENCES,0.9097848716169327,Published as a conference paper at ICLR 2022
+REFERENCES,0.9104788341429563,"observe Fig. 27, where we plot a random subset of 5 individual rollouts from the Hopper Medium-
+Expert data we generated."
+REFERENCES,0.9111727966689799,"0
+50
+100 0.0 2.5 5.0 7.5 10.0"
+REFERENCES,0.9118667591950035,"0
+50
+100
+0
+50
+100
+0
+50
+100
+0
+50
+100"
+REFERENCES,0.9125607217210271,Normalized Medians
+REFERENCES,0.9132546842470507,Time Steps in Model
+REFERENCES,0.9139486467730743,"Dynamics
+Distribution"
+REFERENCES,0.9146426092990978,Figure 27: Several Individual Ground Truth Rollouts in Hopper Medium-Expert
+REFERENCES,0.9153365718251214,"We observe that errors along any single trajectory tend to manifest as ‘spikes’, and that it is entirely
+possible to recover from these, returning to either admissible dynamics, or parts of the state-action
+space that have been seen in the data. This speaks to the nature of how we ought to penalize policies
+for accessing regions of inaccuracy/uncertainty, and may justify a hybrid MOPO/MOReL approach,
+whereby we penalize individual transitions along a trajectory, but do not stop rollouts early. Indeed,
+this is similar to the approach taken in M2AC (non-stop), albeit they choose to ‘mask’ uncertain
+transitions, not penalize them. We leave the design of such an algorithm to future work."
+REFERENCES,0.916030534351145,"Finally, we address the issue of comparing OOD dynamics and inputs. As already observed in Fig. 27,
+these two errors are not necessarily always the same, and oftentimes it is possible that one quantity is
+large, whilst the other is small. We revisit Fig. 1a to explore this, now also plotting the Distribution
+Error in Fig. 28."
+REFERENCES,0.9167244968771686,"0
+20
+40
+60
+80
+100
+Time Steps in Model 0 2 4 6 8"
+REFERENCES,0.9174184594031922,Normalized Measure
+REFERENCES,0.9181124219292158,"1
+2
+Dynamics Error
+Distribution Error
+Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var."
+REFERENCES,0.9188063844552394,Figure 28: Comparing OOD dynamics and inputs on a Hopper Medium-Expert trajectory
+REFERENCES,0.919500346981263,"We ﬁrst speak to the inset annotated ‘1’. Here we observe that the transitions generated in fact closely
+resemble the data that our model was trained on, however the predicted dynamics are incorrect, and
+cause an aforementioned ‘spike’. This is the opposite of what is observed in the inset annotated
+‘2’; where we actually predict accurate dynamics, however the resultant state-action tuples do not
+closely resemble the data that our model was trained on. We generally observe that regions of high
+Distribution Error tend to be preceded by ‘spikes’ pertaining to high Dynamics Error, and this present
+an exciting avenue for future work understanding how these quantities are related."
+REFERENCES,0.9201943095072866,"D.3
+ON THE DIVERSITY OF EXPLOITATIVE POLICIES"
+REFERENCES,0.9208882720333103,"It is possible that training policies purely to exploit the world models may result in generating state-
+action tuples that are low in diversity, as the policy could discover ""pockets"" in the model that provide
+consistently high return. To prevent this, we train multiple policies inside the model from different
+seeds, with the aim of inducing different modes of exploitation. To validate this induces diverse
+trajectories in the world models, we visualize the state-action manifold using a t-SNE projection
+(van der Maaten & Hinton, 2008) of: 1) the D4RL Hopper Mixed-Replay (which contains diverse
+samples); 2) the imagined rollouts inside the model from the exploitative policies in Fig. 29. The
+policies were trained to exploit a model that itself was trained on the Hopper Mixed-Replay data."
+REFERENCES,0.9215822345593337,Published as a conference paper at ICLR 2022
+REFERENCES,0.9222761970853574,"75
+50
+25
+0
+25
+50
+75 75 50 25 0 25 50 75"
+REFERENCES,0.922970159611381,t-SNE Plot of State-Action Tuples
+REFERENCES,0.9236641221374046,"D4RL Medium-Replay
+Imagined"
+REFERENCES,0.9243580846634282,"Figure 29: t-SNE projection of 10,000 Hopper D4RL Medium-Replay and 10,000 exploitative Imagined policy
+state-action tuples"
+REFERENCES,0.9250520471894518,"We observe that the induced policies inside the model displays some overlap with the D4RL data,
+but also resides in parts of the manifold where there is little coverage from the D4RL data, likely
+representing regions of exploitation. Importantly, the exploitative WM trajectories display strong
+state-action tuple diversity, comparable to that of the ofﬂine data it was trained on."
+REFERENCES,0.9257460097154754,"E
+USING METRICS AS OOD EVENT DETECTORS"
+REFERENCES,0.926439972241499,"E.1
+MEASURING STATISTICS"
+REFERENCES,0.9271339347675226,"0.00
+0.25
+0.50
+0.75
+1.00
+Recall 0.2 0.4 0.6 0.8 1.0"
+REFERENCES,0.9278278972935462,Precision
+REFERENCES,0.9285218598195697,"0
+20
+40
+60
+80
+100
+Time Steps 0 2 4 6 8"
+REFERENCES,0.9292158223455933,Normalized Measure
+TH,0.9299097848716169,"90th
+95th"
+TH,0.9306037473976405,99th
+TH,0.9312977099236641,"0
+20
+40
+60
+80
+100
+Time Steps"
+TH,0.9319916724496877,"90th
+95th"
+TH,0.9326856349757113,99th
+TH,0.9333795975017349,"Ground Truth
+Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var.
+LL Var.
+KL LOO"
+TH,0.9340735600277585,"Figure 30: Hopper Medium-Expert True Model-Based Experiments; Left: Precision v.s. Recall against Ground
+Truth; Middle: Higher Performing Penalties v.s. Ground Truth MSE in Imagined Rollout; Right: Lower
+Performing Penalties v.s. Ground Truth MSE in Imagined Rollout"
+TH,0.9347675225537821,"As noted previously, different penalties have varying scales and distribution proﬁles, so we need a
+way of standardizing the method of assessment. Using our observation that errors manifest as ‘spikes’
+during a rollout, we propose treating each penalty as a classiﬁer. Concretely, our test set consists of
+the ground truth data labeled by whether or not they exceed a certain percentile at a particular time
+step. Each penalty may be then be treated as a ‘classiﬁer’ by normalizing its range to lie in [0, 1]. We
+can then use standard classiﬁcation quality measures, such as AUC, to determine the effectiveness of
+these penalties at capturing these spikes, whilst sidestepping the issue of the different distributional
+proﬁles identiﬁed previously."
+TH,0.9354614850798056,"Fig. 30 shows how our proposed method may be used to compare the effectiveness of each metric at
+capturing OOD events. In the ﬁgure, we plot a single rollout in the model, and the resultant ground
+truth MSE between the predicted next state and the true next state in black. We then superimpose
+the 90th, 95th and 99th percentile MSEs across the entire imagined trajectories onto the ﬁgure in
+gray dashed lines. To construct our OOD labels, we label any point below the percentile line as being
+‘False’, and any point above that line as being ‘True’. Finally, we normalize the uncertainty metrics as
+previously described into values in the range [0, 1], allowing us to construct precision-recall graphs
+and calculate classiﬁer statistics."
+TH,0.9361554476058292,Published as a conference paper at ICLR 2022
+TH,0.9368494101318529,"E.2
+PRECISION RECALL CURVES"
+TH,0.9375433726578765,In this section we present the Precision-Recall curves described in App. E.1. 0.00 0.25 0.50 0.75 1.00
+TH,0.9382373351839001,"Hopper Random
+Hopper Mixed
+Hopper Med.
+Hopper Med.-Exp.
+Hopper Exp."
+TH,0.9389312977099237,"0.0
+0.5
+1.0
+0.00 0.25 0.50 0.75 1.00"
+TH,0.9396252602359473,HalfCheetah Random
+TH,0.9403192227619709,"0.0
+0.5
+1.0"
+TH,0.9410131852879945,HalfCheetah Mixed
+TH,0.9417071478140181,"0.0
+0.5
+1.0"
+TH,0.9424011103400416,HalfCheetah Med.
+TH,0.9430950728660652,"0.0
+0.5
+1.0"
+TH,0.9437890353920888,HalfCheetah Med.-Exp.
+TH,0.9444829979181124,"0.0
+0.5
+1.0"
+TH,0.945176960444136,HalfCheetah Exp.
+TH,0.9458709229701596,Precision
+TH,0.9465648854961832,Recall
+TH,0.9472588480222068,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var.
+LL Var.
+KL LOO"
+TH,0.9479528105482304,(a) 90th Percentile 0.00 0.25 0.50 0.75 1.00
+TH,0.9486467730742539,"Hopper Random
+Hopper Mixed
+Hopper Med.
+Hopper Med.-Exp.
+Hopper Exp."
+TH,0.9493407356002775,"0.0
+0.5
+1.0
+0.00 0.25 0.50 0.75 1.00"
+TH,0.9500346981263011,HalfCheetah Random
+TH,0.9507286606523248,"0.0
+0.5
+1.0"
+TH,0.9514226231783484,HalfCheetah Mixed
+TH,0.952116585704372,"0.0
+0.5
+1.0"
+TH,0.9528105482303956,HalfCheetah Med.
+TH,0.9535045107564192,"0.0
+0.5
+1.0"
+TH,0.9541984732824428,HalfCheetah Med.-Exp.
+TH,0.9548924358084664,"0.0
+0.5
+1.0"
+TH,0.9555863983344899,HalfCheetah Exp.
+TH,0.9562803608605135,Precision
+TH,0.9569743233865371,Recall
+TH,0.9576682859125607,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var.
+LL Var.
+KL LOO"
+TH,0.9583622484385843,(b) 95th Percentile 0.00 0.25 0.50 0.75 1.00
+TH,0.9590562109646079,"Hopper Random
+Hopper Mixed
+Hopper Med.
+Hopper Med.-Exp.
+Hopper Exp."
+TH,0.9597501734906315,"0.0
+0.5
+1.0 0.00 0.25 0.50 0.75 1.00"
+TH,0.9604441360166551,HalfCheetah Random
+TH,0.9611380985426787,"0.0
+0.5
+1.0"
+TH,0.9618320610687023,HalfCheetah Mixed
+TH,0.9625260235947258,"0.0
+0.5
+1.0"
+TH,0.9632199861207494,HalfCheetah Med.
+TH,0.963913948646773,"0.0
+0.5
+1.0"
+TH,0.9646079111727967,HalfCheetah Med.-Exp.
+TH,0.9653018736988203,"0.0
+0.5
+1.0"
+TH,0.9659958362248439,HalfCheetah Exp.
+TH,0.9666897987508675,Precision
+TH,0.9673837612768911,Recall
+TH,0.9680777238029147,"Max Aleatoric
+Max Pairwise Diff.
+Ensemble Std.
+Ensemble Var.
+LL Var.
+KL LOO"
+TH,0.9687716863289383,(c) 99th Percentile
+TH,0.9694656488549618,Figure 31: Precision Recall curves on ground truth data.
+TH,0.9701596113809854,Published as a conference paper at ICLR 2022
+TH,0.970853573907009,"F
+IMPLEMENTATION DETAILS"
+TH,0.9715475364330326,"This paper extensively discusses key hyperparameters speciﬁc to current ofﬂine MBRL algorithms.
+However, there are signiﬁcant code-level implementation details which are often critical for strong
+performance and make it hard to disambiguate between algorithmic and implementation improve-
+ments. Worryingly, many of these details are not mentioned in their respective papers, or are different
+between the authors’ code and paper. We detail clear examples of this below. We believe further
+investigation of these code-level implementation details represents important future work, as has
+already been done for policy gradients (Engstrom et al., 2020; Andrychowicz et al., 2021). Indeed – it
+is unclear if the improvement of MOReL over MOPO is due to its different P-MDP formulation, or if
+it is successful in spite of this formulation, due to a superior policy optimization strategy or dynamics
+model design. We believe that this paper takes a signiﬁcant ﬁrst step in tackling this issue by directly
+comparing a number of key design choices, and understanding their individual impact. Now we
+summarize key differences between the paper and code for the MOPO and MOReL algorithms which
+we compare against that are crucial to achieve the same reported performance."
+TH,0.9722414989590562,"In MOPO,"
+TH,0.9729354614850798,• Each layer in the model neural network has a different level of weight-decay
+TH,0.9736294240111034,• The authors’ code uses different objectives for training (log-likelihood) and validation (MSE).
+TH,0.974323386537127,"• The authors use elites, but only for next state prediction (as discussed previously)."
+TH,0.9750173490631506,"In MOReL,"
+TH,0.9757113115891742,"• There is a difference in the authors’ code about how the penalty threshold is calculated and tuned,
+and isn’t provided as a hyperparameter in the appendix."
+TH,0.9764052741151977,• The absorbing HALT state does not appear in the authors’ code.
+TH,0.9770992366412213,• The negative halt penalty appears signiﬁcantly different between code and paper.
+TH,0.9777931991672449,• There is a minimum trajectory steps parameter (hard-coded to 4) not mentioned in the paper.
+TH,0.9784871616932685,"• The reward function appears to be hard-coded in the authors’ implementation, not learned as stated
+in the paper."
+TH,0.9791811242192922,"• The policy architecture is different in the authors’ code (64,64 hidden layers) and the paper (32,32
+hidden layers)"
+TH,0.9798750867453158,• It is not clear when the optional behavior cloning initialization step is applied.
+TH,0.9805690492713394,"G
+HYPERPARAMETERS AND EXPERIMENT DETAILS"
+TH,0.981263011797363,"The D4RL (Fu et al., 2021a) codebase and datasets used for the empirical evaluation is available
+under the CC BY 4.0 Licence. As stated in the main text, we choose to use ‘v0’ experiments as these
+are more challenging for Hopper due to having low return trajectories (Kostrikov et al., 2021), and
+we clearly state when other benchmarks use the ‘v2’ experiments, which have ofﬂine trajectories with
+higher returns on Hopper."
+TH,0.9819569743233866,"The remaining hyperparameters for the MOPO algorithm that we do not vary by Bayesian Opti-
+mization were taken from the original MOPO paper (Yu et al., 2020), apart from we ﬁx the number
+of policy epochs/iterations to 1,000 for all experiments. This means our implementation uses
+the same probabilistic dynamics models (with unchanged hyperparameters) and policy optimizer
+(SAC, Haarnoja et al. (2018)) as MOPO, differing from MOReL, which uses Natural Policy Gradient
+(Kakade, 2002)."
+TH,0.9826509368494102,"The hyperparameters used for the BO algorithm, CASMOPOLITAN, are listed in Table 7. We use the
+batch-mode of CASMOPOLITAN, where multiple hyperparameters settings are proposed and evaluated
+concurrently."
+TH,0.9833448993754337,"Each BO iteration is run for 300 epochs on a single seed, and the full optimization over an ofﬂine
+dataset took ~200 hours on a NVIDIA GeForce GTX 1080 Ti GPU taken up predominantly by
+MOPO training."
+TH,0.9840388619014573,Published as a conference paper at ICLR 2022
+TH,0.9847328244274809,Table 7: CASMOPOLITAN Hyperparameters
+TH,0.9854267869535045,"Parameter
+Value"
+TH,0.9861207494795281,"Number of parallel trials
+4
+Number of random initializing points
+20
+ARD
+False
+Acquisition Function
+Thompson Sampling
+Global BO
+True
+Kernel
+CoCaBo Kernel (Ru et al., 2020)"
+TH,0.9868147120055517,"Unless speciﬁed otherwise, plots and reported statistics are completed with 7 models in the ensemble,
+as this is the number chosen in the original MOPO paper used with the Max Aleatoric penalty."
+TH,0.9875086745315753,"H
+R L I A B L E FRAMEWORK FOR PERFORMANCE EVALUATION"
+TH,0.9882026370575989,"Throughout this work, we choose to adopt the rliable framework introduced in Agarwal et al.
+(2021) to evaluate the performance of our approaches. rliable advocates for computing aggregate
+performance statistics and probability of improvement across many tasks in a benchmark suite; indeed
+we take this approach when reporting the values in the analysis performed in Sections 4 and 5. This
+is important when the number of tasks become large, and also prevents outliers from dominating
+mean statistics. Furthermore, this allows us to make clear statements about improvements given the
+relatively low number of seeds that are used in deep RL; indeed, Agarwal et al. (2021) show that
+even using high seed counts does not ameliorate the variance issues experienced when training such
+algorithms. For normalization, we use the standard D4RL return scaling."
+TH,0.9888965995836225,"I
+EVALUATION USING AUTOMATIC CONSTRAINT TUNING"
+TH,0.9895905621096461,"We show the full tabulated results from Sec. 6 with statistical signiﬁcance using the rliable
+framework in Table 8, using the ‘Probability of Improvement’ metric in Agarwal et al. (2021)."
+TH,0.9902845246356696,"To evaluate our claims in Sections 4 and 5 without needing to laboriously tune the penalty weight λ
+per environment, we employ an automatic penalty tuning scheme, analogous to the automatic entropy
+tuning used in Haarnoja et al. (2018). Concretely, given a constraint value Λ, at each epoch we
+minimize:"
+TH,0.9909784871616932,"J(λ) = Est,at∼D [log λ(Λ −λ · u(st, at))]
+(5)"
+TH,0.9916724496877168,"We start from an initial weight λ = 1. We observe that the penalty weight found by automatic tuning
+tends to converge within the ﬁrst 50 epochs and then remains stable throughout training."
+TH,0.9923664122137404,"Table 8: Improvement over grid-searched MOPO through restricted hyperparameter choices (e.g., one single
+choice, or an arg max between two) on the D4RL MuJoCo benchmark. The single and two setup approaches
+both use the Ensemble Std. penalty and N = 10."
+TH,0.993060374739764,"Algorithm
+Average Score
+P[Improvement over MOPO]"
+TH,0.9937543372657877,"MOPO (default hyperparameters)
+34.2
+-
+Single setup: (h = 20, Λ = 1)
+49.0 (+43%)
+73.96%
+Two setups: arg max{(h = 10, Λ = 0.5), (h = 20, Λ = 1)}
+57.8 (+69%)
+80.20%
+Optimized MOPO (ours, Table 3)
+65.2 (+91%)
+89.06%"
+TH,0.9944482997918113,Published as a conference paper at ICLR 2022
+TH,0.9951422623178349,"J
+BEST FOUND ADROIT HYPERPARAMETERS"
+TH,0.9958362248438585,"We present the best found hyperparameters under our BO procedure for the D4RL Adroit tasks in
+Table 4. We see similar trends as in our main evaluation in Table 3 favoring higher rollout lengths
+and the Ensemble penalties."
+TH,0.9965301873698821,Table 9: Best discovered hyperparameters using BO for Adroit
+TH,0.9972241498959056,"Environment
+Discovered Hyperparameters"
+TH,0.9979181124219292,"N
+λ
+h
+Penalty"
+TH,0.9986120749479528,"pen
+cloned
+10
+6.64
+12
+Ensemble Std
+human
+11
+0.96
+37
+Ensemble Var
+expert
+7
+4.56
+5
+Max Aleatoric"
+TH,0.9993060374739764,"hammer
+cloned
+10
+0.21
+12
+Ensemble Var
+human
+13
+2.48
+47
+Ensemble Std
+expert
+12
+0.99
+37
+Ensemble Std"

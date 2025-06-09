@@ -1,0 +1,763 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.005291005291005291,"In reinforcement learning (RL), adaptive curricula have proven highly effective
+for learning policies that generalize well under a wide variety of changes to the
+environment. Recently, the framework of Unsupervised Environment Design
+(UED) generalized notions of curricula for RL in terms of generating entire
+environments, leading to the development of new methods with robust minimax-
+regret properties. However, in partially-observable or stochastic settings (those
+featuring aleatoric uncertainty), optimal policies may depend on the ground-
+truth distribution over the aleatoric features of the environment. Such settings
+are potentially problematic for curriculum learning, which necessarily shifts the
+environment distribution used during training with respect to the ﬁxed ground-
+truth distribution in the intended deployment environment. We formalize this
+phenomenon as curriculum-induced covariate shift, and describe how, when the
+distribution shift occurs over such aleatoric environment parameters, it can lead to
+learning suboptimal policies. We then propose a method which, given black-box
+access to a simulator, corrects this resultant bias by aligning the advantage estimates
+to the ground-truth distribution over aleatoric parameters. This approach leads to a
+minimax-regret UED method, SAMPLR, with Bayes-optimal guarantees."
+INTRODUCTION,0.010582010582010581,"1
+INTRODUCTION"
+INTRODUCTION,0.015873015873015872,"Adaptive curricula, which dynamically adjust the distribution of training environments to optimize
+the performance of the resulting policy, have played a key role in many recent achievements in
+deep reinforcement learning (RL). Applications have spanned both single-agent RL (Portelas et al.,
+2020; Wang et al., 2019; Zhong et al., 2020; Justesen et al., 2018), where adaptation occurs over
+environment variations, and multi-agent RL (MARL), where adaptation can additionally occur over
+co-players (Silver et al., 2016; Vinyals et al., 2019; Stooke et al., 2021). By presenting the agent with
+challenges at the threshold of its abilities, such methods demonstrably improve the sample efﬁciency
+and the generality of the ﬁnal policy (Matiisen et al., 2017; Dennis et al., 2020; Jiang et al., 2021b;a)."
+INTRODUCTION,0.021164021164021163,"This work introduces a fundamental problem relevant to adaptive curriculum learning methods for RL,
+which we call curriculum-induced covariate shift (CICS). Analogous to the covariate shift that occurs
+in supervised learning (SL), CICS refers to a mismatch between the input distribution at training and
+test time, and in this case, speciﬁcally when the distribution shift is caused by the selective sampling
+performed by an adaptive curriculum. While there may be cases in which CICS impacts model
+performance in SL, adaptive curricula for SL have generally not been found to be as impactful as in
+RL (Wu et al., 2021). Therefore, here we focus on addressing this problem speciﬁcally as it arises in
+the RL setting, and leave investigation of its potential impact in SL to future work."
+INTRODUCTION,0.026455026455026454,"To establish precise language around adaptive curricula, we cast our discussion under the lens of
+Unsupervised Environment Design (UED, Dennis et al., 2020). UED provides a formal problem
+description for which curriculum learning is the solution, by deﬁning the Underspeciﬁed POMDP
+(UPOMDP; see Section 2), which expands the classic POMDP with a set of free parameters Θ,
+representing the dimensions along which the environment may vary across episodes. The goal of
+UED is then to adapt distributions over Θ, so to maximize some objective, which could be tied to an
+RL agent’s performance over this distribution. This allows us to view adaptive curricula as emerging
+via a multi-agent game between a teacher that proposes environments with parameters θ ∼Θ and a
+student that learns to solve them. In addition to the notational clarity it provides, this formalism lends"
+INTRODUCTION,0.031746031746031744,Under review as a conference paper at ICLR 2022
+INTRODUCTION,0.037037037037037035,"Adaptive
+curriculum"
+INTRODUCTION,0.042328042328042326,(no OBL)
+INTRODUCTION,0.047619047619047616,SAMPLR (OBL)
+INTRODUCTION,0.05291005291005291,Advantage
+INTRODUCTION,0.0582010582010582,Layout
+INTRODUCTION,0.06349206349206349,Ground-truth levels
+INTRODUCTION,0.06878306878306878,Sampled levels
+INTRODUCTION,0.07407407407407407,"Figure 1: Adaptive curricula can result in covariate shifts in environment parameters with respect to a ﬁxed
+ground-truth distribution P(θ) (see top path), e.g. whether apple or banana is the correct fruit to choose per
+level. Here, the policy π
+(π ) always chooses apple (banana). Our method, SAMPLR (bottom path) matches
+the advantages in sampled levels to the advantages observed if sampling levels from P(θ) (blue triangles), thus
+constraining the optimal policy under the curriculum distribution P(θ) to match that under P(θ)."
+INTRODUCTION,0.07936507936507936,"the analysis of adaptive curricula to useful game theoretic constructs, such as Nash equilibria (NE,
+Nash et al., 1950)."
+INTRODUCTION,0.08465608465608465,"This game-theoretic view has led to the development of curriculum methods with principled robustness
+guarantees, such as PAIRED (Dennis et al., 2020) and Prioritized Level Replay (PLR, Jiang et al.,
+2021a), which showed that curricula optimizing for the student’s regret lead to minimax regret
+(Savage, 1951) policies at Nash equilibria, implying the agent can solve all solvable environments
+within the training domain. While other methods can also be cast in this framework, they do not hold
+the same desirable property at equilibrium. For this reason, we will focus on addressing CICS for
+regret-maximizing UED, but note that our solution can be used with other UED methods."
+INTRODUCTION,0.08994708994708994,"To see how the CICS can be problematic, consider the simpliﬁed case of training a self-driving car
+in simulation, so it learns to take the fastest route from home to ofﬁce. Suppose trafﬁc data shows
+on 70% of the days, Route 1 is faster than Route 2. Moreover, on any given day the self-driving car
+cannot infer which route is faster ahead of time, so always picking Route 1 is faster in expectation.
+To support training a policy using an adaptive curriculum, one could build a simulator which sets
+road conditions per episode based on a random day sampled from the trafﬁc data. However, adaptive
+curriculum over the trafﬁc settings may oversample days when Route 1 is closed—perhaps because
+it ﬁnds the agent needs more practice on Route 2—shifting the best choice to Route 2 in training.
+In fact, methods for minimax regret UED like PLR would keep shifting the distribution of fastest
+route, to maximize the agent’s regret. Their curriculum dynamics would map to the zero-sum game
+of matching pennies, in which one player wins for guessing whether the other chose heads or tails;
+the NE corresponds to each player randomly playing each option half the time. Randomly picking
+the route in this way is suboptimal, because in reality Route 1 is faster in expectation. This example
+is depicted in Figure 1, where the two routes are replaced by an apple and banana."
+INTRODUCTION,0.09523809523809523,"If, on a given day, the faster route could be identiﬁed before having to pick one, the agent could
+choose optimally. Instead, it is an aleatoric parameter, inducing irreducible uncertainty in the limit
+of inﬁnite experiential data (Der Kiureghian & Ditlevsen, 2009). When CICS occurs over such
+parameters, with respect to a ground-truth distribution of environments P(θ), the learned policy can
+be suboptimal with respect to P. It can therefore be useful to ground—that is, to constrain—the
+aleatoric parameters Θ′ ⊂Θ to P(θ′) when it is known or can be learned, as in simulation or from
+real-world data. However, grounding all θ is undesirable, preventing the curriculum from sampling
+enough opportunities to learn from useful scenarios with low support under P(θ)."
+INTRODUCTION,0.10052910052910052,"In this work, we formalize the problem of CICS in RL, and provide a solution by proposing a UED
+method to ﬁnd robustly Bayes-optimal policies where θ′ is grounded to P(θ′). Our solution called
+Sample-Matched PLR (SAMPLR) extends PLR, a state-of-the-art UED algorithm, by constraining the
+advantage estimates to match those observed if training under P(θ′). This advantage correction adapts
+Off-Belief Learning (Hu et al., 2021) from cooperative MARL, revealing an intriguing connection
+between curriculum biases observed in single and multi-agent RL. Our experiments in challenging"
+INTRODUCTION,0.10582010582010581,Under review as a conference paper at ICLR 2022
+INTRODUCTION,0.1111111111111111,"environments based on the NetHack Learning Environment (NLE, Küttler et al., 2020) demonstrate
+that SAMPLR learns near-optimal policies under CICS, in cases where standard PLR fails."
+BACKGROUND,0.1164021164021164,"2
+BACKGROUND"
+UNSUPERVISED ENVIRONMENT DESIGN,0.12169312169312169,"2.1
+UNSUPERVISED ENVIRONMENT DESIGN"
+UNSUPERVISED ENVIRONMENT DESIGN,0.12698412698412698,"The problem of Unsupervised Environment Design (UED, Dennis et al. (2020)) is the problem of
+automatically generating an adaptive distribution of environments which will lead to policies that
+successfully transfer within a target domain. The domain of possible environments is represented
+by an Underspeciﬁed POMDP (UPOMDP), which adds a set of free parameters to the standard
+deﬁnition of a POMDP, along which each concrete instantiation, or level, of the UPOMDP. For
+instance, these free parameters can be the position of obstacles in a maze, or friction coefﬁcients
+in a physics-based task. Formally a UPOMDP is deﬁned as a tuple M = ⟨A, O, Θ, S, T , I, R, γ⟩,
+where A is a set of actions, O is a set of observations, Θ is a set of free parameters, S is a set of
+states, T : S × A × Θ →∆(S) is a transition function, I : S →O is an observation (or inspection)
+function, R : S →R is a reward function, and γ is a discount factor. UED typically approaches the
+curriculum design problem as training a teacher agent that co-evolves an adversarial curriculum for a
+student agent, for example, by maximizing the student’s regret."
+UNSUPERVISED ENVIRONMENT DESIGN,0.13227513227513227,"We will focus on a recent UED algorithm called Robust Prioritized Level Replay (PLR⊥, Jiang
+et al., 2021b), which performs environment design via random search. PLR maintains a buffer of
+the most useful levels for training, according to some learning potential score—typically based on
+a regret approximation, such as the positive value loss—and with probability p, actively samples
+the next training level from this level buffer instead of the ground-truth training distribution. This
+selective-sampling mechanism has been demonstrated to greatly improve sample-efﬁciency and
+generalization in several domains, while provably leading to a minimax regret policy for the student
+at NE. In maximizing regret, PLR curricula naturally avoid unsolvable levels, which have no regret."
+OFF-BELIEF LEARNING,0.13756613756613756,"2.2
+OFF-BELIEF LEARNING"
+OFF-BELIEF LEARNING,0.14285714285714285,"In cooperative MARL, self-play promotes the formation of cryptic conventions—arbitrary sequences
+of actions that allow agents to communicate information about the environment state. These
+conventions are learned jointly among all agents during training, but are arbitrary and hence,
+indecipherable to independently-trained agents or humans at test time. Crucially, this leads to
+policies that fail to perform zero-shot coordination (ZSC, Hu et al., 2020), where independently-
+trained agents must cooperate successfully without additional learning steps, or ad-hoc team play.
+Off-Belief Learning (OBL) resolves this problem by forcing agents to assume their co-players act
+according to a ﬁxed, known policy π0 until the current time t, and optimally afterwards, conditioned
+on this assumption. If π0 is playing uniformly random, this removes the possibility of forming
+arbitrary conventions."
+OFF-BELIEF LEARNING,0.14814814814814814,"Formally, let G be a decentralized, partially-observable MDP (Dec-POMDP, Bernstein et al., 2002),
+with state s, joint action a, observation function Ii(s) for each player i, and transition function
+T (s, a). Let the historical trajectory τ = (s1, a1, ...at−1, st), and the action-observation history
+(AOH) for agent i be τ i = (Ii(s1), a1, ..., at−1, Ii(st)). Further, let π0 be an arbitrary policy, such
+as a uniformly random policy, and Bπ0(τ|τ i) = P(τt|τ i
+t, π0), a belief model predicting the current
+state, conditioned on the AOH of agent i and the assumption of co-players playing policy π0 until
+the current time t, and optimally according to π1 from t and beyond. OBL aims to ﬁnd the policy π1
+with the optimal, counter-factual value function,"
+OFF-BELIEF LEARNING,0.15343915343915343,"V π0→π1(τ i) = Eτ∼Bπ0(τ i) [V π1(τ)] .
+(1)"
+OFF-BELIEF LEARNING,0.15873015873015872,"As the agent conditions its policy on the realized AOH τ i, while transition dynamics are based on
+states sampled from B, this mechanism is called a ﬁctitious transition. In Section 5, we show how
+OBL’s ﬁctitious transition can be adapted to the single-agent curriculum learning setting to address
+CICS, by interpreting the curriculum designer in UED as a co-player."
+OFF-BELIEF LEARNING,0.164021164021164,Under review as a conference paper at ICLR 2022
+RELATED WORK,0.1693121693121693,"3
+RELATED WORK"
+RELATED WORK,0.1746031746031746,"The mismatch between training and testing distributions of input features is referred to as covariate
+shift, and has long served as a fundamental problem for the machine learning community. Covariate
+shifts have been extensively studied in supervised learning (Vapnik & Chervonenkis, 1971; Huang
+et al., 2006; Bickel et al., 2009; Arjovsky et al., 2019). In RL, prior works have largely focused
+on covariate shifts due to training on off-policy data (Sutton et al., 2016; Rowland et al., 2020;
+Espeholt et al., 2018; Hallak & Mannor, 2017; Gelada & Bellemare, 2019; Thomas & Brunskill,
+2016) including the important case of learning from demonstrations (Pomerleau, 1988; Ross &
+Bagnell, 2010). Recent work also aims to learn invariant representations robust to covariate shifts
+(Zhang et al., 2019; 2021). More generally, CICS can be interpreted as a kind of sample-selection
+bias (Heckman, 1979). We believe this work to be the ﬁrst to formalize and provide a solution to the
+problem of covariate shifts in reinforcement learning due to curriculum learning."
+RELATED WORK,0.17989417989417988,"Our method ﬁxes a critical ﬂaw that can cause curricula to fail under CICS—an important problem as
+curricula have been shown to be essential for training RL agents across many of the most challenging
+domains, including combinatorial gridworlds (Zhong et al., 2020), Go (Silver et al., 2016), StarCraft 2
+(Vinyals et al., 2019), and achieving comprehensive task mastery in open-ended environments (Stooke
+et al., 2021). While this work focuses on PLR, other recent methods include minimax adversarial
+curricula (Wang et al., 2019; 2020) and curricula based on changes in return (Matiisen et al., 2017;
+Portelas et al., 2020). Most similar to our work, OFFER (Ciosek & Whiteson, 2017) adapts a
+curriculum over transition functions and uses importance sampling to correct for biased gradient
+estimates. Unlike this work, Ciosek & Whiteson (2017) requires whitebox access to the transition
+function and does not directly study the impact of CICS on the learning dynamics. Curriculum
+methods have also been studied in goal-conditioned RL (Florensa et al., 2018; Campero et al., 2021;
+Sukhbaatar et al., 2018; OpenAI et al., 2021), though CICS does not occur here as goals are observed
+by the agent. Lastly, domain randomization (DR, Sadeghi & Levine, 2017; Peng et al., 2017) can
+be seen as a degenerate form of UED, though curriculum-based extensions of DR have also been
+studied (Jakobi, 1997; Tobin et al., 2017)."
+RELATED WORK,0.18518518518518517,"Prior work has also investigated methods for learning Bayes optimal policies under uncertainty about
+the task (Zintgraf et al., 2020; Osband et al., 2013), based on the framework of Bayes-adaptive
+MDPs (BAMDPs) (Bellman, 1956; Duff, 2002). In this setting, the agent can adapt to an unknown
+MDP over several episodes by acting to reduce its uncertainty about the identity of the MDP. In
+contrast, SAMPLR learns a robustly Bayes optimal policy for the case of zero-shot transfer. Further
+unlike these works, our setting assumes the distribution of certain aleatoric parameters are biased
+during training, which would lead to biased a posteriori uncertainty estimates with respect to the
+ground-truth distribution when optimizing for the BAMDP objective. Instead, SAMPLR proposes a
+means to correct for this bias assuming knowledge of the true environment parameters for each level,
+to which we can safely assume access in curriculum learning."
+CURRICULUM-INDUCED COVARIATE SHIFT,0.19047619047619047,"4
+CURRICULUM-INDUCED COVARIATE SHIFT"
+CURRICULUM-INDUCED COVARIATE SHIFT,0.19576719576719576,"As UED algorithms formulate curriculum learning as a multi-agent game between teacher and student
+agents, we can formalize when CICS become problematic by considering the equilibrium point of this
+game: Let θ be the environment parameters controlled by UED, P(θ), the ground truth distribution
+of θ, and P(θ), the curriculum distribution at equilibrium. Further, let τt be (o1, a1, ..., at−1, ot), the
+student agent’s action-observation history (AOH) until time t (though we will use simply τ when
+clear from context). The optimal action-value function Q∗with respect to P(θ) can then be expressed
+as a marginalization over θ:"
+CURRICULUM-INDUCED COVARIATE SHIFT,0.20105820105820105,"Q
+∗(at|τt) = Eτt+1:∞
+at+1:∞
+∼π∗ "" ∞
+X"
+CURRICULUM-INDUCED COVARIATE SHIFT,0.20634920634920634,"l=0
+γlrt+l # =
+X θ"
+CURRICULUM-INDUCED COVARIATE SHIFT,0.21164021164021163,"P(θ|τt)Q
+∗
+P (at|τt, θ)
+(2) ∝
+X θ"
+CURRICULUM-INDUCED COVARIATE SHIFT,0.21693121693121692,"P(θ)P(τt|θ)Q
+∗
+P (at|τt, θ).
+(3)"
+CURRICULUM-INDUCED COVARIATE SHIFT,0.2222222222222222,"From Equation 2, we see that Q
+∗(at|τt) remains optimal under different values of P(θ) at each time
+t as long as it is possible to infer θ deterministically from τt, implying that P(θ′|τt) = 1 for some θ,"
+CURRICULUM-INDUCED COVARIATE SHIFT,0.2275132275132275,Under review as a conference paper at ICLR 2022
+CURRICULUM-INDUCED COVARIATE SHIFT,0.2328042328042328,Figure 2: A standard RL transition (left) and the ﬁctitious transition used by SAMPLR (right).
+CURRICULUM-INDUCED COVARIATE SHIFT,0.23809523809523808,"in which case the RHS of Equation 1 reduces to the LHS. If P(θ|τt) < 1 for all θ, then some subset
+θ′ ⊂Θ results in irreducible uncertainty at time t, thereby constituting aleatoric parameters. Letting
+Q∗(at|τt) be the optimal action-value function when P(θ) is replaced with P(θ) in Equation 2, we
+can then state that curriculum-induced covariate shift results in suboptimal policies with respect to
+the ground truth distribution when"
+CURRICULUM-INDUCED COVARIATE SHIFT,0.24338624338624337,"arg max
+a
+Q∗(a|τt) ̸= arg max
+a
+Q
+∗(a|τt)."
+CURRICULUM-INDUCED COVARIATE SHIFT,0.24867724867724866,"Moreover, this formulation highlights how this effect results from the presence of aleatoric parameters."
+CURRICULUM-INDUCED COVARIATE SHIFT,0.25396825396825395,"This description categorizes errors made by a policy trained on P evaluated on levels drawn from P(θ)
+into two categories: The ﬁrst type of error, which we call a mistake, simply arises when P(θ′′) = 0
+for some non-aleatoric θ′′ where P(θ′′) > 0, i.e. the policy did not train on trajectories needed to
+learn to behave optimally under some set of otherwise identiﬁable level parameters. This is distinct
+from the second kind of error, which we call a misunderstanding, and which corresponds to the
+problematic mismatch between training and test time distributions of speciﬁcally aleatoric parameters
+θ′, so that P(θ′) ̸= P(θ′), as we just previously characterized."
+CURRICULUM-INDUCED COVARIATE SHIFT,0.25925925925925924,"This taxonomy also clariﬁes errors in cooperative MARL, where the co-players shape environment
+interactions, and thus play a similar role to the UED teacher. Failures in ZSC can then be diagnosed
+as due to (i) a mistake, because the co-players fail to generate trajectories that occur with test-time
+co-players; or (ii), a misunderstanding, because the train-time co-players shift the training distribution
+of aleatoric parameters P(θ′), which impacts the inference of P(τ) = P"
+CURRICULUM-INDUCED COVARIATE SHIFT,0.26455026455026454,"θ′ P(θ′)P(τ|θ′) needed for
+optimal cooperation—for example, through the use of cryptic conventions. This view then connects
+generalization errors in cooperative MARL to those in single-agent RL, implying that methods like
+OBL devised to solve one type of error in one of the settings may be adapted for the other. Indeed,
+we now describe our method, which does exactly this: By adapting OBL to single-agent curriculum
+learning, we can ground the values of P(θ′|τt) by forcing P(θ′) = P(θ′), thereby ensuring that the
+distribution of the aleatoric parameters at equilibrium is equivalent to their ground truth distribution."
+CURRICULUM-INDUCED COVARIATE SHIFT,0.2698412698412698,"5
+SAMPLE-MATCHED PLR (SAMPLR)"
+CURRICULUM-INDUCED COVARIATE SHIFT,0.2751322751322751,"We now describe how OBL’s ﬁctitious transition can be adapted for PLR⊥(Jiang et al., 2021a) to
+address CICS, resulting in Sample-Matched PLR (SAMPLR). To avoid CICS, we must ground θ′
+to the ground-truth distribution P(θ′), while allowing the remaining parameters in Θ to vary under
+UED, so as to still beneﬁt from a curriculum. To achieve this, we adapt the ﬁctitious transition to
+single-agent curriculum learning by treating the UED teacher as a co-player—one that performs the
+single action of choosing the level θ at the start of each episode, and subsequently performs no-ops.
+Under this ﬁctitious transition, we ground the teacher’s choice of θ such that the aleatoric parameters
+θ′ are assumed to be sampled from P(θ)."
+CURRICULUM-INDUCED COVARIATE SHIFT,0.2804232804232804,"Thus, at each time t, the agent takes actions at based on its AOH as usual, but estimates the advantage
+A(at, st) using ﬁctitious transitions, which assume subsequent state transitions and rewards occur
+with Θ′ ﬁxed to θ′ ∼P(θ′), sampled at the start of the episode. More formally, the ﬁctitious transition
+is performed as s′
+t ∼B(s′
+t|τ), at ∼π(·|τ), s′
+t+1 = T (s′
+t, at), and r′
+t = R(st+1), where τ is the"
+CURRICULUM-INDUCED COVARIATE SHIFT,0.2857142857142857,Under review as a conference paper at ICLR 2022
+CURRICULUM-INDUCED COVARIATE SHIFT,0.291005291005291,Algorithm 1: Sample-Matched PLR (SAMPLR)
+CURRICULUM-INDUCED COVARIATE SHIFT,0.2962962962962963,"Randomly initialize policy π(φ), an empty level buffer Λ of size K, and belief model B(st|τ).
+while not converged do"
+CURRICULUM-INDUCED COVARIATE SHIFT,0.30158730158730157,"Sample replay-decision Bernoulli, d ∼P D(d)
+if d = 0 or |Λ| = 0 then"
+CURRICULUM-INDUCED COVARIATE SHIFT,0.30687830687830686,"Sample level θ from level generator
+Collect π’s trajectory τ on θ, with a stop-gradient φ⊥
+Use observed ground-truth states to update B
+else"
+CURRICULUM-INDUCED COVARIATE SHIFT,0.31216931216931215,"Use PLR to sample a replay level from the level store, θ ∼Λ
+Collect ﬁctitious trajectory τ ′ on θ, based on s′
+t ∼B
+Update π with rewards R(τ ′)
+end
+Compute PLR score, S = score(τ ′, π)
+Update Λ with θ using score S
+end"
+CURRICULUM-INDUCED COVARIATE SHIFT,0.31746031746031744,"AOH of the student. Figure 2 summarizes this transition mechanism. Here, the belief model B(st|τ)
+can be expressed as"
+CURRICULUM-INDUCED COVARIATE SHIFT,0.32275132275132273,"B(st|τ) =
+X θ′"
+CURRICULUM-INDUCED COVARIATE SHIFT,0.328042328042328,"P(st|τ, θ′)P(θ′|τ).
+(4)"
+CURRICULUM-INDUCED COVARIATE SHIFT,0.3333333333333333,"This shows that, assuming blackbox simulator access, we can generally implement B as follows:
+Periodically during training, we sample N trajectories, such that each is generated under a level
+with θ′ ∼P(θ′). We use these {(θ′
+k, τk)}N
+k=1 pairs to update a posterior model P(θ′|τ) that predicts
+the underlying θ′ given τ. We can then sample from B by ﬁrst sampling θ ∼P(θ′|τ), followed by
+stepping forward a parallel simulator that has been initially reset to the current AOH τ, with ﬁxed
+Θ′ = θ′, thereby yielding a desired sample of st according to B."
+CURRICULUM-INDUCED COVARIATE SHIFT,0.3386243386243386,"In practice, it is often the case that θ′ can be uniquely identiﬁed by some revelatory event by time t,
+so that P(θ′|τ) = 1 for some θ′ and τ, and P(st|τ, θ′) = P(st|τ) otherwise. In this case, we can
+implement the ﬁctitious transition by setting θ′ ∼P(θ′) at the start of each episode; subsequent
+transitions will then be consistent with B. For example, in the fruit choice example, whether apple
+or banana was the right goal is deterministically revealed by the ﬁnal reward, and otherwise, does
+not impact transition dynamics. Additionally, we often only have limited access to P(θ) throughout
+training, for example, if sampling P(θ) is costly. In this case, we can learn an estimate ˆP(θ′) using
+the samples we do collect from P(θ), which can occur online. We then use ˆP(θ′) in sampling
+ﬁctitious transitions during UED. We refer to the resulting ˆP(θ′) as a learned belief prior."
+CURRICULUM-INDUCED COVARIATE SHIFT,0.3439153439153439,"SAMPLR, summarized in Algorithm 1, incorporates this ﬁctitious transition by replacing the
+advantages of trajectories on replay levels sampled by PLR⊥with their ﬁctitious counterparts,
+as only these trajectories are used by PLR⊥for training. To reduce the cost of sampling P(θ′), we
+can use the new levels regularly sampled by PLR⊥to estimate the learned belief prior P(θ′), and use
+P(θ′) in sampling ﬁctitious transitions on replay levels."
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.3492063492063492,"6
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL"
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.3544973544973545,"We can view OBL-based correction as a method for training a policy to be optimal with respect to the
+ground-truth value function, with levels sampled from some generating distribution Λ deﬁned as:"
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.35978835978835977,"V
+Λ(π) = Eτ∼MΛ(π)
+h"
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.36507936507936506,"V
+π(τ)
+i
+.
+(5)"
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.37037037037037035,"Note that when Λ = P(θ) this reduces to the ground-truth value function notated simply as V (π).
+First, we will note that, for any UED method, our OBL-based correction will ensure that, in
+equilibrium, the resulting policy is Bayes-optimal on the ground truth beliefs, on any trajectory
+sampled from MΛ(π), the distribution of trajectories of π in levels sampled from Λ."
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.37566137566137564,Under review as a conference paper at ICLR 2022
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.38095238095238093,"Remark 1. If π is optimal with respect to the grounded value function V
+Λ(π) then it is Bayes optimal
+with respect to the ground-truth parameter distribution P(θ) on the support of MΛ(π)."
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.3862433862433862,"Proof. By deﬁnition we have that π ∈arg max
+π∈Π
+{V
+Λ(π)} = arg max
+π∈Π
+{Eτ∼MΛ(π)
+h"
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.3915343915343915,"V
+π(τ)
+i
+}. Since"
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.3968253968253968,"π can condition on the initial trajectory τ, the action selected after each trajectory can be independently
+optimized. Thus we have, for all τ ∈MΛ(π), π ∈arg max
+π∈Π
+{V
+π(τ)} implying that π is the optimal"
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.4021164021164021,"grounded policy and V
+π = V
+∗."
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.4074074074074074,"Thus, assuming the base RL algorithm ﬁnds Bayes optimal policies, a UED method that optimizes
+the grounded value function, as done by SAMPLR, will result in Bayes optimal performance over the
+ground-truth distribution. When the UED method aims to maximize worst-case regret, we can prove
+an even stronger property we call robust ϵ-Bayes optimality."
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.4126984126984127,"Let V
+θ(π) be the value function for π evaluated on a speciﬁc level θ. We will say that a policy is
+robustly ϵ-Bayes optimal iff for all θ in the domain of P(θ) and for all π′ we have"
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.41798941798941797,"V
+θ(π) ≥V
+θ(π′) −ϵ."
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.42328042328042326,"Note how this differs from being only ϵ-Bayes optimal, which means for all π′,"
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.42857142857142855,V (π) ≥V (π′) −ϵ
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.43386243386243384,"With robust ϵ-Bayes optimality, we must be ϵ-optimal even on levels which are rarely sampled from
+the ground-truth distribution. We will show that if SAMPLR is in an ϵ-Nash Equilibrium, then a
+policy is robustly ϵ-Bayes optimal with respect to the grounded value function V (π) rather than only
+ϵ-Bayes optimal as one would expect from training directly on the true distribution of levels."
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.43915343915343913,"Theorem 1. If π is ϵ-Bayes optimal by V
+Λ(π) for Λ minimizing worst-case regret as is done in
+SAMPLR, then it is robustly ϵ-Bayes optimal with respect to the grounded value function, V (π)."
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.4444444444444444,"Proof. Let π be ϵ-optimal with respect to V
+Λ(π) where Λ minimizing worst-case regret with respect
+to π. Let π∗be an optimal grounded policy, and let θ be arbitrary. Then we have:"
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.4497354497354497,"V
+θ(π∗) −V
+θ(π) ≤V
+Λ(π∗) −V
+Λ(π) ≤ϵ
+(6)"
+GROUNDED POLICIES ARE ROBUSTLY BAYES OPTIMAL,0.455026455026455,"Where the ﬁrst inequality follows from Λ minimizing worst-case regret with respect to π, and the
+second follows from π being ϵ-optimal on Λ. Rearranging terms gives the desired condition."
+EXPERIMENTS,0.4603174603174603,"7
+EXPERIMENTS"
+EXPERIMENTS,0.4656084656084656,"We investigate the performance of SAMPLR with respect to the the standard PLR and domain
+randomization in environments based on MiniHack (Samvelyan et al., 2021), a library for creating
+custom environments based on the runtime of the NetHack Learning Environment (NLE) (Küttler
+et al., 2020). Acting optimally in our environments requires grounding to the ground-truth distribution."
+EXPERIMENTS,0.4708994708994709,"Our agents are trained using PPO (Schulman et al., 2017), using the best hyperparameters found
+via grid search, and use the policy architecture in Küttler et al. (2020). We tune the PLR-speciﬁc
+hyperparameters shared among PLR⊥and SAMPLR variants for each environment, based on the
+performance of PLR⊥. Full details of our environments, agent architecture, and hyperparameters
+are provided in Appendix A, and our SAMPLR implementation, in Appendix B. We compare both
+standard SAMPLR and a variant called LP-SAMPLR that learns a belief prior over the true goal,
+against PLR⊥and standard PPO baselines. These baselines allows us to separate the relative changes
+in performance metrics due to curriculum learning and our proposed correction for CICS."
+EXPERIMENTS,0.47619047619047616,Under review as a conference paper at ICLR 2022
+EXPERIMENTS,0.48148148148148145,"0
+100M
+200M
+0 1 2 3 4 5"
+EXPERIMENTS,0.48677248677248675,Mean episodic return
+EXPERIMENTS,0.49206349206349204,"0
+100M
+200M
+0.0 0.5 1.0 1.5 2.0 2.5"
+EXPERIMENTS,0.4973544973544973,Solved room count
+EXPERIMENTS,0.5026455026455027,"Test
+Train Steps"
+EXPERIMENTS,0.5079365079365079,"DR
+PLR
+SAMPLR
+LP-SAMPLR"
+EXPERIMENTS,0.5132275132275133,q = 0.3
+EXPERIMENTS,0.5185185185185185,"0
+200M"
+EXPERIMENTS,0.5238095238095238,q = 0.5
+EXPERIMENTS,0.5291005291005291,"0
+200M 1 0"
+EXPERIMENTS,0.5343915343915344,"0
+200M"
+EXPERIMENTS,0.5396825396825397,q = 0.7
+EXPERIMENTS,0.544973544973545,"0
+200M
+0
+200M 1 0"
+EXPERIMENTS,0.5502645502645502,"0
+200M"
+EXPERIMENTS,0.5555555555555556,"Mean test  return
+Proportion apple"
+EXPERIMENTS,0.5608465608465608,"Figure 4: Episodic returns (left) and number of rooms in solved levels (middle) during training (dotted lines)
+and test on the ground-truth distribution (solid lines), for q = 0.7. Normalized test returns and proportion of
+apple goals during training for various q are shown on the right. Plots show mean and standard error of 10 runs."
+EXPERIMENTS,0.5661375661375662,"In our experiments, we ﬁrst adapt the apple and banana example, depicted in Figure 3 into a fully
+procedurally-generated RL environment set in the world of NetHack. For each level, the agent can
+only learn to choose optimally in expectation at test time by grounding to the distribution of correct
+choices in the deployment domain. Speciﬁcally, in each level, the agent must traverse between one to
+eight randomly generated rooms, and in the ﬁnal room, the agent must choose to eat the apple or the
+banana. The correct choice is ﬁxed for each level, but indiscernible to the agent. Thus, the identity of
+the true goal acts as the aleatoric parameter. Figure 3 shows example levels from this environment."
+EXPERIMENTS,0.5714285714285714,"This environment presents a hard exploration challenge for standard RL algorithms, as it requires
+learning to both navigate multiple rooms, as well as the NLE-speciﬁc skills of kicking doors and
+eating. The doors opening into adjacent rooms are locked. In order to go from one room to the next,
+the agent must learn to, potentially repeatedly, kick the locked door until it opens. Likewise, upon
+reaching a piece of fruit in the ﬁnal room, the agent must learn to deliberately choose to eat the fruit.
+If the right choice of fruit were determinable per episode, we expect PLR⊥’s adaptive curriculum to
+improve learning by selectively sampling levels at the threshold of the agent’s abilities."
+EXPERIMENTS,0.5767195767195767,"Figure
+3:
+Levels
+from
+the
+stochastic fruit-choice environment.
+Across levels, the correct choice of
+fruit is distributed according to P."
+EXPERIMENTS,0.582010582010582,"Let πA be the policy in which the agent always chooses the apple,
+and πB, the banana. If the probability of the goal being apple
+P(A) = q, the expected return of the agent is RAq under πA
+and RB(1 −q) under πB. The optimal policy is then to act
+according to πA when q > RB/(RA + RB), and according to πB
+otherwise. We expect training under domain randomization, which
+samples each level completely at random from the ground-truth
+distribution P(θ), deﬁned by the environment parameterization,
+would converge to the correct choice of πA or πB, assuming
+the environment is learnable by the choice of RL algorithm. In
+contrast, PLR evolves an adversarial curriculum, incentivizing
+PLR to shift the distribution over goals throughout training. For
+example, PLR is incentivized to ﬂip the curriculum distribution
+to favor eating apples whenever the agent begins to consistently
+succeed at eating bananas. We thus expect the PLR curriculum to
+continually oscillate the preferred choice of goal."
+EXPERIMENTS,0.5873015873015873,"In our experiments, we set RA = 3, RB = 10, and q in {0.7, 0.5, 0.3}, making it always optimal to
+follow the banana-eating policy πB, but with the marginal beneﬁt of doing so varying with q. We
+report train and test performance of each agent over 200M training steps in Figure 4. We ﬁnd that
+DR struggles to learn an effective policy, plateauing at an expected return under 1.0; PLR performs
+even worse, due to its adversarial curriculum shifting the distribution over the correct goal, leading to
+rapid oscillations in the optimal choice of fruit under the curriculum distribution, as visible in the
+high-variance oscillations in the proportion of apple goals selected by PLR for each value of q in 4).
+This makes it difﬁcult for the agent to settle on the optimal policy with respect to any ground-truth
+distribution. The proportion of each choice outcome, shown in Figure 5, reveals that both DR and
+PLR policies fail to eat any fruit most of the time, even after 200M training steps. In contrast, both
+SAMPLR and LP-SAMPLR realize a marked improvement in test performance by grounding PLR’s"
+EXPERIMENTS,0.5925925925925926,Under review as a conference paper at ICLR 2022
+EXPERIMENTS,0.5978835978835979,"0
+100M
+200M
+0.0"
+NONE,0.6031746031746031,"1.0
+None"
+NONE,0.6084656084656085,"0
+100M
+200M
+0.0 0.2 0.4 0.6 0.8"
+APPLE,0.6137566137566137,"1.0
+Apple"
+APPLE,0.6190476190476191,"0
+100M
+200M
+0.0 0.2 0.4 0.6 0.8"
+BANANA,0.6243386243386243,"1.0
+Banana"
+BANANA,0.6296296296296297,Proportion selected Steps
+BANANA,0.6349206349206349,"DR
+PLR
+SAMPLR
+LP-SAMPLR"
+BANANA,0.6402116402116402,"0
+50M
+100M
+150M
+200M 4.4 4.6 4.8 5.0 5.2 5.4 5.6 5.8"
+BANANA,0.6455026455026455,Training room count
+BANANA,0.6507936507936508,"Figure 5: Left: Proportion of training episodes in which the agent fails to eat any fruit; eats the apple; or eats
+the banana. Right: Number of rooms in levels during training. Plots show mean and standard error of 10 runs."
+BANANA,0.656084656084656,"0
+50M
+100M
+150M 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7"
+BANANA,0.6613756613756614,Proportion fireproof
+BANANA,0.6666666666666666,"0
+50M
+100M
+150M
+0.00 0.05 0.10 0.15 0.20 0.25"
+BANANA,0.671957671957672,Mean test episode return
+BANANA,0.6772486772486772,"DR
+PLR
+SAMPLR
+LP-SAMPLR Steps"
+BANANA,0.6825396825396826,"Figure 6: Left: Levels from FireDungeon. Middle: Test return on the ground-truth distribution of FireDungeon.
+Right: Proportion of training levels with ﬁreproof armor. Plots show mean and standard error of 10 runs."
+BANANA,0.6878306878306878,"otherwise wild shifts in q. Figure 4 shows this improvement is most pronounced when the expected
+difference in πA and πB is smaller, and therefore easier for PLR to ﬂip the agent’s policy. Moreover,
+we see in Figure 5 that both SAMPLR methods present levels with higher room counts on average,
+indicating that early in training, it is able to discover easier, few-room levels in which the agent
+can capture reward signal, and which can then be made more complex to push the agent along its
+threshold of abilities."
+BANANA,0.6931216931216931,"We next turn to a more challenging environment that introduces additional NetHack-speciﬁc dynamics.
+The FireDungeon environment (see Figure 6 for example levels), requires the agent to navigate through
+up to 13 chambers, and ultimately choose between chamber A or B, each containing a valid goal.
+Reaching this goal ends the episode and provides the agent with a sparse reward. Further, in this
+penultimate chamber, there is an armor, which if worn grants the agent with ﬁre resistance with
+probability q. Chamber B is marked by a red gemstone by the door and contains enemy units, whose
+ﬁre attack will instantly kill the agent. Killing each enemy grants the agent with +1 ﬁnal reward,
+which is only provided upon reaching either goal. The agent thus stands to attain a higher reward
+by attacking the enemies in Chamber B, before reaching the goal, only if the armor is ﬁreproof.
+This environment presents an even more difﬁcult exploration problem for the agent, yet we see in
+Figure 6, both SAMPLR variants begin to learn to solve this environment with signiﬁcantly greater
+sample-efﬁciency than DR, while PLR again struggles to learn. As in the case of the previous
+stochastic choice environment, we see that PLR rapidly oscillates the key aleatoric parameter, which
+in this case, determines whether the armor is ﬁreproof."
+CONCLUSION,0.6984126984126984,"8
+CONCLUSION"
+CONCLUSION,0.7037037037037037,"Using the formal notions of environment parameterizations in the framework of UED, we deﬁned
+the problem of curriculum-induced covariate shift in RL. Our deﬁnition highlights the issues that
+can arise when there is persisitent uncertainty over the environment parameters, either because the
+uncertainty is irreducible or because reducing the uncertainty is costly. We then adapted a ﬁctitious
+transition mechanism previously used to improve zero-shot coordination in cooperative MARL to
+correct for this covariate shift. We demonstrated that our resulting algorithm, SAMPLR, avoids the
+pitfalls of this type of covariate shift, while preserving the beneﬁts of curriculum learning."
+CONCLUSION,0.708994708994709,Under review as a conference paper at ICLR 2022
+REFERENCES,0.7142857142857143,REFERENCES
+REFERENCES,0.7195767195767195,"Martín Arjovsky, Léon Bottou, Ishaan Gulrajani, and David Lopez-Paz. Invariant risk minimization.
+CoRR, abs/1907.02893, 2019. URL http://arxiv.org/abs/1907.02893."
+REFERENCES,0.7248677248677249,"Richard Bellman. A problem in the sequential design of experiments. Sankhy¯a: The Indian Journal
+of Statistics (1933-1960), 16(3/4):221–229, 1956."
+REFERENCES,0.7301587301587301,"Daniel S Bernstein, Robert Givan, Neil Immerman, and Shlomo Zilberstein. The complexity of
+decentralized control of markov decision processes. Mathematics of operations research, 27(4):
+819–840, 2002."
+REFERENCES,0.7354497354497355,"Steffen Bickel, Michael Brückner, and Tobias Scheffer. Discriminative learning under covariate shift.
+J. Mach. Learn. Res., 10:2137–2155, 2009. URL https://dl.acm.org/citation.cfm?
+id=1755858."
+REFERENCES,0.7407407407407407,"Andres Campero, Roberta Raileanu, Heinrich Kuttler, Joshua B. Tenenbaum, Tim Rocktäschel,
+and Edward Grefenstette. Learning with AMIGo: Adversarially motivated intrinsic goals. In
+International Conference on Learning Representations, 2021."
+REFERENCES,0.746031746031746,"Kamil Andrzej Ciosek and Shimon Whiteson. OFFER: off-environment reinforcement learning. In
+Satinder P. Singh and Shaul Markovitch (eds.), Proceedings of the Thirty-First AAAI Conference
+on Artiﬁcial Intelligence, February 4-9, 2017, San Francisco, California, USA, pp. 1819–1825.
+AAAI Press, 2017. URL http://aaai.org/ocs/index.php/AAAI/AAAI17/paper/
+view/14378."
+REFERENCES,0.7513227513227513,"Michael Dennis, Natasha Jaques, Eugene Vinitsky, Alexandre Bayen, Stuart Russell, Andrew Critch,
+and Sergey Levine. Emergent complexity and zero-shot transfer via unsupervised environment
+design. In Advances in Neural Information Processing Systems, volume 33, 2020."
+REFERENCES,0.7566137566137566,"Armen Der Kiureghian and Ove Ditlevsen. Aleatory or epistemic? does it matter? Structural safety,
+31(2):105–112, 2009."
+REFERENCES,0.7619047619047619,"Michael O’Gordon Duff. Optimal Learning: Computational procedures for Bayes-adaptive Markov
+decision processes. University of Massachusetts Amherst, 2002."
+REFERENCES,0.7671957671957672,"Lasse Espeholt, Hubert Soyer, Remi Munos, Karen Simonyan, Vlad Mnih, Tom Ward, Yotam Doron,
+Vlad Firoiu, Tim Harley, Iain Dunning, Shane Legg, and Koray Kavukcuoglu. IMPALA: Scalable
+distributed deep-RL with importance weighted actor-learner architectures. In Jennifer Dy and
+Andreas Krause (eds.), Proceedings of the 35th International Conference on Machine Learning,
+volume 80 of Proceedings of Machine Learning Research, pp. 1407–1416. PMLR, 10–15 Jul 2018."
+REFERENCES,0.7724867724867724,"Carlos Florensa, David Held, Xinyang Geng, and Pieter Abbeel. Automatic goal generation for
+reinforcement learning agents. In Jennifer Dy and Andreas Krause (eds.), Proceedings of the
+35th International Conference on Machine Learning, volume 80 of Proceedings of Machine
+Learning Research, pp. 1515–1528. PMLR, 10–15 Jul 2018. URL http://proceedings.
+mlr.press/v80/florensa18a.html."
+REFERENCES,0.7777777777777778,"Carles Gelada and Marc G. Bellemare. Off-policy deep reinforcement learning by bootstrapping
+the covariate shift. In The Thirty-Third AAAI Conference on Artiﬁcial Intelligence, AAAI 2019,
+The Thirty-First Innovative Applications of Artiﬁcial Intelligence Conference, IAAI 2019, The
+Ninth AAAI Symposium on Educational Advances in Artiﬁcial Intelligence, EAAI 2019, Honolulu,
+Hawaii, USA, January 27 - February 1, 2019, pp. 3647–3655. AAAI Press, 2019. URL https:
+//doi.org/10.1609/aaai.v33i01.33013647."
+REFERENCES,0.783068783068783,"Assaf Hallak and Shie Mannor. Consistent on-line off-policy evaluation. In Doina Precup and
+Yee Whye Teh (eds.), Proceedings of the 34th International Conference on Machine Learning,
+volume 70 of Proceedings of Machine Learning Research, pp. 1372–1383. PMLR, 06–11 Aug
+2017. URL https://proceedings.mlr.press/v70/hallak17a.html."
+REFERENCES,0.7883597883597884,"James J Heckman. Sample selection bias as a speciﬁcation error. Econometrica: Journal of the
+econometric society, pp. 153–161, 1979."
+REFERENCES,0.7936507936507936,Under review as a conference paper at ICLR 2022
+REFERENCES,0.798941798941799,"Hengyuan Hu, Adam Lerer, Alex Peysakhovich, and Jakob Foerster. “Other-play” for zero-shot
+coordination. In Hal Daumé III and Aarti Singh (eds.), Proceedings of the 37th International
+Conference on Machine Learning, volume 119 of Proceedings of Machine Learning Research, pp.
+4399–4410. PMLR, 13–18 Jul 2020. URL https://proceedings.mlr.press/v119/
+hu20a.html."
+REFERENCES,0.8042328042328042,"Hengyuan Hu, Adam Lerer, Brandon Cui, Luis Pineda, Noam Brown, and Jakob N. Foerster. Off-
+belief learning. In Marina Meila and Tong Zhang (eds.), Proceedings of the 38th International
+Conference on Machine Learning, ICML 2021, 18-24 July 2021, Virtual Event, volume 139
+of Proceedings of Machine Learning Research, pp. 4369–4379. PMLR, 2021. URL http:
+//proceedings.mlr.press/v139/hu21c.html."
+REFERENCES,0.8095238095238095,"Jiayuan Huang, Arthur Gretton, Karsten Borgwardt, Bernhard Schölkopf, and Alex Smola. Correcting
+sample selection bias by unlabeled data. Advances in neural information processing systems, 19:
+601–608, 2006."
+REFERENCES,0.8148148148148148,"Nick Jakobi. Evolutionary robotics and the radical envelope-of-noise hypothesis. Adaptive Behavior,
+6(2):325–368, 1997."
+REFERENCES,0.8201058201058201,"Minqi Jiang, Michael Dennis, Jack Parker-Holder, Jakob Foerster, Edward Grefenstette, and Tim
+Rocktäschel. Replay guided adversarial environment design. arXiv, 2021a."
+REFERENCES,0.8253968253968254,"Minqi Jiang, Edward Grefenstette, and Tim Rocktäschel. Prioritized level replay. In Proceedings of
+the 38th International Conference on Machine Learning, ICML 2021, 18-24 July 2021, Virtual
+Event, volume 139 of Proceedings of Machine Learning Research, pp. 4940–4950. PMLR, 2021b.
+URL http://proceedings.mlr.press/v139/jiang21b.html."
+REFERENCES,0.8306878306878307,"Niels Justesen, Ruben Rodriguez Torrado, Philip Bontrager, Ahmed Khalifa, Julian Togelius, and
+Sebastian Risi. Procedural level generation improves generality of deep reinforcement learning.
+CoRR, abs/1806.10729, 2018. URL http://arxiv.org/abs/1806.10729."
+REFERENCES,0.8359788359788359,"Heinrich Küttler, Nantas Nardelli, Alexander H. Miller, Roberta Raileanu, Marco Selvatici, Edward
+Grefenstette, and Tim Rocktäschel. The NetHack Learning Environment. In Proceedings of the
+Conference on Neural Information Processing Systems (NeurIPS), 2020."
+REFERENCES,0.8412698412698413,"Tambet Matiisen, Avital Oliver, Taco Cohen, and John Schulman. Teacher-student curriculum
+learning. IEEE Transactions on Neural Networks and Learning Systems, PP, 07 2017."
+REFERENCES,0.8465608465608465,"John F Nash et al. Equilibrium points in n-person games. Proceedings of the national academy of
+sciences, 36(1):48–49, 1950."
+REFERENCES,0.8518518518518519,"OpenAI OpenAI, Matthias Plappert, Raul Sampedro, Tao Xu, Ilge Akkaya, Vineet Kosaraju, Peter
+Welinder, Ruben D’Sa, Arthur Petron, Henrique Ponde de Oliveira Pinto, Alex Paino, Hyeonwoo
+Noh, Lilian Weng, Qiming Yuan, Casey Chu, and Wojciech Zaremba. Asymmetric self-play for
+automatic goal discovery in robotic manipulation, 2021."
+REFERENCES,0.8571428571428571,"Ian Osband,
+Daniel Russo,
+and Benjamin Van Roy.
+(more) efﬁcient reinforcement
+learning via posterior sampling.
+In Christopher J. C. Burges, Léon Bottou, Zoubin
+Ghahramani, and Kilian Q. Weinberger (eds.), Advances in Neural Information Processing
+Systems 26:
+27th Annual Conference on Neural Information Processing Systems 2013.
+Proceedings of a meeting held December 5-8, 2013, Lake Tahoe, Nevada, United States, pp.
+3003–3011, 2013. URL https://proceedings.neurips.cc/paper/2013/hash/
+6a5889bb0190d0211a991f47bb19a777-Abstract.html."
+REFERENCES,0.8624338624338624,"Xue Bin Peng, Marcin Andrychowicz, Wojciech Zaremba, and Pieter Abbeel. Sim-to-real transfer of
+robotic control with dynamics randomization. CoRR, abs/1710.06537, 2017."
+REFERENCES,0.8677248677248677,"Dean Pomerleau. ALVINN: an autonomous land vehicle in a neural network. In David S. Touretzky
+(ed.), Advances in Neural Information Processing Systems 1, [NIPS Conference, Denver, Colorado,
+USA, 1988], pp. 305–313. Morgan Kaufmann, 1988.
+URL http://papers.nips.cc/
+paper/95-alvinn-an-autonomous-land-vehicle-in-a-neural-network."
+REFERENCES,0.873015873015873,Under review as a conference paper at ICLR 2022
+REFERENCES,0.8783068783068783,"Rémy Portelas, Cédric Colas, Katja Hofmann, and Pierre-Yves Oudeyer. Teacher algorithms for
+curriculum learning of deep rl in continuously parameterized environments. In Leslie Pack
+Kaelbling, Danica Kragic, and Komei Sugiura (eds.), Proceedings of the Conference on Robot
+Learning, volume 100 of Proceedings of Machine Learning Research, pp. 835–853. PMLR, 30 Oct–
+01 Nov 2020. URL https://proceedings.mlr.press/v100/portelas20a.html."
+REFERENCES,0.8835978835978836,"Stephane Ross and Drew Bagnell. Efﬁcient reductions for imitation learning. In Yee Whye Teh
+and Mike Titterington (eds.), Proceedings of the Thirteenth International Conference on Artiﬁcial
+Intelligence and Statistics, volume 9 of Proceedings of Machine Learning Research, pp. 661–668,
+Chia Laguna Resort, Sardinia, Italy, 13–15 May 2010. PMLR. URL https://proceedings.
+mlr.press/v9/ross10a.html."
+REFERENCES,0.8888888888888888,"Mark Rowland, Will Dabney, and Remi Munos. Adaptive trade-offs in off-policy learning. In Silvia
+Chiappa and Roberto Calandra (eds.), Proceedings of the Twenty Third International Conference
+on Artiﬁcial Intelligence and Statistics, volume 108 of Proceedings of Machine Learning Research,
+pp. 34–44. PMLR, 26–28 Aug 2020. URL https://proceedings.mlr.press/v108/
+rowland20a.html."
+REFERENCES,0.8941798941798942,"Fereshteh Sadeghi and Sergey Levine. CAD2RL: real single-image ﬂight without a single real image.
+In Nancy M. Amato, Siddhartha S. Srinivasa, Nora Ayanian, and Scott Kuindersma (eds.), Robotics:
+Science and Systems XIII, Massachusetts Institute of Technology, Cambridge, Massachusetts, USA,
+July 12-16, 2017, 2017."
+REFERENCES,0.8994708994708994,"Mikayel Samvelyan, Robert Kirk, Vitaly Kurin, Jack Parker-Holder, Minqi Jiang, Eric Hambro, Fabio
+Petroni, Heinrich Kuttler, Edward Grefenstette, and Tim Rocktäschel. Minihack the planet: A
+sandbox for open-ended reinforcement learning research. In Thirty-ﬁfth Conference on Neural
+Information Processing Systems Datasets and Benchmarks Track, 2021."
+REFERENCES,0.9047619047619048,"Leonard J Savage. The theory of statistical decision. Journal of the American Statistical association,
+46(253):55–67, 1951."
+REFERENCES,0.91005291005291,"John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. Proximal policy
+optimization algorithms, 2017."
+REFERENCES,0.9153439153439153,"David Silver, Aja Huang, Chris J. Maddison, Arthur Guez, Laurent Sifre, George van den Driessche,
+Julian Schrittwieser, Ioannis Antonoglou, Vedavyas Panneershelvam, Marc Lanctot, Sander
+Dieleman, Dominik Grewe, John Nham, Nal Kalchbrenner, Ilya Sutskever, Timothy P. Lillicrap,
+Madeleine Leach, Koray Kavukcuoglu, Thore Graepel, and Demis Hassabis. Mastering the
+game of go with deep neural networks and tree search. Nat., 529(7587):484–489, 2016. URL
+https://doi.org/10.1038/nature16961."
+REFERENCES,0.9206349206349206,"Adam Stooke, Anuj Mahajan, Catarina Barros, Charlie Deck, Jakob Bauer, Jakub Sygnowski,
+Maja Trebacz, Max Jaderberg, Michaël Mathieu, Nat McAleese, Nathalie Bradley-Schmieg,
+Nathaniel Wong, Nicolas Porcel, Roberta Raileanu, Steph Hughes-Fitt, Valentin Dalibard, and
+Wojciech Marian Czarnecki. Open-ended learning leads to generally capable agents. CoRR,
+abs/2107.12808, 2021. URL https://arxiv.org/abs/2107.12808."
+REFERENCES,0.9259259259259259,"Sainbayar Sukhbaatar, Zeming Lin, Ilya Kostrikov, Gabriel Synnaeve, Arthur Szlam, and Rob
+Fergus. Intrinsic motivation and automatic curricula via asymmetric self-play. In International
+Conference on Learning Representations, 2018. URL https://openreview.net/forum?
+id=SkT5Yg-RZ."
+REFERENCES,0.9312169312169312,"Richard S. Sutton, A. Rupam Mahmood, and Martha White. An emphatic approach to the problem
+of off-policy temporal-difference learning. Journal of Machine Learning Research, 17(73):1–29,
+2016. URL http://jmlr.org/papers/v17/14-488.html."
+REFERENCES,0.9365079365079365,"Philip Thomas and Emma Brunskill. Data-efﬁcient off-policy policy evaluation for reinforcement
+learning. In Maria Florina Balcan and Kilian Q. Weinberger (eds.), Proceedings of The 33rd
+International Conference on Machine Learning, volume 48 of Proceedings of Machine Learning
+Research, pp. 2139–2148, New York, New York, USA, 20–22 Jun 2016. PMLR."
+REFERENCES,0.9417989417989417,Under review as a conference paper at ICLR 2022
+REFERENCES,0.9470899470899471,"Josh Tobin, Rachel Fong, Alex Ray, Jonas Schneider, Wojciech Zaremba, and Pieter Abbeel. Domain
+randomization for transferring deep neural networks from simulation to the real world. In 2017
+IEEE/RSJ International Conference on Intelligent Robots and Systems, IROS 2017, Vancouver, BC,
+Canada, September 24-28, 2017, pp. 23–30. IEEE, 2017."
+REFERENCES,0.9523809523809523,"Vladimir N Vapnik and A Ya Chervonenkis. On the uniform convergence of relative frequencies of
+events to their probabilities. Theory of Probability and Its Applications, pp. 264–280, 1971."
+REFERENCES,0.9576719576719577,"Oriol Vinyals, Igor Babuschkin, Wojciech M. Czarnecki, Michaël Mathieu, Andrew Dudzik, Junyoung
+Chung, David H. Choi, Richard Powell, Timo Ewalds, Petko Georgiev, Junhyuk Oh, Dan Horgan,
+Manuel Kroiss, Ivo Danihelka, Aja Huang, Laurent Sifre, Trevor Cai, John P. Agapiou, Max
+Jaderberg, Alexander Sasha Vezhnevets, Rémi Leblond, Tobias Pohlen, Valentin Dalibard, David
+Budden, Yury Sulsky, James Molloy, Tom L. Paine, Çaglar Gülçehre, Ziyu Wang, Tobias Pfaff,
+Yuhuai Wu, Roman Ring, Dani Yogatama, Dario Wünsch, Katrina McKinney, Oliver Smith,
+Tom Schaul, Timothy P. Lillicrap, Koray Kavukcuoglu, Demis Hassabis, Chris Apps, and David
+Silver. Grandmaster level in starcraft II using multi-agent reinforcement learning. Nat., 575(7782):
+350–354, 2019. doi: 10.1038/s41586-019-1724-z. URL https://doi.org/10.1038/
+s41586-019-1724-z."
+REFERENCES,0.9629629629629629,"Rui Wang, Joel Lehman, Jeff Clune, and Kenneth O. Stanley. Paired open-ended trailblazer (POET):
+endlessly generating increasingly complex and diverse learning environments and their solutions.
+CoRR, abs/1901.01753, 2019."
+REFERENCES,0.9682539682539683,"Rui Wang, Joel Lehman, Aditya Rawal, Jiale Zhi, Yulun Li, Jeffrey Clune, and Kenneth Stanley.
+Enhanced POET: Open-ended reinforcement learning through unbounded invention of learning
+challenges and their solutions. In Proceedings of the 37th International Conference on Machine
+Learning, pp. 9940–9951, 2020."
+REFERENCES,0.9735449735449735,"Xiaoxia Wu, Ethan Dyer, and Behnam Neyshabur. When do curricula work? In 9th International
+Conference on Learning Representations, ICLR 2021, Virtual Event, Austria, May 3-7, 2021.
+OpenReview.net, 2021. URL https://openreview.net/forum?id=tW4QEInpni."
+REFERENCES,0.9788359788359788,"Amy Zhang, Zachary C. Lipton, Luis Pineda, Kamyar Azizzadenesheli, Anima Anandkumar, Laurent
+Itti, Joelle Pineau, and Tommaso Furlanello. Learning causal state representations of partially
+observable environments. CoRR, abs/1906.10437, 2019. URL http://arxiv.org/abs/
+1906.10437."
+REFERENCES,0.9841269841269841,"Amy Zhang, Rowan Thomas McAllister, Roberto Calandra, Yarin Gal, and Sergey Levine. Learning
+invariant representations for reinforcement learning without reconstruction. In 9th International
+Conference on Learning Representations, ICLR 2021, Virtual Event, Austria, May 3-7, 2021.
+OpenReview.net, 2021. URL https://openreview.net/forum?id=-2FCwDKRREu."
+REFERENCES,0.9894179894179894,"Victor Zhong, Tim Rocktäschel, and Edward Grefenstette. RTFM: generalising to new environment
+dynamics via reading. In 8th International Conference on Learning Representations, ICLR
+2020, Addis Ababa, Ethiopia, April 26-30, 2020. OpenReview.net, 2020. URL https://
+openreview.net/forum?id=SJgob6NKvH."
+REFERENCES,0.9947089947089947,"Luisa M. Zintgraf, Kyriacos Shiarlis, Maximilian Igl, Sebastian Schulze, Yarin Gal, Katja Hofmann,
+and Shimon Whiteson. Varibad: A very good method for bayes-adaptive deep RL via meta-learning.
+In 8th International Conference on Learning Representations, ICLR 2020, Addis Ababa, Ethiopia,
+April 26-30, 2020. OpenReview.net, 2020. URL https://openreview.net/forum?id=
+Hkl9JlBYvr."

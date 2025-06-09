@@ -1,0 +1,1650 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,Abstract
+ABSTRACT,0.0012422360248447205,"Since the advent of diffusion models, personalizing these models – conditioning
+1"
+ABSTRACT,0.002484472049689441,"them to render novel subjects – has been widely studied. Recently, several methods
+2"
+ABSTRACT,0.0037267080745341614,"propose training a dedicated image encoder on a large variety of subject images.
+3"
+ABSTRACT,0.004968944099378882,"This encoder maps the images to identity embeddings (ID embeddings). During
+4"
+ABSTRACT,0.006211180124223602,"inference, these ID embeddings, combined with conventional prompts, condition a
+5"
+ABSTRACT,0.007453416149068323,"diffusion model to generate new images of the subject. However, such methods
+6"
+ABSTRACT,0.008695652173913044,"often face challenges in achieving a good balance between authenticity and compo-
+7"
+ABSTRACT,0.009937888198757764,"sitionality – accurately capturing the subject’s likeness while effectively integrating
+8"
+ABSTRACT,0.011180124223602485,"them into varied and complex scenes. A primary source for this issue is that the ID
+9"
+ABSTRACT,0.012422360248447204,"embeddings reside in the image token space (“image prompts""), which is not fully
+10"
+ABSTRACT,0.013664596273291925,"composable with the text prompt encoded by the CLIP text encoder. In this work,
+11"
+ABSTRACT,0.014906832298136646,"we present AdaFace, an image encoder that maps human faces into the text prompt
+12"
+ABSTRACT,0.016149068322981366,"space. After being trained only on 400K face images with 2 GPUs, it achieves high
+13"
+ABSTRACT,0.017391304347826087,"authenticity of the generated subjects and high compositionality with various text
+14"
+ABSTRACT,0.018633540372670808,"prompts. In addition, as the ID embeddings are integrated in a normal text prompt,
+15"
+ABSTRACT,0.01987577639751553,"it is highly compatible with existing pipelines and can be used without modification
+16"
+ABSTRACT,0.02111801242236025,"to generate authentic videos. We showcase the generated images and videos of
+17"
+ABSTRACT,0.02236024844720497,"celebrities under various compositional prompts. The source code is released on an
+18"
+ABSTRACT,0.02360248447204969,"anonymous repository https://github.com/adaface-neurips/adaface.
+19"
+ABSTRACT,0.024844720496894408,Face2Vec
+ABSTRACT,0.02608695652173913,Initial Face Embedding
+ABSTRACT,0.02732919254658385,Face2Image
+ABSTRACT,0.02857142857142857,Encoder
+ABSTRACT,0.02981366459627329,Custom U-Net
+ABSTRACT,0.031055900621118012,"Input
+Output"
+ABSTRACT,0.03229813664596273,"𝑣1
+𝑣2
+𝑣3
+𝑣𝑛
+⋯"
+ABSTRACT,0.03354037267080745,Non-editable ID Embeddings in
+ABSTRACT,0.034782608695652174,the image space
+ABSTRACT,0.03602484472049689,"Figure 2: A typical zero-shot face encoder pipeline for diffusion models. First, a Face2Vec module
+(e.g., ArcFace [Deng et al., 2019]) extracts a single vector that captures the facial features. Then a
+trainable Face2Image encoder (e.g., Arc2Face [Papantoniou et al., 2024]) maps it to n facial tokens
+v1, · · · , vn within the image embedding spaces. The facial tokens condition the U-Net (either original
+or fine-tuned) to generate authentic-looking subject images. However, since the facial tokens is not
+blended with other text prompts (sometimes they are simply concatenated), the whole pipeline has
+weaker compositionality than using text prompts alone. Moreover, such models are often incompatible
+with existing diffusion pipelines, such as AnimateDiff Guo et al. [2024a]."
+INTRODUCTION,0.037267080745341616,"1
+Introduction
+20"
+INTRODUCTION,0.03850931677018633,"Recent years have witnessed the blossom of diffusion models, which have been widely used in image
+21"
+INTRODUCTION,0.03975155279503106,"generation, image editing, and video generation [Ho et al., 2020, Nichol et al., 2022, Saharia et al.,
+22"
+INTRODUCTION,0.040993788819875775,"2022, Rombach et al., 2022, Podell et al., 2024, Chen et al., 2024a, Kawar et al., 2023, Peebles and
+23"
+INTRODUCTION,0.0422360248447205,"Xie, 2023, Guo et al., 2024a]. A particularly interesting application of these models is personalization,
+24"
+INTRODUCTION,0.043478260869565216,"where they are conditioned to generate images of specific subjects. Previously, this was primarily
+25"
+INTRODUCTION,0.04472049689440994,"achieved through test-time fine-tuning [Ruiz et al., 2022, Gal et al., 2022a, Kumari et al., 2022,
+26"
+INTRODUCTION,0.04596273291925466,"Tewel et al., 2023], which introduced additional computational demands and complexity to the
+27"
+INTRODUCTION,0.04720496894409938,"image generation process. Recent advancements have seen the development of zero-shot, tuning-free
+28"
+INTRODUCTION,0.0484472049689441,"methods [Wei et al., 2023, Ye et al., 2023, Shi et al., 2023, Wang et al., 2024, Papantoniou et al.,
+29"
+INTRODUCTION,0.049689440993788817,"2024, Guo et al., 2024b, Huang et al., 2024, Han et al., 2024, Chen et al., 2024b, He et al., 2024].
+30"
+INTRODUCTION,0.05093167701863354,"These methods train a dedicated image encoder to convert subject images to identity embeddings
+31"
+INTRODUCTION,0.05217391304347826,"(ID embeddings) using a large dataset. During inference, these ID embeddings are combined with
+32"
+INTRODUCTION,0.05341614906832298,"standard text prompts to generate new images of the subject (Figure 2). Despite these innovations,
+33"
+INTRODUCTION,0.0546583850931677,"these approaches often struggle to strike a good balance between authenticity and compositionality.
+34"
+INTRODUCTION,0.055900621118012424,"Authenticity ensures the model captures the true likeness of the subject, whereas compositionality
+35"
+INTRODUCTION,0.05714285714285714,"concerns the model’s ability to seamlessly integrate the subject into diverse and intricate scenes.
+36"
+INTRODUCTION,0.058385093167701865,"The challenge primarily stems from how ID embeddings are utilized: in many zero-shot methods,
+37"
+INTRODUCTION,0.05962732919254658,"the embeddings exist in the image token space (“image prompts"") and do not fully mesh with text
+38"
+INTRODUCTION,0.06086956521739131,"prompts. In cases like [Huang et al., 2024], while the ID embeddings are within the text space, there
+39"
+INTRODUCTION,0.062111801242236024,"lacks targeted training to enhance their integration with other text prompts, resulting in compromised
+40"
+INTRODUCTION,0.06335403726708075,"compositionality.
+41"
+INTRODUCTION,0.06459627329192547,"Given the limitations of existing methods, we propose AdaFace, a versatile face encoder that maps
+42"
+INTRODUCTION,0.06583850931677018,"human faces into the text prompt space. First, the ID embeddings generated by AdaFace seamlessly
+43"
+INTRODUCTION,0.0670807453416149,"integrate with text prompts via the CLIP text encoder, allowing for more coherent and expressive
+44"
+INTRODUCTION,0.06832298136645963,"conditioning. Second, we employ targeted training strategies to enhance the compositionality of the ID
+45"
+INTRODUCTION,0.06956521739130435,"embeddings, ensuring they are able to be used to generate diverse and complex scenes. Furthermore,
+46"
+INTRODUCTION,0.07080745341614907,"AdaFace is highly compatible with existing diffusion pipelines, requiring no modifications to generate
+47"
+INTRODUCTION,0.07204968944099378,"authentic videos, as demonstrated in Figure 1. Notably, due to efficient model design and distillation
+48"
+INTRODUCTION,0.07329192546583851,"techniques, AdaFace is trained on merely 406,567 face images with 2 RTX A6000 GPUs, all within a
+49"
+INTRODUCTION,0.07453416149068323,"constrained compute budget.
+50"
+INTRODUCTION,0.07577639751552795,"We demonstrate the effectiveness of AdaFace by showcasing the generated images and videos of
+51"
+INTRODUCTION,0.07701863354037267,"celebrities under various compositional prompts. We also perform quantitative evaluations to validate
+52"
+INTRODUCTION,0.0782608695652174,"that AdaFace achieves a good balance between authenticity and compositionality, measured by
+53"
+INTRODUCTION,0.07950310559006211,"ArcFace similarity and CLIP-Text similarity, respectively.
+54"
+INTRODUCTION,0.08074534161490683,Initial Face Embedding
+INTRODUCTION,0.08198757763975155,Face2Image
+INTRODUCTION,0.08322981366459627,Encoder
+INTRODUCTION,0.084472049689441,Original U-Net Input
+INTRODUCTION,0.08571428571428572,AdaFace Prompt
+INTRODUCTION,0.08695652173913043,Inverter
+INTRODUCTION,0.08819875776397515,"Original CLIP 
+Prompt Encoder"
+INTRODUCTION,0.08944099378881988,"Editable ID Embeddings 𝑤1~𝑤𝑛 in the text 
+space, seamlessly compatible with a text prompt"
+INTRODUCTION,0.0906832298136646,"𝑤1
+𝑤2
+𝑤3
+𝑤𝑛
+⋯
+a photo of
+in a chef outfit"
+INTRODUCTION,0.09192546583850932,Output
+INTRODUCTION,0.09316770186335403,Non-editable ID Embeddings in
+INTRODUCTION,0.09440993788819876,the image space
+INTRODUCTION,0.09565217391304348,To image space
+INTRODUCTION,0.0968944099378882,To text space
+INTRODUCTION,0.09813664596273292,"𝑣1
+𝑣2
+𝑣3
+𝑣𝑛
+⋯"
+INTRODUCTION,0.09937888198757763,Face2Vec
+INTRODUCTION,0.10062111801242236,"Figure 3: The core of AdaFace is the Prompt Inverter, which inverts the image-space ID embeddings
+from another model to the text prompt space, represented as w1, · · · , wn. These embeddings are
+integrated into a standard text prompt and encoded by a CLIP prompt encoder. CLIP coherently
+composes the semantics of the ID embeddings and the text prompt, providing good compositionality."
+METHOD,0.10186335403726708,"2
+Method
+55"
+METHOD,0.1031055900621118,"Motivated by the advantages of text space face prompts, we propose techniques to distill one or more
+56"
+METHOD,0.10434782608695652,"image-space face encoders into the text space, and further enhance its compositionality. The overall
+57"
+METHOD,0.10559006211180125,"architecture of AdaFace is shown in Figure 3. The core module of AdaFace is the AdaFace Prompt
+58"
+METHOD,0.10683229813664596,"Inverter, which inverts the image-space ID embeddings to the text space, enabling the integration
+59"
+METHOD,0.10807453416149068,"of the ID embeddings into a standard text prompt. The ID embeddings are then encoded by a CLIP
+60"
+METHOD,0.1093167701863354,"prompt encoder, which coherently composes the semantics of the ID embeddings and the text prompt.
+61"
+METHOD,0.11055900621118013,"The text-level composition also facilitates Composition Distillation (Figure 5), which significantly
+62"
+METHOD,0.11180124223602485,"improves the compositionality of the ID embeddings without additional training data. A side-effect
+63"
+METHOD,0.11304347826086956,"of composition distillation is that, when there is spatial misalignment between the subject-single
+64"
+METHOD,0.11428571428571428,"and subject-composition images, the subject features will be gradually contaminated by background
+65"
+METHOD,0.115527950310559,"features, reducing their authenticity. Accordingly, we propose a Elastic Face Preserving Loss (Figure
+66"
+METHOD,0.11677018633540373,"6), to prevent the subject features from degeneration.
+67"
+ADAFACE ARCHITECTURE,0.11801242236024845,"2.1
+AdaFace Architecture
+68"
+ADAFACE ARCHITECTURE,0.11925465838509317,"The core module of AdaFace is the AdaFace Prompt Inverter, which converts the image-space ID
+69"
+ADAFACE ARCHITECTURE,0.12049689440993788,"embeddings from a Face2Image model to the text space.
+70"
+ADAFACE ARCHITECTURE,0.12173913043478261,"The architecture and initialization of the prompt inverter significantly impacts the training efficiency.
+71"
+ADAFACE ARCHITECTURE,0.12298136645962733,"Compared to other deep learning tasks, the diffusion training is highly stochastic and the gradients
+72"
+ADAFACE ARCHITECTURE,0.12422360248447205,"have a much lower signal-to-noise ratio. It is highly challenging to train a sizable diffusion component
+73"
+ADAFACE ARCHITECTURE,0.12546583850931678,"from scratch without high compute budgets and large batch sizes. To achieve efficient learning, we
+74"
+ADAFACE ARCHITECTURE,0.1267080745341615,"adopt the same architecture as the CLIP text encoder for the AdaFace Prompt Inverter, and initialize
+75"
+ADAFACE ARCHITECTURE,0.12795031055900621,"it with the pre-trained weights. This ensures that the output embeddings are not very distant from the
+76"
+ADAFACE ARCHITECTURE,0.12919254658385093,"text space from the beginning of training, and the model learns more signals from the gradients.
+77"
+ADAFACE ARCHITECTURE,0.13043478260869565,"One may raise the question that since the output of a pre-trained CLIP encoder is in the image space,
+78"
+ADAFACE ARCHITECTURE,0.13167701863354037,"why it is able to adapt quickly to generate text-space embeddings? We speculate that in CLIP, the
+79"
+ADAFACE ARCHITECTURE,0.13291925465838508,"semantics of low-level layers and high-level layers are not in totally incompatible spaces, but rather,
+80"
+ADAFACE ARCHITECTURE,0.1341614906832298,"Input
+Custom U-Net"
+ADAFACE ARCHITECTURE,0.13540372670807455,AdaFace Prompt
+ADAFACE ARCHITECTURE,0.13664596273291926,Inverter
+ADAFACE ARCHITECTURE,0.13788819875776398,Face2Image
+ADAFACE ARCHITECTURE,0.1391304347826087,Encoder
+ADAFACE ARCHITECTURE,0.14037267080745341,"Original CLIP 
+Prompt Encoder"
+ADAFACE ARCHITECTURE,0.14161490683229813,"Face 
+Distillation Loss"
+ADAFACE ARCHITECTURE,0.14285714285714285,Original UNet
+ADAFACE ARCHITECTURE,0.14409937888198757,"𝑤1
+𝑤𝑛
+⋯
+Subject-ID only prompt"
+ADAFACE ARCHITECTURE,0.1453416149068323,Face2Vec
+ADAFACE ARCHITECTURE,0.14658385093167703,"Figure 4: Face distillation on face images. The output of the AdaFace stream is compared with the
+Face2Image stream. During this process, only the AdaFace Prompt Inverter is optimized."
+ADAFACE ARCHITECTURE,0.14782608695652175,"the high-level semantics enrich the low-level ones. Our hypothesis is corroborated by [Toker et al.,
+81"
+ADAFACE ARCHITECTURE,0.14906832298136646,"2024], as well as the community practice of ad-hoc fusing the output embeddings of multiple CLIP
+82"
+ADAFACE ARCHITECTURE,0.15031055900621118,"text encoder layers1. The semantics of layer features gradually transition from the text space to
+83"
+ADAFACE ARCHITECTURE,0.1515527950310559,"the image space. As a result, during fine-tuning, the skip connections within CLIP will allow the
+84"
+ADAFACE ARCHITECTURE,0.15279503105590062,"low-level semantics to take shortcut towards the output embeddings, and the high-level layers will
+85"
+ADAFACE ARCHITECTURE,0.15403726708074533,"gradually learn to enrich the low-level semantics in the text space instead.
+86"
+ADAFACE ARCHITECTURE,0.15527950310559005,"The training of the prompt inverter is divided into two stages. In the first face distillation stage, a
+87"
+ADAFACE ARCHITECTURE,0.1565217391304348,"Face2Image model guides the prompt inverter to generate authentic faces in the text prompt space. In
+88"
+ADAFACE ARCHITECTURE,0.1577639751552795,"the second composition distillation stage, the prompt inverter observes how the original model output
+89"
+ADAFACE ARCHITECTURE,0.15900621118012423,"responds to compositional prompts, and learns to generate similar responses, so as to allow the text
+90"
+ADAFACE ARCHITECTURE,0.16024844720496895,"prompts to control the composition of the generated images.
+91"
+FACE DISTILLATION,0.16149068322981366,"2.2
+Face Distillation
+92"
+FACE DISTILLATION,0.16273291925465838,"The face distillation stage is illustrated in Figure 4, where the objective is to minimize the difference
+93"
+FACE DISTILLATION,0.1639751552795031,"between the generated images by the original Face2Image model and by the AdaFace Prompt Inverter
+94"
+FACE DISTILLATION,0.16521739130434782,"on the same initial noise. The training objective, namely the face distillation loss, is formulated as a
+95"
+FACE DISTILLATION,0.16645962732919253,"reconstruction loss between the two generated images:
+96"
+FACE DISTILLATION,0.16770186335403728,"Lface = Ef∼F,z∼N(0,I),t∈[1,T ]
+h
+∥GAdaFace(f, z, t|θ) −GFace2Image(f, z, t|θ′)∥2
+2
+i
+,
+(1)"
+FACE DISTILLATION,0.168944099378882,"where GFace2Image and GAdaFace are the Face2Image and the AdaFace Prompt Inverter conditioned
+97"
+FACE DISTILLATION,0.1701863354037267,"U-Nets, respectively, f is a random face drawn from the face space F, z is the initial noise, and θ and
+98"
+FACE DISTILLATION,0.17142857142857143,"θ′ are the parameters of the AdaFace Prompt Inverter and the Face2Image model, respectively. For
+99"
+FACE DISTILLATION,0.17267080745341615,"some models such as Ada2Face, θ′ ̸= θ.
+100"
+FACE DISTILLATION,0.17391304347826086,"In order to sweep the input space {f, z, t} as completely as possible, we adopt a few techniques:
+101"
+FACE DISTILLATION,0.17515527950310558,"Random Gaussian Face Embeddings.
+Empirically, we observe that almost all random face
+102"
+FACE DISTILLATION,0.1763975155279503,"embeddings result in legitimate face images when processed by the Face2Image model. Therefore,
+103"
+FACE DISTILLATION,0.17763975155279504,"we expand the candidate face space F by including random face embeddings drawn from a Gaussian
+104"
+FACE DISTILLATION,0.17888198757763976,"distribution, alongside the face embeddings extracted from real face images: F = Freal ∪Frand.
+105"
+FACE DISTILLATION,0.18012422360248448,"Multi-Timestep Distillation.
+We use multiple denoising steps on the same initial noise, and
+106"
+FACE DISTILLATION,0.1813664596273292,"compute the reconstruction loss on all the steps, so that the prompt inverter learns to imitate the
+107"
+FACE DISTILLATION,0.1826086956521739,"Face2Image model’s behavior on intermediate noise levels:
+108"
+FACE DISTILLATION,0.18385093167701863,"Lface = Ef∼F,z1∼N(0,I),t1>···>tk∈[1,T ] k
+X i=1"
+FACE DISTILLATION,0.18509316770186335,"h
+∥GAdaFace(f, zi, ti|θ) −GFace2Image(f, zi, ti|θ′)∥2
+2
+i
+,
+(2)"
+FACE DISTILLATION,0.18633540372670807,1https://github.com/AUTOMATIC1111/stable-diffusion-webui/discussions/5674 Input
+FACE DISTILLATION,0.18757763975155278,AdaFace Prompt
+FACE DISTILLATION,0.18881987577639753,Inverter
+FACE DISTILLATION,0.19006211180124225,Composition
+FACE DISTILLATION,0.19130434782608696,Distillation Loss
+FACE DISTILLATION,0.19254658385093168,"𝑤1
+𝑤𝑛
+⋯"
+FACE DISTILLATION,0.1937888198757764,"Face2Image 
+components"
+FACE DISTILLATION,0.19503105590062111,a photo of
+FACE DISTILLATION,0.19627329192546583,"𝑤1
+𝑤𝑛
+⋯
+a photo of
+in a chef outfit"
+FACE DISTILLATION,0.19751552795031055,"𝑃(subj, compos)"
+FACE DISTILLATION,0.19875776397515527,𝑃(subj)
+FACE DISTILLATION,0.2,a photo of
+FACE DISTILLATION,0.20124223602484473,"a photo of
+in a chef outfit"
+FACE DISTILLATION,0.20248447204968945,"𝑃(class, compos)"
+FACE DISTILLATION,0.20372670807453416,"𝑃(class)
+boy boy"
+FACE DISTILLATION,0.20496894409937888,CLIP + UNet
+FACE DISTILLATION,0.2062111801242236,𝛥(subj)
+FACE DISTILLATION,0.20745341614906831,𝛥(class)
+FACE DISTILLATION,0.20869565217391303,"Feature maps 
+from 16 cross-
+attention layers"
+FACE DISTILLATION,0.20993788819875778,"Figure 5: Composition distillation on four types of prompts: subject-single, subject-composition,
+class-single and class-composition. The four generated images form two contrastive pairs, and their
+feature deltas are encouraged to be aligned through a composition distillation loss."
+FACE DISTILLATION,0.2111801242236025,"where t1, · · · , tk are a randomly sampled sequence of timesteps, and when i > 1, zi is the partially
+109"
+FACE DISTILLATION,0.2124223602484472,"denoised image by GFace2Image in the previous step.
+110"
+FACE DISTILLATION,0.21366459627329193,"Dynamic Model Expansion.
+When the training loss plateaus, it suggests that the model has reached
+111"
+FACE DISTILLATION,0.21490683229813665,"the limits of its capacity to capture nuanced facial features. In this situation, we expand the model
+112"
+FACE DISTILLATION,0.21614906832298136,"capacity by incorporating additional query and value projections within the attention layers of the
+113"
+FACE DISTILLATION,0.21739130434782608,"prompt inverter. As a result, each token is represented by multiple, subtly distinct query and value
+114"
+FACE DISTILLATION,0.2186335403726708,"tokens. This enables the model to better grasp the subtle facial features of the subject, thanks to the
+115"
+FACE DISTILLATION,0.21987577639751552,"increased diversity and richness of the queries and values. Note that the number of keys and output
+116"
+FACE DISTILLATION,0.22111801242236026,"tokens remain unchanged, ensuring that the computational load does not increase drastically.
+117"
+FACE DISTILLATION,0.22236024844720498,"Specifically, when a query projection Q is expanded by N times, we make N identical copies of Q
+118"
+FACE DISTILLATION,0.2236024844720497,"and add Gaussian noises to N −1 of them. The same operation is applied to the value projection V .
+119"
+FACE DISTILLATION,0.2248447204968944,"This is to ensure that the expanded Q′ and V ′ do not deviate too much from the original Q and V ,
+120"
+FACE DISTILLATION,0.22608695652173913,"and the model augments the original features with slightly varied replicas.
+121"
+FACE DISTILLATION,0.22732919254658385,"The attention expansion proves to be particularly beneficial at the lower layers of the prompt inverter.
+122"
+FACE DISTILLATION,0.22857142857142856,"Intuitively, once some information in the features from the upstream Face2Image encoder is lost in
+123"
+FACE DISTILLATION,0.22981366459627328,"the lower layers, it is hard to recover in the higher layers. The mechanism of expanding queries and
+124"
+FACE DISTILLATION,0.231055900621118,"values creates multiple, slightly varied replicas of the same information, thereby allowing the model
+125"
+FACE DISTILLATION,0.23229813664596274,"to select the most informative copy for preservation and further processing in subsequent layers.
+126"
+FACE DISTILLATION,0.23354037267080746,"This approach is conceptually akin to the role of the excitation operator in a squeeze-and-excitation
+127"
+FACE DISTILLATION,0.23478260869565218,"network [Hu et al., 2018], which also emphasizes selectively retaining the most significant features.
+128"
+COMPOSITION DISTILLATION,0.2360248447204969,"2.3
+Composition Distillation
+129"
+COMPOSITION DISTILLATION,0.2372670807453416,"A prevalent issue with existing face encoders is that the subject token tends to dominate the generated
+130"
+COMPOSITION DISTILLATION,0.23850931677018633,"images, resulting in degeneration of compositionality. To mitigate this issue, we employ composi-
+131"
+COMPOSITION DISTILLATION,0.23975155279503105,"tion distillation (Figure 5) to regularize the subject embeddings, ensuring that their semantics are
+132"
+COMPOSITION DISTILLATION,0.24099378881987576,"effectively integrated with other tokens, enhancing the overall expression. During this process, the
+133"
+COMPOSITION DISTILLATION,0.2422360248447205,"model observes how the original diffusion model adjusts output features to incorporate additional
+134"
+COMPOSITION DISTILLATION,0.24347826086956523,"compositional prompts into the output image. The model then imitates these adjustments when
+135"
+COMPOSITION DISTILLATION,0.24472049689440994,"encountering similar compositional prompts.
+136"
+COMPOSITION DISTILLATION,0.24596273291925466,"For this purpose, four types of prompts are employed to form two contrastive pairs: 1) a “subject-
+137"
+COMPOSITION DISTILLATION,0.24720496894409938,"single” prompt that only contains the subject, such as “A photo of a [Zendaya]”, 2) a “subject-
+138"
+COMPOSITION DISTILLATION,0.2484472049689441,"composition” prompt such as “A photo of a [Zendaya] in the forest”, 3) a “class-single” prompt that
+139"
+COMPOSITION DISTILLATION,0.2496894409937888,"only contains a general class, such as “A photo of a woman”, and 4) a “class-composition” prompt
+140"
+COMPOSITION DISTILLATION,0.25093167701863356,"such as “A photo of a woman in the forest”. Ideally, the semantic differences between “A photo of x”
+141"
+COMPOSITION DISTILLATION,0.25217391304347825,"and “A photo of x in the forest” should only be relevant to “in the forest”, and is independent of x.
+142"
+COMPOSITION DISTILLATION,0.253416149068323,"We represent the semantic differences between two pairs of prompts as their “feature deltas”. The train-
+143"
+COMPOSITION DISTILLATION,0.2546583850931677,"ing objective is to encourage the feature deltas between the subject-single and subject-composition
+144"
+COMPOSITION DISTILLATION,0.25590062111801243,"images to be aligned with the feature deltas between the class-single and class-composition images.
+145"
+COMPOSITION DISTILLATION,0.2571428571428571,"In other words, the following equation is expected to hold approximately:
+146"
+COMPOSITION DISTILLATION,0.25838509316770186,"∆(subject, compos) .= feat(subject, compos) −feat(subject)"
+COMPOSITION DISTILLATION,0.2596273291925466,"≈∆(class, compos)
+.= feat(class, compos)
+−feat(class),
+(3)"
+COMPOSITION DISTILLATION,0.2608695652173913,"where subject, class, (subject, compos) and (class, compos) denote the four types of prompts, re-
+147"
+COMPOSITION DISTILLATION,0.26211180124223604,"spectively. (subject, compos) and (class, compos) are randomly drawn from a pool of common
+148"
+COMPOSITION DISTILLATION,0.26335403726708073,"compositional prompts consisting of various backgrounds, additional objects, dresses, image styles
+149"
+COMPOSITION DISTILLATION,0.2645962732919255,"and lighting conditions. feat(x) refers to relevant features, including 1) the output features from all
+150"
+COMPOSITION DISTILLATION,0.26583850931677017,"the cross-attention layers, 2) the attention maps in all the cross-attention layers, and 3) the encoded
+151"
+COMPOSITION DISTILLATION,0.2670807453416149,"prompt embeddings by CLIP text encoder. feat(x) −feat(y) is the orthogonal subtraction between
+152"
+COMPOSITION DISTILLATION,0.2683229813664596,"two feature maps, defined below.
+153"
+COMPOSITION DISTILLATION,0.26956521739130435,"We define a compositional delta loss that aligns the feature deltas ∆i(subject, compos) and
+154"
+COMPOSITION DISTILLATION,0.2708074534161491,"∆i(class, compos) on the three types of features listed above:
+155 L∆=
+X"
+COMPOSITION DISTILLATION,0.2720496894409938,"i
+{1 −Ecompos∼U(C) cos(∆i(subject, compos), ∆i(class, compos))},
+(4)"
+COMPOSITION DISTILLATION,0.2732919254658385,"in which i indexes the feature type (cross-attention output features, attention maps or CLIP prompt
+156"
+COMPOSITION DISTILLATION,0.2745341614906832,"embeddings), and U(C) is a uniform distribution on a set of compositional prompts C.
+157"
+COMPOSITION DISTILLATION,0.27577639751552796,"Orthogonal Subtraction.
+We wish to remove subject-specific features through the feature sub-
+158"
+COMPOSITION DISTILLATION,0.27701863354037265,"traction “feat(subject, compos) −feat(subject)”. However, it is commonly observed that the subject-
+159"
+COMPOSITION DISTILLATION,0.2782608695652174,"specific features may have different magnitudes (often smaller under compositional prompts). To
+160"
+COMPOSITION DISTILLATION,0.2795031055900621,"mitigate this issue, we propose to use orthogonal subtraction, which is invariant to the scale of
+161"
+COMPOSITION DISTILLATION,0.28074534161490683,"the subject-specific features. A relevant idea [Wang et al., 2023] is explored for language model
+162"
+COMPOSITION DISTILLATION,0.2819875776397516,"fine-tuning. Specifically, the feature deltas are calculated using the following equation:
+163"
+COMPOSITION DISTILLATION,0.28322981366459626,"∆feat(s, c) = feat(s, c) −projfeat(s)(feat(s, c)),
+(5)"
+COMPOSITION DISTILLATION,0.284472049689441,"where projfeat(s)(feat(s, c)) is the projection of feat(s, c) onto feat(s), computed as:
+164"
+COMPOSITION DISTILLATION,0.2857142857142857,"projfeat(s)(feat(s, c)) = ⟨feat(s, c), feat(s)⟩feat(s),
+(6)"
+COMPOSITION DISTILLATION,0.28695652173913044,"with ⟨feat(s, c), feat(s)⟩being the inner product between the two features. The operation effectively
+165"
+COMPOSITION DISTILLATION,0.28819875776397513,"projects feat(s, c) onto the orthogonal complement of feat(s) and then subtracts this projection from
+166"
+COMPOSITION DISTILLATION,0.2894409937888199,"feat(s, c). As a result, ∆feat(s, c), the feature delta, is orthogonal to feat(s). This methodology
+167"
+COMPOSITION DISTILLATION,0.2906832298136646,"ensures that the deltas remove as much of the subject-specific features as possible, thereby minimizing
+168"
+COMPOSITION DISTILLATION,0.2919254658385093,"the influence of the scales of the subject-specific features contained within feat(s, c).
+169"
+COMPOSITION DISTILLATION,0.29316770186335406,"Differences with Previous Methods.
+While previous methods have explored analogous concepts,
+170"
+COMPOSITION DISTILLATION,0.29440993788819875,"such as StyleGAN-NADA [Gal et al., 2022b], which applies similar regularizations in the CLIP
+171"
+COMPOSITION DISTILLATION,0.2956521739130435,"prompt embedding space, and PuLID [Guo et al., 2024b], which introduces similar contrastive
+172"
+COMPOSITION DISTILLATION,0.2968944099378882,"regularizations on cross-attention queries, our approach is more comprehensive and effective. Our
+173"
+COMPOSITION DISTILLATION,0.2981366459627329,"compositional delta loss encompasses a broader range of relevant features, including the attention
+174"
+COMPOSITION DISTILLATION,0.2993788819875776,"maps and output features from cross-attention layers, and the CLIP prompt embeddings. Moreover,
+175"
+COMPOSITION DISTILLATION,0.30062111801242236,"we introduce an orthogonal subtraction technique for computing the feature deltas. This technique
+176"
+COMPOSITION DISTILLATION,0.3018633540372671,"isolates and extracts composition-specific features, making the distillation more effective.
+177"
+ELASTIC FACE PRESERVING LOSS,0.3031055900621118,"2.4
+Elastic Face Preserving Loss
+178"
+ELASTIC FACE PRESERVING LOSS,0.30434782608695654,"The composition distillation is done on instances with different prompts starting from the same initial
+179"
+ELASTIC FACE PRESERVING LOSS,0.30559006211180123,"noise. This is to encourage the diffusion model to generate images that are compositionally similar
+180"
+ELASTIC FACE PRESERVING LOSS,0.306832298136646,"Figure 6: To prevent subject features from degeneration due to spatial misalignment during composi-
+tion distillation, we propose a Elastic Face Preserving Loss. The second row shows the cross-attention
+maps at selected four points on the subject-single image. The highlighted pixels associate the corre-
+sponding facial areas across the two images. The features of matching pixels are required to be close
+to each other to achieve subject feature preservation."
+ELASTIC FACE PRESERVING LOSS,0.30807453416149067,"[Zhang et al., 2024], to achieve more accurate alignment between the image pairs. Despite this effort,
+181"
+ELASTIC FACE PRESERVING LOSS,0.3093167701863354,"spatial misalignment often persists between the images differently prompted. This misalignment
+182"
+ELASTIC FACE PRESERVING LOSS,0.3105590062111801,"can result in delta loss providing erroneous signals from non-facial to facial areas, slowly reducing
+183"
+ELASTIC FACE PRESERVING LOSS,0.31180124223602484,"the authenticity of the generated subjects. For instance, on a noisy input face image, the output
+184"
+ELASTIC FACE PRESERVING LOSS,0.3130434782608696,"image from the subject-single instance is expected to largely retain the same facial contours as the
+185"
+ELASTIC FACE PRESERVING LOSS,0.3142857142857143,"input. However, the output from the subject-composition instance often deviate from the original
+186"
+ELASTIC FACE PRESERVING LOSS,0.315527950310559,"face contours, due to the introduction of additional compositional elements. An illustrative example
+187"
+ELASTIC FACE PRESERVING LOSS,0.3167701863354037,"provided in the first row of Figure 6 shows how a chef hat in one image spatially aligns with the hair
+188"
+ELASTIC FACE PRESERVING LOSS,0.31801242236024846,"in another, leading to potential contamination in the subject’s hair representations.
+189"
+ELASTIC FACE PRESERVING LOSS,0.31925465838509315,"To tackle this challenge, we view the subject-composition image as a “warped” version of the subject-
+190"
+ELASTIC FACE PRESERVING LOSS,0.3204968944099379,"single image, and turn to techniques from the Optical Flow literature[Teed and Deng, 2020, Sui et al.,
+191"
+ELASTIC FACE PRESERVING LOSS,0.3217391304347826,"2022] to estimate a matching field. The matching field is used to spatially align the subject features
+192"
+ELASTIC FACE PRESERVING LOSS,0.32298136645962733,"across different images, ensuring them to be consistently maintained after “warping”.
+193"
+ELASTIC FACE PRESERVING LOSS,0.3242236024844721,"Specifically, the model takes as input a noisy face image from the training data. The face image is
+194"
+ELASTIC FACE PRESERVING LOSS,0.32546583850931676,"accompanied by a segmentation mask, isolating the face area for matching. We compute the cross
+195"
+ELASTIC FACE PRESERVING LOSS,0.3267080745341615,"attention matrix2 between the queries of a subject-single instance and a subject-composition instance:
+196"
+ELASTIC FACE PRESERVING LOSS,0.3279503105590062,"CA(subj, compos) = softmax(QsubjQT
+compos),
+(7)"
+ELASTIC FACE PRESERVING LOSS,0.32919254658385094,"By looking up the cross-attention map CA(subj, compos), we can find the pixels best matching a
+197"
+ELASTIC FACE PRESERVING LOSS,0.33043478260869563,"subject-single image pixel in a subject-composition image. The second row in Figure 6 shows the
+198"
+ELASTIC FACE PRESERVING LOSS,0.3316770186335404,"attention maps of four points on the face in the left image. We “soft-warp” the subject-composition
+199"
+ELASTIC FACE PRESERVING LOSS,0.33291925465838507,"features to align with the subject-single features through matrix multiplication, and require the warped
+200"
+ELASTIC FACE PRESERVING LOSS,0.3341614906832298,"features to be close to the facial features in the subject-single image:
+201"
+ELASTIC FACE PRESERVING LOSS,0.33540372670807456,"Lface-preserving = 1 −cos
+
+CA(subj, compos) ⊙feat(compos), feat(subj)
+"
+ELASTIC FACE PRESERVING LOSS,0.33664596273291925,"mask.
+(8)"
+ELASTIC FACE PRESERVING LOSS,0.337888198757764,"Here for clarity, feat(subject, compos) is abbreviated as feat(compos). The cosine similarity cos(·, ·)
+202"
+ELASTIC FACE PRESERVING LOSS,0.3391304347826087,"is computed on the masked area. The face-preserving loss is computed on each U-Net cross-attention
+203"
+ELASTIC FACE PRESERVING LOSS,0.3403726708074534,"layer. It encourages the subject features in the subject-composition instance to be consistent with
+204"
+ELASTIC FACE PRESERVING LOSS,0.3416149068322981,"those in the subject-single instance, preventing them from being contaminated in the composition
+205"
+ELASTIC FACE PRESERVING LOSS,0.34285714285714286,"distillation process.
+206"
+ELASTIC FACE PRESERVING LOSS,0.3440993788819876,2The inner product is not scaled to make the matching scores more polarized.
+ELASTIC FACE PRESERVING LOSS,0.3453416149068323,A woman with a
+ELASTIC FACE PRESERVING LOSS,0.34658385093167704,mountain in the
+ELASTIC FACE PRESERVING LOSS,0.34782608695652173,background
+ELASTIC FACE PRESERVING LOSS,0.3490683229813665,A man in a police
+ELASTIC FACE PRESERVING LOSS,0.35031055900621116,outfit
+ELASTIC FACE PRESERVING LOSS,0.3515527950310559,A man wearing a
+ELASTIC FACE PRESERVING LOSS,0.3527950310559006,black top hat
+ELASTIC FACE PRESERVING LOSS,0.35403726708074534,"A woman 
+wearing a santa hat"
+ELASTIC FACE PRESERVING LOSS,0.3552795031055901,A woman in a
+ELASTIC FACE PRESERVING LOSS,0.3565217391304348,chef outfit
+ELASTIC FACE PRESERVING LOSS,0.3577639751552795,"InstantID        ConsistentID        PuLID            AdaFace
+Input"
+ELASTIC FACE PRESERVING LOSS,0.3590062111801242,"Figure 7: Qualitative comparison of AdaFace with state-of-the-art face encoders. AdaFace generates
+images that maintain the highest authenticity of the subjects, while still follow the target prompts."
+EXPERIMENTS,0.36024844720496896,"3
+Experiments
+207"
+DATASET AND TRAINING DETAILS,0.36149068322981365,"3.1
+Dataset and Training Details
+208"
+DATASET AND TRAINING DETAILS,0.3627329192546584,"We trained AdaFace on a combination of two face datasets: Flickr-Faces-HQ (FFHQ) [Karras et al.,
+209"
+DATASET AND TRAINING DETAILS,0.3639751552795031,"2019], which comprises 70,000 images, and VGGFace2-HQ [Cao et al., 2018], which comprises
+210"
+DATASET AND TRAINING DETAILS,0.3652173913043478,"336,567 images after filtering. Face masks were generated using the BiSeNet face segmentation
+211"
+DATASET AND TRAINING DETAILS,0.36645962732919257,"model [Yu et al., 2018]. The distilled Face2Image model is Ada2Face [Papantoniou et al., 2024], as it
+212"
+DATASET AND TRAINING DETAILS,0.36770186335403726,"is able to generate authentic and diverse face images. The training employed the Prodigy optimizer
+213"
+DATASET AND TRAINING DETAILS,0.368944099378882,"[Mishchenko and Defazio, 2024] with d_coef=2 (akin to the learning rate in other optimizers) during
+214"
+DATASET AND TRAINING DETAILS,0.3701863354037267,"face distillation, and d_coef=0.5 during composition distillation. Batch sizes were set to 4 and 3 for
+215"
+DATASET AND TRAINING DETAILS,0.37142857142857144,"the two stages, respectively, with a gradient accumulation of 2. The model was trained with 240,000
+216"
+DATASET AND TRAINING DETAILS,0.37267080745341613,"iterations in the face distillation stage and 120,000 iterations in the composition distillation stage.
+217"
+DATASET AND TRAINING DETAILS,0.3739130434782609,"During face distillation, the loss reached a plateau twice, resulting in two dynamic expansions of the
+218"
+DATASET AND TRAINING DETAILS,0.37515527950310557,"model capacity. Eventually, the attention layers in the trained prompt inverter were expanded with
+219"
+DATASET AND TRAINING DETAILS,0.3763975155279503,"multipliers of (8x, 8x, 8x, 4x, 4x, ..., 4x) relative to the original CLIP text encoder. This resulted in
+220"
+DATASET AND TRAINING DETAILS,0.37763975155279506,"a total of 2M parameters, in contrast to the 1.2M parameters of the original model.
+221"
+DATASET AND TRAINING DETAILS,0.37888198757763975,"In addition, we collected the images of 23 celebrities, each with 9 10 images, as the evaluated subjects.
+222"
+DATASET AND TRAINING DETAILS,0.3801242236024845,"These celebrities include actors, singers and internet celebrities on Instagram. This dataset will be
+223"
+DATASET AND TRAINING DETAILS,0.3813664596273292,"released along with the code.
+224"
+QUALITATIVE COMPARISONS,0.3826086956521739,"3.2
+Qualitative Comparisons
+225"
+QUALITATIVE COMPARISONS,0.3838509316770186,"We compared AdaFace with a few state-of-the-art face encoders, including InstantID [Wang et al.,
+226"
+QUALITATIVE COMPARISONS,0.38509316770186336,"2024], ConsistentID [Huang et al., 2024] and PuLID [Guo et al., 2024b]. The input were images
+227"
+QUALITATIVE COMPARISONS,0.38633540372670805,"from our celebrity-23 dataset.
+228"
+QUALITATIVE COMPARISONS,0.3875776397515528,"The results presented in Figure 7 demonstrate that AdaFace produces images that not only exhibit
+229"
+QUALITATIVE COMPARISONS,0.38881987577639754,"high authenticity of the subjects but also show good consistency with the text prompts. In comparison,
+230"
+QUALITATIVE COMPARISONS,0.39006211180124223,"other models often fall short in generating images that are either less authentic or less compositional.
+231"
+QUALITATIVE COMPARISONS,0.391304347826087,"For instance, InstantID tends to produce overly stylized images with significant variability in au-
+232"
+QUALITATIVE COMPARISONS,0.39254658385093166,"thenticity across different subjects. PuLID, while generating aesthetically pleasing images, achieves
+233"
+QUALITATIVE COMPARISONS,0.3937888198757764,"slightly lower authenticity levels compared to AdaFace. Despite also utilizing a text-space approach,
+234"
+QUALITATIVE COMPARISONS,0.3950310559006211,Jensen Huang dancing pose among folks in a
+QUALITATIVE COMPARISONS,0.39627329192546584,"park, waving hands
+Yann Lecun in a white apron and chef hat,"
+QUALITATIVE COMPARISONS,0.39751552795031053,garnishing a gourmet dish
+QUALITATIVE COMPARISONS,0.3987577639751553,"Figure 8: Comparison of AdaFace with ID-Animator on personalized video generation. AdaFace
+generates videos with higher authenticity and compositionality."
+QUALITATIVE COMPARISONS,0.4,"ConsistentID has the least compositional output among the models evaluated, largely due to the
+235"
+QUALITATIVE COMPARISONS,0.4012422360248447,"absence of compositional training in its ID embeddings.
+236"
+QUALITATIVE COMPARISONS,0.40248447204968946,"In addition, we plugged AdaFace into AnimateDiff, and generated personalized videos of celebrities
+237"
+QUALITATIVE COMPARISONS,0.40372670807453415,"under various compositional prompts. The results are shown in Figure 1. Figure 8 compares with a
+238"
+QUALITATIVE COMPARISONS,0.4049689440993789,"recent method ID-Animator [He et al., 2024]. AdaFace generated videos with high authenticity and
+239"
+QUALITATIVE COMPARISONS,0.4062111801242236,"compositionality, while ID-Animator usually produces videos with less authentic subjects.
+240"
+QUANTITATIVE EVALUATIONS,0.4074534161490683,"3.3
+Quantitative Evaluations
+241"
+QUANTITATIVE EVALUATIONS,0.40869565217391307,"To assess the performance of AdaFace quantitatively, we evaluated a few baseline methods and
+242"
+QUANTITATIVE EVALUATIONS,0.40993788819875776,"AdaFace, on the “celebrity-23"" images and DreamBench compositional prompts, comparing AdaFace
+243"
+QUANTITATIVE EVALUATIONS,0.4111801242236025,"with two baseline methods PuLID and InstantID. First, we measured the face similarity using the
+244"
+QUANTITATIVE EVALUATIONS,0.4124223602484472,"cosine similarity between the ArcFace embedding of the generated images and reference images. In
+245"
+QUANTITATIVE EVALUATIONS,0.41366459627329194,"addition, the CLIP-Text (CLIP-T) metric determines the consistency of the generated images with the
+246"
+QUANTITATIVE EVALUATIONS,0.41490683229813663,"prompts. The DINO and CLIP-I metrics are less indicative and are only for reference. The results,
+247"
+QUANTITATIVE EVALUATIONS,0.4161490683229814,"detailed in Table 1, show that AdaFace achieved comparable face similarity and prompt consistency
+248"
+QUANTITATIVE EVALUATIONS,0.41739130434782606,"scores to PuLID, and slightly outperformed InstantID. Note that the results of AdaFace is achieved
+249"
+QUANTITATIVE EVALUATIONS,0.4186335403726708,"on the original Stable Diffusion 1.5 model weight, which usually leads to much lower composition
+250"
+QUANTITATIVE EVALUATIONS,0.41987577639751555,"scores than other fine-tuned SD 1.5 model weights, such as RealisticVision.
+251"
+QUANTITATIVE EVALUATIONS,0.42111801242236024,"ArcFace (subj) CLIP-T (comp) DINO CLIP-I
+DB
+0.349
+0.324
+0.470 0.656
+TI
+0.326
+0.250
+0.508 0.675
+PuLID
+0.468
+0.280
+0.512 0.630
+InstantID
+0.455
+0.257
+0.472 0.595
+Ada
+0.476
+0.270
+0.544 0.670
+-Comp
+0.505
+0.235
+0.598 0.685
+Table 1: Quantitative evaluation on the “celebrity-23"" images and DreamBench compositional
+prompts. -Comp is the model trained only with the face distillation stage."
+QUANTITATIVE EVALUATIONS,0.422360248447205,"As an ablation study, we list the performance of the AdaFace model without composition distillation.
+252"
+QUANTITATIVE EVALUATIONS,0.4236024844720497,"It can be seen that the face authenticity is slightly reduced after composition distillation, however, the
+253"
+QUANTITATIVE EVALUATIONS,0.4248447204968944,"generated images become much more consistent with the prompts.
+254"
+CONCLUSIONS AND DISCUSSIONS,0.4260869565217391,"4
+Conclusions and Discussions
+255"
+CONCLUSIONS AND DISCUSSIONS,0.42732919254658386,"In this work, we present AdaFace, a versatile face encoder that maps human faces into the text
+256"
+CONCLUSIONS AND DISCUSSIONS,0.42857142857142855,"prompt space. AdaFace is trained with a low compute budget and achieves high authenticity and
+257"
+CONCLUSIONS AND DISCUSSIONS,0.4298136645962733,"compositionality in zero-shot generation of subject images. We demonstrate the effectiveness of
+258"
+CONCLUSIONS AND DISCUSSIONS,0.43105590062111804,"AdaFace by showcasing the generated images and videos of celebrities under various compositional
+259"
+CONCLUSIONS AND DISCUSSIONS,0.4322981366459627,"prompts. Additionally, our quantitative evaluations further underscore its performance.
+260"
+CONCLUSIONS AND DISCUSSIONS,0.4335403726708075,"A notable limitation of AdaFace is that the authenticity of the output face embeddings are constrained
+261"
+CONCLUSIONS AND DISCUSSIONS,0.43478260869565216,"by the Face2Image model it distills from. However, this limitation can be addressed by distilling on
+262"
+CONCLUSIONS AND DISCUSSIONS,0.4360248447204969,"more powerful Face2Image models and expanding the model capacity. For future work, we would
+263"
+CONCLUSIONS AND DISCUSSIONS,0.4372670807453416,"extend the AdaFace method to object images. For instance, applying AdaFace distillation techniques
+264"
+CONCLUSIONS AND DISCUSSIONS,0.43850931677018634,"to IP-Adapter [Ye et al., 2023] could enable the generation of both human and object images.
+265"
+REFERENCES,0.43975155279503103,"References
+266"
+REFERENCES,0.4409937888198758,"References
+267"
+REFERENCES,0.4422360248447205,"Q. Cao, L. Shen, W. Xie, O. M. Parkhi, and A. Zisserman. VGGFace2: a dataset for recognising
+268"
+REFERENCES,0.4434782608695652,"faces across pose and age. In 2018 13th IEEE international conference on automatic face &amp;
+269"
+REFERENCES,0.44472049689440996,"gesture recognition (FG 2018), pages 67–74, Los Alamitos, CA, USA, May 2018. IEEE Computer
+270"
+REFERENCES,0.44596273291925465,"Society. doi: 10.1109/FG.2018.00020. URL https://doi.ieeecomputersociety.org/10.
+271"
+REFERENCES,0.4472049689440994,"1109/FG.2018.00020.
+272"
+REFERENCES,0.4484472049689441,"J. Chen, J. YU, C. GE, L. Yao, E. Xie, Z. Wang, J. Kwok, P. Luo, H. Lu, and Z. Li. PixArt-$\alpha$:
+273"
+REFERENCES,0.4496894409937888,"Fast training of diffusion transformer for photorealistic text-to-image synthesis. In The twelfth
+274"
+REFERENCES,0.4509316770186335,"international conference on learning representations, 2024a. URL https://openreview.net/
+275"
+REFERENCES,0.45217391304347826,"forum?id=eAKmQPe3m1.
+276"
+REFERENCES,0.453416149068323,"W. Chen, J. Zhang, J. Wu, H. Wu, X. Xiao, and L. Lin. ID-Aligner: Enhancing Identity-Preserving
+277"
+REFERENCES,0.4546583850931677,"Text-to-Image Generation with Reward Feedback Learning, Apr. 2024b. URL http://arxiv.
+278"
+REFERENCES,0.45590062111801244,"org/abs/2404.15449. arXiv:2404.15449 [cs].
+279"
+REFERENCES,0.45714285714285713,"J. Deng, J. Guo, N. Xue, and S. Zafeiriou. ArcFace: Additive Angular Margin Loss for Deep Face
+280"
+REFERENCES,0.4583850931677019,"Recognition. pages 4690–4699, 2019. URL https://openaccess.thecvf.com/content_
+281"
+REFERENCES,0.45962732919254656,"CVPR_2019/html/Deng_ArcFace_Additive_Angular_Margin_Loss_for_Deep_Face_
+282"
+REFERENCES,0.4608695652173913,"Recognition_CVPR_2019_paper.html.
+283"
+REFERENCES,0.462111801242236,"R. Gal, Y. Alaluf, Y. Atzmon, O. Patashnik, A. H. Bermano, G. Chechik, and D. Cohen-Or. An Image
+284"
+REFERENCES,0.46335403726708074,"is Worth One Word: Personalizing Text-to-Image Generation using Textual Inversion, Aug. 2022a.
+285"
+REFERENCES,0.4645962732919255,"URL http://arxiv.org/abs/2208.01618. arXiv:2208.01618 [cs].
+286"
+REFERENCES,0.4658385093167702,"R. Gal, O. Patashnik, H. Maron, A. H. Bermano, G. Chechik, and D. Cohen-Or. StyleGAN-NADA:
+287"
+REFERENCES,0.4670807453416149,"CLIP-guided domain adaptation of image generators. ACM Trans. Graph., 41(4), July 2022b.
+288"
+REFERENCES,0.4683229813664596,"ISSN 0730-0301. doi: 10.1145/3528223.3530164. URL https://doi.org/10.1145/3528223.
+289"
+REFERENCES,0.46956521739130436,"3530164. Number of pages: 13 Place: New York, NY, USA Publisher: Association for Computing
+290"
+REFERENCES,0.47080745341614905,"Machinery tex.articleno: 141 tex.issue_date: July 2022.
+291"
+REFERENCES,0.4720496894409938,"Y. Guo, C. Yang, A. Rao, Z. Liang, Y. Wang, Y. Qiao, M. Agrawala, D. Lin, and B. Dai. AnimateDiff:
+292"
+REFERENCES,0.47329192546583854,"Animate your personalized text-to-image diffusion models without specific tuning. In The twelfth
+293"
+REFERENCES,0.4745341614906832,"international conference on learning representations, 2024a. URL https://openreview.net/
+294"
+REFERENCES,0.47577639751552797,"forum?id=Fx2SbBgcte.
+295"
+REFERENCES,0.47701863354037266,"Z. Guo, Y. Wu, Z. Chen, L. Chen, and Q. He. PuLID: Pure and Lightning ID Customization via Con-
+296"
+REFERENCES,0.4782608695652174,"trastive Alignment, Apr. 2024b. URL http://arxiv.org/abs/2404.16022. arXiv:2404.16022
+297"
+REFERENCES,0.4795031055900621,"[cs].
+298"
+REFERENCES,0.48074534161490684,"Y. Han, J. Zhu, K. He, X. Chen, Y. Ge, W. Li, X. Li, J. Zhang, C. Wang, and Y. Liu. Face Adapter
+299"
+REFERENCES,0.48198757763975153,"for Pre-Trained Diffusion Models with Fine-Grained ID and Attribute Control, May 2024. URL
+300"
+REFERENCES,0.4832298136645963,"http://arxiv.org/abs/2405.12970. arXiv:2405.12970 [cs].
+301"
+REFERENCES,0.484472049689441,"X. He, Q. Liu, S. Qian, X. Wang, T. Hu, K. Cao, K. Yan, and J. Zhang. ID-Animator: Zero-Shot
+302"
+REFERENCES,0.4857142857142857,"Identity-Preserving Human Video Generation, May 2024. URL http://arxiv.org/abs/2404.
+303"
+REFERENCES,0.48695652173913045,"15275. arXiv:2404.15275 [cs].
+304"
+REFERENCES,0.48819875776397514,"J. Ho, A. Jain, and P. Abbeel.
+Denoising Diffusion Probabilistic Models.
+In Ad-
+305"
+REFERENCES,0.4894409937888199,"vances in Neural Information Processing Systems, volume 33, pages 6840–6851. Curran
+306"
+REFERENCES,0.4906832298136646,"Associates, Inc., 2020.
+URL https://proceedings.neurips.cc/paper/2020/hash/
+307"
+REFERENCES,0.4919254658385093,"4c5bcfec8584af0d967f1ab10179ca4b-Abstract.html.
+308"
+REFERENCES,0.493167701863354,"J. Hu, L. Shen, and G. Sun. Squeeze-and-excitation networks. In 2018 IEEE/CVF conference on
+309"
+REFERENCES,0.49440993788819876,"computer vision and pattern recognition, pages 7132–7141, 2018. doi: 10.1109/CVPR.2018.00745.
+310"
+REFERENCES,0.4956521739130435,"J. Huang, X. Dong, W. Song, H. Li, J. Zhou, Y. Cheng, S. Liao, L. Chen, Y. Yan, S. Liao, and
+311"
+REFERENCES,0.4968944099378882,"X. Liang. ConsistentID: Portrait Generation with Multimodal Fine-Grained Identity Preserving,
+312"
+REFERENCES,0.49813664596273294,"Apr. 2024. URL http://arxiv.org/abs/2404.16771. arXiv:2404.16771 [cs].
+313"
+REFERENCES,0.4993788819875776,"T. Karras, S. Laine, and T. Aila. A style-based generator architecture for generative adversarial
+314"
+REFERENCES,0.5006211180124224,"networks. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+315"
+REFERENCES,0.5018633540372671,"(CVPR), June 2019.
+316"
+REFERENCES,0.5031055900621118,"B. Kawar, S. Zada, O. Lang, O. Tov, H. Chang, T. Dekel, I. Mosseri, and M. Irani. Imagic: Text-
+317"
+REFERENCES,0.5043478260869565,"based real image editing with diffusion models. In Conference on computer vision and pattern
+318"
+REFERENCES,0.5055900621118012,"recognition 2023, 2023.
+319"
+REFERENCES,0.506832298136646,"N. Kumari, B. Zhang, R. Zhang, E. Shechtman, and J.-Y. Zhu. Multi-Concept Customization of Text-
+320"
+REFERENCES,0.5080745341614907,"to-Image Diffusion, Dec. 2022. URL http://arxiv.org/abs/2212.04488. arXiv:2212.04488
+321"
+REFERENCES,0.5093167701863354,"[cs].
+322"
+REFERENCES,0.5105590062111801,"K. Mishchenko and A. Defazio. Prodigy: An Expeditiously Adaptive Parameter-Free Learner, Mar.
+323"
+REFERENCES,0.5118012422360249,"2024. URL http://arxiv.org/abs/2306.06101. arXiv:2306.06101 [cs, math, stat].
+324"
+REFERENCES,0.5130434782608696,"A. Nichol, P. Dhariwal, A. Ramesh, P. Shyam, P. Mishkin, B. McGrew, I. Sutskever, and M. Chen.
+325"
+REFERENCES,0.5142857142857142,"GLIDE: Towards Photorealistic Image Generation and Editing with Text-Guided Diffusion Models,
+326"
+REFERENCES,0.515527950310559,"Mar. 2022. URL http://arxiv.org/abs/2112.10741. arXiv:2112.10741 [cs].
+327"
+REFERENCES,0.5167701863354037,"F. P. Papantoniou, A. Lattas, S. Moschoglou, J. Deng, B. Kainz, and S. Zafeiriou. Arc2Face: A
+328"
+REFERENCES,0.5180124223602485,"Foundation Model of Human Faces, Mar. 2024. URL http://arxiv.org/abs/2403.11641.
+329"
+REFERENCES,0.5192546583850932,"arXiv:2403.11641 [cs].
+330"
+REFERENCES,0.5204968944099378,"W. Peebles and S. Xie. Scalable Diffusion Models with Transformers, Mar. 2023. URL http:
+331"
+REFERENCES,0.5217391304347826,"//arxiv.org/abs/2212.09748. arXiv:2212.09748 [cs].
+332"
+REFERENCES,0.5229813664596273,"D. Podell, Z. English, K. Lacey, A. Blattmann, T. Dockhorn, J. Müller, J. Penna, and R. Rombach.
+333"
+REFERENCES,0.5242236024844721,"SDXL: Improving latent diffusion models for high-resolution image synthesis. In The twelfth
+334"
+REFERENCES,0.5254658385093167,"international conference on learning representations, 2024. URL https://openreview.net/
+335"
+REFERENCES,0.5267080745341615,"forum?id=di52zR8xgf.
+336"
+REFERENCES,0.5279503105590062,"R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer. High-Resolution Image Syn-
+337"
+REFERENCES,0.529192546583851,"thesis with Latent Diffusion Models, Apr. 2022. URL http://arxiv.org/abs/2112.10752.
+338"
+REFERENCES,0.5304347826086957,"arXiv:2112.10752 [cs].
+339"
+REFERENCES,0.5316770186335403,"N. Ruiz, Y. Li, V. Jampani, Y. Pritch, M. Rubinstein, and K. Aberman. DreamBooth: Fine Tuning
+340"
+REFERENCES,0.5329192546583851,"Text-to-Image Diffusion Models for Subject-Driven Generation, Aug. 2022. URL http://arxiv.
+341"
+REFERENCES,0.5341614906832298,"org/abs/2208.12242. arXiv:2208.12242 [cs].
+342"
+REFERENCES,0.5354037267080746,"C. Saharia, W. Chan, S. Saxena, L. Li, J. Whang, E. Denton, S. K. S. Ghasemipour, R. Gontijo-Lopes,
+343"
+REFERENCES,0.5366459627329192,"B. K. Ayan, T. Salimans, J. Ho, D. J. Fleet, and M. Norouzi. Photorealistic Text-to-Image Diffusion
+344"
+REFERENCES,0.537888198757764,"Models with Deep Language Understanding. Oct. 2022.
+345"
+REFERENCES,0.5391304347826087,"J. Shi, W. Xiong, Z. Lin, and H. J. Jung.
+InstantBooth: Personalized Text-to-Image Genera-
+346"
+REFERENCES,0.5403726708074534,"tion without Test-Time Finetuning, Apr. 2023. URL http://arxiv.org/abs/2304.03411.
+347"
+REFERENCES,0.5416149068322982,"arXiv:2304.03411 [cs].
+348"
+REFERENCES,0.5428571428571428,"X. Sui, S. Li, X. Geng, Y. Wu, X. Xu, Y. Liu, R. Goh, and H. Zhu. CRAFT: Cross-attentional flow
+349"
+REFERENCES,0.5440993788819876,"transformer for robust optical flow. In 2022 IEEE/CVF conference on computer vision and pattern
+350"
+REFERENCES,0.5453416149068323,"recognition (CVPR), 2022.
+351"
+REFERENCES,0.546583850931677,"Z. Teed and J. Deng. RAFT: Recurrent all-pairs field transforms for optical flow. In A. Vedaldi,
+352"
+REFERENCES,0.5478260869565217,"H. Bischof, T. Brox, and J.-M. Frahm, editors, Computer vision – ECCV 2020, pages 402–419,
+353"
+REFERENCES,0.5490683229813664,"Cham, 2020. Springer International Publishing. ISBN 978-3-030-58536-5.
+354"
+REFERENCES,0.5503105590062112,"Y. Tewel, R. Gal, G. Chechik, and Y. Atzmon. Key-locked rank one editing for text-to-image
+355"
+REFERENCES,0.5515527950310559,"personalization. In ACM SIGGRAPH 2023 conference proceedings, Siggraph ’23, New York, NY,
+356"
+REFERENCES,0.5527950310559007,"USA, 2023. Association for Computing Machinery. ISBN 9798400701597. doi: 10.1145/3588432.
+357"
+REFERENCES,0.5540372670807453,"3591506. URL https://doi.org/10.1145/3588432.3591506. Number of pages: 11 Place: ,
+358"
+REFERENCES,0.55527950310559,"Los Angeles, CA, USA, tex.articleno: 12.
+359"
+REFERENCES,0.5565217391304348,"M. Toker, H. Orgad, M. Ventura, D. Arad, and Y. Belinkov. Diffusion Lens: Interpreting Text
+360"
+REFERENCES,0.5577639751552795,"Encoders in Text-to-Image Pipelines, Mar. 2024. URL http://arxiv.org/abs/2403.05846.
+361"
+REFERENCES,0.5590062111801242,"arXiv:2403.05846 [cs] version: 1.
+362"
+REFERENCES,0.5602484472049689,"Q. Wang, X. Bai, H. Wang, Z. Qin, A. Chen, H. Li, X. Tang, and Y. Hu. InstantID: Zero-shot Identity-
+363"
+REFERENCES,0.5614906832298137,"Preserving Generation in Seconds, Feb. 2024. URL http://arxiv.org/abs/2401.07519.
+364"
+REFERENCES,0.5627329192546584,"arXiv:2401.07519 [cs].
+365"
+REFERENCES,0.5639751552795031,"X. Wang, T. Chen, Q. Ge, H. Xia, R. Bao, R. Zheng, Q. Zhang, T. Gui, and X. Huang. Orthogonal
+366"
+REFERENCES,0.5652173913043478,"subspace learning for language model continual learning. In Findings of the association for
+367"
+REFERENCES,0.5664596273291925,"computational linguistics: EMNLP 2023, Singapore, Dec. 2023. Association for Computational
+368"
+REFERENCES,0.5677018633540373,"Linguistics.
+369"
+REFERENCES,0.568944099378882,"Y. Wei, Y. Zhang, Z. Ji, J. Bai, L. Zhang, and W. Zuo. ELITE: Encoding Visual Concepts into Textual
+370"
+REFERENCES,0.5701863354037268,"Embeddings for Customized Text-to-Image Generation. In ICCV 2023. arXiv, Feb. 2023. doi:
+371"
+REFERENCES,0.5714285714285714,"10.48550/arXiv.2302.13848. URL http://arxiv.org/abs/2302.13848. arXiv:2302.13848
+372"
+REFERENCES,0.5726708074534161,"[cs].
+373"
+REFERENCES,0.5739130434782609,"H. Ye, J. Zhang, S. Liu, X. Han, and W. Yang. IP-Adapter: Text Compatible Image Prompt Adapter
+374"
+REFERENCES,0.5751552795031056,"for Text-to-Image Diffusion Models, Aug. 2023. URL http://arxiv.org/abs/2308.06721.
+375"
+REFERENCES,0.5763975155279503,"arXiv:2308.06721 [cs].
+376"
+REFERENCES,0.577639751552795,"C. Yu, J. Wang, C. Peng, C. Gao, G. Yu, and N. Sang. BiSeNet: Bilateral segmentation network for
+377"
+REFERENCES,0.5788819875776398,"real-time semantic segmentation. In V. Ferrari, M. Hebert, C. Sminchisescu, and Y. Weiss, editors,
+378"
+REFERENCES,0.5801242236024845,"Computer vision – ECCV 2018, pages 334–349, Cham, 2018. Springer International Publishing.
+379"
+REFERENCES,0.5813664596273292,"ISBN 978-3-030-01261-8.
+380"
+REFERENCES,0.5826086956521739,"H. Zhang, J. Zhou, Y. Lu, M. Guo, P. Wang, L. Shen, and Q. Qu. The Emergence of Reproducibility
+381"
+REFERENCES,0.5838509316770186,"and Consistency in Diffusion Models, Feb. 2024. URL http://arxiv.org/abs/2310.05264.
+382"
+REFERENCES,0.5850931677018634,"arXiv:2310.05264 [cs].
+383"
+REFERENCES,0.5863354037267081,"NeurIPS Paper Checklist
+384"
+CLAIMS,0.5875776397515527,"1. Claims
+385"
+CLAIMS,0.5888198757763975,"Question: Do the main claims made in the abstract and introduction accurately reflect the
+386"
+CLAIMS,0.5900621118012422,"paper’s contributions and scope?
+387"
+CLAIMS,0.591304347826087,"Answer: [Yes]
+388"
+CLAIMS,0.5925465838509317,"Justification: The main claims in the abstract and introduction accurately reflect the paper’s
+389"
+CLAIMS,0.5937888198757764,"contributions and scope, as the detailed results, discussions, and conclusions align with and
+390"
+CLAIMS,0.5950310559006211,"support the initial claims.
+391"
+CLAIMS,0.5962732919254659,"Guidelines:
+392"
+CLAIMS,0.5975155279503106,"• The answer NA means that the abstract and introduction do not include the claims
+393"
+CLAIMS,0.5987577639751552,"made in the paper.
+394"
+CLAIMS,0.6,"• The abstract and/or introduction should clearly state the claims made, including the
+395"
+CLAIMS,0.6012422360248447,"contributions made in the paper and important assumptions and limitations. A No or
+396"
+CLAIMS,0.6024844720496895,"NA answer to this question will not be perceived well by the reviewers.
+397"
+CLAIMS,0.6037267080745342,"• The claims made should match theoretical and experimental results, and reflect how
+398"
+CLAIMS,0.6049689440993788,"much the results can be expected to generalize to other settings.
+399"
+CLAIMS,0.6062111801242236,"• It is fine to include aspirational goals as motivation as long as it is clear that these goals
+400"
+CLAIMS,0.6074534161490683,"are not attained by the paper.
+401"
+LIMITATIONS,0.6086956521739131,"2. Limitations
+402"
+LIMITATIONS,0.6099378881987577,"Question: Does the paper discuss the limitations of the work performed by the authors?
+403"
+LIMITATIONS,0.6111801242236025,"Answer: [Yes]
+404"
+LIMITATIONS,0.6124223602484472,"Justification: The limitations of the work are discussed in the ""Conclusions and Discussion""
+405"
+LIMITATIONS,0.613664596273292,"section.
+406"
+LIMITATIONS,0.6149068322981367,"Guidelines:
+407"
+LIMITATIONS,0.6161490683229813,"• The answer NA means that the paper has no limitation while the answer No means that
+408"
+LIMITATIONS,0.6173913043478261,"the paper has limitations, but those are not discussed in the paper.
+409"
+LIMITATIONS,0.6186335403726708,"• The authors are encouraged to create a separate ""Limitations"" section in their paper.
+410"
+LIMITATIONS,0.6198757763975156,"• The paper should point out any strong assumptions and how robust the results are to
+411"
+LIMITATIONS,0.6211180124223602,"violations of these assumptions (e.g., independence assumptions, noiseless settings,
+412"
+LIMITATIONS,0.622360248447205,"model well-specification, asymptotic approximations only holding locally). The authors
+413"
+LIMITATIONS,0.6236024844720497,"should reflect on how these assumptions might be violated in practice and what the
+414"
+LIMITATIONS,0.6248447204968944,"implications would be.
+415"
+LIMITATIONS,0.6260869565217392,"• The authors should reflect on the scope of the claims made, e.g., if the approach was
+416"
+LIMITATIONS,0.6273291925465838,"only tested on a few datasets or with a few runs. In general, empirical results often
+417"
+LIMITATIONS,0.6285714285714286,"depend on implicit assumptions, which should be articulated.
+418"
+LIMITATIONS,0.6298136645962733,"• The authors should reflect on the factors that influence the performance of the approach.
+419"
+LIMITATIONS,0.631055900621118,"For example, a facial recognition algorithm may perform poorly when image resolution
+420"
+LIMITATIONS,0.6322981366459627,"is low or images are taken in low lighting. Or a speech-to-text system might not be
+421"
+LIMITATIONS,0.6335403726708074,"used reliably to provide closed captions for online lectures because it fails to handle
+422"
+LIMITATIONS,0.6347826086956522,"technical jargon.
+423"
+LIMITATIONS,0.6360248447204969,"• The authors should discuss the computational efficiency of the proposed algorithms
+424"
+LIMITATIONS,0.6372670807453417,"and how they scale with dataset size.
+425"
+LIMITATIONS,0.6385093167701863,"• If applicable, the authors should discuss possible limitations of their approach to
+426"
+LIMITATIONS,0.639751552795031,"address problems of privacy and fairness.
+427"
+LIMITATIONS,0.6409937888198758,"• While the authors might fear that complete honesty about limitations might be used by
+428"
+LIMITATIONS,0.6422360248447205,"reviewers as grounds for rejection, a worse outcome might be that reviewers discover
+429"
+LIMITATIONS,0.6434782608695652,"limitations that aren’t acknowledged in the paper. The authors should use their best
+430"
+LIMITATIONS,0.6447204968944099,"judgment and recognize that individual actions in favor of transparency play an impor-
+431"
+LIMITATIONS,0.6459627329192547,"tant role in developing norms that preserve the integrity of the community. Reviewers
+432"
+LIMITATIONS,0.6472049689440994,"will be specifically instructed to not penalize honesty concerning limitations.
+433"
+THEORY ASSUMPTIONS AND PROOFS,0.6484472049689441,"3. Theory Assumptions and Proofs
+434"
+THEORY ASSUMPTIONS AND PROOFS,0.6496894409937888,"Question: For each theoretical result, does the paper provide the full set of assumptions and
+435"
+THEORY ASSUMPTIONS AND PROOFS,0.6509316770186335,"a complete (and correct) proof?
+436"
+THEORY ASSUMPTIONS AND PROOFS,0.6521739130434783,"Answer: [Yes]
+437"
+THEORY ASSUMPTIONS AND PROOFS,0.653416149068323,"Justification: For each theoretical result, the paper provides a plenty of experimental support.
+438"
+THEORY ASSUMPTIONS AND PROOFS,0.6546583850931676,"Guidelines:
+439"
+THEORY ASSUMPTIONS AND PROOFS,0.6559006211180124,"• The answer NA means that the paper does not include theoretical results.
+440"
+THEORY ASSUMPTIONS AND PROOFS,0.6571428571428571,"• All the theorems, formulas, and proofs in the paper should be numbered and cross-
+441"
+THEORY ASSUMPTIONS AND PROOFS,0.6583850931677019,"referenced.
+442"
+THEORY ASSUMPTIONS AND PROOFS,0.6596273291925466,"• All assumptions should be clearly stated or referenced in the statement of any theorems.
+443"
+THEORY ASSUMPTIONS AND PROOFS,0.6608695652173913,"• The proofs can either appear in the main paper or the supplemental material, but if
+444"
+THEORY ASSUMPTIONS AND PROOFS,0.662111801242236,"they appear in the supplemental material, the authors are encouraged to provide a short
+445"
+THEORY ASSUMPTIONS AND PROOFS,0.6633540372670808,"proof sketch to provide intuition.
+446"
+THEORY ASSUMPTIONS AND PROOFS,0.6645962732919255,"• Inversely, any informal proof provided in the core of the paper should be complemented
+447"
+THEORY ASSUMPTIONS AND PROOFS,0.6658385093167701,"by formal proofs provided in appendix or supplemental material.
+448"
+THEORY ASSUMPTIONS AND PROOFS,0.6670807453416149,"• Theorems and Lemmas that the proof relies upon should be properly referenced.
+449"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6683229813664596,"4. Experimental Result Reproducibility
+450"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6695652173913044,"Question: Does the paper fully disclose all the information needed to reproduce the main ex-
+451"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6708074534161491,"perimental results of the paper to the extent that it affects the main claims and/or conclusions
+452"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6720496894409937,"of the paper (regardless of whether the code and data are provided or not)?
+453"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6732919254658385,"Answer: [Yes]
+454"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6745341614906832,"Justification: All the experimental details are clearly stated in the paper and the code will be
+455"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.675776397515528,"made publicly available.
+456"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6770186335403726,"Guidelines:
+457"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6782608695652174,"• The answer NA means that the paper does not include experiments.
+458"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6795031055900621,"• If the paper includes experiments, a No answer to this question will not be perceived
+459"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6807453416149069,"well by the reviewers: Making the paper reproducible is important, regardless of
+460"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6819875776397516,"whether the code and data are provided or not.
+461"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6832298136645962,"• If the contribution is a dataset and/or model, the authors should describe the steps taken
+462"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.684472049689441,"to make their results reproducible or verifiable.
+463"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6857142857142857,"• Depending on the contribution, reproducibility can be accomplished in various ways.
+464"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6869565217391305,"For example, if the contribution is a novel architecture, describing the architecture fully
+465"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6881987577639752,"might suffice, or if the contribution is a specific model and empirical evaluation, it may
+466"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6894409937888198,"be necessary to either make it possible for others to replicate the model with the same
+467"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6906832298136646,"dataset, or provide access to the model. In general. releasing code and data is often
+468"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6919254658385093,"one good way to accomplish this, but reproducibility can also be provided via detailed
+469"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6931677018633541,"instructions for how to replicate the results, access to a hosted model (e.g., in the case
+470"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6944099378881987,"of a large language model), releasing of a model checkpoint, or other means that are
+471"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6956521739130435,"appropriate to the research performed.
+472"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6968944099378882,"• While NeurIPS does not require releasing code, the conference does require all submis-
+473"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.698136645962733,"sions to provide some reasonable avenue for reproducibility, which may depend on the
+474"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.6993788819875777,"nature of the contribution. For example
+475"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.7006211180124223,"(a) If the contribution is primarily a new algorithm, the paper should make it clear how
+476"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.7018633540372671,"to reproduce that algorithm.
+477"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.7031055900621118,"(b) If the contribution is primarily a new model architecture, the paper should describe
+478"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.7043478260869566,"the architecture clearly and fully.
+479"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.7055900621118012,"(c) If the contribution is a new model (e.g., a large language model), then there should
+480"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.7068322981366459,"either be a way to access this model for reproducing the results or a way to reproduce
+481"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.7080745341614907,"the model (e.g., with an open-source dataset or instructions for how to construct
+482"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.7093167701863354,"the dataset).
+483"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.7105590062111802,"(d) We recognize that reproducibility may be tricky in some cases, in which case
+484"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.7118012422360248,"authors are welcome to describe the particular way they provide for reproducibility.
+485"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.7130434782608696,"In the case of closed-source models, it may be that access to the model is limited in
+486"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.7142857142857143,"some way (e.g., to registered users), but it should be possible for other researchers
+487"
+EXPERIMENTAL RESULT REPRODUCIBILITY,0.715527950310559,"to have some path to reproducing or verifying the results.
+488"
+OPEN ACCESS TO DATA AND CODE,0.7167701863354037,"5. Open access to data and code
+489"
+OPEN ACCESS TO DATA AND CODE,0.7180124223602484,"Question: Does the paper provide open access to the data and code, with sufficient instruc-
+490"
+OPEN ACCESS TO DATA AND CODE,0.7192546583850932,"tions to faithfully reproduce the main experimental results, as described in supplemental
+491"
+OPEN ACCESS TO DATA AND CODE,0.7204968944099379,"material?
+492"
+OPEN ACCESS TO DATA AND CODE,0.7217391304347827,"Answer: [Yes]
+493"
+OPEN ACCESS TO DATA AND CODE,0.7229813664596273,"Justification: All data and code will be made publicly available.
+494"
+OPEN ACCESS TO DATA AND CODE,0.724223602484472,"Guidelines:
+495"
+OPEN ACCESS TO DATA AND CODE,0.7254658385093168,"• The answer NA means that paper does not include experiments requiring code.
+496"
+OPEN ACCESS TO DATA AND CODE,0.7267080745341615,"• Please see the NeurIPS code and data submission guidelines (https://nips.cc/
+497"
+OPEN ACCESS TO DATA AND CODE,0.7279503105590062,"public/guides/CodeSubmissionPolicy) for more details.
+498"
+OPEN ACCESS TO DATA AND CODE,0.7291925465838509,"• While we encourage the release of code and data, we understand that this might not be
+499"
+OPEN ACCESS TO DATA AND CODE,0.7304347826086957,"possible, so “No” is an acceptable answer. Papers cannot be rejected simply for not
+500"
+OPEN ACCESS TO DATA AND CODE,0.7316770186335404,"including code, unless this is central to the contribution (e.g., for a new open-source
+501"
+OPEN ACCESS TO DATA AND CODE,0.7329192546583851,"benchmark).
+502"
+OPEN ACCESS TO DATA AND CODE,0.7341614906832298,"• The instructions should contain the exact command and environment needed to run to
+503"
+OPEN ACCESS TO DATA AND CODE,0.7354037267080745,"reproduce the results. See the NeurIPS code and data submission guidelines (https:
+504"
+OPEN ACCESS TO DATA AND CODE,0.7366459627329193,"//nips.cc/public/guides/CodeSubmissionPolicy) for more details.
+505"
+OPEN ACCESS TO DATA AND CODE,0.737888198757764,"• The authors should provide instructions on data access and preparation, including how
+506"
+OPEN ACCESS TO DATA AND CODE,0.7391304347826086,"to access the raw data, preprocessed data, intermediate data, and generated data, etc.
+507"
+OPEN ACCESS TO DATA AND CODE,0.7403726708074534,"• The authors should provide scripts to reproduce all experimental results for the new
+508"
+OPEN ACCESS TO DATA AND CODE,0.7416149068322981,"proposed method and baselines. If only a subset of experiments are reproducible, they
+509"
+OPEN ACCESS TO DATA AND CODE,0.7428571428571429,"should state which ones are omitted from the script and why.
+510"
+OPEN ACCESS TO DATA AND CODE,0.7440993788819876,"• At submission time, to preserve anonymity, the authors should release anonymized
+511"
+OPEN ACCESS TO DATA AND CODE,0.7453416149068323,"versions (if applicable).
+512"
+OPEN ACCESS TO DATA AND CODE,0.746583850931677,"• Providing as much information as possible in supplemental material (appended to the
+513"
+OPEN ACCESS TO DATA AND CODE,0.7478260869565218,"paper) is recommended, but including URLs to data and code is permitted.
+514"
+OPEN ACCESS TO DATA AND CODE,0.7490683229813665,"6. Experimental Setting/Details
+515"
+OPEN ACCESS TO DATA AND CODE,0.7503105590062111,"Question: Does the paper specify all the training and test details (e.g., data splits, hyper-
+516"
+OPEN ACCESS TO DATA AND CODE,0.7515527950310559,"parameters, how they were chosen, type of optimizer, etc.) necessary to understand the
+517"
+OPEN ACCESS TO DATA AND CODE,0.7527950310559006,"results?
+518"
+OPEN ACCESS TO DATA AND CODE,0.7540372670807454,"Answer: [Yes]
+519"
+OPEN ACCESS TO DATA AND CODE,0.7552795031055901,"Justification: Please refer to the ""Implementation Detail"" section in the main paper.
+520"
+OPEN ACCESS TO DATA AND CODE,0.7565217391304347,"Guidelines:
+521"
+OPEN ACCESS TO DATA AND CODE,0.7577639751552795,"• The answer NA means that the paper does not include experiments.
+522"
+OPEN ACCESS TO DATA AND CODE,0.7590062111801242,"• The experimental setting should be presented in the core of the paper to a level of detail
+523"
+OPEN ACCESS TO DATA AND CODE,0.760248447204969,"that is necessary to appreciate the results and make sense of them.
+524"
+OPEN ACCESS TO DATA AND CODE,0.7614906832298136,"• The full details can be provided either with the code, in appendix, or as supplemental
+525"
+OPEN ACCESS TO DATA AND CODE,0.7627329192546584,"material.
+526"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7639751552795031,"7. Experiment Statistical Significance
+527"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7652173913043478,"Question: Does the paper report error bars suitably and correctly defined or other appropriate
+528"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7664596273291926,"information about the statistical significance of the experiments?
+529"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7677018633540372,"Answer: [No]
+530"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.768944099378882,"Justification: We evaluated on a diverse set of 30 celebrities, each with around 50 prompts,
+531"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7701863354037267,"which is sufficient to reflect the model’s performance.
+532"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7714285714285715,"Guidelines:
+533"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7726708074534161,"• The answer NA means that the paper does not include experiments.
+534"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7739130434782608,"• The authors should answer ""Yes"" if the results are accompanied by error bars, confi-
+535"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7751552795031056,"dence intervals, or statistical significance tests, at least for the experiments that support
+536"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7763975155279503,"the main claims of the paper.
+537"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7776397515527951,"• The factors of variability that the error bars are capturing should be clearly stated (for
+538"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7788819875776397,"example, train/test split, initialization, random drawing of some parameter, or overall
+539"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7801242236024845,"run with given experimental conditions).
+540"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7813664596273292,"• The method for calculating the error bars should be explained (closed form formula,
+541"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.782608695652174,"call to a library function, bootstrap, etc.)
+542"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7838509316770186,"• The assumptions made should be given (e.g., Normally distributed errors).
+543"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7850931677018633,"• It should be clear whether the error bar is the standard deviation or the standard error
+544"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7863354037267081,"of the mean.
+545"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7875776397515528,"• It is OK to report 1-sigma error bars, but one should state it. The authors should
+546"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7888198757763976,"preferably report a 2-sigma error bar than state that they have a 96% CI, if the hypothesis
+547"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7900621118012422,"of Normality of errors is not verified.
+548"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7913043478260869,"• For asymmetric distributions, the authors should be careful not to show in tables or
+549"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7925465838509317,"figures symmetric error bars that would yield results that are out of range (e.g. negative
+550"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7937888198757764,"error rates).
+551"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7950310559006211,"• If error bars are reported in tables or plots, The authors should explain in the text how
+552"
+EXPERIMENT STATISTICAL SIGNIFICANCE,0.7962732919254658,"they were calculated and reference the corresponding figures or tables in the text.
+553"
+EXPERIMENTS COMPUTE RESOURCES,0.7975155279503106,"8. Experiments Compute Resources
+554"
+EXPERIMENTS COMPUTE RESOURCES,0.7987577639751553,"Question: For each experiment, does the paper provide sufficient information on the com-
+555"
+EXPERIMENTS COMPUTE RESOURCES,0.8,"puter resources (type of compute workers, memory, time of execution) needed to reproduce
+556"
+EXPERIMENTS COMPUTE RESOURCES,0.8012422360248447,"the experiments?
+557"
+EXPERIMENTS COMPUTE RESOURCES,0.8024844720496894,"Answer: [Yes]
+558"
+EXPERIMENTS COMPUTE RESOURCES,0.8037267080745342,"Justification: We use 2 A6000 GPUs, each with 48G of memory.
+559"
+EXPERIMENTS COMPUTE RESOURCES,0.8049689440993789,"Guidelines:
+560"
+EXPERIMENTS COMPUTE RESOURCES,0.8062111801242235,"• The answer NA means that the paper does not include experiments.
+561"
+EXPERIMENTS COMPUTE RESOURCES,0.8074534161490683,"• The paper should indicate the type of compute workers CPU or GPU, internal cluster,
+562"
+EXPERIMENTS COMPUTE RESOURCES,0.808695652173913,"or cloud provider, including relevant memory and storage.
+563"
+EXPERIMENTS COMPUTE RESOURCES,0.8099378881987578,"• The paper should provide the amount of compute required for each of the individual
+564"
+EXPERIMENTS COMPUTE RESOURCES,0.8111801242236025,"experimental runs as well as estimate the total compute.
+565"
+EXPERIMENTS COMPUTE RESOURCES,0.8124223602484472,"• The paper should disclose whether the full research project required more compute
+566"
+EXPERIMENTS COMPUTE RESOURCES,0.8136645962732919,"than the experiments reported in the paper (e.g., preliminary or failed experiments that
+567"
+EXPERIMENTS COMPUTE RESOURCES,0.8149068322981367,"didn’t make it into the paper).
+568"
+CODE OF ETHICS,0.8161490683229814,"9. Code Of Ethics
+569"
+CODE OF ETHICS,0.8173913043478261,"Question: Does the research conducted in the paper conform, in every respect, with the
+570"
+CODE OF ETHICS,0.8186335403726708,"NeurIPS Code of Ethics https://neurips.cc/public/EthicsGuidelines?
+571"
+CODE OF ETHICS,0.8198757763975155,"Answer: [Yes]
+572"
+CODE OF ETHICS,0.8211180124223603,"Justification: The research conducted in the paper conforms in every respect with the
+573"
+CODE OF ETHICS,0.822360248447205,"NeurIPS Code of Ethics.
+574"
+CODE OF ETHICS,0.8236024844720496,"Guidelines:
+575"
+CODE OF ETHICS,0.8248447204968944,"• The answer NA means that the authors have not reviewed the NeurIPS Code of Ethics.
+576"
+CODE OF ETHICS,0.8260869565217391,"• If the authors answer No, they should explain the special circumstances that require a
+577"
+CODE OF ETHICS,0.8273291925465839,"deviation from the Code of Ethics.
+578"
+CODE OF ETHICS,0.8285714285714286,"• The authors should make sure to preserve anonymity (e.g., if there is a special consid-
+579"
+CODE OF ETHICS,0.8298136645962733,"eration due to laws or regulations in their jurisdiction).
+580"
+BROADER IMPACTS,0.831055900621118,"10. Broader Impacts
+581"
+BROADER IMPACTS,0.8322981366459627,"Question: Does the paper discuss both potential positive societal impacts and negative
+582"
+BROADER IMPACTS,0.8335403726708075,"societal impacts of the work performed?
+583"
+BROADER IMPACTS,0.8347826086956521,"Answer: [Yes]
+584"
+BROADER IMPACTS,0.8360248447204969,"Justification: We discussed the positive impacts, including its potential use in entertainment
+585"
+BROADER IMPACTS,0.8372670807453416,"and art, video games and virtual reality. Additionally, its potential use for educational
+586"
+BROADER IMPACTS,0.8385093167701864,"purposes in historical recreation, such as recreating faces of historical figures or enhancing
+587"
+BROADER IMPACTS,0.8397515527950311,"documentaries, bringing history to life. We also pointed out potential negative impacts,
+588"
+BROADER IMPACTS,0.8409937888198757,"including privacy violations. There is a risk of creating and using images of individuals with-
+589"
+BROADER IMPACTS,0.8422360248447205,"out their consent. Moreover, misinformation and deepfakes are among the most concerning
+590"
+BROADER IMPACTS,0.8434782608695652,"impacts, with the creation of deepfake videos that could be used to spread misinformation
+591"
+BROADER IMPACTS,0.84472049689441,"and manipulate public opinion. We also highlighted security concerns, as the technology
+592"
+BROADER IMPACTS,0.8459627329192546,"could be used to bypass facial recognition systems for fraudulent purposes, posing significant
+593"
+BROADER IMPACTS,0.8472049689440994,"security challenges. The authors will join in the effort for possible mitigation by providing
+594"
+BROADER IMPACTS,0.8484472049689441,"gated release of models.
+595"
+BROADER IMPACTS,0.8496894409937888,"Guidelines:
+596"
+BROADER IMPACTS,0.8509316770186336,"• The answer NA means that there is no societal impact of the work performed.
+597"
+BROADER IMPACTS,0.8521739130434782,"• If the authors answer NA or No, they should explain why their work has no societal
+598"
+BROADER IMPACTS,0.853416149068323,"impact or why the paper does not address societal impact.
+599"
+BROADER IMPACTS,0.8546583850931677,"• Examples of negative societal impacts include potential malicious or unintended uses
+600"
+BROADER IMPACTS,0.8559006211180125,"(e.g., disinformation, generating fake profiles, surveillance), fairness considerations
+601"
+BROADER IMPACTS,0.8571428571428571,"(e.g., deployment of technologies that could make decisions that unfairly impact specific
+602"
+BROADER IMPACTS,0.8583850931677018,"groups), privacy considerations, and security considerations.
+603"
+BROADER IMPACTS,0.8596273291925466,"• The conference expects that many papers will be foundational research and not tied
+604"
+BROADER IMPACTS,0.8608695652173913,"to particular applications, let alone deployments. However, if there is a direct path to
+605"
+BROADER IMPACTS,0.8621118012422361,"any negative applications, the authors should point it out. For example, it is legitimate
+606"
+BROADER IMPACTS,0.8633540372670807,"to point out that an improvement in the quality of generative models could be used to
+607"
+BROADER IMPACTS,0.8645962732919255,"generate deepfakes for disinformation. On the other hand, it is not needed to point out
+608"
+BROADER IMPACTS,0.8658385093167702,"that a generic algorithm for optimizing neural networks could enable people to train
+609"
+BROADER IMPACTS,0.867080745341615,"models that generate Deepfakes faster.
+610"
+BROADER IMPACTS,0.8683229813664596,"• The authors should consider possible harms that could arise when the technology is
+611"
+BROADER IMPACTS,0.8695652173913043,"being used as intended and functioning correctly, harms that could arise when the
+612"
+BROADER IMPACTS,0.8708074534161491,"technology is being used as intended but gives incorrect results, and harms following
+613"
+BROADER IMPACTS,0.8720496894409938,"from (intentional or unintentional) misuse of the technology.
+614"
+BROADER IMPACTS,0.8732919254658386,"• If there are negative societal impacts, the authors could also discuss possible mitigation
+615"
+BROADER IMPACTS,0.8745341614906832,"strategies (e.g., gated release of models, providing defenses in addition to attacks,
+616"
+BROADER IMPACTS,0.8757763975155279,"mechanisms for monitoring misuse, mechanisms to monitor how a system learns from
+617"
+BROADER IMPACTS,0.8770186335403727,"feedback over time, improving the efficiency and accessibility of ML).
+618"
+SAFEGUARDS,0.8782608695652174,"11. Safeguards
+619"
+SAFEGUARDS,0.8795031055900621,"Question: Does the paper describe safeguards that have been put in place for responsible
+620"
+SAFEGUARDS,0.8807453416149068,"release of data or models that have a high risk for misuse (e.g., pretrained language models,
+621"
+SAFEGUARDS,0.8819875776397516,"image generators, or scraped datasets)?
+622"
+SAFEGUARDS,0.8832298136645963,"Answer: [Yes]
+623"
+SAFEGUARDS,0.884472049689441,"Justification: The work describes basic safeguards implemented for the responsible release
+624"
+SAFEGUARDS,0.8857142857142857,"of models, particularly focusing on preventing misuse. We have incorporated filters that
+625"
+SAFEGUARDS,0.8869565217391304,"specifically exclude NSFW (Not Safe for Work) keywords in the generation prompts, such
+626"
+SAFEGUARDS,0.8881987577639752,"as ’nude,’ ’naked,’ ’nsfw,’ ’topless,’ and ’bare breasts.’ This approach helps mitigate the risk
+627"
+SAFEGUARDS,0.8894409937888199,"of generating inappropriate or sensitive content.""
+628"
+SAFEGUARDS,0.8906832298136645,"Guidelines:
+629"
+SAFEGUARDS,0.8919254658385093,"• The answer NA means that the paper poses no such risks.
+630"
+SAFEGUARDS,0.893167701863354,"• Released models that have a high risk for misuse or dual-use should be released with
+631"
+SAFEGUARDS,0.8944099378881988,"necessary safeguards to allow for controlled use of the model, for example by requiring
+632"
+SAFEGUARDS,0.8956521739130435,"that users adhere to usage guidelines or restrictions to access the model or implementing
+633"
+SAFEGUARDS,0.8968944099378882,"safety filters.
+634"
+SAFEGUARDS,0.8981366459627329,"• Datasets that have been scraped from the Internet could pose safety risks. The authors
+635"
+SAFEGUARDS,0.8993788819875776,"should describe how they avoided releasing unsafe images.
+636"
+SAFEGUARDS,0.9006211180124224,"• We recognize that providing effective safeguards is challenging, and many papers do
+637"
+SAFEGUARDS,0.901863354037267,"not require this, but we encourage authors to take this into account and make a best
+638"
+SAFEGUARDS,0.9031055900621118,"faith effort.
+639"
+LICENSES FOR EXISTING ASSETS,0.9043478260869565,"12. Licenses for existing assets
+640"
+LICENSES FOR EXISTING ASSETS,0.9055900621118013,"Question: Are the creators or original owners of assets (e.g., code, data, models), used in
+641"
+LICENSES FOR EXISTING ASSETS,0.906832298136646,"the paper, properly credited and are the license and terms of use explicitly mentioned and
+642"
+LICENSES FOR EXISTING ASSETS,0.9080745341614906,"properly respected?
+643"
+LICENSES FOR EXISTING ASSETS,0.9093167701863354,"Answer: [Yes]
+644"
+LICENSES FOR EXISTING ASSETS,0.9105590062111801,"Justification: In our paper, we have ensured proper attribution for all assets used, such as
+645"
+LICENSES FOR EXISTING ASSETS,0.9118012422360249,"code, data, and models, by citing the related papers and sources from which these assets
+646"
+LICENSES FOR EXISTING ASSETS,0.9130434782608695,"were derived. Additionally, we have adhered to the licensing terms and conditions of each
+647"
+LICENSES FOR EXISTING ASSETS,0.9142857142857143,"asset, as detailed in the respective citations.
+648"
+LICENSES FOR EXISTING ASSETS,0.915527950310559,"Guidelines:
+649"
+LICENSES FOR EXISTING ASSETS,0.9167701863354037,"• The answer NA means that the paper does not use existing assets.
+650"
+LICENSES FOR EXISTING ASSETS,0.9180124223602485,"• The authors should cite the original paper that produced the code package or dataset.
+651"
+LICENSES FOR EXISTING ASSETS,0.9192546583850931,"• The authors should state which version of the asset is used and, if possible, include a
+652"
+LICENSES FOR EXISTING ASSETS,0.9204968944099379,"URL.
+653"
+LICENSES FOR EXISTING ASSETS,0.9217391304347826,"• The name of the license (e.g., CC-BY 4.0) should be included for each asset.
+654"
+LICENSES FOR EXISTING ASSETS,0.9229813664596274,"• For scraped data from a particular source (e.g., website), the copyright and terms of
+655"
+LICENSES FOR EXISTING ASSETS,0.924223602484472,"service of that source should be provided.
+656"
+LICENSES FOR EXISTING ASSETS,0.9254658385093167,"• If assets are released, the license, copyright information, and terms of use in the
+657"
+LICENSES FOR EXISTING ASSETS,0.9267080745341615,"package should be provided. For popular datasets, paperswithcode.com/datasets
+658"
+LICENSES FOR EXISTING ASSETS,0.9279503105590062,"has curated licenses for some datasets. Their licensing guide can help determine the
+659"
+LICENSES FOR EXISTING ASSETS,0.929192546583851,"license of a dataset.
+660"
+LICENSES FOR EXISTING ASSETS,0.9304347826086956,"• For existing datasets that are re-packaged, both the original license and the license of
+661"
+LICENSES FOR EXISTING ASSETS,0.9316770186335404,"the derived asset (if it has changed) should be provided.
+662"
+LICENSES FOR EXISTING ASSETS,0.9329192546583851,"• If this information is not available online, the authors are encouraged to reach out to
+663"
+LICENSES FOR EXISTING ASSETS,0.9341614906832298,"the asset’s creators.
+664"
+NEW ASSETS,0.9354037267080745,"13. New Assets
+665"
+NEW ASSETS,0.9366459627329192,"Question: Are new assets introduced in the paper well documented and is the documentation
+666"
+NEW ASSETS,0.937888198757764,"provided alongside the assets?
+667"
+NEW ASSETS,0.9391304347826087,"Answer: [Yes]
+668"
+NEW ASSETS,0.9403726708074535,"Justification: New assets introduced in the paper are well documented. The code is accompa-
+669"
+NEW ASSETS,0.9416149068322981,"nied by usage documentation and is embedded with detailed comments to ensure clarity and
+670"
+NEW ASSETS,0.9428571428571428,"ease of use for future researchers. Additionally, videos are provided alongside a description
+671"
+NEW ASSETS,0.9440993788819876,"of the files and a list of prompts used for their generation, which enhances transparency and
+672"
+NEW ASSETS,0.9453416149068323,"replicability of the results.
+673"
+NEW ASSETS,0.9465838509316771,"Guidelines:
+674"
+NEW ASSETS,0.9478260869565217,"• The answer NA means that the paper does not release new assets.
+675"
+NEW ASSETS,0.9490683229813665,"• Researchers should communicate the details of the dataset/code/model as part of their
+676"
+NEW ASSETS,0.9503105590062112,"submissions via structured templates. This includes details about training, license,
+677"
+NEW ASSETS,0.9515527950310559,"limitations, etc.
+678"
+NEW ASSETS,0.9527950310559006,"• The paper should discuss whether and how consent was obtained from people whose
+679"
+NEW ASSETS,0.9540372670807453,"asset is used.
+680"
+NEW ASSETS,0.9552795031055901,"• At submission time, remember to anonymize your assets (if applicable). You can either
+681"
+NEW ASSETS,0.9565217391304348,"create an anonymized URL or include an anonymized zip file.
+682"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9577639751552796,"14. Crowdsourcing and Research with Human Subjects
+683"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9590062111801242,"Question: For crowdsourcing experiments and research with human subjects, does the paper
+684"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9602484472049689,"include the full text of instructions given to participants and screenshots, if applicable, as
+685"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9614906832298137,"well as details about compensation (if any)?
+686"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9627329192546584,"Answer: [NA]
+687"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9639751552795031,"Justification: The paper does not involve crowdsourcing nor research with human subjects.
+688"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9652173913043478,"Guidelines:
+689"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9664596273291925,"• The answer NA means that the paper does not involve crowdsourcing nor research with
+690"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9677018633540373,"human subjects.
+691"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.968944099378882,"• Including this information in the supplemental material is fine, but if the main contribu-
+692"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9701863354037267,"tion of the paper involves human subjects, then as much detail as possible should be
+693"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9714285714285714,"included in the main paper.
+694"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9726708074534162,"• According to the NeurIPS Code of Ethics, workers involved in data collection, curation,
+695"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9739130434782609,"or other labor should be paid at least the minimum wage in the country of the data
+696"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9751552795031055,"collector.
+697"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9763975155279503,"15. Institutional Review Board (IRB) Approvals or Equivalent for Research with Human
+698"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.977639751552795,"Subjects
+699"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9788819875776398,"Question: Does the paper describe potential risks incurred by study participants, whether
+700"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9801242236024845,"such risks were disclosed to the subjects, and whether Institutional Review Board (IRB)
+701"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9813664596273292,"approvals (or an equivalent approval/review based on the requirements of your country or
+702"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9826086956521739,"institution) were obtained?
+703"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9838509316770186,"Answer: [NA]
+704"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9850931677018634,"Justification: The paper does not involve crowdsourcing nor research with human subjects.
+705"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.986335403726708,"Guidelines:
+706"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9875776397515528,"• The answer NA means that the paper does not involve crowdsourcing nor research with
+707"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9888198757763975,"human subjects.
+708"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9900621118012423,"• Depending on the country in which research is conducted, IRB approval (or equivalent)
+709"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.991304347826087,"may be required for any human subjects research. If you obtained IRB approval, you
+710"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9925465838509316,"should clearly state this in the paper.
+711"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9937888198757764,"• We recognize that the procedures for this may vary significantly between institutions
+712"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9950310559006211,"and locations, and we expect authors to adhere to the NeurIPS Code of Ethics and the
+713"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9962732919254659,"guidelines for their institution.
+714"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9975155279503105,"• For initial submissions, do not include any information that would break anonymity (if
+715"
+CROWDSOURCING AND RESEARCH WITH HUMAN SUBJECTS,0.9987577639751553,"applicable), such as the institution conducting the review.
+716"

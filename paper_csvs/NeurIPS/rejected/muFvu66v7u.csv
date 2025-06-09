@@ -1,0 +1,1168 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,Abstract
+ABSTRACT,0.001890359168241966,"State-of-the-art approaches for training Differentially Private (DP) Deep Neural
+1"
+ABSTRACT,0.003780718336483932,"Networks (DNN) faces difficulties to estimate tight bounds on the sensitivity of
+2"
+ABSTRACT,0.005671077504725898,"the network’s layers, and instead rely on a process of per-sample gradient clipping.
+3"
+ABSTRACT,0.007561436672967864,"This clipping process not only biases the direction of gradients but also proves
+4"
+ABSTRACT,0.00945179584120983,"costly both in memory consumption and in computation. To provide sensitivity
+5"
+ABSTRACT,0.011342155009451797,"bounds and bypass the drawbacks of the clipping process, our theoretical analysis
+6"
+ABSTRACT,0.013232514177693762,"of Lipschitz constrained networks reveals an unexplored link between the Lipschitz
+7"
+ABSTRACT,0.015122873345935728,"constant with respect to their input and the one with respect to their parameters.
+8"
+ABSTRACT,0.017013232514177693,"By bounding the Lipschitz constant of each layer with respect to its parameters
+9"
+ABSTRACT,0.01890359168241966,"we guarantee DP training of these networks. This analysis not only allows the
+10"
+ABSTRACT,0.020793950850661626,"computation of the aforementioned sensitivities at scale but also provides leads
+11"
+ABSTRACT,0.022684310018903593,"on to how maximize the gradient-to-noise ratio for fixed privacy guarantees. To
+12"
+ABSTRACT,0.024574669187145556,"facilitate the application of Lipschitz networks and foster robust and certifiable
+13"
+ABSTRACT,0.026465028355387523,"learning under privacy guarantees, we provide a Python package that implements
+14"
+ABSTRACT,0.02835538752362949,"building blocks allowing the construction and private training of such networks.
+15"
+INTRODUCTION,0.030245746691871456,"1
+Introduction
+16"
+INTRODUCTION,0.03213610586011342,"Machine learning relies more than ever on foundational models, and such practices raise questions
+17"
+INTRODUCTION,0.034026465028355386,"about privacy. Differential privacy allows to develop methods for training models that preserve
+18"
+INTRODUCTION,0.035916824196597356,"the privacy of individual data points in the training set. The field seeks to enable deep learning on
+19"
+INTRODUCTION,0.03780718336483932,"sensitive data, while ensuring that models do not inadvertently memorize or reveal specific details
+20"
+INTRODUCTION,0.03969754253308128,"about individual samples in their weights. This involves incorporating privacy-preserving mechanisms
+21"
+INTRODUCTION,0.04158790170132325,"into the design of deep learning architectures and training algorithms, whose most popular example
+22"
+INTRODUCTION,0.043478260869565216,"is Differentially Private Stochastic Gradient Descent (DP-SGD) [1]. One main drawback of classical
+23"
+INTRODUCTION,0.045368620037807186,"DP-SGD methods is that they require costly per-sample backward processing and gradient clipping.
+24"
+INTRODUCTION,0.04725897920604915,"In this paper, we offer a new method that unlocks fast differentially private training through the use
+25"
+INTRODUCTION,0.04914933837429111,"of Lipschitz constrained neural networks. Additionally, this method offers new opportunities for
+26"
+INTRODUCTION,0.05103969754253308,"practitioners that wish to easily ""DP-fy"" [2] the training procedure of a deep neural network.
+27"
+INTRODUCTION,0.052930056710775046,"Differential privacy fundamentals. Informally, differential privacy is a definition that quantifies how
+28"
+INTRODUCTION,0.054820415879017016,"much the change of a single sample in a dataset affects the range of a stochastic function (here the DP
+29"
+INTRODUCTION,0.05671077504725898,"training), called mechanism in this context. This quantity can be bounded in an inequality involving
+30"
+INTRODUCTION,0.05860113421550094,"two parameters ϵ and δ. A mechanism fulfilling such inequality is said (ϵ, δ)-DP (see Definition 1).
+31"
+INTRODUCTION,0.06049149338374291,"This definition is universally accepted as a strong guarantee against privacy leakages under various
+32"
+INTRODUCTION,0.062381852551984876,"scenarii, including data aggregation or post-processing [3]. A popular rule of thumb suggests using
+33"
+INTRODUCTION,0.06427221172022685,ϵ ≤10 and δ < 1
+INTRODUCTION,0.0661625708884688,"N with N the number of records [2] for mild guarantees. In practice, most classic
+34"
+INTRODUCTION,0.06805293005671077,"algorithmic procedures (called queries in this context) do not readily fulfill the definition for useful
+35"
+INTRODUCTION,0.06994328922495274,"values of (ϵ, δ), in particular the deterministic ones: randomization is mandatory. This randomization
+36"
+INTRODUCTION,0.07183364839319471,"model = DP_Sequential( # step 1: use
+DP_Sequential to build a model
+["
+INTRODUCTION,0.07372400756143667,"# step 2: add
+Lipschitz
+layers of known
+sensitivity
+DP_BoundedInput(input_shape =(28 , 28, 1), upper_bound =20.) ,
+DP_SpectralConv2D (filters =16, kernel_size =3, use_bias=False),
+DP_GroupSort (2),
+DP_Flatten (),
+DP_SpectralDense (10) ,
+],
+noise_multiplier = 1.2, # step 3: choose DP parameters
+sampling_probability = batch_size / dataset_size ,
+) # step 4: compile
+the model , and choose any first
+order
+optimizer
+model.compile(loss= DP_Crossentropy (), optimizer=Adam (1e-3))
+model.fit( # step 5: train the model and
+measure
+the DP guarantees
+train_dataset , validation_data =val_dataset ,
+epochs=num_epochs , callbacks =[ DP_Accountant ()]
+)"
+INTRODUCTION,0.07561436672967864,"Figure 1: An example of usage of our framework, illustrating how to create a small Lipschitz VGG
+and how to train it under (ϵ, δ)-DP guarantees while reporting (ϵ, δ) values."
+INTRODUCTION,0.07750472589792061,"comes at the expense of “utility”, i.e the usefulness of the output for downstream tasks [4]. The goal
+37"
+INTRODUCTION,0.07939508506616257,"is then to strike a balance between privacy and utility, ensuring that the released information remains
+38"
+INTRODUCTION,0.08128544423440454,"useful and informative for the intended purpose while minimizing the risk of privacy breaches. The
+39"
+INTRODUCTION,0.0831758034026465,"privacy/utility trade-off yields a Pareto front, materialized by plotting ϵ against a measurement of
+40"
+INTRODUCTION,0.08506616257088846,"utility, such as validation accuracy for a classification task.
+41"
+INTRODUCTION,0.08695652173913043,"Private gradient descent. The SGD algorithm consists of a sequence of queries that (i) take the
+42"
+INTRODUCTION,0.0888468809073724,"dataset in input, sample a minibatch from it, and return the gradient of the loss evaluated on the
+43"
+INTRODUCTION,0.09073724007561437,"minibatch, before (ii) performing a descent step following the gradient direction. The sensitivity (see
+44"
+INTRODUCTION,0.09262759924385633,"Definition 2) of SGD queries is proportional to the norm of the per-sample gradients. DP-SGD turns
+45"
+INTRODUCTION,0.0945179584120983,"each query into a Gaussian mechanism by perturbing the gradients with a noise ζ. The upper bound
+46"
+INTRODUCTION,0.09640831758034027,"on gradient norms is generally unknown in advance, which leads practitioners to clip it to C > 0, in
+47"
+INTRODUCTION,0.09829867674858223,"order to bound the sensitivity manually. This is problematic for several reasons: 1. Hyper-parameter
+48"
+INTRODUCTION,0.1001890359168242,"search on the broad-range clipping value C is required to train models with good privacy/utility trade-
+49"
+INTRODUCTION,0.10207939508506617,"offs [5], 2. The computation of per-sample gradients is expensive: DP-SGD is usually slower and
+50"
+INTRODUCTION,0.10396975425330812,"consumes more memory than vanilla SGD, in particular for the large batch sizes often used in private
+51"
+INTRODUCTION,0.10586011342155009,"training [6], 3. Clipping the per-sample gradients biases their average [7]. This is problematic as the
+52"
+INTRODUCTION,0.10775047258979206,"average direction is mainly driven by misclassified examples, that carry the most useful information
+53"
+INTRODUCTION,0.10964083175803403,"for future progress.
+54"
+INTRODUCTION,0.11153119092627599,"An unexplored approach: Lipschitz constrained networks. We propose to train neural networks
+55"
+INTRODUCTION,0.11342155009451796,"for which the parameter-wise gradients are provably and analytically bounded during the whole
+56"
+INTRODUCTION,0.11531190926275993,"training procedure, in order to get rid of the clipping process. This allows for rapid training of models
+57"
+INTRODUCTION,0.11720226843100189,"without a need for tedious hyper-parameter optimization.
+58"
+INTRODUCTION,0.11909262759924386,"The main reason why this approach has not been experimented much in the past is that upper bounding
+59"
+INTRODUCTION,0.12098298676748583,"the gradient of neural networks is often intractable. However, by leveraging the literature of Lipschitz
+60"
+INTRODUCTION,0.12287334593572778,"constrained networks [8], we show that these networks allows to estimate their gradient bound.
+61"
+INTRODUCTION,0.12476370510396975,"This yields tight bounds on the sensitivity of SGD steps, making their transformation into Gaussian
+62"
+INTRODUCTION,0.1266540642722117,"mechanisms inexpensive - hence the name Clipless DP-SGD.
+63"
+INTRODUCTION,0.1285444234404537,"Informally, the Lipschitz constant quantifies the rate at which the function’s output varies with respect
+64"
+INTRODUCTION,0.13043478260869565,"to changes in its input. A Lipschitz constrained network is one in which its weights and activations
+65"
+INTRODUCTION,0.1323251417769376,"are constrained such that it can only represent l-Lipschitz functions. In this work, we will focus our
+66"
+INTRODUCTION,0.1342155009451796,"attention on feed-forward networks (refer to Definition 3). Note that the most common architectures,
+67"
+INTRODUCTION,0.13610586011342155,"such as Convolutional Neural Networks (CNNs), Fully Connected Networks (FCNs), Residual
+68"
+INTRODUCTION,0.13799621928166353,"Networks (ResNets), or patch-based classifiers (like MLP-Mixers), all fall under the category of
+69"
+INTRODUCTION,0.13988657844990549,"feed-forward networks. We will also tackle the particular case of Gradient Norm Preserving (GNP)
+70"
+INTRODUCTION,0.14177693761814744,"networks, a subset of Lipschitz networks that enjoy tighter bounds (see appendix).
+71"
+INTRODUCTION,0.14366729678638943,"Contributions
+72"
+INTRODUCTION,0.14555765595463138,"While the properties of Lipschitz constrained networks regarding their inputs are well explored, the
+73"
+INTRODUCTION,0.14744801512287334,"properties with respect to its parameters remain non-trivial. This work provides a first step to fill this
+74"
+INTRODUCTION,0.14933837429111532,"gap: our analysis shows that under appropriate architectural constraints, a l-Lipschitz network has a
+75"
+INTRODUCTION,0.15122873345935728,"tractable, finite Lipschitz constant with respect to its parameters. We prove that this Lipschitz constant
+76"
+INTRODUCTION,0.15311909262759923,"allows for easy estimation of the sensitivity of the gradient computation queries. The prerequisite and
+77"
+INTRODUCTION,0.15500945179584122,"details of the method to compute the sensitivities are explained in Section 2.
+78"
+INTRODUCTION,0.15689981096408318,"Our contributions are the following:
+79"
+INTRODUCTION,0.15879017013232513,"1. We extend the field of applications of Lipschitz constrained neural networks. So far the
+80"
+INTRODUCTION,0.16068052930056712,"literature focused on Lipschitzness with respect to the inputs: we extend the framework to
+81"
+INTRODUCTION,0.16257088846880907,"compute the Lipschitzness with respect to the parameters. This is exposed in Section 2.
+82"
+WE PROPOSE A GENERAL FRAMEWORK TO HANDLE LAYER GRADIENT STEPS AS GAUSSIAN MECHANISMS,0.16446124763705103,"2. We propose a general framework to handle layer gradient steps as Gaussian mechanisms
+83"
+WE PROPOSE A GENERAL FRAMEWORK TO HANDLE LAYER GRADIENT STEPS AS GAUSSIAN MECHANISMS,0.166351606805293,"that depends on the loss and the model structure. Our framework covers widely used
+84"
+WE PROPOSE A GENERAL FRAMEWORK TO HANDLE LAYER GRADIENT STEPS AS GAUSSIAN MECHANISMS,0.16824196597353497,"architectures, including VGG and ResNets.
+85"
+WE SHOW THAT SGD TRAINING OF DEEP NEURAL NETWORKS CAN BE ACHIEVED WITHOUT GRADIENT,0.17013232514177692,"3. We show that SGD training of deep neural networks can be achieved without gradient
+86"
+WE SHOW THAT SGD TRAINING OF DEEP NEURAL NETWORKS CAN BE ACHIEVED WITHOUT GRADIENT,0.1720226843100189,"clipping using Lipschitz layers. This allows the use of larger networks and larger batch
+87"
+WE SHOW THAT SGD TRAINING OF DEEP NEURAL NETWORKS CAN BE ACHIEVED WITHOUT GRADIENT,0.17391304347826086,"sizes, as illustrated by our experiments in Section 4.
+88"
+WE SHOW THAT SGD TRAINING OF DEEP NEURAL NETWORKS CAN BE ACHIEVED WITHOUT GRADIENT,0.17580340264650285,"4. We establish connections between Gradient Norm Preserving (GNP) networks and im-
+89"
+WE SHOW THAT SGD TRAINING OF DEEP NEURAL NETWORKS CAN BE ACHIEVED WITHOUT GRADIENT,0.1776937618147448,"proved privacy/utility trade-offs (Section 3.1).
+90"
+WE SHOW THAT SGD TRAINING OF DEEP NEURAL NETWORKS CAN BE ACHIEVED WITHOUT GRADIENT,0.17958412098298676,"5. Finally, a Python package1 companions the project, with pre-computed Lipschitz constant
+91"
+WE SHOW THAT SGD TRAINING OF DEEP NEURAL NETWORKS CAN BE ACHIEVED WITHOUT GRADIENT,0.18147448015122875,"and noise for each layer type, ready to be forked on any problem of interest (Section 3.2).
+92"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.1833648393194707,"1.1
+Differential Privacy and Lipschitz Networks
+93"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.18525519848771266,"The definition of DP relies on the notion of neighboring datasets, i.e datasets that vary by at most one
+94"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.18714555765595464,"example. We highlight below the central tools related to the field, inspired from [9].
+95"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.1890359168241966,"Definition 1 ((ϵ, δ)-Differential Privacy). A labeled dataset D is a finite collection of input/label
+96"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.19092627599243855,"pairs D = {(x1, y1), (x2, y2), . . . ...(xN, yN)}. Two datasets D and D′ are said to be neighboring
+97"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.19281663516068054,"for the “replace-one” relation if they differ by at most one sample: D′ = D ∪{(x′
+i, y′
+i)} \ {(xi, yi)}.
+98"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.1947069943289225,"Let ϵ and δ be two non-negative scalars. A mechanism A is (ϵ, δ)-DP if for any two neighboring
+99"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.19659735349716445,"datasets D and D′, and for any S ⊆range(A):
+100"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.19848771266540643,"P[A(D) ∈S] ≤eϵ × P[A(D′) ∈S] + δ.
+(1)"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.2003780718336484,"A cookbook to create a (ϵ, δ)-DP mechanism from a query is to compute its sensitivity ∆(see
+101"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.20226843100189035,"Definition 2), and to perturb its output by adding a Gaussian noise of predefined variance ζ2 = ∆2σ2,
+102"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.20415879017013233,"where the (ϵ, δ)-DP guarantees depends on σ. This yields what is called a Gaussian mechanism [3].
+103"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.2060491493383743,"Definition 2 (l2-sensitivity). Let M be a query mapping from the space of the datasets to Rp. Let N
+104"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.20793950850661624,"be the set of all possible pairs of neighboring datasets D, D′. The l2 sensitivity of M is defined by:
+105"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.20982986767485823,"∆(M) =
+max
+D,D′∈N∥M(D) −M(D′)∥2.
+(2)"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.21172022684310018,"Differentially Private SGD. The classical algorithm keeps track of (ϵ, δ)-DP values with a moments
+106"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.21361058601134217,"accountant [1] which allows to keep track of privacy guarantees at each epoch, by composing
+107"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.21550094517958412,"different sub-mechanisms. For a dataset with N records and a batch size b, it relies on two parameters:
+108"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.21739130434782608,"the sampling ratio p =
+b
+N and the “noise multiplier” σ defined as the ratio between effective noise
+109"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.21928166351606806,"strength ζ and sensitivity ∆. Bounds on gradient norm can be turned into bounds on sensitivity
+110"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.22117202268431002,"of SGD queries. In “replace-one” policy for (ϵ, δ)-DP accounting, if the gradients are bounded by
+111"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.22306238185255198,"K > 0, the sensitivity of the gradients averaged on a minibatch of size b is ∆= 2K/b..
+112"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.22495274102079396,"Crucially, the algorithm requires a bound on ∥∇θL(ˆy, y)∥2 ≤K. The whole difficulty lies in
+113"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.22684310018903592,"bounding tightly this value in advance for neural networks. Currently, gradient clipping serves as a
+114"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.22873345935727787,"patch to circumvent the issue [1]. Unfortunately, clipping individual gradients in the batch is costly
+115"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.23062381852551986,"and will bias the direction of their average, which may induce underfitting [7].
+116"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.23251417769376181,1Code and documentation are given as supplementary material during review process.
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.23440453686200377,"Lipschitz constrained networks. Our proposed solution comes from the observation that the norm
+117"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.23629489603024575,"of the gradient and the Lipschitz constant are two sides of the same coin. The function f : Rm →Rn
+118"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.2381852551984877,"is said l-Lipschitz for l2 norm if for every x, y ∈Rm we have ∥f(x) −f(y)∥2 ≤l∥x −y∥2. Per
+119"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.24007561436672967,"Rademacher’s theorem [10], its gradient is bounded: ∥∇xf∥≤l. Reciprocally, continuous functions
+120"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.24196597353497165,"gradient bounded by l are l-Lipschitz.
+121"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.2438563327032136,"In Lipschitz networks, the literature has predominantly concentrated on investigating the control
+122"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.24574669187145556,"of Lipschitzness with respect to the inputs (i.e bounding ∇xf), primarily motivated by concerns
+123"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.24763705103969755,"of robustness [11]. However, in this work, we will demonstrate that it is also possible to control
+124"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.2495274102079395,"Lipschitzness with respect to parameters (i.e bounding ∇θf), which is essential for ensuring privacy.
+125"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.2514177693761815,"Our first contribution will point out the tight link that exists between those two quantities.
+126"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.2533081285444234,"Definition 3 (Lipschitz feed-forward neural network). A feedforward neural network of depth D,
+127"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.2551984877126654,"with input space X ⊂Rn, output space Y ⊂RK (e.g logits), and parameter space Θ ⊂Rp, is a
+128"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.2570888468809074,"parameterized function f : Θ × X →Y defined by the sequential composition of layers fd:
+129"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.2589792060491493,"f(θ, x) := (fD(θd) ◦. . . ◦f2(θ2) ◦f1(θ1)) (x).
+(3)
+The parameters of the layers are denoted by θ = (θd)1≤d≤D ∈Θ. For affine layers, it corresponds
+130"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.2608695652173913,"to bias and weight matrix θd = (Wd, bd). For activation functions, there is no parameters: θd = ∅.
+131"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.2627599243856333,"Lipschitz networks are feed-forward networks, with the additionnal constraint that each
+132"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.2646502835538752,"layer xd 7→fd(θd, xd) := yd is ld-Lipschitz for all θd. Consequently, the function x 7→f(θ, x)
+133"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.2665406427221172,"is l-Lipschitz with l = l1 × . . . × ld for all θ ∈Θ.
+134"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.2684310018903592,"In practice, this is enforced by using activations with Lipschitz constant ld, and by applying a con-
+135"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.27032136105860116,"straint Π : Rp →Θ on the weights of affine layers. This corresponds to spectrally normalized matri-
+136"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.2722117202268431,"ces [12, 13], since for affine layers we have ld = ∥Wd∥2 := max
+∥x∥≤1∥Wdx∥2 hence Θ = {∥Wd∥≤lq}.
+137"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.2741020793950851,"The seminal work of [8] proved that universal approximation in the set of l-Lipschitz functions was
+138"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.27599243856332706,"achievable by this family of architectures. Concurrent approaches are based on regularization (like
+139"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.277882797731569,"in [14, 15, 16]) but they fail to produce formal guarantees. While they have primarily been studied in
+140"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.27977315689981097,"the context of adversarial robustness [11, 17], recent works have revealed additional properties of
+141"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.28166351606805295,"these networks, such as improved generalization [13, 18]. However, the properties of their parameter
+142"
+DIFFERENTIAL PRIVACY AND LIPSCHITZ NETWORKS,0.2835538752362949,"gradient ∇θf(θ, x) remain largely unexplored.
+143"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.28544423440453687,"2
+Clipless DP-SGD with l-Lipschitz networks
+144"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.28733459357277885,"Our framework consists of 1. a method that computes the maximum gradient norm of a network with
+145"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.2892249527410208,"respect to its parameters to obtain a per-layer sensitivity ∆d, 2. a moments accountant that relies on
+146"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.29111531190926276,"the per-layer sensitivities to compute (ϵ, δ)-DP guarantees. The method 1. is based on the recursive
+147"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.29300567107750475,"formulation of the chain rule involved in backpropagation, while 2. keeps track of (ϵ, δ)-DP values
+148"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.2948960302457467,"with RDP accounting. It requires some natural assumptions that we highlight below.
+149"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.29678638941398866,"Requirement 1 (Lipschitz loss.). The loss function ˆy 7→L(ˆy, y) must be L-Lipschitz with respect to
+150"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.29867674858223064,"the logits ˆy for all ground truths y ∈Y. This is notably the case of Categorical Softmax-Crossentropy.
+151"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.3005671077504726,"The Lipschitz constants of common classification losses can be found in the appendix.
+152"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.30245746691871456,"Requirement 2 (Bounded input). There exists X0 > 0 such that for all x ∈X we have ∥x∥≤X0.
+153"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.30434782608695654,"While there exist numerous approaches for the parametrization of Lipschitz networks (e.g differen-
+154"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.30623818525519847,"tiable re-parametrization [19, 8], optimization over matrix manifolds [20] or projections [21]), our
+155"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.30812854442344045,"framework only provides sensitivity bounds for projection-based algorithms (see appendix).
+156"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.31001890359168244,"Requirement 3 (Lipschitz projection). The Lipschitz constraints must be enforced with a projection
+157"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.31190926275992437,"operator Π : Rp →Θ. This corresponds to Tensorflow [22] constraints and Pytorch [23] hooks.
+158"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.31379962192816635,"Projection is a post-processing of private gradients: it induces no privacy leakage [3].
+159"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.31568998109640833,"To compute the per-layer sensitivities, our framework mimics the backpropagation algorithm, where
+160"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.31758034026465026,"Vector-Jacobian products (VJP) are replaced by Scalar-Scalar products of element-wise bounds. For
+161"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.31947069943289225,"an arbitrary layer xd 7→fd(θd, xd) := yd the operation is sketched below:
+162"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.32136105860113423,∇xdL := (∇ydL) ∂fd
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.32325141776937616,"∂xd
+|
+{z
+}
+Vector-Jacobian product: backpropagate gradients"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.32514177693761814,=⇒∥∇xdL∥2 ≤∥∇ydL∥2 ×
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.3270321361058601,"∂fd
+∂xd 2"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.32892249527410206,".
+|
+{z
+}
+Scalar-Scalar product: backpropagate bounds (4)"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.33081285444234404,"Figure 2: Backpropagation for bounds, Algorithm 1. Compute the per-layer sensitivity ∆d."
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.332703213610586,"The notation ∥· ∥2 must be understood as the spectral norm for Jacobian matrices, and the Euclidean
+163"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.33459357277882795,"norm for gradient vectors. The scalar-scalar product is inexpensive. For Lipschitz layers the spectral
+164"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.33648393194706994,norm of the Jacobian ∥∂f
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.3383742911153119,"∂x∥is kept constant during training with projection operator Π. The bound of
+165"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.34026465028355385,"the gradient with respect to the parameters then takes a simple form:
+166"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.34215500945179583,∥∇θdL∥2 = ∥∇ydL∥2 ×
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.3440453686200378,"∂fd
+∂θd 2 .
+(5)"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.34593572778827975,"Once again the operation is inexpensive. The upper bound
+ ∂f"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.34782608695652173,"∂θ
+
+2 typically depends on the supremum
+167"
+CLIPLESS DP-SGD WITH L-LIPSCHITZ NETWORKS,0.3497164461247637,"of ∥xd∥2, that can also be analytically bounded, as exposed in the following section.
+168"
+BACKPROPAGATION FOR BOUNDS,0.3516068052930057,"2.1
+Backpropagation for bounds
+169"
+BACKPROPAGATION FOR BOUNDS,0.3534971644612476,"The pseudo-code of Clipless DP-SGD is sketched in Algorithm 2. The algorithm avoids clipping by
+170"
+BACKPROPAGATION FOR BOUNDS,0.3553875236294896,"computing a per-layer bound on the element-wise gradient norm. The computation of this per-layer
+171"
+BACKPROPAGATION FOR BOUNDS,0.3572778827977316,"bound is described by Algorithm 1 (graphically explained in Figure 2). Crucially, it requires to
+172"
+BACKPROPAGATION FOR BOUNDS,0.3591682419659735,"compute the spectral norm of the Jacobian of each layer with respect to input and parameters.
+173"
+BACKPROPAGATION FOR BOUNDS,0.3610586011342155,"Input bound propagation (line 2). We compute Xd = max∥x∥≤Xd−1 ∥fd(x)∥2. For activation
+174"
+BACKPROPAGATION FOR BOUNDS,0.3629489603024575,"functions it depends on their range. For linear layers, it depends on the spectral norm of the operator
+175"
+BACKPROPAGATION FOR BOUNDS,0.3648393194706994,"itself. This quantity can be computed with SVD or Power Iteration [24, 19], and constrained during
+176"
+BACKPROPAGATION FOR BOUNDS,0.3667296786389414,"training using projection operator Π. In particular, it covers the case of convolutions, for which tight
+177"
+BACKPROPAGATION FOR BOUNDS,0.3686200378071834,"bounds are known [25]. For affine layers, it additionally depends on the amplitude of the bias ∥bd∥.
+178"
+BACKPROPAGATION FOR BOUNDS,0.3705103969754253,"Remark 1 (Tighter bounds in literature.). Although libraries such as Decomon [26] or
+179"
+BACKPROPAGATION FOR BOUNDS,0.3724007561436673,"auto-LiRPA [27] provide tighter bounds Xd via linear relaxations [28, 29], our approach is ca-
+180"
+BACKPROPAGATION FOR BOUNDS,0.3742911153119093,"pable of delivering practically tighter bounds than worst-case scenarios thanks to the projection
+181"
+BACKPROPAGATION FOR BOUNDS,0.3761814744801512,"operator Π, while also being significantly less computationally expensive. Moreover, hybridizing our
+182"
+BACKPROPAGATION FOR BOUNDS,0.3780718336483932,"method with scalable certification methods can be a path for future extensions.
+183"
+BACKPROPAGATION FOR BOUNDS,0.3799621928166352,"Computing maximum gradient norm (line 6). We bound the Jacobian ∂fd(θd,x)"
+BACKPROPAGATION FOR BOUNDS,0.3818525519848771,"∂θd
+. In neural networks,
+184"
+BACKPROPAGATION FOR BOUNDS,0.3837429111531191,"the parameterized layers f(θ, x) (fully connected, convolutions) are bilinear operators. Hence we
+185"
+BACKPROPAGATION FOR BOUNDS,0.3856332703213611,"typically obtain bounds of the form:
+186
+
+∂fd(θd, x) ∂θd 2"
+BACKPROPAGATION FOR BOUNDS,0.387523629489603,"≤K(fd, θd)∥x∥2 ≤K(fd, θd)Xd−1,
+(6)"
+BACKPROPAGATION FOR BOUNDS,0.389413988657845,"where K(fd, Θd) is a constant that depends on the nature of the operator. Xd−1 is obtained in line 2
+187"
+BACKPROPAGATION FOR BOUNDS,0.391304347826087,"with input bound propagation. Values of K(fd, θd) for popular layers are pre-computed in the library.
+188"
+BACKPROPAGATION FOR BOUNDS,0.3931947069943289,"Backpropagate cotangeant vector bounds (line 7).
+We bound the Jacobian ∂fd(θd,x)"
+BACKPROPAGATION FOR BOUNDS,0.3950850661625709,"∂x
+. For activa-
+189"
+BACKPROPAGATION FOR BOUNDS,0.39697542533081287,"tion functions this value can be hard-coded, while for affine layers it is the spectral norm of the linear
+190"
+BACKPROPAGATION FOR BOUNDS,0.3988657844990548,"operator. Like before, this value is constrained with projection operator Π.
+191"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.4007561436672968,"2.2
+Privacy accounting for Clipless DP-SGD
+192"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.40264650283553877,"Two strategies are available to keep track of (ϵ, δ) values as the training progresses, based on
+193"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.4045368620037807,"accounting either a per-layer “local” sensitivity, either by aggregating them into a “global” sensitivity.
+194"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.4064272211720227,"Algorithm 1 Backpropagation for Bounds(f, X)
+Input: Feed-forward architecture f(θ, ·) = fD(θD, ·) ◦. . . ◦f1(θ1, ·)
+Input: Weights θ = (θ1, θ2, . . . θD), input bound X0"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.40831758034026466,"1: for all layers 1 ≤d ≤D do
+2:
+Xd ←
+max
+∥x∥≤Xd−1∥fd(θd, x)∥2.
+▷Input bounds propagation"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.4102079395085066,"3: end for
+4: G ←L/b.
+▷Lipschitz constant of the loss for batchsize b
+5: for all layers D ≥d ≥1 do
+6:
+∆d ←G
+max
+∥x∥≤Xd−1∥∂fd(θd,x)"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.4120982986767486,"∂θd
+∥2.
+▷Compute sensitivity from gradient norm"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.41398865784499056,"7:
+G ←G
+max
+∥x∥≤Xd−1∥∂fd(θd,x)"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.4158790170132325,"∂x
+∥2 = Gld.
+▷Backpropagate cotangeant vector bounds"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.41776937618147447,"8: end for
+9: return sensitivities ∆1, ∆2 . . . , ∆D"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.41965973534971646,"Algorithm 2 Clipless DP-SGD with local sensitivity accounting
+Input: Feed-forward architecture f(θ, ·) = fD(θD, ·) ◦. . . ◦f1(θ1, ·)
+Input: Initial weights θ = (θ1, θ1, . . . θD), learning rate η, noise multiplier σ."
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.4215500945179584,"1: repeat
+2:
+∆1, ∆2 . . . ∆D ←Backpropagation for Bounds(f, X).
+3:
+Update Moment Accountant state with local sensitivities ∆1, ∆2, . . . ∆d.
+4:
+Sample a batch B = {(x1, y1), (x2, y2), . . . , (xb, yb)}.
+5:
+Compute per-layer averaged gradient: gd := 1"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.42344045368620037,"b
+Pb
+i=1 ∇θdL(f(θ, xi), yi)).
+6:
+Sample local noise: ζd ∼N(0, σ∆d).
+7:
+Perform noisified gradient step: θd ←θd −η(gd + ζd).
+8:
+Enforce Lipschitz constraint with projection: θd ←Π(θd).
+9: until privacy budget (ϵ, δ)-DP budget has been reached."
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.42533081285444235,"The “global” strategy. Illustrated in the appendix,this strategy simply aggregates the individual
+195"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.42722117202268434,"sensitivities ∆d of each layer to obtain the global sensitivity of the whole gradient vector ∆=
+196
+pP"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.42911153119092627,"d ∆2
+d. The origin of the clipping-based version of this strategy can be traced back to [30]. With
+197"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.43100189035916825,"noise variance σ2∆2 we recover the accountant that comes with DP-SGD. It tends to overestimate
+198"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.43289224952741023,"the true sensitivity (in particular for deep networks), but its implementation is straightforward with
+199"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.43478260869565216,"existing tools.
+200"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.43667296786389415,"The “local” strategy. Recall that we are able to characterize the sensitivity ∆d of every layer of
+201"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.43856332703213613,"the network. Hence, we can apply a different noise to each of the gradients. We dissect the whole
+202"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.44045368620037806,"training procedure in Figure 3. At same noise multiplier σ, it tends to produce a higher value of ϵ per
+203"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.44234404536862004,"epoch than “global” strategy, but has the advantage over the latter to add smaller effective noise ζ to
+204"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.444234404536862,"each weight.
+205"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.44612476370510395,"We rely on the autodp2 library [32, 33, 34] as it uses the Renyi Differential Privacy (RDP) adaptive
+206"
+PRIVACY ACCOUNTING FOR CLIPLESS DP-SGD,0.44801512287334594,"composition theorem [35, 36], that ensures tighter bounds than naive DP composition.
+207"
+FROM THEORY TO PRACTICE,0.4499054820415879,"3
+From theory to practice
+208"
+FROM THEORY TO PRACTICE,0.45179584120982985,"Beyond the application of Algorithms 1 and 2, our framework provides numerous opportunities to
+209"
+FROM THEORY TO PRACTICE,0.45368620037807184,"enhance our understanding of prevalent techniques identified in the literature. An in-depth exploration
+210"
+FROM THEORY TO PRACTICE,0.4555765595463138,"of these is beyond the scope of this work, so we focus on giving insights on promising tracks based
+211"
+FROM THEORY TO PRACTICE,0.45746691871455575,"on our theoretical analysis. In particular, we discuss how the tightness of the bound provided by
+212"
+FROM THEORY TO PRACTICE,0.45935727788279773,"Algorithm 1 can be influenced by working on the architecture, the input pre-processing and the loss
+213"
+FROM THEORY TO PRACTICE,0.4612476370510397,"post-processing.
+214"
+FROM THEORY TO PRACTICE,0.46313799621928164,2https://github.com/yuxiangw/autodp distributed under Apache License 2.0 licence.
+FROM THEORY TO PRACTICE,0.46502835538752363,"Figure 3: Accountant for locally enforced differential privacy. (i) The gradient query for each
+layer is turned into a Gaussian mechanism [9], (ii) their composition at the scale of the whole network
+is a non isotropic Gaussian mechanism, (iii) that benefits from amplification via sub-sampling [31],
+(iv) the train steps are composed over the course of training."
+GRADIENT NORM PRESERVING NETWORKS,0.4669187145557656,"3.1
+Gradient Norm Preserving networks
+215"
+GRADIENT NORM PRESERVING NETWORKS,0.46880907372400754,"We can manually derive the bounds obtained from Algorithm 2 across diverse configurations. Below,
+216"
+GRADIENT NORM PRESERVING NETWORKS,0.4706994328922495,"we conduct a sensitivity analysis on l-Lipschitz networks.
+217"
+GRADIENT NORM PRESERVING NETWORKS,0.4725897920604915,"Theorem (informal) 1. Gradient Norm of Lipschitz Networks. Assume that every layer fd is
+218"
+GRADIENT NORM PRESERVING NETWORKS,0.47448015122873344,"K-Lipschitz, i.e l1 = · · · = lD = K. Assume that every bias is bounded by B. We further assume that
+219"
+GRADIENT NORM PRESERVING NETWORKS,0.4763705103969754,"each activation is centered in zero (e.g ReLU, tanh, GroupSort). We recall that θ = [θ1, θ2, . . . θD].
+220"
+GRADIENT NORM PRESERVING NETWORKS,0.4782608695652174,"Then the global upper bound of Algorithm 2 can be expanded analytically.
+221"
+GRADIENT NORM PRESERVING NETWORKS,0.48015122873345933,"1. If K < 1 we have: ∥∇θL(f(θ, x), y)∥2 = O
+ 
+L
+ 
+KD(X0 + B) + 1
+
+.
+222"
+GRADIENT NORM PRESERVING NETWORKS,0.4820415879017013,"Due to the KD ≪1 term this corresponds to a vanishing gradient phenomenon [37]. The output of
+223"
+GRADIENT NORM PRESERVING NETWORKS,0.4839319470699433,"the network is essentially independent of its input, and the training is nearly impossible.
+224"
+GRADIENT NORM PRESERVING NETWORKS,0.48582230623818523,"2. If K > 1 we have: ∥∇θL(f(θ, x), y)∥2 = O
+ 
+LKD (X0 + B)
+
+.
+225"
+GRADIENT NORM PRESERVING NETWORKS,0.4877126654064272,"Due to the KD ≫1 term this corresponds to an exploding gradient phenomenon [38]. The upper
+226"
+GRADIENT NORM PRESERVING NETWORKS,0.4896030245746692,"bound becomes vacuous for deep networks: the added noise ζ is at risk of being too high.
+227"
+GRADIENT NORM PRESERVING NETWORKS,0.4914933837429111,"3. If K = 1 we have: ∥∇θL(f(θ, x), y)∥2 = O
+
+L
+
+X0 +
+√"
+GRADIENT NORM PRESERVING NETWORKS,0.4933837429111531,"D + √BX0D + BD3/2
+,
+228"
+GRADIENT NORM PRESERVING NETWORKS,0.4952741020793951,"which for linear layers without biases further simplify to O(L(X0 +
+√"
+GRADIENT NORM PRESERVING NETWORKS,0.497164461247637,"D)).
+229"
+GRADIENT NORM PRESERVING NETWORKS,0.499054820415879,"The formal statement can be found in appendix. From Theorem 1 we see that most favorable bounds
+230"
+GRADIENT NORM PRESERVING NETWORKS,0.500945179584121,"are achieved by 1-Lipschitz neural networks with 1-Lipschitz layers. In classification tasks, they are
+231"
+GRADIENT NORM PRESERVING NETWORKS,0.502835538752363,"not less expressive than conventional networks [18]. Hence, this choice of architecture is not at the
+232"
+GRADIENT NORM PRESERVING NETWORKS,0.504725897920605,"expense of utility. Moreover an accuracy/robustness trade-off exists, determined by the choice of
+233"
+GRADIENT NORM PRESERVING NETWORKS,0.5066162570888468,"loss function [18]. However, setting K = 1 merely ensures that ∥∇xf∥≤1, and in the worst-case
+234"
+GRADIENT NORM PRESERVING NETWORKS,0.5085066162570888,"scenario we have ∥∇xf∥< 1 almost everywhere. This could result in a situation where the bound of
+235"
+GRADIENT NORM PRESERVING NETWORKS,0.5103969754253308,"case 3 in Theorem 1 is not tight, leading to an underfitting regime as in case K < 1. With Gradient
+236"
+GRADIENT NORM PRESERVING NETWORKS,0.5122873345935728,"Norm Preserving (GNP) networks [17], we expect to mitigate this issue.
+237"
+GRADIENT NORM PRESERVING NETWORKS,0.5141776937618148,"Controlling K with Gradient Norm Preserving (GNP) networks.
+GNP networks are 1-Lipschitz
+238"
+GRADIENT NORM PRESERVING NETWORKS,0.5160680529300568,"neural networks with the additional constraint that the Jacobian of layers consists of orthogonal
+239"
+GRADIENT NORM PRESERVING NETWORKS,0.5179584120982986,"matrices. They fulfill the Eikonal equation
+ ∂fd(θd,xd) ∂xd"
+GRADIENT NORM PRESERVING NETWORKS,0.5198487712665406,"2 = 1 for any intermediate activation
+240"
+GRADIENT NORM PRESERVING NETWORKS,0.5217391304347826,"fd(θd, xd). Without biases these networks are also norm preserving: ∥f(θ, x)∥= ∥x∥.
+241"
+GRADIENT NORM PRESERVING NETWORKS,0.5236294896030246,"As a consequence, the gradient of the loss with respect to the parameters is easily bounded by
+242"
+GRADIENT NORM PRESERVING NETWORKS,0.5255198487712666,"∥∇θdL∥= ∥∇yDL∥×
+
+∂fd(θd, xd) ∂θd ,
+(7)"
+GRADIENT NORM PRESERVING NETWORKS,0.5274102079395085,"which for weight matrices Wd further simplifies to ∥∇WdL∥≤∥∇yDL∥×∥fd−1(θd−1, xd−1)∥. We
+243"
+GRADIENT NORM PRESERVING NETWORKS,0.5293005671077504,"see that this upper bound crucially depends on two terms than can be analyzed separately. On one
+244"
+GRADIENT NORM PRESERVING NETWORKS,0.5311909262759924,"hand, ∥fd−1(θd−1, xd−1)∥depends on the scale of the input. On the other, ∥∇yDL∥depends on the
+245"
+GRADIENT NORM PRESERVING NETWORKS,0.5330812854442344,"loss, the predictions and the training stage. We show below how to intervene on these two quantities.
+246"
+GRADIENT NORM PRESERVING NETWORKS,0.5349716446124764,"Remark 2 (Implementation of GNP Networks). In practice, GNP are parametrized with GroupSort
+247"
+GRADIENT NORM PRESERVING NETWORKS,0.5368620037807184,"activation [8, 39], Householder activation [40], and orthogonal weight matrices [17, 41]. Strict
+248"
+GRADIENT NORM PRESERVING NETWORKS,0.5387523629489603,"orthogonality is challenging to enforce, especially for convolutions for which it is still an active
+249"
+GRADIENT NORM PRESERVING NETWORKS,0.5406427221172023,"research area (see [42, 43, 44, 45, 46] and references therein). Our line of work traces an additional
+250"
+GRADIENT NORM PRESERVING NETWORKS,0.5425330812854442,"motivation for the development of GNP and the bounds will strengthen as the field progresses.
+251"
+GRADIENT NORM PRESERVING NETWORKS,0.5444234404536862,"Controlling X0 with input pre-processing. The weight gradient norm ∥∇θdL∥indirectly depends
+252"
+GRADIENT NORM PRESERVING NETWORKS,0.5463137996219282,"on the norm of the inputs. This observation implies that the pre-processing of input data significantly
+253"
+GRADIENT NORM PRESERVING NETWORKS,0.5482041587901701,"influences the bounding of sensitivity. Multiple strategies are available to keep the input’s norm under
+254"
+GRADIENT NORM PRESERVING NETWORKS,0.5500945179584121,"control: projection onto the ball (“norm clipping”), or projection onto the sphere (“normalization”).
+255"
+GRADIENT NORM PRESERVING NETWORKS,0.5519848771266541,"In the domain of natural images for instance, this result sheds light on the importance of color space
+256"
+GRADIENT NORM PRESERVING NETWORKS,0.553875236294896,"such as RGB, HSV, YIQ, YUV or Grayscale. These strategies are natively handled by our library.
+257"
+GRADIENT NORM PRESERVING NETWORKS,0.555765595463138,"Controlling L with the hybrid approach, loss gradient clipping. As training progresses, the
+258"
+GRADIENT NORM PRESERVING NETWORKS,0.55765595463138,"magnitude of ∥∇fL∥tends to diminish when approaching a local minima, quickly falling below the
+259"
+GRADIENT NORM PRESERVING NETWORKS,0.5595463137996219,"upper bound and diminishing the gradient norm to noise ratio. To circumvent the issue, the gradient
+260"
+GRADIENT NORM PRESERVING NETWORKS,0.5614366729678639,"clipping strategy is still available in our framework. Crucially, instead of clipping the parameter
+261"
+GRADIENT NORM PRESERVING NETWORKS,0.5633270321361059,"gradient ∇θL, any intermediate gradient ∇fdL can be clipped during backpropagation. This can
+262"
+GRADIENT NORM PRESERVING NETWORKS,0.5652173913043478,"be achieved with a special “clipping layer” that behaves like the identity function at the forward
+263"
+GRADIENT NORM PRESERVING NETWORKS,0.5671077504725898,"pass, and clips the gradient during the backward pass. The resulting cotangeant vector is not a true
+264"
+GRADIENT NORM PRESERVING NETWORKS,0.5689981096408318,"gradient anymore, but rather a descent direction [47]. In vanilla DP-SGD the clipping is applied on
+265"
+GRADIENT NORM PRESERVING NETWORKS,0.5708884688090737,"the batched gradient ∇WdL of size b × h2 for matrix weight Wd ∈Rh×h and clipping this vector can
+266"
+GRADIENT NORM PRESERVING NETWORKS,0.5727788279773157,"cause memory issues or slowdowns [6]. In our case, ∇yDL is of size b × h which reduces overhead.
+267"
+LIP-DP LIBRARY,0.5746691871455577,"3.2
+Lip-dp library
+268"
+LIP-DP LIBRARY,0.5765595463137996,"To foster and spread accessibility, we provide an opensource tensorflow library for Clipless DP-SGD
+269"
+LIP-DP LIBRARY,0.5784499054820416,"training, named lip-dp. It provides an exposed Keras API for seamless usability. It is implemented
+270"
+LIP-DP LIBRARY,0.5803402646502835,"as a wrapper over the Lipschitz layers of deel-lip3 library [48]. Its usage is illustrated in Figure 1.
+271"
+EXPERIMENTAL RESULTS,0.5822306238185255,"4
+Experimental results
+272"
+EXPERIMENTAL RESULTS,0.5841209829867675,"We validate our implementation with a speed benchmark against competing approaches, and we
+273"
+EXPERIMENTAL RESULTS,0.5860113421550095,"present the privacy/utility Pareto front that can be obtained with GNP networks.
+274"
+EXPERIMENTAL RESULTS,0.5879017013232514,"Figure 4: Our approach outperforms concur-
+rent frameworks in terms of runtime and mem-
+ory: we trained CNNs (ranging from 130K to 2M
+parameters) on CIFAR-10, and report the median
+batch processing time (including noise, and con-
+straints application Π or gradient clipping)."
+EXPERIMENTAL RESULTS,0.5897920604914934,"Speed and memory consumption.
+We bench-
+275"
+EXPERIMENTAL RESULTS,0.5916824196597353,"marked the median runtime per epoch of vanilla
+276"
+EXPERIMENTAL RESULTS,0.5935727788279773,"DP-SGD against the one of Clipless DP-SGD,
+277"
+EXPERIMENTAL RESULTS,0.5954631379962193,"on a CNN architecture and its Lipschitz equiv-
+278"
+EXPERIMENTAL RESULTS,0.5973534971644613,"alent respectively. The experiment was run on
+279"
+EXPERIMENTAL RESULTS,0.5992438563327032,"a GPU with 48GB video memory. We compare
+280"
+EXPERIMENTAL RESULTS,0.6011342155009451,"against the implementation of tf_privacy,
+281"
+EXPERIMENTAL RESULTS,0.6030245746691871,"opacus and optax. In order to allow a fair com-
+282"
+EXPERIMENTAL RESULTS,0.6049149338374291,"parison, when evaluating Opacus, we reported
+283"
+EXPERIMENTAL RESULTS,0.6068052930056711,"the runtime with respect to the logical batch size,
+284"
+EXPERIMENTAL RESULTS,0.6086956521739131,"while capping the physical batch size to avoid
+285"
+EXPERIMENTAL RESULTS,0.610586011342155,"Out Of Memory error (OOM). Although our li-
+286"
+EXPERIMENTAL RESULTS,0.6124763705103969,"brary does not implement logical batching yet,
+287"
+EXPERIMENTAL RESULTS,0.6143667296786389,"it is fully compatible with this feature.
+288"
+EXPERIMENTAL RESULTS,0.6162570888468809,"An advantage of projection Π over per-sample
+289"
+EXPERIMENTAL RESULTS,0.6181474480151229,"gradient clipping is that the projection cost is
+290"
+EXPERIMENTAL RESULTS,0.6200378071833649,"independent of the batch size. Fig 4 validates that our method scales much better than vanilla
+291"
+EXPERIMENTAL RESULTS,0.6219281663516069,"DP-SGD, and is compatible with large batch sizes. It offers several advantages: firstly, a larger batch
+292"
+EXPERIMENTAL RESULTS,0.6238185255198487,"size contributes to a decrease of the sensitivity ∆∝1/b, which diminishes the ratio between noise
+293"
+EXPERIMENTAL RESULTS,0.6257088846880907,"and gradient norm. Secondly, as the batch size b increases, the variance decreases at the parametric
+294"
+EXPERIMENTAL RESULTS,0.6275992438563327,"rate O(
+√"
+EXPERIMENTAL RESULTS,0.6294896030245747,"b) (as demonstrated in appendix), aligning with expectations. This observation does not
+295"
+EXPERIMENTAL RESULTS,0.6313799621928167,"apply to DP-SGD: gradient clipping biases the direction of the average gradient, as noticed by [7].
+296"
+EXPERIMENTAL RESULTS,0.6332703213610587,3https://github.com/deel-ai/deel-lip distributed under MIT License (MIT).
+EXPERIMENTAL RESULTS,0.6351606805293005,"(a) MNIST.
+(b) F-MNIST.
+(c) CIFAR-10."
+EXPERIMENTAL RESULTS,0.6370510396975425,"Figure 5: Our framework paints a clearer picture of the privacy/utility trade-off. We trained
+models in an ""out of the box setting"" (no pre-training, no data augmentation and no handcrafted
+features) on multiple tasks. While our results align with the baselines presented in other frameworks,
+we recognize the importance of domain-specific engineering. In this regard, we find the innovations
+introduced in [49, 50, 51] and references therein highly relevant. These advancements demonstrate
+compatibility with our framework and hold potential for future integration."
+EXPERIMENTAL RESULTS,0.6389413988657845,"Pareto front of privacy/utility trade-off.
+We performed a search over a broad range of hyper-
+297"
+EXPERIMENTAL RESULTS,0.6408317580340265,"parameters values to cover the Pareto front between utility and privacy. Results are reported in
+298"
+EXPERIMENTAL RESULTS,0.6427221172022685,"Figure 5. We emphasize that our experiments did not use the elements behind the success of most
+299"
+EXPERIMENTAL RESULTS,0.6446124763705104,"recent papers (pre-training, data preparation, or handcrafted feature are examples). Hence our
+300"
+EXPERIMENTAL RESULTS,0.6465028355387523,"results are more representative of the typical performance that can be obtained in an “out of the
+301"
+EXPERIMENTAL RESULTS,0.6483931947069943,"box” setting. Future endeavors or domain-specific engineering can enhance the performance even
+302"
+EXPERIMENTAL RESULTS,0.6502835538752363,"further, but such improvements currently lie beyond the scope of our work. We also benchmarked
+303"
+EXPERIMENTAL RESULTS,0.6521739130434783,"architectures inspired from VGG [52], Resnet [53] and MLP_Mixers [54] see appendix for more
+304"
+EXPERIMENTAL RESULTS,0.6540642722117203,"details. Following standard practices of the community [2], we used sampling without replacement at
+305"
+EXPERIMENTAL RESULTS,0.6559546313799622,"each epoch (by shuffling examples), but we reported ϵ assuming Poisson sampling to benefit from
+306"
+EXPERIMENTAL RESULTS,0.6578449905482041,"privacy amplification [31]. We also ignore the privacy loss that may be induced by hyper-parameter
+307"
+EXPERIMENTAL RESULTS,0.6597353497164461,"search, which is a limitation per recent studies [5], but is common practice.
+308"
+LIMITATIONS AND FUTURE WORK,0.6616257088846881,"5
+Limitations and future work
+309"
+LIMITATIONS AND FUTURE WORK,0.6635160680529301,"Although this framework offers a novel approach to address differentially private training, it introduces
+310"
+LIMITATIONS AND FUTURE WORK,0.665406427221172,"new challenges. We primary rely on GNP networks, where high performing architectures are
+311"
+LIMITATIONS AND FUTURE WORK,0.667296786389414,"quite different from the usual CNN architectures. As emphasized in Remark 2, we anticipate that
+312"
+LIMITATIONS AND FUTURE WORK,0.6691871455576559,"progress in these areas would greatly enhance the effectiveness of our approach. Additionally, to
+313"
+LIMITATIONS AND FUTURE WORK,0.6710775047258979,"meet requirement 3, we rely on projections, necessitating additional efforts to incorporate recent
+314"
+LIMITATIONS AND FUTURE WORK,0.6729678638941399,"advancements associated with differentiable reparametrizations [42, 43]. It is worth noting that
+315"
+LIMITATIONS AND FUTURE WORK,0.6748582230623819,"our methodology is applicable to most layers. Another limitation of our approach is the accurate
+316"
+LIMITATIONS AND FUTURE WORK,0.6767485822306238,"computation of sensitivity ∆, which is challenging due to the non-associativity of floating-point
+317"
+LIMITATIONS AND FUTURE WORK,0.6786389413988658,"arithmetic and its impact on numerical stability [55]. This challenge is exacerbated on GPUs, where
+318"
+LIMITATIONS AND FUTURE WORK,0.6805293005671077,"operations are inherently non-deterministic [56]. Finally, as mentioned in Remark 1, our propagation
+319"
+LIMITATIONS AND FUTURE WORK,0.6824196597353497,"bound method can be refined.
+320"
+CONCLUDING REMARKS AND BROADER IMPACT,0.6843100189035917,"6
+Concluding remarks and broader impact
+321"
+CONCLUDING REMARKS AND BROADER IMPACT,0.6862003780718336,"Besides its main focus on differential privacy, our work provides (1) a motivation to further develop
+322"
+CONCLUDING REMARKS AND BROADER IMPACT,0.6880907372400756,"Gradient Norm Preserving architectures. Furthermore, the development of networks with known
+323"
+CONCLUDING REMARKS AND BROADER IMPACT,0.6899810964083176,"Lipschitz constant with respect to parameters is a question of independent interest, (2) a useful tool for
+324"
+CONCLUDING REMARKS AND BROADER IMPACT,0.6918714555765595,"the study of the optimization dynamics in neural networks. Finally, Lipschitz networks are known
+325"
+CONCLUDING REMARKS AND BROADER IMPACT,0.6937618147448015,"to enjoy certificates against adversarial attacks [17, 57], and from generalization guarantees [13],
+326"
+CONCLUDING REMARKS AND BROADER IMPACT,0.6956521739130435,"without cost in accuracy [18]. We advocate for the spreading of their use in the context of robust and
+327"
+CONCLUDING REMARKS AND BROADER IMPACT,0.6975425330812854,"certifiable learning.
+328"
+REFERENCES,0.6994328922495274,"References
+329"
+REFERENCES,0.7013232514177694,"[1] Martin Abadi, Andy Chu, Ian Goodfellow, H Brendan McMahan, Ilya Mironov, Kunal Talwar,
+330"
+REFERENCES,0.7032136105860114,"and Li Zhang. Deep learning with differential privacy. In Proceedings of the 2016 ACM SIGSAC
+331"
+REFERENCES,0.7051039697542533,"conference on computer and communications security, pages 308–318, 2016.
+332"
+REFERENCES,0.7069943289224953,"[2] Natalia Ponomareva, Hussein Hazimeh, Alex Kurakin, Zheng Xu, Carson Denison, H Brendan
+333"
+REFERENCES,0.7088846880907372,"McMahan, Sergei Vassilvitskii, Steve Chien, and Abhradeep Thakurta. How to dp-fy ml: A
+334"
+REFERENCES,0.7107750472589792,"practical guide to machine learning with differential privacy. arXiv preprint arXiv:2303.00654,
+335"
+REFERENCES,0.7126654064272212,"2023.
+336"
+REFERENCES,0.7145557655954632,"[3] Cynthia Dwork, Frank McSherry, Kobbi Nissim, and Adam Smith. Calibrating noise to
+337"
+REFERENCES,0.7164461247637051,"sensitivity in private data analysis. In Theory of Cryptography: Third Theory of Cryptography
+338"
+REFERENCES,0.718336483931947,"Conference, TCC 2006, New York, NY, USA, March 4-7, 2006. Proceedings 3, pages 265–284.
+339"
+REFERENCES,0.720226843100189,"Springer, 2006.
+340"
+REFERENCES,0.722117202268431,"[4] Mário S Alvim, Miguel E Andrés, Konstantinos Chatzikokolakis, Pierpaolo Degano, and
+341"
+REFERENCES,0.724007561436673,"Catuscia Palamidessi. Differential privacy: on the trade-off between utility and information
+342"
+REFERENCES,0.725897920604915,"leakage. In Formal Aspects of Security and Trust: 8th International Workshop, FAST 2011,
+343"
+REFERENCES,0.7277882797731569,"Leuven, Belgium, September 12-14, 2011. Revised Selected Papers 8, pages 39–54. Springer,
+344"
+REFERENCES,0.7296786389413988,"2012.
+345"
+REFERENCES,0.7315689981096408,"[5] Nicolas Papernot and Thomas Steinke. Hyperparameter tuning with renyi differential privacy.
+346"
+REFERENCES,0.7334593572778828,"In International Conference on Learning Representations, 2022.
+347"
+REFERENCES,0.7353497164461248,"[6] Jaewoo Lee and Daniel Kifer. Scaling up differentially private deep learning with fast per-
+348"
+REFERENCES,0.7372400756143668,"example gradient clipping. Proceedings on Privacy Enhancing Technologies, 2021(1), 2021.
+349"
+REFERENCES,0.7391304347826086,"[7] Xiangyi Chen, Steven Z Wu, and Mingyi Hong. Understanding gradient clipping in private sgd:
+350"
+REFERENCES,0.7410207939508506,"A geometric perspective. Advances in Neural Information Processing Systems, 33:13773–13782,
+351"
+REFERENCES,0.7429111531190926,"2020.
+352"
+REFERENCES,0.7448015122873346,"[8] Cem Anil, James Lucas, and Roger Grosse. Sorting out lipschitz function approximation. In
+353"
+REFERENCES,0.7466918714555766,"International Conference on Machine Learning, pages 291–301. PMLR, 2019.
+354"
+REFERENCES,0.7485822306238186,"[9] Cynthia Dwork, Aaron Roth, et al. The algorithmic foundations of differential privacy. Founda-
+355"
+REFERENCES,0.7504725897920604,"tions and Trends® in Theoretical Computer Science, 9(3–4):211–407, 2014.
+356"
+REFERENCES,0.7523629489603024,"[10] Leon Simon et al. Lectures on geometric measure theory. The Australian National University,
+357"
+REFERENCES,0.7542533081285444,"Mathematical Sciences Institute, Centre ..., 1983.
+358"
+REFERENCES,0.7561436672967864,"[11] Christian Szegedy, Wojciech Zaremba, Ilya Sutskever, Joan Bruna, Dumitru Erhan, Ian Good-
+359"
+REFERENCES,0.7580340264650284,"fellow, and Rob Fergus. Intriguing properties of neural networks. In International Conference
+360"
+REFERENCES,0.7599243856332704,"on Learning Representations, 2014.
+361"
+REFERENCES,0.7618147448015122,"[12] Yuichi Yoshida and Takeru Miyato. Spectral norm regularization for improving the generaliz-
+362"
+REFERENCES,0.7637051039697542,"ability of deep learning. arXiv preprint arXiv:1705.10941, 2017.
+363"
+REFERENCES,0.7655954631379962,"[13] Peter L Bartlett, Dylan J Foster, and Matus Telgarsky. Spectrally-normalized margin bounds for
+364"
+REFERENCES,0.7674858223062382,"neural networks. In Proceedings of the 31st International Conference on Neural Information
+365"
+REFERENCES,0.7693761814744802,"Processing Systems, pages 6241–6250, 2017.
+366"
+REFERENCES,0.7712665406427222,"[14] Ishaan Gulrajani, Faruk Ahmed, Martin Arjovsky, Vincent Dumoulin, and Aaron C Courville.
+367"
+REFERENCES,0.7731568998109641,"Improved training of wasserstein gans. In Advances in Neural Information Processing Systems,
+368"
+REFERENCES,0.775047258979206,"volume 30, pages 5767–5777. Curran Associates, Inc., 2017.
+369"
+REFERENCES,0.776937618147448,"[15] Moustapha Cisse, Piotr Bojanowski, Edouard Grave, Yann Dauphin, and Nicolas Usunier.
+370"
+REFERENCES,0.77882797731569,"Parseval networks: Improving robustness to adversarial examples. In International Conference
+371"
+REFERENCES,0.780718336483932,"on Machine Learning, pages 854–863. PMLR, 2017.
+372"
+REFERENCES,0.782608695652174,"[16] Henry Gouk, Eibe Frank, Bernhard Pfahringer, and Michael J Cree. Regularisation of neural
+373"
+REFERENCES,0.7844990548204159,"networks by enforcing lipschitz continuity. Machine Learning, 110:393–416, 2021.
+374"
+REFERENCES,0.7863894139886578,"[17] Qiyang Li, Saminul Haque, Cem Anil, James Lucas, Roger B Grosse, and Jörn-Henrik Jacobsen.
+375"
+REFERENCES,0.7882797731568998,"Preventing gradient attenuation in lipschitz constrained convolutional networks. In Advances in
+376"
+REFERENCES,0.7901701323251418,"Neural Information Processing Systems (NeurIPS), volume 32, Cambridge, MA, 2019. MIT
+377"
+REFERENCES,0.7920604914933838,"Press.
+378"
+REFERENCES,0.7939508506616257,"[18] Louis Béthune, Thibaut Boissin, Mathieu Serrurier, Franck Mamalet, Corentin Friedrich, and
+379"
+REFERENCES,0.7958412098298677,"Alberto Gonzalez Sanz. Pay attention to your loss : understanding misconceptions about
+380"
+REFERENCES,0.7977315689981096,"lipschitz neural networks. In Alice H. Oh, Alekh Agarwal, Danielle Belgrave, and Kyunghyun
+381"
+REFERENCES,0.7996219281663516,"Cho, editors, Advances in Neural Information Processing Systems, 2022.
+382"
+REFERENCES,0.8015122873345936,"[19] Takeru Miyato, Toshiki Kataoka, Masanori Koyama, and Yuichi Yoshida. Spectral normalization
+383"
+REFERENCES,0.8034026465028355,"for generative adversarial networks. arXiv preprint arXiv:1802.05957, 2018.
+384"
+REFERENCES,0.8052930056710775,"[20] P-A Absil, Robert Mahony, and Rodolphe Sepulchre. Optimization algorithms on matrix
+385"
+REFERENCES,0.8071833648393195,"manifolds. Princeton University Press, 2008.
+386"
+REFERENCES,0.8090737240075614,"[21] Martin Arjovsky, Soumith Chintala, and Léon Bottou. Wasserstein generative adversarial
+387"
+REFERENCES,0.8109640831758034,"networks. In International conference on machine learning, pages 214–223. PMLR, 2017.
+388"
+REFERENCES,0.8128544423440454,"[22] Martín Abadi, Ashish Agarwal, Paul Barham, Eugene Brevdo, Zhifeng Chen, Craig Citro,
+389"
+REFERENCES,0.8147448015122873,"Greg Corrado, Andy Davis, Jeffrey Dean, Matthieu Devin, Sanjay Ghemawat, Ian Goodfellow,
+390"
+REFERENCES,0.8166351606805293,"Andrew Harp, Geoffrey Irving, Michael Isard, Yangqing Jia, Rafal Jozefowicz, Lukasz Kaiser,
+391"
+REFERENCES,0.8185255198487713,"Manjunath Kudlur, Josh Levenberg, Dan Mané, Rajat Monga, Sherry Moore, Derek Murray,
+392"
+REFERENCES,0.8204158790170132,"Chris Olah, Mike Schuster, Jonathon Shlens, Benoit Steiner, Ilya Sutskever, Kunal Talwar, Paul
+393"
+REFERENCES,0.8223062381852552,"Tucker, Vincent Vanhoucke, Vijay Vasudevan, Fernanda Viégas, Oriol Vinyals, Pete Warden,
+394"
+REFERENCES,0.8241965973534972,"Martin Wattenberg, Martin Wicke, Yuan Yu, and Xiaoqiang Zheng. Tensorflow: Large-scale
+395"
+REFERENCES,0.8260869565217391,"machine learning on heterogeneous distributed systems, 2015.
+396"
+REFERENCES,0.8279773156899811,"[23] Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan,
+397"
+REFERENCES,0.8298676748582231,"Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, et al. Pytorch: An imperative
+398"
+REFERENCES,0.831758034026465,"style, high-performance deep learning library. Advances in neural information processing
+399"
+REFERENCES,0.833648393194707,"systems, 32, 2019.
+400"
+REFERENCES,0.8355387523629489,"[24] Lloyd N Trefethen and David Bau. Numerical linear algebra, volume 181. Siam, 2022.
+401"
+REFERENCES,0.8374291115311909,"[25] S Singla and S Feizi. Fantastic four: Differentiable bounds on singular values of convolution
+402"
+REFERENCES,0.8393194706994329,"layers. In International Conference on Learning Representations (ICLR), 2021.
+403"
+REFERENCES,0.8412098298676749,"[26] Airbus. Decomon. https://github.com/airbus/decomon, 2023.
+404"
+REFERENCES,0.8431001890359168,"[27] Kaidi Xu, Zhouxing Shi, Huan Zhang, Yihan Wang, Kai-Wei Chang, Minlie Huang, Bhavya
+405"
+REFERENCES,0.8449905482041588,"Kailkhura, Xue Lin, and Cho-Jui Hsieh. Automatic perturbation analysis for scalable certified
+406"
+REFERENCES,0.8468809073724007,"robustness and beyond. Advances in Neural Information Processing Systems, 33:1129–1141,
+407"
+REFERENCES,0.8487712665406427,"2020.
+408"
+REFERENCES,0.8506616257088847,"[28] Gagandeep Singh, Timon Gehr, Markus Püschel, and Martin Vechev. An abstract domain for
+409"
+REFERENCES,0.8525519848771267,"certifying neural networks. Proceedings of the ACM on Programming Languages, 3(POPL):1–
+410"
+REFERENCES,0.8544423440453687,"30, 2019.
+411"
+REFERENCES,0.8563327032136105,"[29] Huan Zhang, Tsui-Wei Weng, Pin-Yu Chen, Cho-Jui Hsieh, and Luca Daniel. Efficient neu-
+412"
+REFERENCES,0.8582230623818525,"ral network robustness certification with general activation functions. Advances in neural
+413"
+REFERENCES,0.8601134215500945,"information processing systems, 31, 2018.
+414"
+REFERENCES,0.8620037807183365,"[30] H Brendan McMahan, Daniel Ramage, Kunal Talwar, and Li Zhang. Learning differentially
+415"
+REFERENCES,0.8638941398865785,"private recurrent language models. In International Conference on Learning Representations,
+416"
+REFERENCES,0.8657844990548205,"2018.
+417"
+REFERENCES,0.8676748582230623,"[31] Borja Balle, Gilles Barthe, and Marco Gaboardi. Privacy amplification by subsampling: Tight
+418"
+REFERENCES,0.8695652173913043,"analyses via couplings and divergences. Advances in Neural Information Processing Systems,
+419"
+REFERENCES,0.8714555765595463,"31, 2018.
+420"
+REFERENCES,0.8733459357277883,"[32] Yu-Xiang Wang, Borja Balle, and Shiva Prasad Kasiviswanathan. Subsampled rényi differential
+421"
+REFERENCES,0.8752362948960303,"privacy and analytical moments accountant. In The 22nd International Conference on Artificial
+422"
+REFERENCES,0.8771266540642723,"Intelligence and Statistics, pages 1226–1235. PMLR, 2019.
+423"
+REFERENCES,0.8790170132325141,"[33] Yuqing Zhu and Yu-Xiang Wang. Possion subsampled rényi differential privacy. In International
+424"
+REFERENCES,0.8809073724007561,"Conference on Machine Learning, pages 7634–7642. PMLR, 2019.
+425"
+REFERENCES,0.8827977315689981,"[34] Yuqing Zhu and Yu-Xiang Wang. Improving sparse vector technique with renyi differential
+426"
+REFERENCES,0.8846880907372401,"privacy. Advances in Neural Information Processing Systems, 33:20249–20258, 2020.
+427"
+REFERENCES,0.8865784499054821,"[35] Ilya Mironov. Rényi differential privacy. In 2017 IEEE 30th computer security foundations
+428"
+REFERENCES,0.888468809073724,"symposium (CSF), pages 263–275. IEEE, 2017.
+429"
+REFERENCES,0.8903591682419659,"[36] Ilya Mironov, Kunal Talwar, and Li Zhang. R\’enyi differential privacy of the sampled gaussian
+430"
+REFERENCES,0.8922495274102079,"mechanism. arXiv preprint arXiv:1908.10530, 2019.
+431"
+REFERENCES,0.8941398865784499,"[37] Razvan Pascanu, Tomas Mikolov, and Yoshua Bengio. On the difficulty of training recurrent
+432"
+REFERENCES,0.8960302457466919,"neural networks. In International conference on machine learning, pages 1310–1318. Pmlr,
+433"
+REFERENCES,0.8979206049149339,"2013.
+434"
+REFERENCES,0.8998109640831758,"[38] Yoshua Bengio, Patrice Simard, and Paolo Frasconi. Learning long-term dependencies with
+435"
+REFERENCES,0.9017013232514177,"gradient descent is difficult. IEEE transactions on neural networks, 5(2):157–166, 1994.
+436"
+REFERENCES,0.9035916824196597,"[39] Ugo Tanielian and Gerard Biau. Approximating lipschitz continuous functions with groupsort
+437"
+REFERENCES,0.9054820415879017,"neural networks. In International Conference on Artificial Intelligence and Statistics, pages
+438"
+REFERENCES,0.9073724007561437,"442–450. PMLR, 2021.
+439"
+REFERENCES,0.9092627599243857,"[40] Zakaria Mhammedi, Andrew Hellicar, Ashfaqur Rahman, and James Bailey. Efficient orthogonal
+440"
+REFERENCES,0.9111531190926276,"parametrisation of recurrent neural networks using householder reflections. In International
+441"
+REFERENCES,0.9130434782608695,"Conference on Machine Learning, pages 2401–2409. PMLR, 2017.
+442"
+REFERENCES,0.9149338374291115,"[41] Shuai Li, Kui Jia, Yuxin Wen, Tongliang Liu, and Dacheng Tao. Orthogonal deep neural
+443"
+REFERENCES,0.9168241965973535,"networks. IEEE transactions on pattern analysis and machine intelligence, 43(4):1352–1368,
+444"
+REFERENCES,0.9187145557655955,"2019.
+445"
+REFERENCES,0.9206049149338374,"[42] Asher Trockman and J Zico Kolter. Orthogonalizing convolutional layers with the cayley
+446"
+REFERENCES,0.9224952741020794,"transform. In International Conference on Learning Representations, 2021.
+447"
+REFERENCES,0.9243856332703214,"[43] Sahil Singla and Soheil Feizi. Skew orthogonal convolutions. In International Conference on
+448"
+REFERENCES,0.9262759924385633,"Machine Learning, pages 9756–9766. PMLR, 2021.
+449"
+REFERENCES,0.9281663516068053,"[44] El Mehdi Achour, François Malgouyres, and Franck Mamalet. Existence, stability and scalability
+450"
+REFERENCES,0.9300567107750473,"of orthogonal convolutional neural networks. The Journal of Machine Learning Research,
+451"
+REFERENCES,0.9319470699432892,"23(1):15743–15798, 2022.
+452"
+REFERENCES,0.9338374291115312,"[45] Sahil Singla and Soheil Feizi. Improved techniques for deterministic l2 robustness. arXiv
+453"
+REFERENCES,0.9357277882797732,"preprint arXiv:2211.08453, 2022.
+454"
+REFERENCES,0.9376181474480151,"[46] Xiaojun Xu, Linyi Li, and Bo Li. Lot: Layer-wise orthogonal training on improving l2 certified
+455"
+REFERENCES,0.9395085066162571,"robustness. arXiv preprint arXiv:2210.11620, 2022.
+456"
+REFERENCES,0.941398865784499,"[47] Stephen P Boyd and Lieven Vandenberghe. Convex optimization. Cambridge university press,
+457"
+REFERENCES,0.943289224952741,"2004.
+458"
+REFERENCES,0.945179584120983,"[48] Mathieu Serrurier, Franck Mamalet, Alberto González-Sanz, Thibaut Boissin, Jean-Michel
+459"
+REFERENCES,0.947069943289225,"Loubes, and Eustasio Del Barrio. Achieving robustness in classification using optimal transport
+460"
+REFERENCES,0.9489603024574669,"with hinge regularization. In Proceedings of the IEEE/CVF Conference on Computer Vision
+461"
+REFERENCES,0.9508506616257089,"and Pattern Recognition, pages 505–514, 2021.
+462"
+REFERENCES,0.9527410207939508,"[49] Nicolas Papernot, Abhradeep Thakurta, Shuang Song, Steve Chien, and Úlfar Erlingsson.
+463"
+REFERENCES,0.9546313799621928,"Tempered sigmoid activations for deep learning with differential privacy. In Proceedings of the
+464"
+REFERENCES,0.9565217391304348,"AAAI Conference on Artificial Intelligence, volume 35, pages 9312–9321, 2021.
+465"
+REFERENCES,0.9584120982986768,"[50] Florian Tramèr and Dan Boneh. Differentially private learning needs better features (or much
+466"
+REFERENCES,0.9603024574669187,"more data), 2021.
+467"
+REFERENCES,0.9621928166351607,"[51] Soham De, Leonard Berrada, Jamie Hayes, Samuel L Smith, and Borja Balle.
+Unlock-
+468"
+REFERENCES,0.9640831758034026,"ing high-accuracy differentially private image classification through scale. arXiv preprint
+469"
+REFERENCES,0.9659735349716446,"arXiv:2204.13650, 2022.
+470"
+REFERENCES,0.9678638941398866,"[52] Karen Simonyan and Andrew Zisserman. Very deep convolutional networks for large-scale
+471"
+REFERENCES,0.9697542533081286,"image recognition. arXiv preprint arXiv:1409.1556, 2014.
+472"
+REFERENCES,0.9716446124763705,"[53] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image
+473"
+REFERENCES,0.9735349716446124,"recognition. In Proceedings of the IEEE conference on computer vision and pattern recognition,
+474"
+REFERENCES,0.9754253308128544,"pages 770–778, 2016.
+475"
+REFERENCES,0.9773156899810964,"[54] Ilya O Tolstikhin, Neil Houlsby, Alexander Kolesnikov, Lucas Beyer, Xiaohua Zhai, Thomas
+476"
+REFERENCES,0.9792060491493384,"Unterthiner, Jessica Yung, Andreas Steiner, Daniel Keysers, Jakob Uszkoreit, et al. Mlp-
+477"
+REFERENCES,0.9810964083175804,"mixer: An all-mlp architecture for vision. Advances in neural information processing systems,
+478"
+REFERENCES,0.9829867674858223,"34:24261–24272, 2021.
+479"
+REFERENCES,0.9848771266540642,"[55] David Goldberg. What every computer scientist should know about floating-point arithmetic.
+480"
+REFERENCES,0.9867674858223062,"ACM computing surveys (CSUR), 23(1):5–48, 1991.
+481"
+REFERENCES,0.9886578449905482,"[56] Hadi Jooybar, Wilson WL Fung, Mike O’Connor, Joseph Devietti, and Tor M Aamodt. Gpudet:
+482"
+REFERENCES,0.9905482041587902,"a deterministic gpu architecture. In Proceedings of the eighteenth international conference on
+483"
+REFERENCES,0.9924385633270322,"Architectural support for programming languages and operating systems, pages 1–12, 2013.
+484"
+REFERENCES,0.994328922495274,"[57] Mahyar Fazlyab, Alexander Robey, Hamed Hassani, Manfred Morari, and George Pappas.
+485"
+REFERENCES,0.996219281663516,"Efficient and accurate estimation of lipschitz constants for deep neural networks. Advances in
+486"
+REFERENCES,0.998109640831758,"Neural Information Processing Systems, 32, 2019.
+487"

@@ -1,0 +1,3402 @@
+Section,Section Appearance Order,Paragraph
+ABSTRACT,0.0,ABSTRACT
+ABSTRACT,0.0008561643835616438,"Federated learning (FL) enables edge clients to train collaboratively while pre-
+serving individual’s data privacy. As clients do not inherently share identical data
+distributions, they may disagree in the direction of parameter updates, resulting
+in high compute and communication costs in comparison to centralized learning.
+Recent advances in FL focus on reducing data transmission during training; yet
+they neglected the increase of computational cost that dwarfs the merit of reduced
+communication. To this end, we propose FedDrop, which introduces channel-wise
+weighted dropout layers between convolutions to accelerate training while min-
+imizing their impact on convergence. Empirical results show that FedDrop can
+drastically reduce the amount of FLOPs required for training with a small increase
+in communication, and push the Pareto frontier of communication/computation
+trade-off further than competing FL algorithms."
+INTRODUCTION,0.0017123287671232876,"1
+INTRODUCTION"
+INTRODUCTION,0.0025684931506849314,"In the light of the importance of personal data and the recent strict privacy regulations, e.g. the General
+Data Protection Regulation (GDPR) of the European Union (Voigt & Von dem Bussche, 2017; Wolters,
+2017; Politou et al., 2018), there is now a great amount of risk, responsibility (Edwards et al., 2016;
+Culnan & Williams, 2009) and technical challenges for securing private data centrally (Sun et al.,
+2014); it is often impractical to upload, store and use data on central servers. To this end, federated
+learning (FL) (McMahan et al., 2017; Li et al., 2019a) enables multiple edge compute devices to
+learn a global shared model collaboratively in a communication-efﬁcient way without collecting
+their local training data. When compared against naïve decentralized SGD, Federated averaging
+(FedAvg) (McMahan et al., 2017) and subsequent FL algorithms (Li et al., 2020; Karimireddy et al.,
+2020) reduce the burden of data transmission by many orders of magnitude."
+INTRODUCTION,0.003424657534246575,"While these communication-efﬁcient methods can notably alleviate the difﬁculties of using FL in
+scenarios with limited bandwidth or data-quota, they, however, entail a drastic increase in computation
+cost, which has rarely been addressed by previous literature on FL. It has been argued that communi-
+cation is several orders of magnitude more expensive than computation on edge devices (Li et al.,
+2019a; Huang et al., 2013). Yet existing FL methods optimize for communication so aggressively that
+an iPhone 12 Pro running as a FedAvg client in our test1 would spend at least 16 minutes on training,
+before even transmitting 180 MB of data, which only takes fraction of a second under the modern
+5G infrastructure. The savings in communication thus are completely dwarfed by the expensive
+computation."
+INTRODUCTION,0.004280821917808219,"In a FL setup, models trained by the clients may disagree on the gradient direction to update the same
+neurons if the user data distributions are non-IID. In Figure 1, we demonstrate this effect with an
+initial round of FedAvg training. It turns out that clients sharing similar data distributions tend to
+produce similar update trajectories to the same channel, and different distributions observe disparate
+trajectories. From this example, it can be observed that the consequence of non-IID data is two-fold.
+First, a naïve averaging of client parameters may cause these conﬂicting signals to cancel out each
+other, resulting in a slow convergence of the global model. Second, neurons in a layer tend to learn
+distinct features, and yet they cannot learn meaningfully if these features are absent in the client’s
+training data. Since neuron training is heavily dependent on the client’s local data, it presents us an"
+INTRODUCTION,0.005136986301369863,1See Appendix F.6 for the setup.
+INTRODUCTION,0.0059931506849315065,Under review as a conference paper at ICLR 2022
+INTRODUCTION,0.00684931506849315,"Figure 1: We synthesized 20 clients with the Fashion-MNIST training data, where every two clients
+received only the same class images to simulate a concept shift, and separately trained the same CNN
+model for 1 epoch. We present all ﬁlter parameters update magnitudes for the ﬁrst 8 channels (row)
+in the ﬁrst convolutional layer for all clients (column) after 1 round of training. The pairs of clients
+grouped together with same colors (one lighter and one darker) signify that they shared the same data
+distribution. Each polar plot contains the update magnitudes of all parameters in the same channel.
+The length of each ray is the magnitude of the parameter update, and the parameters are arranged
+radially in each plot."
+INTRODUCTION,0.007705479452054794,"opportunity: can we concentrate training effort to neurons that are correlated to the current data
+distribution of the client, while paying less attention to neurons that are less relevant to the client?
+To leverage this, we introduce FedDrop, which introduces SyncDrop layers to structurally sparsify
+client models, and on the server-side an inter-client trajectory-based optimization of the dropout
+probabilities used by SyncDrop to speed up model training. FedDrop brings two-fold advantages:
+dropped neurons can simply be skipped, and thus reduce the training FLOPs required per step; and
+dropout probabilities of each neuron can be tuned individually to minimize the impact on the global
+averaged model updates to assist convergence. Overall, as evinced by our experiments, FedDrop
+enables a much improved communication/computation trade-off relationship than traditional FL
+approaches."
+INTRODUCTION,0.008561643835616438,Our contributions in this paper are as follows:
+INTRODUCTION,0.009417808219178082,"• We present SyncDrop layers, which are synchronous structural dropouts with adaptive keep
+probabilities, to reduce the computational cost required by FL."
+INTRODUCTION,0.010273972602739725,"• With SyncDrop, we formally derive the FedDrop objective that adjusts each neuron’s dropout
+probability to improve convergence by minimizing the disparities among inter-client update
+trajectories. We further introduce FLOPs-based constraints to enforce sparsity per FL round,
+allowing the trade-off between FLOPs and communication to be tuned easily."
+INTRODUCTION,0.01113013698630137,"• Empirical results reveal that the combined method, FedDrop, attains a substantially better
+communication/computation trade-off in comparison to other FL methods."
+RELATED WORK,0.011986301369863013,"2
+RELATED WORK"
+RELATED WORK,0.012842465753424657,"Federated learning. Distributed machine learning has a long history of progress and success (Peteiro-
+Barral & Guijarro-Berdiñas, 2013; Li et al., 2014), yet it mainly focuses on training with IID data.
+The Federated Learning (FL) paradigm and the Federated Averaging algorithm (FedAvg) initially
+introduced by McMahan et al. (2017) allow clients to train collaboratively without sharing the private
+data in a communication-efﬁcient manner, To further tackle data heterogeneity, FedProx (Li et al.,
+2020) introduces new regularizations, and SCAFFOLD (Karimireddy et al., 2020) presents control
+variates to account for client drifts and reduce the inter-client variance. While being effective at
+reducing communication, the above methods neglected the computational costs associated with the
+training process."
+RELATED WORK,0.0136986301369863,Under review as a conference paper at ICLR 2022
+RELATED WORK,0.014554794520547944,"Computation vs. communication during training. There are a few precursory methods that focus
+on the joint optimization of computation and communication costs during training. Caldas et al.
+(2018a) introduced federated dropout, which prunes parameters following a uniform random distribu-
+tion, whereas PruneFL (Jiang et al., 2019) proposes a greedy gradient-magnitude-based unstructured
+pruning. In each FL round, both methods produce a shared pruned model with ﬁne-grained spar-
+sity for all clients. Such unstructured sparsity is difﬁcult to utilize for training acceleration, and a
+shared global model cannot exploit the data distribution of individual clients. Adaptive federated
+dropout (Bouacida et al., 2020) partially addresses the latter issue by allowing each client to select a
+sub-model to join training. FjORD (Horvath et al., 2021) introduces ordered dropout to tackle the
+problem of system heterogeneity in FL with sub-model training that dynamically changes model
+capabilities using uniform sampling. FedGKT (He et al., 2020) transmits shallow layer activations to
+ofﬂoad training of subsequent layers to the server. However, the privacy implications were not well
+explored, and the trained models were substantially larger, which may limit their inference speed on
+edge devices. It is noteworthy that FedDrop differs from these approaches as it takes into account the
+non-IID client data distributions in a FL setting, and computes inter-client channel selection decisions
+that would minimize the impact on convergence."
+RELATED WORK,0.015410958904109588,"Dropout algorithms in centralized training. Dropout (Hinton et al., 2012; Srivastava et al., 2014)
+may improve neural network training by reducing the overﬁtting effect and allow it to generalize
+better. It is done by randomly setting parts of the connections or weights to zero in a network, and
+scaling the remaining values accordingly. Since its advent, there have been an increasing interest in
+applying dropout in a structural fashion (Huang et al., 2015; Ghiasi et al., 2018; Hou & Wang, 2019).
+Nonetheless, the above methods missed the opportunity to explore the implications of a structural
+dropout on the FLOPs consumed by training or inference."
+RELATED WORK,0.016267123287671232,"Structural pruning. A closely related topic is structural neuron pruning/selection for accelerated
+inference. These work propose new ways to extract a smaller accurate network from the original (He
+et al., 2018; Wu et al., 2019; Li et al., 2019b; Herrmann et al., 2020), and can even do so dynamically
+with an input-dependent policy (Gao et al., 2019; Hua et al., 2019; Wang et al., 2020c)."
+THE FEDDROP METHOD,0.017123287671232876,"3
+THE FEDDROP METHOD"
+HIGH-LEVEL OVERVIEW,0.01797945205479452,"3.1
+HIGH-LEVEL OVERVIEW"
+HIGH-LEVEL OVERVIEW,0.018835616438356163,Training round
+HIGH-LEVEL OVERVIEW,0.019691780821917807,HicbVDLSgNBEOyNrxhfUY9eFoMgGMKuKHoRA4p4jGgSIVnC7GQ2GTIzu8zMBsOST/CqF2/i1YN/I/ghHjw4eQiaWNBQVHfR3eVHjCrtO9WamZ2bn4hvZhZWl5ZXcub1RUGEtMyjhkobz1kSKMClLWVDNyG0mCuM9I1e+cDfrVLpGKhuJG9yLicdQSNKAYaSNdyz23kc05BWcIe5q4Y5I7/To/uXjrfJYa2Y96M8QxJ0JjhpSquU6kvQRJTEj/Uw9ViRCuINapGaoQJwoLxme2rd3jNK0g1CaEtoeqr8dCeJK9bif93n+7sfDkW6ryamB+F+vFuvg2EuoiGJNB6tDGJm69AeJGA3qSRYs54hCEtqrZxG0mEtckpY+JwJ5+fJpX9gntYcK6cXPEARkjDFmzDLrhwBEW4hBKUAUML7uEBHq2u9WQ9Wy+j0ZQ19mzCH1iv3ywqlWk=</latexit>r + 1
+HIGH-LEVEL OVERVIEW,0.02054794520547945,Optimize
+HIGH-LEVEL OVERVIEW,0.021404109589041095,"Inter-Client
+Trajectory Similarity"
+HIGH-LEVEL OVERVIEW,0.02226027397260274,FLOPs budget
+HIGH-LEVEL OVERVIEW,0.023116438356164382,Server aggregation round r
+HIGH-LEVEL OVERVIEW,0.023972602739726026,Weighted-average model parameters
+HIGH-LEVEL OVERVIEW,0.02482876712328767,ARXJSiKI7C25cVrAXaEuZTE/boTNJmDkRS8gL+Aa6c6sbd9KtbyH4ME7aCtr6w8DHf87hnPm9UHCNjvNpLSwuLa+sZtay6xubW9u5nd2qDiLFoMICEai6RzUI7kMFOQqohwqo9ATUvMFVWq/dgdI8G9xGEJL0p7Pu5xRNFY7tx83kYsOxE1PGuwD0iRJ2rm8U3TGsufBnUL+cvSY6qnczn01OwGLJPjIBNW64TohtmKqkDMBSbYZaQgpG9AeNAz6VIJuxePzE/vIOB27GyjzfLTH7u+JmEqth9IreLJw/zMjKfb1bFdq/ldrRNi9aMXcDyMEn01WdiNhY2CnqdgdroChGBqgTHFztc36VFGJrusicOd/fw8VE+K7lnRuXHypVMyUYckENyTFxyTkrkmpRJhTASk2fyQl6tB+vNerdGk9YFazqzR/7I+vgG6Fye6w=</latexit>˜✓
+HIGH-LEVEL OVERVIEW,0.025684931506849314,Last round
+HIGH-LEVEL OVERVIEW,0.026541095890410957,Training round r r
+HIGH-LEVEL OVERVIEW,0.0273972602739726,Parameter Update
+HIGH-LEVEL OVERVIEW,0.028253424657534245,Trajectories
+HIGH-LEVEL OVERVIEW,0.02910958904109589,Client 1
+HIGH-LEVEL OVERVIEW,0.029965753424657533,Client 2
+HIGH-LEVEL OVERVIEW,0.030821917808219176,Client 3
+HIGH-LEVEL OVERVIEW,0.031678082191780824,"Client 4
+✓"
+HIGH-LEVEL OVERVIEW,0.032534246575342464,"1+3A7tMNMGa3ZW1QEYM="">ACD3icbVDLSgNBEJz1GeMrxqMelgTBg4RdUfQY0IPHCOYB2RBmJx0zOLO7zPSqYdmLf+BPiFe9eFK8Cv6A4Mc4eQhqLGgoqrtmusuPBNfoOB/W1PTM7Nx8ZiG7uLS8spby9d0GCsGVRaKUDV8qkHwAKrIUAjUkClL6DuXxwN+vVLUJqHwRn2I2hJeh7wLmcUjdTObSbe8JHkqscRUs+XHvYAaTtx07SdKzolZwh7krhjUixn3p/zx3eFSjv36XVCFksIkAmqdN1ImwlVCFnAtKsF2uIKLug59A0NKASdCsZLpDaW0bp2N1QmQrQHqo/HQmVWvelv+PLnetvj6TY03+nBuJ/vWaM3cNWwoMoRgjY6MtuLGwM7UE4docrYCj6hlCmuNnaZj2qKEMTYdbE4f49fpLUdkvufsk5NbnskREyZIMUyDZxyQEpkxNSIVXCyA25Jw/k0bq1nqwX63U0OmWNPevkF6y3LzlNoE8=</latexit>✓1"
+HIGH-LEVEL OVERVIEW,0.03339041095890411,"9AC2yCWZC/2zX64+Y0A="">ACD3icbVBNS8NAEN3Ur1q/aj3qIVgED6UkRdFjQ8eK1gVmlI2m7dDcJuxO1hFz8B/4J8aoXT4pXwT8g+GPctgpafTDweDNvd+b5keAaHefdykxNz8zOZedzC4tLyv51cKpDmPFoM5CEapzn2oQPIA6chRwHimg0hdw5vcPhv2zC1Cah8EJDiJoStoNeIczikZq5TcSb/RIctnjCKnSw97gLSVNK0lS86ZWcE+y9xv0ixmn17KhzebtZa+Q+vHbJYQoBMUK0brhNhM6EKOROQ5rxYQ0RZn3ahYWhAJehmMlogtbeM0rY7oTIVoD1SfzoSKrUeSL/ky9LVt0dS7OnJqaH4X68RY2e/mfAgihECNv6yEwsbQ3sYjt3mChiKgSGUKW62tlmPKsrQRJgzcbiTx/8lp5Wyu1t2jk0uO2SMLFknm2SbuGSPVMkRqZE6YeSa3JF78mDdWI/Ws/UyHs1YX5418gvW6yc63aBQ</latexit>✓2"
+HIGH-LEVEL OVERVIEW,0.03424657534246575,"m56FYWPN2sSC7A4PsY="">ACD3icbVDJSgNBEO1xjXGL8aiHQRE8hDjgh4DevAYwSyQCaGnU0kau2eG7ho1DHPxD/wJ8aoXT4pXwR8Q/Bg7i+D2oODxql531fMjwTU6zrs1MTk1PTObmcvOLywuLedW8lUdxopBhYUiVHWfahA8gApyFCPFDpC6j50eDfu0ClOZhcIb9CJqSdgPe4YyikVq59cQbPpJc9jhC6vnSwx4gbSW7adrKbTpFZwj7L3HZLOUeXvKH9ulFu5D68dslhCgExQrRuE2EzoQo5E5BmvVhDRNk57ULD0IBK0M1kuEBqbxmlbXdCZSpAe6h+dyRUat2XfsGXhasvj6TY07+nBuJ/vUaMncNmwoMoRgjY6MtOLGwM7UE4dpsrYCj6hlCmuNnaZj2qKEMTYdbE4f4+/i+p7hTd/aJzanLZIyNkyBrZINvEJQekRE5ImVQI9fkjtyTB+vGerSerZfR6IQ19qySH7BePwE8baBR</latexit>✓3"
+HIGH-LEVEL OVERVIEW,0.0351027397260274,"P2GqZSzD9E5YvIGyCD8="">ACD3icbVBNS8NAEN3Ur1q/aj3qIVgED6UkUtFjQ8eK1gVmlI2m7dDcJuxO1hFz8B/4J8aoXT4pXwT8g+GPctgpafTDweDNvd+b5keAaHefdykxNz8zOZedzC4tLyv51cKpDmPFoM5CEapzn2oQPIA6chRwHimg0hdw5vcPhv2zC1Cah8EJDiJoStoNeIczikZq5TcSb/RIctnjCKnSw97gLSVNK0lS86ZWcE+y9xv0ixmn17KhzebtZa+Q+vHbJYQoBMUK0brhNhM6EKOROQ5rxYQ0RZn3ahYWhAJehmMlogtbeM0rY7oTIVoD1SfzoSKrUeSL/ky9LVt0dS7OnJqaH4X68RY2e/mfAgihECNv6yEwsbQ3sYjt3mChiKgSGUKW62tlmPKsrQRJgzcbiTx/8lpztld7fsHJtcKmSMLFknm2SbuGSPVMkRqZE6YeSa3JF78mDdWI/Ws/UyHs1YX5418gvW6yc9/aBS</latexit>✓4"
+HIGH-LEVEL OVERVIEW,0.03595890410958904,"BZDoTweigkCQKBC4="">ACFXicbVDLSsNAFJ34rPUVdekmtAguSklE0Z0FNy4r2Ac0pUymt+3QmSTM3KglZO8fiH6EW3XhTty6FvwY04egrQcuHM69Z+be4WCa7TtT2NufmFxaTmzkl1dW9/YNLe2qzqIFIMKC0Sg6h7VILgPFeQoB4qoNITUP6Z8N+7QqU5oF/iYMQmpJ2fd7hjGIqtcxc7I4eia97HCFxkYs2xK4nYxd7gDRJkpaZt4v2CNYscSYkf/pyP8RDuWV+ue2ARJ8ZIJq3XDsEJsxVciZgCTrRhpCyvq0C42U+lSCbsajNRJrL1XaVidQaflojdTfjphKrQfSK3iycPjkR7enpqKP7Xa0TYOWnG3A8jBJ+Nv+xEwsLAGkZktbkChmKQEsoUT7e2WI8qyjANMpvG4UwfP0uqB0XnqGhf2PnSIRkjQ3ZJjuwThxyTEjknZVIhjNySR/JEno0749V4M97Ho3PGxLND/sD4+AYP6qUB</latexit>˜✓"
+HIGH-LEVEL OVERVIEW,0.036815068493150686,"Optimized
+Dropout Keep"
+HIGH-LEVEL OVERVIEW,0.03767123287671233,Probabilities
+HIGH-LEVEL OVERVIEW,0.038527397260273974,clients
+HIGH-LEVEL OVERVIEW,0.039383561643835614,channels
+HIGH-LEVEL OVERVIEW,0.04023972602739726,channels
+HIGH-LEVEL OVERVIEW,0.0410958904109589,clients
+HIGH-LEVEL OVERVIEW,0.04195205479452055,clients
+HIGH-LEVEL OVERVIEW,0.04280821917808219,Client 1
+HIGH-LEVEL OVERVIEW,0.04366438356164384,Client 2
+HIGH-LEVEL OVERVIEW,0.04452054794520548,Client 3
+HIGH-LEVEL OVERVIEW,0.045376712328767124,Client 4
+HIGH-LEVEL OVERVIEW,0.046232876712328765,"(a)
+(b)
+(c)"
+HIGH-LEVEL OVERVIEW,0.04708904109589041,"Figure 2: A high-level overview of FedDrop using FedAvg as the base algorithm. Here, we use 4
+training clients for illustration. During each round of server averaging, FedDrop carries out dropout
+probability optimization to encourage collaboration between sparse clients for the next training round.
+Intuitively, for each neuron, if clients agree upon an update direction they would use larger keep
+probabilities, and a disagreement results in lower probabilities. Clients can thus focus training effort
+to their specialized neurons."
+HIGH-LEVEL OVERVIEW,0.04794520547945205,"FedDrop complements existing FL methods by adding new client- and server-side components.
+During client training, convolutional layers are sparsiﬁed by interleaving them with channel-wise
+dropout layers, namely the SyncDrop layers. Section 3.3 discusses in depth how SyncDrop layers
+compute dropout decisions. Additional optimization stages during server aggregation are added to
+encourage collaboration between sparse clients. Figure 2 shows how FedDrop extends traditional
+FedAvg (McMahan et al., 2017). After each round of client training, the server begins by identifying"
+HIGH-LEVEL OVERVIEW,0.0488013698630137,Under review as a conference paper at ICLR 2022
+HIGH-LEVEL OVERVIEW,0.04965753424657534,"parameter update directions of each client from the previous round, and computes a cross-client
+trajectory similarity matrix for each channel neuron. This is then followed by an optimization stage
+that iteratively minimizes the trajectory disparities by tuning dropout keep probabilities for each
+channel neuron on each client for the next training round (Section 3.6). This process also takes into
+consideration the FLOPs budget constraints to sparsify client models (Section 3.4). Finally, following
+FedAvg, the server broadcasts the weighted-average model parameters to all training clients in the
+new round, and ﬁnally sends the optimized probabilities to the respective clients."
+PRELIMINARIES AND DEFINITIONS,0.05051369863013699,"3.2
+PRELIMINARIES AND DEFINITIONS"
+PRELIMINARIES AND DEFINITIONS,0.05136986301369863,"FedDrop complements most FL algorithms. In this paper, we focus on its use on FedAvg (McMahan
+et al., 2017). We assume the training loss function of a client c ∈C to be ℓc(θc), where θc comprises
+the parameters {θ[l]
+c : l ∈L} of all layers in the model of client c."
+PRELIMINARIES AND DEFINITIONS,0.052226027397260275,"In each FedAvg training round r, clients begin by training on the loss function, with initial parameters
+θ(r) received from the server for this round:"
+PRELIMINARIES AND DEFINITIONS,0.053082191780821915,"θ(r+1)
+c
+= SGDc
+ 
+ℓc, θ(r), η, E
+
+.
+(1)"
+PRELIMINARIES AND DEFINITIONS,0.05393835616438356,"Here SGDc indicates that client c carries out stochastic gradient descent (SGD) on ℓc(θ(r)
+c ) locally,
+and it uses a learning rate η for E epochs. The FedAvg server then aggregates client model parameters
+after the rth training round, by taking the weighted average of them:"
+PRELIMINARIES AND DEFINITIONS,0.0547945205479452,θ(r+1) = P
+PRELIMINARIES AND DEFINITIONS,0.05565068493150685,"c∈C λcθ(r+1)
+c
+,
+(2)"
+PRELIMINARIES AND DEFINITIONS,0.05650684931506849,"where λc is the weight of client c and is proportional to the size of its training set |Dc| with
+P
+c∈C λc = 1. Finally, the (r + 1)th training round starts by repeating the above procedure."
+SYNCHRONIZED DROPOUT,0.05736301369863014,"3.3
+SYNCHRONIZED DROPOUT"
+SYNCHRONIZED DROPOUT,0.05821917808219178,"To induce sparsity in a stochastic manner, and subsequently introduce training correlation across
+clients, we designed a threshold-based dropout layer, SyncDrop, to synchronize dropout decisions
+across multiple clients."
+SYNCHRONIZED DROPOUT,0.059075342465753425,"Initially for all sampled clients c ∈C ⊆C, the server provides them with their corresponding dropout
+keep probabilities pc ∈[0, 1]N, and we assume p ∈[0, 1]C×N to be the concatenated probabilites
+from all sampled clients. Each element pn
+c in p denotes the keep probability of the channel neuron
+n ∈N in client c ∈C. We additionally use p[l]
+c , a slice of pc, to indicate the probabilities of all
+channels in the lth layer. During training, the lth layer samples t[l]
+n from a uniform distribution U(0, 1)
+for all channel neurons n in the layer, where t[l]
+n is shared across clients by using the same random
+seed. If pn
+c < t[l]
+n , a channel n in client c is dropped, i.e. we set the entire channel map to zero;
+otherwise, the channel values are scaled by 1/pn
+c during training2. Formally, for each client c, the lth
+dropout layer computes for the input x[l]:"
+SYNCHRONIZED DROPOUT,0.059931506849315065,"drop
+ 
+x
+[l], p
+[l]
+c
+
+≜d
+[l]
+c ◦x
+[l] ◦p
+[l]
+c"
+SYNCHRONIZED DROPOUT,0.06078767123287671,"◦−1, where d
+[l]
+c ≜1[t
+[l] < p
+[l]
+c ].
+(3)"
+SYNCHRONIZED DROPOUT,0.06164383561643835,"Here, 1[z] is the (element-wise) indicator function, which is equal to 1 when the condition z is met
+and 0 otherwise, ◦refers to the element-wise product, the term p[l]
+c
+◦−1 represents the element-wise
+inverse of p[l]
+c , and ﬁnally all elements of t[l] are independently sampled from U(0, 1) and shared
+across clients. Figure 3a provides a high-level overview of the procedure described above."
+SYNCHRONIZED DROPOUT,0.0625,"From the local perspective of a client c, the dropout decision d[l]
+c is equivalent to the Bernoulli
+distributions B(p[l]
+c ). An important distinction from independent Bernoulli distributions is that the
+distribution of d[l]
+c is correlated across clients c ∈C. Given a pair of clients (i, j) for channel n:"
+SYNCHRONIZED DROPOUT,0.06335616438356165,"Et∼U(0,1)
+
+dn
+i dn
+j
+
+=
+Z 1"
+SYNCHRONIZED DROPOUT,0.0642123287671233,"0
+1[t < pn
+i ] · 1[t < pn
+j ]dt = min
+ 
+pn
+i , pn
+j
+
+.
+(4)"
+SYNCHRONIZED DROPOUT,0.06506849315068493,"This enables us to adjust the correlation of the same channel neurons between any pairs of clients,
+and Section 3.6 makes use of this property to minimize the model update disparities across all clients."
+SYNCHRONIZED DROPOUT,0.06592465753424658,"2This is known as “inverted dropout” and implemented by PyTorch (2021) and TensorFlow (2021). Figure 7
+provides ablation results on scaling for dropout to justify the design choice."
+SYNCHRONIZED DROPOUT,0.06678082191780822,Under review as a conference paper at ICLR 2022
+SYNCHRONIZED DROPOUT,0.06763698630136987,: dropped channel
+SYNCHRONIZED DROPOUT,0.0684931506849315,: channel of 4 diﬀerent clients
+SYNCHRONIZED DROPOUT,0.06934931506849315,Keep probability
+SYNCHRONIZED DROPOUT,0.0702054794520548,"Channels (grouped by clients) …
+…"
+SYNCHRONIZED DROPOUT,0.07106164383561644,"Client 1 …
+…"
+SYNCHRONIZED DROPOUT,0.07191780821917808,"Client 2 …
+…"
+SYNCHRONIZED DROPOUT,0.07277397260273973,"Client 3 …
+…"
+SYNCHRONIZED DROPOUT,0.07363013698630137,Client 4
+SYNCHRONIZED DROPOUT,0.07448630136986302,SyncDrop Layer (no inter-client communications)
+SYNCHRONIZED DROPOUT,0.07534246575342465,": client channel keep probabilities
+: dropped client channel
+: dropout threshold, drawn from
+  uniform distribution"
+SYNCHRONIZED DROPOUT,0.0761986301369863,"w/w="">ACAXicbVBNS8NAEJ34WetX1IvgZbEIFaQkouix4MVjBdMWmlA27dDcJuxuhHrxr3jxoIhX/4U3/42bNgdtfTDweG+GmXlhwpnSjvNtLS2vrK6tlzbKm1vbO7v23n5Txak1CMxj2U7xIpyFlFPM81pO5EUi5DTVji6yf3WA5WKxdG9Hic0EHgQsT4jWBupax+myFdMIF9gPSYZ96k6pwh97RrV5yaMwVaJG5BKlCg0bW/F5MUkEjThWquM6iQ4yLDUjnE7KfqpogskID2jH0AgLqoJs+sEnRilh/qxNBVpNFV/T2RYKDUWoenMD1XzXi7+53VS3b8OMhYlqaYRmS3qpxzpGOVxoB6TlGg+NgQTycytiAyxESb0MomBHf+5UXSPK+5lzXn7qJSrxZxlOAIjqEKLlxBHW6hAR4QeIRneIU368l6sd6tj1nrklXMHMAfWJ8/QPmVYA=</latexit>u ⇠U(0, 1)"
+SYNCHRONIZED DROPOUT,0.07705479452054795,(a) The SyncDrop layer. …
+SYNCHRONIZED DROPOUT,0.0779109589041096,SyncDrop
+SYNCHRONIZED DROPOUT,0.07876712328767123,Conv+ReLU
+SYNCHRONIZED DROPOUT,0.07962328767123288,SyncDrop … O u tp u t s p a r s i t y In p u t  s p a r s i t y
+SYNCHRONIZED DROPOUT,0.08047945205479452,"50%
+dropped"
+"X FLOPS
+REDUCTION",0.08133561643835617,"4x FLOPs
+Reduction"
+"X FLOPS
+REDUCTION",0.0821917808219178,": dropped
+: active"
+"X FLOPS
+REDUCTION",0.08304794520547945,(b) Sparse convolution.
+"X FLOPS
+REDUCTION",0.0839041095890411,"Figure 3: A high-level overview of the SyncDrop layer. (a) For each channel across all clients in
+a forward pass, we draw u ∼U(0, 1) from the uniform distribution. If the keep probability (1 −
+dropout probability) of a channel in a client is less than u, then the channel is dropped from the model.
+Note that no inter-client communications are required, as the clients are synchronized by sharing an
+initial random seed. (b) When a convolutional layer is sandwiched between two SyncDrop layers, it
+takes the advantage of both the input- and output-side sparsities. As an example, here dropping 50%
+of both input and output channels can result in a 4× FLOPs reduction."
+"X FLOPS
+REDUCTION",0.08476027397260275,"We deﬁne ˆf to be the sparsiﬁed variant of the original model f, where SyncDrop layers are placed
+immediately after each convolutional layer with ReLU activation (Figure 3b). This enables convolu-
+tional layers to be doubly accelerated by taking advantage of sparsities at both ends and skipping
+dropped channels in input/output feature maps. Recalling the client model loss function ℓc, we
+additionally use ˆℓc to denote the accelerated variant of the sparse model ˆf with probabilities pc."
+"X FLOPS
+REDUCTION",0.08561643835616438,"It is noteworthy that active channels are sampled for each local training mini-batch. In addition, the
+synchronization of dropout decisions is carried out with identical random seeds for all clients, and
+thus it eliminates the need to communicate between clients. Finally, for inference, one may choose to
+enable the SyncDrop layers for speed, or skip these layers entirely. In our evaluations, SyncDrop
+layers are disabled for improved test accuracies."
+FLOPS CONSTRAINTS,0.08647260273972603,"3.4
+FLOPS CONSTRAINTS"
+FLOPS CONSTRAINTS,0.08732876712328767,"To encourage sparsity in models and for the optimization of p, we adopt a hyper-parameter r ∈(0, 1]
+that adjusts the FLOPs budget ratio, and deﬁne a shared global FLOPs-budget constraint g(p) ≥0
+for all participating clients C ⊆C in one round, where:"
+FLOPS CONSTRAINTS,0.08818493150684932,"g(p) = r −
+X"
+FLOPS CONSTRAINTS,0.08904109589041095,"c∈Cﬂops( ˆf, pc)
+
+(|C| ﬂops(f)),
+(5)"
+FLOPS CONSTRAINTS,0.0898972602739726,"and the terms ﬂops( ˆf, pc) and ﬂops(f) respectively denote the FLOPs of a sparse model with
+probabilities pc, and the FLOPs of the dense model f. Moreover, this constraint can be easily
+modiﬁed to allow client- and layer-wise, and even heterogeneous budgets by summing over targets
+with ﬁner granularity. In Appendix B, we explain how the FLOPs of a model is computed."
+PARAMETER INITIALIZATION,0.09075342465753425,"3.5
+PARAMETER INITIALIZATION"
+PARAMETER INITIALIZATION,0.0916095890410959,"At model initialization, we set all values in p to be a uniform constant p such that g(p) = 0. Since
+the training clients are sparse at initialization, the variance of each initialized parameters θ
+[l]
+ij ∈θ[l] of
+the lth layer must satisfy the following condition:
+Theorem 1 (Parameter initialization). To avoid vanishing/exploding gradients at initialization, the
+variance of the parameters of the lth layer followed by a dropout layer with keep probability p should
+be 2p/N, where N = C[l−1]K[l−1]2 is the size of the receptive ﬁeld of each output channel."
+PARAMETER INITIALIZATION,0.09246575342465753,"In this paper, we introduce a modiﬁed He initialization (He et al., 2015), that is θ ∼N(0,
+p"
+PARAMETER INITIALIZATION,0.09332191780821918,"2p/N).
+In Appendix C.1 we provide a proof of this theorem. Both Hendrycks & Gimpel (2016) and Pretorius
+et al. (2018) derived similar schemes for ﬁxing parameters initialization of layers followed by dropout.
+Figure 7 further justiﬁes this decision empirically by ablation of the ﬁxed initialization."
+PARAMETER INITIALIZATION,0.09417808219178082,Under review as a conference paper at ICLR 2022
+OPTIMIZING DROPOUT KEEP PROBABILITIES,0.09503424657534247,"3.6
+OPTIMIZING DROPOUT KEEP PROBABILITIES"
+OPTIMIZING DROPOUT KEEP PROBABILITIES,0.0958904109589041,"In our experiments, we found that using a constant dropout keep probability is often detrimental to the
+joint optimization of computation and communication costs. To speed up training while minimizing
+the impact of model sparsity on global training convergence, we therefore aim to optimize the dropout
+keep probabilities p for the following objective:"
+OPTIMIZING DROPOUT KEEP PROBABILITIES,0.09674657534246575,"minp E
+P"
+OPTIMIZING DROPOUT KEEP PROBABILITIES,0.0976027397260274,c∈Cλc∇θc ˆℓc −P
+OPTIMIZING DROPOUT KEEP PROBABILITIES,0.09845890410958905,"c∈Cλc∇θcℓc
+
+2"
+OPTIMIZING DROPOUT KEEP PROBABILITIES,0.09931506849315068,"2,
+(6)"
+OPTIMIZING DROPOUT KEEP PROBABILITIES,0.10017123287671233,"i.e. the mean square error between the averaged gradients of all training clients with and without
+SyncDrop layers. Intuitively, it aligns the parameter updates of sparse models with the original dense
+variants for an improved convergence behavior. As a result of the correlated dropouts across clients
+(4), the objective above can be minimized by adjusting all dropout keep probabilities pn
+c across
+neuron n on client c."
+OPTIMIZING DROPOUT KEEP PROBABILITIES,0.10102739726027397,"As it is impractical to communicate each step of SGD across clients, FedDrop instead optimizes
+an alternative objective derived in the theorem below (proved in Appendix C.2) that approximately
+minimizes the original:
+Theorem 2 (Approximate Objective). Assuming that for a channel neuron n ∈N and a pair of
+clients i, j ∈C, we have ˆSn
+ij ≜λiλj max(pn
+i , pn
+j )∆θn
+i · ∆θn
+j , where ∆θn
+i , ∆θn
+j are the param-
+eter updates after a round of FL training, pn
+i , pn
+j are the current dropout keep probabilities, and
+max(x, y) represents the element-wise max between x and y, the optimization objective of (6) can
+be approximated by:"
+OPTIMIZING DROPOUT KEEP PROBABILITIES,0.10188356164383562,"minq obj(ˆS, q) ≜minq
+P"
+OPTIMIZING DROPOUT KEEP PROBABILITIES,0.10273972602739725,"n∈N,i,j∈C ˆSn
+ij/max(qn
+i , qn
+j ).
+(7)"
+OPTIMIZING DROPOUT KEEP PROBABILITIES,0.1035958904109589,"The optimized values q can subsequently be used as the new dropout keep probabilities for the next
+round of FL training."
+OPTIMIZING DROPOUT KEEP PROBABILITIES,0.10445205479452055,"It is also desirable to have a bounded optimization to avoid extreme solutions. Without a FLOPs
+constraint, both objectives (6) and (7) can be trivially minimized with p = 1, i.e. when none of the
+channels are dropped, and Appendix C.2 provides the proofs of the following theorem:
+Theorem 3 (Optimization bound). The objective minq
+P"
+OPTIMIZING DROPOUT KEEP PROBABILITIES,0.1053082191780822,"nij ˆSn
+ij/max(qn
+i , qn
+j ) is trivially minimized
+to P
+nij ˆSn
+ij when qn
+c = 1 for ∀n ∈N, c ∈C."
+OPTIMIZING DROPOUT KEEP PROBABILITIES,0.10616438356164383,"To enforce sparsity, we therefore further constrain the optimization of q to be within the feasible
+set g(p) ≥0 as deﬁned in Section 3.4. In practice on the server-side after gathering model updates
+from a round of sparse client training, we minimize the overall objective via gradient descent with
+the interior point method:
+minq obj(ˆS, q) −µ log(g(q)).
+(8)
+The term −µ log(g(q)) constrains the solution q to be within the feasible set g(q) ≥0, and the hyper-
+parameter µ tunes the strength of the regularization, and is kept constant at 10−4. In Appendix D,
+we describe the overall FedDrop algorithm in depth, and discuss the computational and memory
+implications of FedDrop."
+EXPERIMENTAL RESULTS,0.10702054794520548,"4
+EXPERIMENTAL RESULTS"
+EXPERIMENTAL RESULTS,0.10787671232876712,"In this section, we present a comprehensive evaluation of both the communication and computation
+costs of FedDrop and compare it against other FL algorithms, namely FedAvg (McMahan et al.,
+2017), FedProx (Li et al., 2020), SCAFFOLD (Karimireddy et al., 2020), and Caldas et al. (2018a).
+We also introduce UniDrop for reference — a simple channel-wise dropout with a uniform keep
+probability that is kept constant as the comparison baseline."
+EXPERIMENTAL RESULTS,0.10873287671232877,"We conduct experiments on three popular open datasets CIFAR-10 (Krizhevsky et al., 2014), Fashion-
+MNIST (Xiao et al., 2017) and SVHN (Netzer et al., 2011). To simulate non-IID training data
+distribution with a concept shift, for every class label we split the training dataset into |C| parts to
+be respectively received by the clients, where the size of all parts follow the Dirichlet distribution
+D|C|(α) (Hsu et al., 2019; Wang et al., 2020b). For the full participation case, we used α = 0.5, 20
+clients for CIFAR-10, and 100 clients for Fashion-MNIST and SVHN in all experiments by default."
+EXPERIMENTAL RESULTS,0.1095890410958904,Under review as a conference paper at ICLR 2022
+EXPERIMENTAL RESULTS,0.11044520547945205,"We used a 9-layer VGG-style architecture (Simonyan & Zisserman, 2015) for CIFAR-10, wheras
+Fashion-MNIST used a LeNet (Lecun et al., 1998) model and SVHN a smaller variant, and we
+provide the details of the models and datasets in Appendix E."
+EXPERIMENTAL RESULTS,0.1113013698630137,"For a fair comparison, we performed a grid-based search on the remaining hyperparameters for
+baseline algorithms to ﬁnd conﬁgurations that provide the best accuracy after 100 rounds of training
+for each dataset. The search results suggested that typically setting the batch size B = 4 and learning
+rate η = 0.02 were universally optimal for most methods under comparison. FedProx additionally
+introduced a regularizer µ which was also optimized within {0.0001, 0.001, 0.01, 0.1}. Finally,
+FedDrop introduces a global FLOPs budget per round as a ratio between r ∈(0, 1] that can be
+adjusted to steer the communication/computation trade-off as deﬁned in (5), for which we specify the
+values in the experiments below."
+EXPERIMENTAL RESULTS,0.11215753424657535,"FLOPs vs. Accuracy. We ﬁrst focus on the amount of FLOPs required by the algorithms, and
+provide a set of comparisons across the FL methods for the same number of local epochs per round E,
+given their respective optimal hyperparameters with an unbounded communication budget (Figure 4).
+Here, we used a FLOPs ratio r = 0.5 for FedDrop. Frequent communication rounds allow the server
+to more frequently optimize dropout keep probabilities for FedDrop, which can notably improve
+convergence under the same FLOPs budget. In contrast, other methods struggle to improve their
+convergence speed."
+EXPERIMENTAL RESULTS,0.11301369863013698,"0
+0.2 0.4 0.6 0.8
+1
+1.2 ·1015 20 40 60 80"
+EXPERIMENTAL RESULTS,0.11386986301369863,Number of FLOPs
+EXPERIMENTAL RESULTS,0.11472602739726027,Accuracy (%)
+EXPERIMENTAL RESULTS,0.11558219178082192,FedDrop
+EXPERIMENTAL RESULTS,0.11643835616438356,UniDrop
+EXPERIMENTAL RESULTS,0.1172945205479452,FedAvg
+EXPERIMENTAL RESULTS,0.11815068493150685,FedProx
+EXPERIMENTAL RESULTS,0.1190068493150685,SCAFFOLD
+EXPERIMENTAL RESULTS,0.11986301369863013,Caldas et al.
+EXPERIMENTAL RESULTS,0.12071917808219178,(a) E = 4.
+EXPERIMENTAL RESULTS,0.12157534246575342,"0
+1
+2
+3
+4
+5
+6 ·1014 20 40 60 80"
+EXPERIMENTAL RESULTS,0.12243150684931507,Number of FLOPs
+EXPERIMENTAL RESULTS,0.1232876712328767,Accuracy (%)
+EXPERIMENTAL RESULTS,0.12414383561643835,FedDrop
+EXPERIMENTAL RESULTS,0.125,UniDrop
+EXPERIMENTAL RESULTS,0.12585616438356165,FedAvg
+EXPERIMENTAL RESULTS,0.1267123287671233,FedProx
+EXPERIMENTAL RESULTS,0.12756849315068494,SCAFFOLD
+EXPERIMENTAL RESULTS,0.1284246575342466,Caldas et al.
+EXPERIMENTAL RESULTS,0.1292808219178082,(b) E = 2.
+EXPERIMENTAL RESULTS,0.13013698630136986,"0
+0.5
+1
+1.5
+2
+2.5
+3 ·1014 20 40 60 80"
+EXPERIMENTAL RESULTS,0.1309931506849315,Number of FLOPs
+EXPERIMENTAL RESULTS,0.13184931506849315,Accuracy (%)
+EXPERIMENTAL RESULTS,0.1327054794520548,FedDrop
+EXPERIMENTAL RESULTS,0.13356164383561644,UniDrop
+EXPERIMENTAL RESULTS,0.1344178082191781,FedAvg
+EXPERIMENTAL RESULTS,0.13527397260273974,FedProx
+EXPERIMENTAL RESULTS,0.13613013698630136,SCAFFOLD
+EXPERIMENTAL RESULTS,0.136986301369863,Caldas et al.
+EXPERIMENTAL RESULTS,0.13784246575342465,(c) E = 1.
+EXPERIMENTAL RESULTS,0.1386986301369863,Figure 4: Comparing FL methods with the same local training epochs per round E used for CIFAR-10.
+EXPERIMENTAL RESULTS,0.13955479452054795,"FLOPs vs. Communications. To bolster the trade-off between communication and computation, we
+additionally conducted a hyperparameter exploration to navigate the Pareto frontiers of this trade-off
+relationship. The hyperparameters include the number of local epochs per round E and the batch
+size B. In addition, FedDrop can search for the Pareto optimal r in the set {0.2, 0.25, 0.333, 0.5}.
+Figure 5 shows the FLOPs/communication trade-off of the FL methods. It is notable that with
+decreasing FLOPs budgets, FedDrop expends minimal communications, whereas other methods
+may have signiﬁcantly larger communication costs to reach the same target accuracy. Conversely, in
+Table 1, we show that FedDrop can be up to 3× more efﬁcient in terms of FLOPs under the same
+communication budget for the same accuracy goal."
+EXPERIMENTAL RESULTS,0.1404109589041096,"1013
+1013.2 1013.4 1013.6 1013.8
+103 104"
+EXPERIMENTAL RESULTS,0.14126712328767124,Number of FLOPs
+EXPERIMENTAL RESULTS,0.1421232876712329,Communications (GB)
+EXPERIMENTAL RESULTS,0.1429794520547945,FedDrop
+EXPERIMENTAL RESULTS,0.14383561643835616,UniDrop
+EXPERIMENTAL RESULTS,0.1446917808219178,FedAvg
+EXPERIMENTAL RESULTS,0.14554794520547945,FedProx
+EXPERIMENTAL RESULTS,0.1464041095890411,SCAFFOLD
+EXPERIMENTAL RESULTS,0.14726027397260275,Caldas et al.
+EXPERIMENTAL RESULTS,0.1481164383561644,(a) 85% for SVHN.
+EXPERIMENTAL RESULTS,0.14897260273972604,"1013.4
+1013.6
+1013.8
+1014
+103 104 105"
+EXPERIMENTAL RESULTS,0.14982876712328766,Number of FLOPs
+EXPERIMENTAL RESULTS,0.1506849315068493,Communications (GB)
+EXPERIMENTAL RESULTS,0.15154109589041095,FedDrop
+EXPERIMENTAL RESULTS,0.1523972602739726,UniDrop
+EXPERIMENTAL RESULTS,0.15325342465753425,FedAvg
+EXPERIMENTAL RESULTS,0.1541095890410959,FedProx
+EXPERIMENTAL RESULTS,0.15496575342465754,SCAFFOLD
+EXPERIMENTAL RESULTS,0.1558219178082192,Caldas et al.
+EXPERIMENTAL RESULTS,0.1566780821917808,(b) 85% for Fashion-MNIST.
+EXPERIMENTAL RESULTS,0.15753424657534246,"1014.6 1014.8
+1015
+1015.2 1015.4 104 105"
+EXPERIMENTAL RESULTS,0.1583904109589041,Number of FLOPs
+EXPERIMENTAL RESULTS,0.15924657534246575,Communications (GB)
+EXPERIMENTAL RESULTS,0.1601027397260274,FedDrop
+EXPERIMENTAL RESULTS,0.16095890410958905,UniDrop
+EXPERIMENTAL RESULTS,0.1618150684931507,FedAvg
+EXPERIMENTAL RESULTS,0.16267123287671234,FedProx
+EXPERIMENTAL RESULTS,0.16352739726027396,SCAFFOLD
+EXPERIMENTAL RESULTS,0.1643835616438356,Caldas et al.
+EXPERIMENTAL RESULTS,0.16523972602739725,(c) 80% for CIFAR-10.
+EXPERIMENTAL RESULTS,0.1660958904109589,"Figure 5: Comparing the FLOPs vs. communication trade-off across different FL methods reaching a
+target accuracy for a given dataset. We highlight the Pareto optimal points with dotted lines."
+EXPERIMENTAL RESULTS,0.16695205479452055,Under review as a conference paper at ICLR 2022
+EXPERIMENTAL RESULTS,0.1678082191780822,"Table 1: Comparing the computational costs (in TFLOPs) required by FedDrop against other methods
+given a communications budget. Multipliers in parentheses signify the magnitude of FLOPs increase
+compared to FedDrop."
+EXPERIMENTAL RESULTS,0.16866438356164384,"Dataset
+Acc.
+Comm.
+Methods"
+EXPERIMENTAL RESULTS,0.1695205479452055,"FedDrop
+UniDrop
+FedAvg
+FedProx
+SCAFFOLD
+Caldas et al. (2018a)
+(McMahan et al., 2017)
+(Li et al., 2020)
+(Karimireddy et al., 2020)"
+EXPERIMENTAL RESULTS,0.1703767123287671,"CIFAR-10
+70%
+8 GB
+391.35
+964.12 (2.46×)
+602.63 (1.54×)
+669.59 (1.71×)
+696.37 (1.78×)
+715.19 (1.83×)
+16 GB
+244.79
+856.99 (3.50×)
+569.15 (2.32×)
+589.24 (2.41×)
+549.06 (2.24×)
+622.48 (2.54×)"
+EXPERIMENTAL RESULTS,0.17123287671232876,"80%
+16 GB
+753.67
+1526.52 (2.01×)
+937.42 (1.24×)
+1098.73 (1.46×)
+1071.34 (1.42×)
+1324.43 (1.76×)
+32 GB
+531.43
+1298.88 (2.44×)
+890.55 (1.68×)
+964.21 (1.81×)
+870.47 (1.64×)
+1172.12 (2.21×)"
+EXPERIMENTAL RESULTS,0.1720890410958904,"Fashion-
+MNIST"
+EXPERIMENTAL RESULTS,0.17294520547945205,"80%
+4 GB
+12.85
+29.81 (2.32×)
+32.68 (2.54×)
+32.68 (2.54×)
+31.25 (2.43×)
+34.82 (2.71×)
+8 GB
+9.82
+26.97 (2.74×)
+30.54 (3.11×)
+30.54 (3.11×)
+26.99 (2.75×)
+31.65 (3.22×)"
+EXPERIMENTAL RESULTS,0.1738013698630137,"85%
+4 GB
+32.83
+65.30 (1.99×)
+68.19 (2.08×)
+68.19 (2.08×)
+56.83 (1.73×)
+94.78 (2.87×)
+8 GB
+25.69
+59.62 (2.32×)
+66.77 (2.60×)
+62.51 (2.43×)
+51.14 (1.99×)
+72.02 (2.80×)"
+EXPERIMENTAL RESULTS,0.17465753424657535,"SVHN
+80%
+4 GB
+7.72
+14.43 (1.87×)
+12.25 (1.59×)
+12.25 (1.59×)
+12.22 (1.58×)
+17.54 (2.27×)
+8 GB
+6.45
+13.08 (2.02×)
+11.41 (1.77×)
+11.42 (1.77×)
+11.70 (1.81×)
+13.48 (2.09×)"
+EXPERIMENTAL RESULTS,0.175513698630137,"85%
+4 GB
+13.30
+26.60 (2.00×)
+19.99 (1.50×)
+19.99 (1.50×)
+22.19 (1.67×)
+43.85 (3.30×)
+8 GB
+12.23
+23.31 (1.91×)
+17.82 (1.46×)
+17.82 (1.46×)
+16.15 (1.32×)
+26.89 (2.20×)"
+EXPERIMENTAL RESULTS,0.17636986301369864,"Fractional Device Participation. To measure the performance of FedDrop in more practical dis-
+tributed scenario, we scale the number of devices to 1000, while reducing the fraction of participation
+rate φ per round to only 1%, yielding results in Table 2. We refer readers to Appendix F.5 for more
+detailed trade-off results."
+EXPERIMENTAL RESULTS,0.17722602739726026,"Table 2: Comparing the computational costs (in TFLOPs) required by FedDrop against other methods
+given a communications budget with 1000 devices and 1% device participation ratio (φ = 0.01)."
+EXPERIMENTAL RESULTS,0.1780821917808219,"Dataset
+Acc.
+Comm.
+Methods"
+EXPERIMENTAL RESULTS,0.17893835616438356,"FedDrop
+UniDrop
+FedAvg
+FedProx
+Caldas et al. (2018a)
+(McMahan et al., 2017)
+(Li et al., 2020)"
+EXPERIMENTAL RESULTS,0.1797945205479452,"CIFAR-10
+70%
+160 GB
+122.74
+290.98 (2.37×)
+215.07 (1.75×)
+213.46 (1.74×)
+469.64 (3.83×)
+320 GB
+99.89
+213.96 (2.14×)
+194.50 (1.95×)
+187.74 (1.88×)
+238.93 (2.39×)"
+EXPERIMENTAL RESULTS,0.18065068493150685,"75%
+160 GB
+223.28
+392.79 (1.76×)
+322.47 (1.44×)
+321.13 (1.44×)
+735.59 (3.29×)
+320 GB
+128.52
+319.57 (2.49×)
+233.15 (1.81×)
+225.55 (1.75×)
+396.93 (3.09×)"
+EXPERIMENTAL RESULTS,0.1815068493150685,"Fashion-
+MNIST"
+EXPERIMENTAL RESULTS,0.18236301369863014,"80%
+4 GB
+1.32
+1.89 (1.43×)
+2.70 (2.05×)
+2.59 (1.96×)
+2.89 (2.19×)
+8 GB
+1.04
+1.64 (1.58×)
+2.25 (2.16×)
+2.32 (2.23×)
+2.28 (2.19×)"
+EXPERIMENTAL RESULTS,0.1832191780821918,"85%
+4 GB
+4.83
+6.72 (1.39×)
+6.00 (1.24×)
+6.01 (1.24×)
+7.78 (1.61×)
+8 GB
+2.77
+5.59 (2.02×)
+5.54 (2.01×)
+5.47 (1.97×)
+6.50 (2.35×)"
+EXPERIMENTAL RESULTS,0.1840753424657534,"SVHN
+80%
+2 GB
+0.66
+1.11 (1.68×)
+1.05 (1.59×)
+1.04 (1.58×)
+1.39 (2.11×)
+4 GB
+0.56
+0.99 (1.77×)
+0.95 (1.70×)
+0.91 (1.62×)
+1.14 (2.04×)"
+EXPERIMENTAL RESULTS,0.18493150684931506,"85%
+2 GB
+1.36
+2.34 (1.72×)
+1.65 (1.21×)
+1.60 (1.18×)
+3.10 (2.28×)
+4 GB
+0.94
+2.17 (2.31×)
+1.40 (1.49×)
+1.37 (1.46×)
+2.50 (2.66×)"
+EXPERIMENTAL RESULTS,0.1857876712328767,"Dataset Distribution Imbalance. To investigate how different data distributions affect the perfor-
+mance of FedDrop rigorously, we provide a sweep of α ∈{5, 0.5, 0.05} for the CIFAR-10 dataset
+splits D|C|(α) to simulate increasing degrees of distribution imbalance in Figure 6. It shows that
+FedDrop is the best method at maintaining accuracy with distribution imbalance w.r.t. the FLOPs
+budget. We believe SCAFFOLD may be unsuited for larger models as it diverged under these
+scenarios."
+EXPERIMENTAL RESULTS,0.18664383561643835,"0
+0.5
+1
+1.5
+2 ·1015 20 40 60 80"
+EXPERIMENTAL RESULTS,0.1875,Number of FLOPs
+EXPERIMENTAL RESULTS,0.18835616438356165,Accuracy (%)
+EXPERIMENTAL RESULTS,0.1892123287671233,FedDrop
+EXPERIMENTAL RESULTS,0.19006849315068494,UniDrop
+EXPERIMENTAL RESULTS,0.1909246575342466,FedAvg
+EXPERIMENTAL RESULTS,0.1917808219178082,FedProx
+EXPERIMENTAL RESULTS,0.19263698630136986,SCAFFOLD
+EXPERIMENTAL RESULTS,0.1934931506849315,Caldas et al.
+EXPERIMENTAL RESULTS,0.19434931506849315,"(a) E = 8, α = 5."
+EXPERIMENTAL RESULTS,0.1952054794520548,"0
+0.5
+1
+1.5
+2 ·1015 20 40 60 80"
+EXPERIMENTAL RESULTS,0.19606164383561644,Number of FLOPs
+EXPERIMENTAL RESULTS,0.1969178082191781,Accuracy (%)
+EXPERIMENTAL RESULTS,0.19777397260273974,FedDrop
+EXPERIMENTAL RESULTS,0.19863013698630136,UniDrop
+EXPERIMENTAL RESULTS,0.199486301369863,FedAvg
+EXPERIMENTAL RESULTS,0.20034246575342465,FedProx
+EXPERIMENTAL RESULTS,0.2011986301369863,SCAFFOLD
+EXPERIMENTAL RESULTS,0.20205479452054795,Caldas et al.
+EXPERIMENTAL RESULTS,0.2029109589041096,"(b) E = 8, α = 0.5."
+EXPERIMENTAL RESULTS,0.20376712328767124,"0
+0.5
+1
+1.5
+2 ·1015 20 40 60"
+EXPERIMENTAL RESULTS,0.2046232876712329,Number of FLOPs
+EXPERIMENTAL RESULTS,0.2054794520547945,Accuracy (%)
+EXPERIMENTAL RESULTS,0.20633561643835616,FedDrop
+EXPERIMENTAL RESULTS,0.2071917808219178,UniDrop
+EXPERIMENTAL RESULTS,0.20804794520547945,FedAvg
+EXPERIMENTAL RESULTS,0.2089041095890411,FedProx
+EXPERIMENTAL RESULTS,0.20976027397260275,SCAFFOLD
+EXPERIMENTAL RESULTS,0.2106164383561644,Caldas et al.
+EXPERIMENTAL RESULTS,0.21147260273972604,"(c) E = 8, α = 0.05."
+EXPERIMENTAL RESULTS,0.21232876712328766,Figure 6: Varying α for the dataset splits D|C|(α) of CIFAR-10 with E = 8.
+EXPERIMENTAL RESULTS,0.2131849315068493,"Ablation Study. To verify our design choice, we conduct a thorough set of ablations in Figure 7. We
+observe a certain degree of accuracy drop as these components are ablated, conﬁrming the signiﬁcance"
+EXPERIMENTAL RESULTS,0.21404109589041095,Under review as a conference paper at ICLR 2022
+EXPERIMENTAL RESULTS,0.2148972602739726,"20
+40
+60
+80
+100
+40 50 60 70 80"
+EXPERIMENTAL RESULTS,0.21575342465753425,Number of Communication Rounds
+EXPERIMENTAL RESULTS,0.2166095890410959,Accuracy (%)
+EXPERIMENTAL RESULTS,0.21746575342465754,"E = 4, sync"
+EXPERIMENTAL RESULTS,0.2183219178082192,"E = 4, no sync"
+EXPERIMENTAL RESULTS,0.2191780821917808,"E = 8, sync"
+EXPERIMENTAL RESULTS,0.22003424657534246,"E = 8, no sync"
+EXPERIMENTAL RESULTS,0.2208904109589041,(a) r = 0.5
+EXPERIMENTAL RESULTS,0.22174657534246575,"20
+40
+60
+80
+100
+40 50 60 70 80"
+EXPERIMENTAL RESULTS,0.2226027397260274,Number of Communication Rounds
+EXPERIMENTAL RESULTS,0.22345890410958905,Accuracy (%)
+EXPERIMENTAL RESULTS,0.2243150684931507,"E = 4, sync"
+EXPERIMENTAL RESULTS,0.22517123287671234,"E = 4, no sync"
+EXPERIMENTAL RESULTS,0.22602739726027396,"E = 8, sync"
+EXPERIMENTAL RESULTS,0.2268835616438356,"E = 8, no sync"
+EXPERIMENTAL RESULTS,0.22773972602739725,(b) r = 0.25
+EXPERIMENTAL RESULTS,0.2285958904109589,"20
+40
+60
+80
+100
+40 50 60 70 80"
+EXPERIMENTAL RESULTS,0.22945205479452055,Number of Communication Rounds
+EXPERIMENTAL RESULTS,0.2303082191780822,Accuracy (%)
+EXPERIMENTAL RESULTS,0.23116438356164384,"E = 4, ﬁxed init, scaling"
+EXPERIMENTAL RESULTS,0.2320205479452055,"E = 4, scaling"
+EXPERIMENTAL RESULTS,0.2328767123287671,"E = 4, ﬁxed init"
+EXPERIMENTAL RESULTS,0.23373287671232876,(c) r = 0.5
+EXPERIMENTAL RESULTS,0.2345890410958904,"20
+40
+60
+80
+100
+40 50 60 70 80"
+EXPERIMENTAL RESULTS,0.23544520547945205,Number of Communication Rounds
+EXPERIMENTAL RESULTS,0.2363013698630137,Accuracy (%)
+EXPERIMENTAL RESULTS,0.23715753424657535,"E = 4, ﬁxed init, scaling"
+EXPERIMENTAL RESULTS,0.238013698630137,"E = 4, scaling"
+EXPERIMENTAL RESULTS,0.23886986301369864,"E = 4, ﬁxed init"
+EXPERIMENTAL RESULTS,0.23972602739726026,(d) r = 0.25
+EXPERIMENTAL RESULTS,0.2405821917808219,"Figure 7: Ablation of design choices. (a, b) SyncDrop with and without synchronization. (c, d) with
+and without dropout scaling and ﬁxed initialization under different FLOPs ratio r for CIFAR-10."
+EXPERIMENTAL RESULTS,0.24143835616438356,"of synchronization. This then further justiﬁes the effectiveness of dropout scaling and initialization
+that comes with theoretical guarantees."
+EXPERIMENTAL RESULTS,0.2422945205479452,"20
+40
+60
+80
+100
+60 65 70 75 80 85"
+EXPERIMENTAL RESULTS,0.24315068493150685,Number of Communication Rounds
+EXPERIMENTAL RESULTS,0.2440068493150685,Accuracy (%)
+K,0.24486301369863014,50 k
+K,0.2457191780821918,10 k
+K,0.2465753424657534,5 k
+K,0.24743150684931506,1 k
+K,0.2482876712328767,(a) Optimization iterations.
+K,0.24914383561643835,"20
+40
+60
+80
+100
+60 65 70 75 80 85"
+K,0.25,Number of Communication Rounds
+K,0.2508561643835616,Accuracy (%) 0.01 0.001
+K,0.2517123287671233,0.0001
+K,0.2525684931506849,0.00001
+K,0.2534246575342466,(b) FLOPs regularizer.
+K,0.2542808219178082,"1014
+1014.2 1014.4 1014.6 1014.8
+50 60 70 80"
+K,0.2551369863013699,Number of FLOPs
+K,0.2559931506849315,Accuracy (%) 0.75 0.5 0.333 0.25
+K,0.2568493150684932,(c) FLOPs vs. accuracy.
+K,0.2577054794520548,"0
+20
+40
+60
+80 20 40 60 80"
+K,0.2585616438356164,Number of Communication Rounds
+K,0.2594178082191781,Accuracy (%) 0.75 0.5 0.333 0.25
+K,0.2602739726027397,(d) Rounds vs. accuracy.
+K,0.2611301369863014,"Figure 8: Sensitivity analyses of (a) optimization iterations I, (b) FLOPs constraint regularizer µ,
+and (c, d) the FLOPs budget ratio r."
+K,0.261986301369863,"Sensitivity Analysis. Figure 8 produces a sensitivity analysis of the hyperparameters introduced
+by our server-side probability objective minimization (7), namely the number of gradient descent
+iterations I and the strength of regularization µ. It turns out that additional iterations can improve
+convergence, which is desirable as the server compute budget is usually not the performance bot-
+tleneck. Moreover, a broad range of regularization µ do not have an adverse impact on accuracy,
+eliminating the need for a search. We also present an analysis on the effect of the FLOPs ratio r as
+deﬁned in (5). Reducing this ratio can sparsify models, for a faster initial convergence w.r.t. FLOPs.
+However, it comes at a cost of a slower convergence in latter rounds."
+K,0.2628424657534247,"Additional Results. In Appendix F, we provide additional results and analyses. Speciﬁcally, Ap-
+pendix F.1 includes the trade-off curves for all datasets under different accuracy budgets. We examine
+the performance impact on FL algorithms with different degrees of data imbalance (Appendix F.2),
+and varying hyperparameters such as local epochs per round E (Appendix F.3) and the FLOPs budget
+ratio r (Appendix F.4). Finally, Appendix F.5 provides full results with fractional device participation."
+CONCLUSION,0.2636986301369863,"5
+CONCLUSION"
+CONCLUSION,0.2645547945205479,"Recent federate learning (FL) algorithms focus on the reduction of communication costs, while
+neglecting the expensive local compute required by edge clients. This could be further exacerbated
+as the models we employ may increase in size over time to attain a higher task performance.
+We presented FedDrop, a novel FL technique that uses synchronous dropout with adaptive keep
+probabilities to concentrate the clients’ training effort on neurons that they specialize well, while
+making the models sparse to reduce computational costs. Our experiments show that FedDrop can
+push the Pareto frontiers of communication/computation trade-off of FL scenarios notably further
+than existing algorithms. We believe this paves the way for future work that allow FL algorithms to
+scale up models being trained considerably, and consequently improve their performance on more
+challenging training tasks."
+CONCLUSION,0.2654109589041096,Under review as a conference paper at ICLR 2022
+ETHICS STATEMENT,0.2662671232876712,"6
+ETHICS STATEMENT"
+ETHICS STATEMENT,0.2671232876712329,"We believe FedDrop can have a positive impact on the environment as it aims to make federated
+learning more efﬁcient."
+ETHICS STATEMENT,0.2679794520547945,"The federated learning algorithms require communicating locally optimized client models to global
+server. In such a scenario, training data could potentially be recovered from model updates (Yin
+et al., 2021; Wang et al., 2020a), and this could have privacy implications. Although our work do not
+empirically address the privacy concern, we believe the added dropout layers do not bring noticeable
+impact to the underlying FL algorithm, for the reasons below:"
+ETHICS STATEMENT,0.2688356164383562,"• The dropout probabilities are computed on the server with client updates, the optimized
+probabilities are simply derived from information that are already collected by the base
+algorithm."
+ETHICS STATEMENT,0.2696917808219178,"• There is no inter-client information exchange or leakage, as each client only receives its
+corresponding dropout probabilities."
+REPRODUCIBILITY STATEMENT,0.2705479452054795,"7
+REPRODUCIBILITY STATEMENT"
+REPRODUCIBILITY STATEMENT,0.2714041095890411,"We provide detailed information about model conﬁguration in Appendix E, dataset splitting and
+partitioning in Section 4, and hyperparameters for optimization in Section 4. We try to justify
+the design choices of our method with ablation in Section 4, and all the experiments reported in
+this manuscript are conducted exhaustively with broad choices of hyperparameters to ensure fair
+evaluation for all methods. The code would be available during the review period and made public
+upon acceptance."
+REPRODUCIBILITY STATEMENT,0.2722602739726027,Under review as a conference paper at ICLR 2022
+REFERENCES,0.2731164383561644,REFERENCES
+REFERENCES,0.273972602739726,"Core ML — integrate machine learning models into your app. Technical report, Apple Inc., 2021.
+https://developer.apple.com/documentation/coreml."
+REFERENCES,0.2748287671232877,"Nader Bouacida, Jiahui Hou, Hui Zang, and Xin Liu. Adaptive federated dropout: Improving
+communication efﬁciency and generalization for federated learning. CoRR, abs/2011.04050, 2020.
+URL https://arxiv.org/abs/2011.04050."
+REFERENCES,0.2756849315068493,"Sebastian Caldas, Jakub Koneˇcny, H Brendan McMahan, and Ameet Talwalkar. Expanding the reach
+of federated learning by reducing client resource requirements. arXiv preprint arXiv:1812.07210,
+arXiv:1812.07210, 2018a. https://arxiv.org/abs/1812.07210."
+REFERENCES,0.276541095890411,"Sebastian Caldas, Peter Wu, Tian Li, Jakub Konecný, H. Brendan McMahan, Virginia Smith, and
+Ameet Talwalkar. LEAF: A benchmark for federated settings. ArXiv, abs/1812.01097, 2018b.
+http://arxiv.org/abs/1812.01097."
+REFERENCES,0.2773972602739726,"Mary J Culnan and Cynthia Clark Williams. How ethics can enhance organizational privacy: lessons
+from the choicepoint and TJX data breaches. Mis Quarterly, pp. 673–687, 2009."
+REFERENCES,0.2782534246575342,"Benjamin Edwards, Steven Hofmeyr, and Stephanie Forrest. Hype and heavy tails: A closer look at
+data breaches. Journal of Cybersecurity, 2(1):3–14, 2016."
+REFERENCES,0.2791095890410959,"Xitong Gao, Yiren Zhao, Łukasz Dudziak, Robert Mullins, and Cheng zhong Xu. Dynamic channel
+pruning: Feature boosting and suppression. In International Conference on Learning Representa-
+tions, 2019. URL https://openreview.net/forum?id=BJxh2j0qYm."
+REFERENCES,0.2799657534246575,"Golnaz Ghiasi, Tsung-Yi Lin, and Quoc V Le. DropBlock: A regularization method for convolutional
+networks. In Advances in Neural Information Processing Systems, volume 31, 2018. URL
+https://proceedings.neurips.cc/paper/2018/ﬁle/7edcfb2d8f6a659ef4cd1e6c9b6d7079-Paper.pdf."
+REFERENCES,0.2808219178082192,"Xavier Glorot and Yoshua Bengio.
+Understanding the difﬁculty of training deep feedforward
+neural networks. In Yee Whye Teh and Mike Titterington (eds.), Proceedings of the Thirteenth
+International Conference on Artiﬁcial Intelligence and Statistics, volume 9 of Proceedings of
+Machine Learning Research, pp. 249–256, Chia Laguna Resort, Sardinia, Italy, 13–15 May 2010.
+PMLR. http://proceedings.mlr.press/v9/glorot10a.html."
+REFERENCES,0.2816780821917808,"Chaoyang He, Murali Annavaram, and Salman Avestimehr. Group knowledge transfer: Federated
+learning of large cnns at the edge. In Advances in Neural Information Processing Systems 33,
+2020."
+REFERENCES,0.2825342465753425,"Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Delving deep into rectiﬁers: Sur-
+passing human-level performance on imagenet classiﬁcation.
+In Proceedings of the 2015
+IEEE International Conference on Computer Vision (ICCV), ICCV ’15, pp. 1026–1034, USA,
+2015. IEEE Computer Society. ISBN 9781467383912. doi: 10.1109/ICCV.2015.123. URL
+https://doi.org/10.1109/ICCV.2015.123."
+REFERENCES,0.2833904109589041,"Yihui He, Ji Lin, Zhijian Liu, Hanrui Wang, Li-Jia Li, and Song Han. AMC: AutoML for model
+compression and acceleration on mobile devices. In European Conference on Computer Vision
+(ECCV), 2018."
+REFERENCES,0.2842465753424658,"Dan Hendrycks and Kevin Gimpel. Generalizing and improving weight initialization. CoRR,
+abs/1607.02488, 2016. URL http://arxiv.org/abs/1607.02488."
+REFERENCES,0.2851027397260274,"Charles Herrmann, Richard Strong Bowen, and Ramin Zabih. Channel selection using Gumbel
+softmax. In Andrea Vedaldi, Horst Bischof, Thomas Brox, and Jan-Michael Frahm (eds.), Euro-
+pean Conference on Computer Vision (ECCV), pp. 241–257, Cham, 2020. Springer International
+Publishing. ISBN 978-3-030-58583-9."
+REFERENCES,0.285958904109589,"Geoffrey E. Hinton, Nitish Srivastava, Alex Krizhevsky, Ilya Sutskever, and Ruslan Salakhutdinov.
+Improving neural networks by preventing co-adaptation of feature detectors. CoRR, abs/1207.0580,
+2012. URL http://arxiv.org/abs/1207.0580."
+REFERENCES,0.2868150684931507,Under review as a conference paper at ICLR 2022
+REFERENCES,0.2876712328767123,"Samuel Horvath, Stefanos Laskaridis, Mario Almeida, Ilias Leontiadis, Stylianos I. Venieris, and
+Nicholas D. Lane. FjORD: Fair and accurate federated learning under heterogeneous targets with
+ordered dropout. CoRR, abs/2102.13451, 2021. URL http://arxiv.org/abs/2102.13451."
+REFERENCES,0.288527397260274,"Saihui Hou and Zilei Wang. Weighted channel dropout for regularization of deep convolutional
+neural network. In Proceedings of the AAAI Conference on Artiﬁcial Intelligence, volume 33, pp.
+8425–8432, 2019."
+REFERENCES,0.2893835616438356,"Tzu-Ming Harry Hsu, Hang Qi, and Matthew Brown. Measuring the effects of non-identical data
+distribution for federated visual classiﬁcation. NeurIPS Workshop on Federated Learning for Data
+Privacy and Conﬁdentiality, abs/1909.06335, 2019."
+REFERENCES,0.2902397260273973,"Tzu-Ming Harry Hsu, Hang Qi, and Matthew Brown. Federated visual classiﬁcation with real-world
+data distribution. In Computer Vision–ECCV 2020: 16th European Conference, Glasgow, UK,
+August 23–28, 2020, Proceedings, Part X 16, pp. 76–92. Springer, 2020."
+REFERENCES,0.2910958904109589,"Weizhe Hua, Yuan Zhou, Christopher M De Sa, Zhiru Zhang, and G. Edward Suh.
+Chan-
+nel gating neural networks. In H. Wallach, H. Larochelle, A. Beygelzimer, F. d'Alché-Buc,
+E. Fox, and R. Garnett (eds.), Advances in Neural Information Processing Systems, vol-
+ume 32. Curran Associates, Inc., 2019.
+URL https://proceedings.neurips.cc/paper/2019/ﬁle/
+68b1fbe7f16e4ae3024973f12f3cb313-Paper.pdf."
+REFERENCES,0.2919520547945205,"Junxian Huang, Feng Qian, Yihua Guo, Yuanyuan Zhou, Qiang Xu, Z. Morley Mao, Subhabrata
+Sen, and Oliver Spatscheck. An in-depth study of LTE: Effect of network protocol and application
+behavior on performance. In ACM SIGCOMM 2013, pp. 363–374, 2013."
+REFERENCES,0.2928082191780822,"Yuchi Huang, Xiuyu Sun, Ming Lu, and Ming Xu. Channel-max, channel-drop and stochastic
+max-pooling. In 2015 IEEE Conference on Computer Vision and Pattern Recognition Workshops
+(CVPRW), pp. 9–17, 2015. doi: 10.1109/CVPRW.2015.7301267."
+REFERENCES,0.2936643835616438,"Yuang Jiang, Shiqiang Wang, Bong-Jun Ko, Wei-Han Lee, and Leandros Tassiulas. Model pruning
+enables efﬁcient federated learning on edge devices. CoRR, abs/1909.12326, 2019. URL http:
+//arxiv.org/abs/1909.12326."
+REFERENCES,0.2945205479452055,"Sai Praneeth Karimireddy, Satyen Kale, Mehryar Mohri, Sashank Reddi, Sebastian Stich, and
+Ananda Theertha Suresh. SCAFFOLD: Stochastic controlled averaging for federated learning.
+In Hal Daumé III and Aarti Singh (eds.), Proceedings of the 37th International Conference on
+Machine Learning, volume 119 of Proceedings of Machine Learning Research, pp. 5132–5143.
+PMLR, 13–18 Jul 2020. URL http://proceedings.mlr.press/v119/karimireddy20a.html."
+REFERENCES,0.2953767123287671,"Alex Krizhevsky, Vinod Nair, and Geoffrey Hinton. The CIFAR-10 and CIFAR-100 datasets.
+http://www.cs.toronto.edu/ kriz/cifar.html, 2014."
+REFERENCES,0.2962328767123288,"Yann Lecun, Léon Bottou, Yoshua Bengio, and Patrick Haffner. Gradient-based learning applied to
+document recognition. In Proceedings of the IEEE, pp. 2278–2324, 1998."
+REFERENCES,0.2970890410958904,"Mu Li, David G Andersen, Alexander J Smola, and Kai Yu. Communication efﬁcient distributed
+machine learning with the parameter server. Advances in Neural Information Processing Systems,
+27:19–27, 2014."
+REFERENCES,0.2979452054794521,"Tian Li, Anit Kumar Sahu, Ameet Talwalkar, and Virginia Smith. Federated learning: Challenges,
+methods, and future directions. ArXiv, abs/1908.07873, 2019a."
+REFERENCES,0.2988013698630137,"Tian Li, Anit Kumar Sahu, Manzil Zaheer, Maziar Sanjabi, Ameet Talwalkar, and Virginia Smith.
+Federated optimization in heterogeneous networks. In I. Dhillon, D. Papailiopoulos, and V. Sze
+(eds.), Proceedings of Machine Learning and Systems, volume 2, pp. 429–450, 2020. URL
+https://proceedings.mlsys.org/paper/2020/ﬁle/38af86134b65d0f10fe33d30dd76442e-Paper.pdf."
+REFERENCES,0.2996575342465753,"Yawei Li, Shuhang Gu, Luc Van Gool, and Radu Timofte. Learning ﬁlter basis for convolutional
+neural network compression. In Proceedings of the IEEE International Conference on Computer
+Vision, 2019b."
+REFERENCES,0.300513698630137,Under review as a conference paper at ICLR 2022
+REFERENCES,0.3013698630136986,"Brendan McMahan, Eider Moore, Daniel Ramage, Seth Hampson, and Blaise Aguera y Arcas.
+Communication-efﬁcient learning of deep networks from decentralized data. In Artiﬁcial Intelli-
+gence and Statistics, pp. 1273–1282, 2017."
+REFERENCES,0.3022260273972603,"Yuval Netzer, Tao Wang, Adam Coates, Alessandro Bissacco, Bo Wu, and Andrew Y. Ng. Reading
+digits in natural images with unsupervised feature learning. In NIPS Workshop on Deep Learning
+and Unsupervised Feature Learning 2011, 2011. URL http://uﬂdl.stanford.edu/housenumbers/
+nips2011_housenumbers.pdf."
+REFERENCES,0.3030821917808219,"Diego Peteiro-Barral and Bertha Guijarro-Berdiñas. A survey of methods for distributed machine
+learning. Progress in Artiﬁcial Intelligence, 2(1):1–11, 2013."
+REFERENCES,0.3039383561643836,"Eugenia Politou, Efthimios Alepis, and Constantinos Patsakis. Forgetting personal data and revoking
+consent under the GDPR: Challenges and proposed solutions. Journal of Cybersecurity, 4(1),
+2018."
+REFERENCES,0.3047945205479452,"Arnu Pretorius, Elan van Biljon, Steve Kroon, and Herman Kamper. Critical initialisation for deep
+signal propagation in noisy rectiﬁer neural networks. In S. Bengio, H. Wallach, H. Larochelle,
+K. Grauman, N. Cesa-Bianchi, and R. Garnett (eds.), Advances in Neural Information Processing
+Systems, volume 31. Curran Associates, Inc., 2018. URL https://proceedings.neurips.cc/paper/
+2018/ﬁle/045cf83ab0722e782cf72d14e44adf98-Paper.pdf."
+REFERENCES,0.3056506849315068,"PyTorch. Pytorch documentation – torch.nn.functional.dropout, 2021. URL https://pytorch.org/docs/
+stable/generated/torch.nn.functional.dropout.html."
+REFERENCES,0.3065068493150685,"Karen Simonyan and Andrew Zisserman. Very deep convolutional networks for large-scale image
+recognition. In International Conference on Learning Representations, 2015."
+REFERENCES,0.3073630136986301,"Nitish Srivastava, Geoffrey Hinton, Alex Krizhevsky, Ilya Sutskever, and Ruslan Salakhutdinov.
+Dropout: A simple way to prevent neural networks from overﬁtting. Journal of Machine Learning
+Research, 15(56):1929–1958, 2014. URL http://jmlr.org/papers/v15/srivastava14a.html."
+REFERENCES,0.3082191780821918,"Yunchuan Sun, Junsheng Zhang, Yongping Xiong, and Guangyu Zhu. Data security and privacy in
+cloud computing. International Journal of Distributed Sensor Networks, 10(7):190903, 2014."
+REFERENCES,0.3090753424657534,"TensorFlow. Tensorﬂow documentation – tf.nn.dropout, 2021. URL https://www.tensorﬂow.org/api_
+docs/python/tf/nn/dropout."
+REFERENCES,0.3099315068493151,"Paul Voigt and Axel Von dem Bussche. The EU general data protection regulation (GDPR). A
+Practical Guide, 1st Ed., Cham: Springer International Publishing, 10:3152676, 2017."
+REFERENCES,0.3107876712328767,"Hongyi Wang, Kartik Sreenivasan, Shashank Rajput, Harit Vishwakarma, Saurabh Agarwal, Jy-yong
+Sohn, Kangwook Lee, and Dimitris Papailiopoulos. Attack of the tails: Yes, you really can
+backdoor federated learning. arXiv preprint arXiv:2007.05084, 2020a."
+REFERENCES,0.3116438356164384,"Hongyi Wang, Mikhail Yurochkin, Yuekai Sun, Dimitris Papailiopoulos, and Yasaman Khazaeni. Fed-
+erated learning with matched averaging. In International Conference on Learning Representations,
+2020b. URL https://openreview.net/forum?id=BkluqlSFDS."
+REFERENCES,0.3125,"Yulong Wang, Xiaolu Zhang, Xiaolin Hu, Bo Zhang, and Hang Su. Dynamic network pruning
+with interpretable layerwise channel selection. Proceedings of the AAAI Conference on Artiﬁcial
+Intelligence, 34(04):6299–6306, Apr. 2020c. doi: 10.1609/aaai.v34i04.6098. URL https://ojs.aaai.
+org/index.php/AAAI/article/view/6098."
+REFERENCES,0.3133561643835616,"PTJ Wolters.
+The security of personal data under the GDPR: a harmonized duty or a shared
+responsibility? International Data Privacy Law, 7(3):165–178, 2017."
+REFERENCES,0.3142123287671233,"Bichen Wu, Xiaoliang Dai, Peizhao Zhang, Yanghan Wang, Fei Sun, Yiming Wu, Yuan-
+dong Tian, Peter Vajda, Yangqing Jia, and Kurt Keutzer.
+FBNet: Hardware-aware efﬁ-
+cient convnet design via differentiable neural architecture search.
+In IEEE Conference
+on Computer Vision and Pattern Recognition,
+CVPR 2019,
+pp. 10734–10742. Com-
+puter Vision Foundation / IEEE, 2019.
+doi:
+10.1109/CVPR.2019.01099.
+URL http:
+//openaccess.thecvf.com/content_CVPR_2019/html/Wu_FBNet_Hardware-Aware_Efﬁcient_
+ConvNet_Design_via_Differentiable_Neural_Architecture_Search_CVPR_2019_paper.html."
+REFERENCES,0.3150684931506849,Under review as a conference paper at ICLR 2022
+REFERENCES,0.3159246575342466,"Han Xiao, Kashif Rasul, and Roland Vollgraf. Fashion-MNIST: a novel image dataset for bench-
+marking machine learning algorithms, 2017. https://github.com/zalandoresearch/fashion-mnist."
+REFERENCES,0.3167808219178082,"Hongxu Yin, Arun Mallya, Arash Vahdat, Jose M Alvarez, Jan Kautz, and Pavlo Molchanov. See
+through gradients: Image batch recovery via gradinversion. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition, pp. 16337–16346, 2021."
+REFERENCES,0.3176369863013699,Under review as a conference paper at ICLR 2022
+REFERENCES,0.3184931506849315,"A
+TABLE OF NOTATIONS"
+REFERENCES,0.3193493150684932,"For your convenience, we provide a list of notations used in this paper in Table 3."
+REFERENCES,0.3202054794520548,Table 3: Summary of notations.
+REFERENCES,0.3210616438356164,"Symbol
+Description
+."
+REFERENCES,0.3219178082191781,"c, i, j
+an individual client.
+C
+set of clients.
+C
+set of participating clients.
+ℓc(·)
+training loss function of a client c.
+B
+mini-batch size.
+Dc
+the local training dataset of client c.
+θc
+the parameters of all layers in the model of client c.
+L
+softmax-cross-entropy (SCE) loss function.
+f
+the feed-forward model.
+f [l]
+lth layer of model f.
+L
+the total number of layers of model f.
+x, x[0]
+the model input.
+x[L]
+the model output.
+θ(r+1)
+c
+the parameters of client c in round r + 1.
+η
+learning rate.
+E
+epochs of local training.
+r
+the FLOPs budget ratio as deﬁned in Section 3.4, (0, 1].
+φ
+the fraction of participating clients, (0, 1].
+λc
+weight of client c proportional to the size of its training data set |Dc|.
+p, q
+(matrix) dropout keep probabilities.
+pc
+(vector) dropout keep probabilities of client c.
+p[l]
+c
+(vector) a slice of pc indicating the probabilities of all channels in the lth layer.
+pn
+c
+(scalar) the dropout keep probability of neuron n in client c.
+t[l]
+thresholding vector for lth layer with n neurons.
+1[z]
+the (element-wise) indicator function.
+z◦−1
+the element-wise inverse of z.
+d[l]
+c
+binary dropout decision vector of lth layer.
+ˆf
+sparsiﬁed model.
+g(·)
+FLOPs-budget constraint function.
+ˆℓc
+loss function of client c.
+S(r+1)
+(tensor) trajectory similarity with shape |N| × |C| × |C| as in Figure 2(b)
+for the (r + 1)th round.
+Sn
+ij
+(r+1)
+(scalar) trajectory similarity of neuron n between pairs of clients (i, j)
+in the (r + 1)th round.
+ˆS
+(tensor) estimated trajectory similarity accounting for the dropout variances.
+ϑ[l]
+ﬂattened array of weight parameters of lth layer.
+D|C|(α)
+Dirichlet distribution parameterized by α and |C|.
+Tn
+a positive semideﬁnite matrix.
+Π
+a permutation matrix.
+hk
+boolean vector.
+H
+ 
+·
+
+the Hessian matrix w.r.t. parameters."
+REFERENCES,0.3227739726027397,"B
+COMPUTING THE NUMBER OF FLOPS"
+REFERENCES,0.3236301369863014,"In a sparse layer ˆf [l], the expected number of FLOPs per image-step is the sum of the ﬂops required
+by both the convolution and ReLU activation:"
+REFERENCES,0.324486301369863,"ﬂops( ˆf
+[l]) = 2( ˆC
+[l] ˆC
+[l−1]K
+[l]2H
+[l]W
+[l] + ˆC
+[l]H
+[l]W
+[l]),
+(9)"
+REFERENCES,0.3253424657534247,Under review as a conference paper at ICLR 2022
+REFERENCES,0.3261986301369863,"where K2 is the 2-dimensional kernel size, and H × W is the output feature map size. Moreover,
+ˆC[l−1] and ˆC[l] are the number of active input and output channels respectively; we expect ˆC[l], the
+average number of remaining output channels for layer l, to be C[l] mean
+ 
+p[l]
+c
+
+, where mean(z) takes
+the mean of elements in z and C[l] is the number of total output channels of layer l."
+REFERENCES,0.3270547945205479,"To generalize, we can rewrite the total number of FLOPs required by the overall model ˆf to be:"
+REFERENCES,0.3279109589041096,"ﬂops( ˆf, pc) = 2PL
+l=0C
+[l] mean
+ 
+p
+[l]
+c
+ 
+K
+[l]2C
+[l−1] mean
+ 
+p
+[l−1]
+c
+
++ 1
+
+H
+[l]W
+[l],
+(10)"
+REFERENCES,0.3287671232876712,"and assume p[0] = 1 and p[L] = 1, since both the input and output of the model are considered to be
+dense. Finally, by setting p = 1 for the entire model, we can get the number of FLOPs consumed by
+the overall model per image."
+REFERENCES,0.3296232876712329,"C
+PROOFS"
+REFERENCES,0.3304794520547945,"C.1
+MODEL PARAMETER INITIALIZATION"
+REFERENCES,0.3313356164383562,"Here, we restate Theorem 1 from Section 3.5:
+Theorem 1 (Parameter initialization). To avoid vanishing/exploding gradients at initialization, the
+variance of the parameters of the lth layer followed by a dropout layer with keep probability p should
+be 2p/N, where N = C[l−1]K[l−1]2 is the size of the receptive ﬁeld of each output channel."
+REFERENCES,0.3321917808219178,"The theorem proof depends on the following deﬁnitions and assumptions.
+Deﬁnition 1. A convolutional layer with channel dropout decisions d[l] can be written as:"
+REFERENCES,0.3330479452054795,"x
+[l+1] ≜relu(z
+[l]),
+where z
+[l] ≜p
+[l]
+c"
+REFERENCES,0.3339041095890411,"◦−1 ◦d ◦(ϑ
+[l]x
+[l] + b
+[l]),
+(11)"
+REFERENCES,0.3347602739726027,"where we ﬂatten the input features and the convolutional weights to be respectively z[l], x[l] ∈RN×1"
+REFERENCES,0.3356164383561644,"and ϑ[l] ∈RC[l+1]×N[l], with N [l] = K[l]2C[l] being the size of the input receptive ﬁeld. Recall that ◦
+indicates the element-wise product, and the notation z◦−1 is the element-wise inverse of z. Here each
+dropout decision in d[l] is sampled with:"
+REFERENCES,0.336472602739726,"d
+[l] ≜1[t
+[l] < p
+[l]].
+(12)"
+REFERENCES,0.3373287671232877,"At initialization, we assume that p[l] shares a constant dropout keep probability p, and we can
+immediately derive that for any channel neuron i at initialization:"
+REFERENCES,0.3381849315068493,"E[d
+[l]
+i ] = p · 1 + (1 −p) · 0 = p,
+(13)"
+REFERENCES,0.339041095890411,"var(d
+[l]
+i ) = E[d
+[l]
+i
+2] −E[d
+[l]
+i ]2 = p · 1 + (1 −p) · 0 −p2 = p −p2.
+(14)"
+REFERENCES,0.3398972602739726,"Assumption 1. We assume the model input x[0] and for each layer l the intermediate values z[l] to be
+IID and all have zero-valued means. We also let the individual weight parameters ϑ[l] to be initialized
+with IID and zero means, and the biases b[l] = 0. Therefore, for each layer l ∈[1, L]:"
+REFERENCES,0.3407534246575342,"E(z
+[l]
+ij) = 0
+for z
+[l]
+ij ∈z[l],
+(15)"
+REFERENCES,0.3416095890410959,"E(ϑ
+[l]
+ij) = 0
+for ϑ
+[l]
+ij ∈ϑ[l].
+(16)"
+REFERENCES,0.3424657534246575,"Assumption 2. To avoid vanishing/exploding gradients, we restrict the variances of each value in
+z[l] to be constant across all layers l ∈[1, L], i.e."
+REFERENCES,0.3433219178082192,"var(z
+[m]
+i ) = var(z
+[n]
+j )
+for m, n ∈[1, L], z
+[m]
+i
+∈z
+[m], z
+[n]
+j
+∈z
+[n].
+(17)"
+REFERENCES,0.3441780821917808,"We adapt the proofs from (He et al., 2015; Glorot & Bengio, 2010) by taking into consideration the
+variance introduced by dropout layers:"
+REFERENCES,0.3450342465753425,Under review as a conference paper at ICLR 2022
+REFERENCES,0.3458904109589041,"Proof. By Deﬁnition 1, for any value z
+[l]
+i ∈z[l], at initialization:"
+REFERENCES,0.3467465753424658,"var(z
+[l]
+i ) =
+1
+p2 var(P"
+REFERENCES,0.3476027397260274,"j d
+[l]
+i ϑ
+[l]
+ijx
+[l]
+j + d
+[l]
+i b
+[l]
+i )"
+REFERENCES,0.348458904109589,"As d
+[l]
+i , ϑ
+[l]
+ij and x
+[l]
+j are independent, and b[l] = 0 at initialization following Assumption 1:"
+REFERENCES,0.3493150684931507,= N[l]
+REFERENCES,0.3501712328767123,"p2 var(d
+[l]
+i ϑ
+[l]
+ijx
+[l]
+j )"
+REFERENCES,0.351027397260274,= N[l]
+REFERENCES,0.3518835616438356,"p2
+ 
+var(d
+[l]
+i ) + E[d
+[l]
+i ]2 
+var(ϑ
+[l]
+ij) + E[ϑ
+[l]
+ij]2 
+var(x
+[l]
+j ) + E[x
+[l]
+j ]2"
+REFERENCES,0.3527397260273973,"−E[d
+[l]
+i ]2 E[ϑ
+[l]
+ij]2 E[x
+[l]
+j ]2.
+(18)"
+REFERENCES,0.3535958904109589,"Again following Assumption 1, E[ϑ
+[l]
+ij] = 0. Also, var(x
+[l]
+j ) + E[x
+[l]
+j ]2 = E
+ 
+x
+[l]
+j
+2
+, E[d
+[l]
+i ] = p, and
+var(d
+[l]
+i ) = p(1 −p):"
+REFERENCES,0.3544520547945205,"var(z
+[l]
+i ) = N [l]"
+REFERENCES,0.3553082191780822,"p
+var(ϑ
+[l]
+ij) E
+ 
+x
+[l]
+j
+2
+.
+(19)"
+REFERENCES,0.3561643835616438,"As proven by (He et al., 2015) for ReLU-nonlinearity, E
+ 
+x
+[l]
+j
+2
+= 1"
+REFERENCES,0.3570205479452055,"2 var(z
+[l−1]
+j
+), and using Assump-
+tion 2, we can let var(z
+[l]
+i ) = var(z
+[l−1]
+j
+), and solve (19) to give var(ϑ
+[l]
+ij) =
+2p
+N[l] . Finally, if we are
+using Gaussian distributions to initialize model parameters, then ϑ
+[l]
+ij ∼N
+ 
+0,
+p"
+REFERENCES,0.3578767123287671,"2p/N [l]
+."
+REFERENCES,0.3587328767123288,"C.2
+OPTIMIZATION OBJECTIVE"
+REFERENCES,0.3595890410958904,"This section provides proof sketches for the optimization objective (7) described in Section 3.6. Let’s
+assume gc ≜λc∇θℓc, and ˆgc ≜λc∇θˆℓc to simplify the derivations below.
+Lemma 1. The sample gradient with dropout ˆgc can be approximated by dc ◦p◦−1
+c
+◦gc."
+REFERENCES,0.3604452054794521,"Proof. Consider the 1st-order Taylor expansion of ˆℓc(θ):
+ˆℓc(θc) = ℓc(dc ◦p
+◦−1
+c
+◦θc) ≈ℓc(θc) +
+ 
+∇θcℓc
+⊺ 
+dc ◦p
+◦−1
+c
+◦θc −θc
+
+."
+REFERENCES,0.3613013698630137,"Differentiating both sides by θc, we have the following, where H
+ 
+ℓc
+
+signify the Hessian of ℓc(θc):"
+REFERENCES,0.3621575342465753,"∇θc ˆℓc −∇θcℓc ≈∇θc
+ 
+∇θcℓc
+⊺ 
+dc ◦p◦−1
+c
+−1
+
+◦θc
+"
+REFERENCES,0.363013698630137,"=
+ 
+∇θcℓc
+
+◦
+ 
+dc ◦p◦−1
+c
+−1
+
++
+ 
+(dc ◦p◦−1
+c
+−1) ◦θc
+⊺H(ℓc)."
+REFERENCES,0.3638698630136986,"We omit the second term
+ 
+(dc ◦p◦−1
+c
+−1) ◦θc
+⊺H(ℓc) for simplicity, as the Hessian of ℓc(θc) is
+compute-intensive, thus:
+ˆgc −gc = λc
+ 
+∇θc ˆℓc −∇θcℓc
+
+≈gc ◦
+ 
+dc ◦p
+◦−1
+c
+−1
+
+.
+(20)"
+REFERENCES,0.3647260273972603,"In practice, we cannot obtain Sn
+ij ≜E
+
+gn
+i gn
+j
+
+, as evaluating the gradients of dense models defeats
+the intention of accelerated training. We can instead estimate the value with the following lemma:
+Lemma 2. E
+
+gn
+i gn
+j
+
+can be approximated with E
+ˆgn
+i ˆgn
+j
+
+max(pn
+i , pn
+i ), where pn
+i , pn
+i are the
+dropout keep probabilities from the previous round of the neuron n of respective clients i, j."
+REFERENCES,0.3655821917808219,"Proof. From Lemma 1, by rearranging (20), we have gc ≈ˆgc ◦d◦−1
+c
+◦pc for client c. Therefore,"
+REFERENCES,0.3664383561643836,"E
+ˆgn
+i ˆgn
+j
+
+≈E
+ gn
+i gn
+j dn
+i dn
+j
+pn
+i pn
+j
+"
+REFERENCES,0.3672945205479452,"As dc and gc are independent for each client c,"
+REFERENCES,0.3681506849315068,"= E
+
+gn
+i gn
+j
+
+E
+ dn
+i dn
+j
+pn
+i pn
+j
+"
+REFERENCES,0.3690068493150685,"By the deﬁnition of the SyncDrop layer in Section 3.3,"
+REFERENCES,0.3698630136986301,"= E
+
+gn
+i gn
+j
+ R 1
+0
+1[t≤pn
+i ] 1[t≤pn
+j ]
+pn
+i pn
+j
+dt"
+REFERENCES,0.3707191780821918,"= E
+
+gn
+i gn
+j
+ min(pn
+i ,pn
+j )
+pn
+i pn
+j
+."
+REFERENCES,0.3715753424657534,"Rearrange to give:
+E
+
+gn
+i gn
+j
+
+= E
+ˆgn
+i ˆgn
+j
+
+max(pn
+i , pn
+j ).
+(21)"
+REFERENCES,0.3724315068493151,Under review as a conference paper at ICLR 2022
+REFERENCES,0.3732876712328767,"Finally, we reiterate Theorem 2 that introduces the approximate objective (7):"
+REFERENCES,0.3741438356164384,"Theorem 2 (Approximate Objective). Assuming that for a channel neuron n ∈N and a pair of
+clients i, j ∈C, we have ˆSn
+ij ≜λiλj max(pn
+i , pn
+j )∆θn
+i · ∆θn
+j , where ∆θn
+i , ∆θn
+j are the param-
+eter updates after a round of FL training, pn
+i , pn
+j are the current dropout keep probabilities, and
+max(x, y) represents the element-wise max between x and y, the optimization objective of (6) can
+be approximated by:"
+REFERENCES,0.375,"minq obj(ˆS, q) ≜minq
+P"
+REFERENCES,0.3758561643835616,"n∈N,i,j∈C ˆSn
+ij/max(qn
+i , qn
+j ).
+(7)"
+REFERENCES,0.3767123287671233,Proof. We start by deriving from (6):
+REFERENCES,0.3775684931506849,"minp E
+P"
+REFERENCES,0.3784246575342466,c∈Cλc∇θc ˆℓc −P
+REFERENCES,0.3792808219178082,"c∈Cλc∇θcℓc
+
+2 2"
+REFERENCES,0.3801369863013699,"= E
+h P"
+REFERENCES,0.3809931506849315,"c∈C(ˆgc −gc)
+⊺ P"
+REFERENCES,0.3818493150684932,"c∈C(ˆgc −gc)
+i"
+REFERENCES,0.3827054794520548,"= E
+hP"
+REFERENCES,0.3835616438356164,"i,j∈C(ˆgi −gi)⊺(ˆgj −gj)
+i
+,"
+REFERENCES,0.3844178082191781,"following Lemma 1, ≈P"
+REFERENCES,0.3852739726027397,"i,j∈C E
+h
+gi ◦
+ 
+di ◦q
+◦−1
+i
+−1
+⊺
+gj ◦
+ 
+dj ◦q
+◦−1
+j
+−1
+i = P"
+REFERENCES,0.3861301369863014,"i,j∈C,n∈N E
+h
+gn
+i gn
+j
+  dn
+i
+qn
+i −1
+  dn
+j
+qn
+j −1
+i
+,"
+REFERENCES,0.386986301369863,"as dc and gc are independent for each client c, and following Lemma 2, = P"
+REFERENCES,0.3878424657534247,"i,j∈C,n∈N E
+ˆgn
+i ˆgn
+j
+
+max(pn
+i , pn
+j ) E
+h  dn
+i
+qn
+i −1
+  dn
+j
+qn
+j −1
+i
+,"
+REFERENCES,0.3886986301369863,"by deﬁnition of the SyncDrop layer in Section 3.3, = P"
+REFERENCES,0.3895547945205479,"i,j∈C,n∈N E
+ˆgn
+i ˆgn
+j
+
+max(pn
+i , pn
+j )
+R 1
+0
+  1[t≤qn
+i ]
+qn
+i
+−1
+  1[t≤qn
+j ]
+qn
+j
+−1
+
+dt = P"
+REFERENCES,0.3904109589041096,"i,j∈C,n∈N E
+ˆgn
+i ˆgn
+j
+
+max(pn
+i , pn
+j )
+
+1
+max(qn
+i ,qn
+j ) −1
+
+(22)"
+REFERENCES,0.3912671232876712,"Finally, as it is impractical to use single step gradients ˆgn
+i and ˆgn
+j on the server, we approximate them
+with the respective parameter updates after one round of training, i.e. λi∆θn
+i and λj∆θn
+j ; recall the
+deﬁnition of ˆS, we have ≈P"
+REFERENCES,0.3921232876712329,"i,j∈C,n∈N"
+REFERENCES,0.3929794520547945,"ˆSn
+ij
+max(qn
+i ,qn
+j ) −P"
+REFERENCES,0.3938356164383562,"i,j∈C,n∈N Sn
+ij.
+(23)"
+REFERENCES,0.3946917808219178,"The ﬁrst term is exactly (7), and the second term is a constant and can be safely removed from the
+optimization objective."
+REFERENCES,0.3955479452054795,"The value ˆSn
+ij can be considered as the similarity of the model updates between clients i and j for the
+group neuron n. Intuitively, from the perspective of an individual neuron n and the two clients i and
+j, minimizing the term ˆSn
+ij/max(pn
+i , pn
+j ) incentivizes pn
+i and pn
+j to grow when ˆSn
+ij is positive, and
+to become smaller when it is negative."
+REFERENCES,0.3964041095890411,"With the derivations above, we can proceed to prove the objective in Theorem 2 is bounded with a
+minimum. First, we can show that the matrix Sn is positive semideﬁnite for each neuron n ∈N."
+REFERENCES,0.3972602739726027,Lemma 3. The matrix Sn is positive semideﬁnite for all n ∈N.
+REFERENCES,0.3981164383561644,"Proof. By deﬁnition, Sn = E[gngn⊺], where gn comprises the gradient vectors of the nth neuron
+across clients c ∈C. The matrix Sn is therefore positive semideﬁnite, as it is an averaged sum of
+samples of positive semideﬁnite matrices gngn⊺."
+REFERENCES,0.398972602739726,"Theorem 3 (Optimization bound). The objective minq
+P
+nij ˆSn
+ij/max(qn
+i , qn
+j ) is trivially minimized
+to P"
+REFERENCES,0.3998287671232877,"nij ˆSn
+ij when qn
+c = 1 for ∀n ∈N, c ∈C."
+REFERENCES,0.4006849315068493,Under review as a conference paper at ICLR 2022
+REFERENCES,0.401541095890411,"Proof. Without loss of generality, we can permute the matrix ˆSn and the probability vector pn to
+assume a descending order on the probabilities. Let Tn ≜ΠˆSnΠ⊺and πn ≜Πpn denote the
+respective permuted trajectory similarity and probability variants, where Π ∈{0, 1}|C|×|C| is the
+permutation matrix, such that
+P nij"
+REFERENCES,0.4023972602739726,"ˆSn
+ij
+max(pn
+i ,pn
+j ) = P"
+REFERENCES,0.4032534246575342,"nij
+Tn
+ij
+max(πn
+i ,πn
+j )
+and
+πn
+1 ≥πn
+2 ≥· · · ≥πn
+|C|.
+(24)"
+REFERENCES,0.4041095890410959,"We introduce a boolean vector hk ∈R|C|, where each element hk
+c of it is deﬁned as:"
+REFERENCES,0.4049657534246575,"hk
+c ≜1[πn
+k ≥πn
+c ],"
+REFERENCES,0.4058219178082192,"we then let Hk ≜hkhk⊺, and it follows that Hk
+ij = hk
+i hk
+j = 1[πn
+k ≥πn
+i ] 1[πn
+k ≥πn
+j ]. Hence, we
+can rewrite:P"
+REFERENCES,0.4066780821917808,"nij
+Tn
+ij
+max(πn
+i ,πn
+j ) = P"
+REFERENCES,0.4075342465753425,"nij Tn
+ij min
+
+1
+πn
+i ,
+1
+πn
+j  = P"
+REFERENCES,0.4083904109589041,"nij Tn
+ij"
+REFERENCES,0.4092465753424658,"P|C|−1
+k=1
+Hk
+ij−Hk+1
+ij
+πn
+k
++
+H|C|
+ij
+πn
+|C|  = P"
+REFERENCES,0.4101027397260274,"nij Tn
+ij"
+REFERENCES,0.410958904109589,"P|C|−1
+k=1
+Hk
+ij
+πn
+k −P|C|−1
+k=1
+Hk+1
+ij
+πn
+k
++
+H|C|
+ij
+πn
+|C|  = P"
+REFERENCES,0.4118150684931507,"nij Tn
+ij
+ H1
+ij
+πn
+1 + P|C|
+k=2 Hk
+ij
+
+1
+πn
+k −
+1
+πn
+k−1  = P n
+P"
+REFERENCES,0.4126712328767123,"ij
+Tn
+ij
+πn
+1 + P|C|
+k=2
+P"
+REFERENCES,0.413527397260274,"ij Tn
+ijhk
+i hk
+j
+
+1
+πn
+k −
+1
+πn
+k−1  = P"
+REFERENCES,0.4143835616438356,"n
+
+1⊺Tn1"
+REFERENCES,0.4152397260273973,"πn
+1
++ P|C|
+k=2 hk⊺Tnhk
+1
+πn
+k −
+1
+πn
+k−1"
+REFERENCES,0.4160958904109589,"
+.
+(25)"
+REFERENCES,0.4169520547945205,"It is notable that
+1
+πn
+c ≥1 for all c ∈C. The ﬁrst term is bounded by a non-negative 1⊺Tn1 i.e. the
+sum of all elements in a positive semideﬁnite matrix. The second term is also non-negative, as
+hk⊺Tnhk ≥0 by the deﬁnition of a positive semideﬁnite matrix Tn, and
+1
+πn
+k −
+1
+πn
+k−1 ≥0 by the
+ordering proposed in (24). Notably if πn
+c = 1 for all n ∈N and c ∈C, then the objective is trivially
+minimized, with a minimum value P"
+REFERENCES,0.4178082191780822,"nij Tn
+ij = P"
+REFERENCES,0.4186643835616438,"nij Sn
+ij. We therefore include the FLOPs budgets
+discussed in Section 3.4 and Appendix B into our optimizations to solve for non-trivial p."
+REFERENCES,0.4195205479452055,"D
+THE FEDDROP ALGORITHM"
+REFERENCES,0.4203767123287671,"D.1
+HIGH-LEVEL OVERVIEW"
+REFERENCES,0.4212328767123288,"Algorithm 1 provides an overview of the FedDrop FL algorithm. It accepts the client loss functions
+ˆℓc with SyncDrop layers, client data weights λc, the FLOPS constraints function g : [0, 1]C×N →R,
+the SGD learning rate η, the number of local epochs E the number of FL rounds R, and a client
+sub-sampling ratio φ. It returns optimized model parameters θ(R+1) on the ﬁnal round."
+REFERENCES,0.4220890410958904,"The algorithm starts by initializing model parameters θ(0) to be shared across all clients, and assigns a
+uniform keep probability to p for all SyncDrop layers, which satisﬁes the FLOPs constraint g(p) = 0
+(lines 2 and 3). After collecting trained model parameters θ(r+1)
+c
+from the current round r + 1 (line
+6), the FedDrop server computes ∆θ(r+1)
+c
+, i.e. the difference between the averaged model from the
+previous round θ(r) with the trained model θ(r+1)
+c
+for client c (line 7, also in Figure 2a)."
+REFERENCES,0.4229452054794521,"It then measures the trajectory similarity ˆSn
+ij
+(r+1) for each neuron n between each pair of clients (i, j),
+as described on line 11 and illustrated in Figure 2b. The term λi∆θn
+i
+(r+1) · λj∆θn
+j
+(r+1) computes
+the dot-product between the weighted parameter updates of clients i and j, and max
+ 
+pn
+i
+(r), pn
+j
+(r)"
+REFERENCES,0.4238013698630137,"adjusts for the covariance from the synchronized dropouts of the previous round. Finally, the objective
+argminq obj(ˆS, q) is optimized to minimize the impact of model sparsity on convergence."
+REFERENCES,0.4246575342465753,"D.2
+COMPUTATIONAL OVERHEAD OF THE OPTIMIZATION OBJECTIVE"
+REFERENCES,0.425513698630137,"The complexity of computing the trajectory similarity in each round is O(W|C|2), where W is the
+number of parameters and |C| is the number of participating clients. Additionally, the probability"
+REFERENCES,0.4263698630136986,Under review as a conference paper at ICLR 2022
+REFERENCES,0.4272260273972603,Algorithm 1 The FedDrop algorithm.
+REFERENCES,0.4280821917808219,"1: function FEDAVGDROP({(ˆℓc, λc): c ∈C}, g, η, E, R, φ)
+2:
+random_initialize(θ(0), p)
+▷Initialize parameters and a uniform keep probability.
+3:
+for r ←1, 2, . . . R do
+4:
+C ←subsample(C, φ)
+▷Sample a subset of clients.
+5:
+par for c ∈C do
+6:
+θ(r+1)
+c
+←SGDc
+ ˆℓc, θ(r), pc, η, E
+
+▷Client training with SyncDrop layers."
+REFERENCES,0.4289383561643836,"7:
+∆θ(r+1)
+c
+←θ(r) −θ(r+1)
+c
+▷Client update trajectories.
+8:
+end par for"
+REFERENCES,0.4297945205479452,"9:
+θ(r+1) ←P"
+REFERENCES,0.4306506849315068,"c∈C λcθ(r+1)
+c
+▷Server aggregation with FedAvg."
+REFERENCES,0.4315068493150685,"10:
+for i ∈C, j ∈C, n ∈N do
+▷Trajectory-similarity estimation."
+REFERENCES,0.4323630136986301,"11:
+ˆSn
+ij ←λiλj max
+ 
+pn
+i , pn
+j
+
+∆θu
+i
+(r+1) · ∆θu
+j
+(r+1)"
+REFERENCES,0.4332191780821918,"12:
+end for
+▷Optimal dropout probabilities.
+13:
+p ←argminq obj(ˆS, q) s.t. g(q) ≥0
+▷Objective from (7)
+14:
+end for
+15:
+return θ(R+1)"
+REFERENCES,0.4340753424657534,16: end function
+REFERENCES,0.4349315068493151,"optimization stage on the server has a complexity of O(I|N||C|2), where I is the number of opti-
+mization iterations, |N| is the number of channels in the model. As an example, the VGG-9 model
+with 20 clients and I = 10k steps of optimization would require only 53 G FLOPs for computing
+the trajectory similarity, and ≤448 G FLOPs for the optimization steps, which can often exit early
+because it has converged. In practice, the server optimization only takes less than 1 minute on
+average. For reference, if we use local epochs per round E = 8, and a FLOPs ratio r = 0.5, the
+20 clients require a total of 25.8 T FLOPs per round. Overall, under this setting the additional
+computation overhead incurred by the server is only about 2% of total computational costs. For more
+practical consideration, it is noteworthy that typically, the server is much less constrained in terms of
+computational power compared to the edge clients. In addition, given the above example, a single
+client requires 1.29 T FLOPs and the server requires 448 G FLOPs in total. The former consumes
+multiple hours of training in a realistic implementation on an iPhone 12 Pro (extrapolating from the
+proﬁling result in Table 10), whereas the latter only requires minutes to complete on an Nvidia V100
+GPU."
+REFERENCES,0.4357876712328767,"D.3
+AN EXAMPLE HISTORY OF PROBABILITY DISTRIBUTION"
+REFERENCES,0.4366438356164384,"To better understand the probability optimization, we plot the histogram of optimized probabilities for
+each training round in Figure 9. It reveals that after multiple rounds of training, FedDrop gradually
+learns the importance of channels and start to make certain channels contribute less to the model
+training. Note that the histograms only provides distributions of probability values of all clients, each
+client may have vastly different optimized probabilities for the same channels."
+REFERENCES,0.4375,"D.4
+MEMORY REDUCTION"
+REFERENCES,0.4383561643835616,"As SyncDrop layers can sparsify models, many channels in the activation map can simply be skipped
+and never stored in both the forward and backward passes. For this reason, FedDrop can further
+reduce the memory cost associated with training. As an example, VGG-9 equipped with SyncDrop
+can see up to 40% reduction in the memory requirement for training. We summarized the memory
+reduction for different scenarios in Table 4."
+REFERENCES,0.4392123287671233,"D.5
+ACCURACY OF FLOPS ESTIMATION"
+REFERENCES,0.4400684931506849,"To conﬁrm the accuracy of our FLOPs estimation with the expected values, in Table 5 we sample the
+dropout layers in the Fashion-MNIST model with FLOPs budget ratios r ∈{0.25, 0.5, 0.75}, can
+compute the actual FLOPs counts. Under the setting of R = 100 training rounds and local epochs"
+REFERENCES,0.4409246575342466,Under review as a conference paper at ICLR 2022
+REFERENCES,0.4417808219178082,"Figure 9: We present the evolution of dropout keep probabilities (horizontal axis) for multiple rounds
+of training (vertical axis) for VGG-9 training with FLOPS budget ratio r = 0.5 and the number
+of local epochs per round E is 4. After a few rounds of training, FedDrop can learn to distinguish
+channel importance."
+REFERENCES,0.4426369863013699,Table 4: Theoretical memory reductions of FedDrop with varying batch sizes.
+REFERENCES,0.4434931506849315,"Batch size
+Feature (MB)
+Params (MB)
+Total (MB)
+FLOPs ratio
+FedDrop Total (MB)
+Reduction (%)"
+REFERENCES,0.4443493150684932,"4
+3.02
+5.82
+8.83
+0.75
+8.08
+8.53
+0.5
+7.33
+17.07"
+REFERENCES,0.4452054794520548,"8
+6.03
+5.82
+11.85
+0.75
+10.34
+12.72
+0.5
+8.83
+25.45"
+REFERENCES,0.4460616438356164,"16
+12.06
+5.82
+17.88
+0.75
+14.87
+16.86
+0.5
+11.85
+33.73"
+REFERENCES,0.4469178082191781,"32
+24.13
+5.82
+29.95
+0.75
+23.91
+20.14
+0.5
+17.88
+40.28"
+REFERENCES,0.4477739726027397,"per round E = 8. We found the error to be within 0.06%. The low deviation of the expected value
+from the actual result is an effect of the law of large numbers."
+REFERENCES,0.4486301369863014,"Table 5: Comparing the estimated and actual FLOPs counts of FedDrop. The ﬁgures within parenthe-
+ses represent the sampled FLOPs of 3 experiments with different random seeds."
+REFERENCES,0.449486301369863,"FLOPs budget ratio r
+0.25
+0.5
+0.75"
+REFERENCES,0.4503424657534247,"Expected (T FLOPs)
+140.97
+281.85
+422.50
+Sampled (T FLOPs)
+(140.88, 140.91, 140.92 )
+(281.78, 281.81, 281.78)
+(422.47, 422.48, 422.46)
+Relative error (mean)
+0.047%
+0.021%
+0.0071%
+Relative error (std)
+0.012%
+0.005%
+0.0019%"
+REFERENCES,0.4511986301369863,"E
+EXPERIMENT CONFIGURATIONS"
+REFERENCES,0.4520547945205479,"Models. Here, we provide the layout of the models used by the respective datasets. All models
+listed for computer vision (CV) tasks (in Tables 6 to 8) are feed-forward CNNs. Table 9 shows the
+character-level single-layer LSTM model used for the natural language processing (NLP) task. Note
+that sparsity for the LSTM model were introduced for the hidden state and memory cell neurons."
+REFERENCES,0.4529109589041096,Under review as a conference paper at ICLR 2022
+REFERENCES,0.4537671232876712,"Datasets. The experiments are carried out on three popular CV datasets (CIFAR-10 (Krizhevsky et al.,
+2014), Fashion-MNIST (Xiao et al., 2017) and SVHN (Netzer et al., 2011)), and a natural language
+dataset (Shakespeare (Caldas et al., 2018b)). We use the standard train/test split on these datasets and
+report accuracy on test dataset with a global model on server-side. To simulate different heterogeneity
+levels, for CV tasks we split the datasets by class label with the distribution D|C|(α) (Hsu et al., 2019;
+Wang et al., 2020b), and adjust the α constant for varying the degree of data heterogeneity, α = 0.5
+unless speciﬁed for all experiments. Simple data augmentation was also employed for the training
+images, including random crop and normalization, and random ﬂip in addition for CIFAR-10. For
+the Shakespeare NLP dataset, we follow LEAF (Caldas et al., 2018b) for next-character prediction,
+and consider each speaking role in each play as an individual client, and the resulting splits are thus
+inherently heterogeneous since each local client only contains the corresponding role’s sentences."
+REFERENCES,0.4546232876712329,Hyperparameters. We consider different hyperparameter settings for different tasks:
+REFERENCES,0.4554794520547945,"• Client Sampling. For full client participation, we use 20 clients for CIFAR-10 and 100
+clients for the remaining CV and NLP tasks. To simulate the fractional client participation,
+we randomly sample 10 out of 1000 clients on all datasets for CV tasks and 10 out of 660
+clients on Shakespeare dataset for NLP task.
+• Optimization. As for CV tasks, we searched the hyperparameters and found setting batch
+size B = 4 and learning rate η = 0.02 were universally optimal for most methods. For NLP
+task on Shakespeare dataset, the batch size B = 32 and learning rate η = 0.2 were similarly
+found and made constant for all methods under comparison."
+REFERENCES,0.4563356164383562,"We noticed that the reported accuracy could be further improved if deeper models are used for
+baselines as they can exhibit greater redundancy and thus beneﬁt the performance of FedDrop.
+However, we are not pursuing state-of-the-art accuracy on these datasets but instead comparing
+FedDrop with other methods under fair experimental settings and validating its effectiveness. We
+also noticed that there exist larger alternative datasets (Hsu et al., 2020) for evaluation. Nevertheless,
+evaluating and reproducing all competing FL methods on such a large dataset is infeasible given
+the limited (university) computational budgets. Alternatively, we aim to conduct a fair empirical
+evaluation that demonstrate the effectiveness of FedDrop under a broad variety of scenarios."
+REFERENCES,0.4571917808219178,Table 6: Layout of the model used for Fashion-MNIST training.
+REFERENCES,0.4580479452054795,"Layer
+Kernel
+Stride
+Feature shape
+#Params
+#FLOPs"
+REFERENCES,0.4589041095890411,"1
+Conv+ReLU
+5 × 5
+1
+32 × 28 × 28
+832
+652 k
+2
+Max Pool
+2 × 2
+2
+32 × 14 × 14
+—
+25.1 k
+3
+Conv+ReLU
+5 × 5
+1
+64 × 14 × 14
+51.3 k
+10.0 M
+4
+Max Pool
+2 × 2
+2
+64 × 7 × 7
+—
+125 k
+5
+Conv+ReLU
+3 × 3
+1
+64 × 5 × 5
+36.9 k
+923 k
+6
+Avg Pool
+2 × 2
+1
+64 × 2 × 2
+—
+1.6 k
+7
+FC
+—
+—
+512
+132 k
+132 k
+8
+FC
+—
+—
+10
+5.13 k
+5.13 k"
+REFERENCES,0.4597602739726027,"Total
+226 k
+11.8 M"
+REFERENCES,0.4606164383561644,Table 7: Layout of the model used for SVHN training.
+REFERENCES,0.461472602739726,"Layer
+Kernel
+Stride
+Feature shape
+#Params
+#FLOPs"
+REFERENCES,0.4623287671232877,"1
+Conv+ReLU
+5 × 5
+1
+32 × 28 × 28
+2.43 k
+1.91 M
+2
+Max Pool
+2 × 2
+2
+32 × 14 × 14
+—
+25.1 k
+3
+Conv+ReLU
+5 × 5
+1
+64 × 10 × 10
+51.3 k
+5.13 M
+4
+Max Pool
+2 × 2
+2
+64 × 5 × 5
+—
+6.4 k
+5
+Conv+ReLU
+3 × 3
+1
+64 × 3 × 3
+36.9 k
+333 k
+6
+Avg Pool
+2 × 2
+1
+64 × 2 × 2
+—
+576
+7
+FC
+—
+—
+512
+132 k
+132 k
+8
+FC
+—
+—
+10
+5.13 k
+5.13 k"
+REFERENCES,0.4631849315068493,"Total
+227 k
+7.54 M"
+REFERENCES,0.464041095890411,Under review as a conference paper at ICLR 2022
+REFERENCES,0.4648972602739726,Table 8: Layout of the VGG-9 model used for CIFAR-10 training.
+REFERENCES,0.4657534246575342,"Layer
+Kernel
+Stride
+Feature shape
+#Params
+#FLOPs"
+REFERENCES,0.4666095890410959,"1
+Conv+ReLU
+3 × 3
+1
+32 × 32 × 32
+896
+918 k
+2
+Conv+ReLU
+3 × 3
+1
+64 × 32 × 32
+18.5 k
+18.9 M
+3
+Max Pool
+2 × 2
+2
+64 × 16 × 16
+—
+65.5 k
+4
+Conv+ReLU
+3 × 3
+1
+128 × 16 × 16
+73.9 k
+18.9 M
+5
+Conv+ReLU
+3 × 3
+1
+128 × 16 × 16
+148 k
+37.8 M
+6
+Max Pool
+2 × 2
+2
+128 × 8 × 8
+—
+32.8 k
+7
+Conv+ReLU
+3 × 3
+1
+256 × 8 × 8
+295 k
+18.9 M
+8
+Conv+ReLU
+3 × 3
+1
+256 × 8 × 8
+590 k
+37.8 M
+9
+Avg Pool
+8 × 8
+—
+256 × 1 × 1
+—
+16.4 k
+10
+FC
+—
+—
+512
+132 k
+132 k
+11
+FC
+—
+—
+512
+263 k
+263 k
+12
+FC
+—
+—
+10
+5.13 k
+5.13 k"
+REFERENCES,0.4674657534246575,"Total
+1.53 M
+134 M"
+REFERENCES,0.4683219178082192,Table 9: Layout of the model used for Shakespeare dataset training.
+REFERENCES,0.4691780821917808,"Layer
+Shape
+#Params
+#FLOPs"
+ENCODER,0.4700342465753425,"1
+Encoder
+80 × 8
+640
+—
+2
+LSTM
+8 × 256
+272 k
+275 k
+3
+Decoder
+256 × 80
+21 k
+21 k"
+ENCODER,0.4708904109589041,"Total
+293 k
+296 k"
+ENCODER,0.4717465753424658,"F
+ADDITIONAL EXPERIMENTAL DETAILS AND RESULTS"
+ENCODER,0.4726027397260274,"F.1
+TRADE-OFF CURVES"
+ENCODER,0.473458904109589,"Figures 10 to 12 ﬁnd the optimal conﬁgurations for each competing FL methods that produces their
+corresponding communication/computation trade-off curves. It is notable that FedDrop can extend
+the trade-off relationships much further and shows Pareto dominance against other algorithms under
+most conditions. In these ﬁgures, the conﬁgurations explored include combinations of FLOPs budget
+ratios r ∈{0.25, 0.333, 0.5, 0.75} and local epochs per round E ∈{1, 2, 4, 8, 16}."
+ENCODER,0.4743150684931507,1014.2 1014.4 1014.6 1014.8 1015 1015.2 104 105
+ENCODER,0.4751712328767123,Number of FLOPs
+ENCODER,0.476027397260274,Communications (GB)
+ENCODER,0.4768835616438356,FedDrop
+ENCODER,0.4777397260273973,UniDrop
+ENCODER,0.4785958904109589,FedAvg
+ENCODER,0.4794520547945205,FedProx
+ENCODER,0.4803082191780822,SCAFFOLD
+ENCODER,0.4811643835616438,Caldas et al.
+ENCODER,0.4820205479452055,(a) 70%
+ENCODER,0.4828767123287671,"1014.6 1014.8
+1015
+1015.2 1015.4 104 105"
+ENCODER,0.4837328767123288,Number of FLOPs
+ENCODER,0.4845890410958904,Communications (GB)
+ENCODER,0.4854452054794521,FedDrop
+ENCODER,0.4863013698630137,UniDrop
+ENCODER,0.4871575342465753,FedAvg
+ENCODER,0.488013698630137,FedProx
+ENCODER,0.4888698630136986,SCAFFOLD
+ENCODER,0.4897260273972603,Caldas et al.
+ENCODER,0.4905821917808219,(b) 80%
+ENCODER,0.4914383561643836,"Figure 10: The FLOPs vs. communication trade-off curves of different FL methods reaching a target
+accuracy for CIFAR-10. We highlight the Pareto optimal points with dotted lines."
+ENCODER,0.4922945205479452,Under review as a conference paper at ICLR 2022
+ENCODER,0.4931506849315068,"1013
+1013.2 1013.4 1013.6 1013.8 103 104"
+ENCODER,0.4940068493150685,Number of FLOPs
+ENCODER,0.4948630136986301,Communications (GB)
+ENCODER,0.4957191780821918,FedDrop
+ENCODER,0.4965753424657534,UniDrop
+ENCODER,0.4974315068493151,FedAvg
+ENCODER,0.4982876712328767,FedProx
+ENCODER,0.4991438356164384,SCAFFOLD
+ENCODER,0.5,Caldas et al.
+ENCODER,0.5008561643835616,(a) 80%
+ENCODER,0.5017123287671232,"1013.4
+1013.6
+1013.8
+1014
+103 104 105"
+ENCODER,0.502568493150685,Number of FLOPs
+ENCODER,0.5034246575342466,Communications (GB)
+ENCODER,0.5042808219178082,FedDrop
+ENCODER,0.5051369863013698,UniDrop
+ENCODER,0.5059931506849316,FedAvg
+ENCODER,0.5068493150684932,FedProx
+ENCODER,0.5077054794520548,SCAFFOLD
+ENCODER,0.5085616438356164,Caldas et al.
+ENCODER,0.509417808219178,(b) 85%
+ENCODER,0.5102739726027398,Figure 11: The FLOPs vs. communication trade-off curves for Fashion-MNIST.
+ENCODER,0.5111301369863014,"1012.8
+1013
+1013.2
+1013.4
+1013.6 103 104"
+ENCODER,0.511986301369863,Number of FLOPs
+ENCODER,0.5128424657534246,Communications (GB)
+ENCODER,0.5136986301369864,FedDrop
+ENCODER,0.514554794520548,UniDrop
+ENCODER,0.5154109589041096,FedAvg
+ENCODER,0.5162671232876712,FedProx
+ENCODER,0.5171232876712328,SCAFFOLD
+ENCODER,0.5179794520547946,Caldas et al.
+ENCODER,0.5188356164383562,(a) 80%
+ENCODER,0.5196917808219178,"1013
+1013.2 1013.4 1013.6 1013.8
+103 104"
+ENCODER,0.5205479452054794,Number of FLOPs
+ENCODER,0.521404109589041,Communications (GB)
+ENCODER,0.5222602739726028,FedDrop
+ENCODER,0.5231164383561644,UniDrop
+ENCODER,0.523972602739726,FedAvg
+ENCODER,0.5248287671232876,FedProx
+ENCODER,0.5256849315068494,SCAFFOLD
+ENCODER,0.526541095890411,Caldas et al.
+ENCODER,0.5273972602739726,(b) 85%
+ENCODER,0.5282534246575342,Figure 12: The FLOPs vs. communication trade-off curves for SVHN.
+ENCODER,0.5291095890410958,"F.2
+DATA IMBALANCE"
+ENCODER,0.5299657534246576,"Figures 13 to 15 examine the effect of data imbalance on the performance of FedDrop. Again, it
+shows that FedDrop can manage the fastest convergence when compared to other methods, and an
+increase in data imbalance further enhances its effectiveness against the others."
+ENCODER,0.5308219178082192,"0
+0.2 0.4 0.6 0.8
+1
+1.2 ·1015 20 40 60 80"
+ENCODER,0.5316780821917808,Number of FLOPs
+ENCODER,0.5325342465753424,Accuracy (%)
+ENCODER,0.5333904109589042,FedDrop
+ENCODER,0.5342465753424658,UniDrop
+ENCODER,0.5351027397260274,FedAvg
+ENCODER,0.535958904109589,FedProx
+ENCODER,0.5368150684931506,SCAFFOLD
+ENCODER,0.5376712328767124,Caldas et al.
+ENCODER,0.538527397260274,"(a) E = 4, α = 5."
+ENCODER,0.5393835616438356,"0
+0.2 0.4 0.6 0.8
+1
+1.2 ·1015 20 40 60 80"
+ENCODER,0.5402397260273972,Number of FLOPs
+ENCODER,0.541095890410959,Accuracy (%)
+ENCODER,0.5419520547945206,FedDrop
+ENCODER,0.5428082191780822,UniDrop
+ENCODER,0.5436643835616438,FedAvg
+ENCODER,0.5445205479452054,FedProx
+ENCODER,0.5453767123287672,SCAFFOLD
+ENCODER,0.5462328767123288,Caldas et al.
+ENCODER,0.5470890410958904,"(b) E = 4, α = 0.5."
+ENCODER,0.547945205479452,"0
+0.2 0.4 0.6 0.8
+1
+1.2 ·1015 20 40 60"
+ENCODER,0.5488013698630136,Number of FLOPs
+ENCODER,0.5496575342465754,Accuracy (%)
+ENCODER,0.550513698630137,FedDrop
+ENCODER,0.5513698630136986,UniDrop
+ENCODER,0.5522260273972602,FedAvg
+ENCODER,0.553082191780822,FedProx
+ENCODER,0.5539383561643836,SCAFFOLD
+ENCODER,0.5547945205479452,Caldas et al.
+ENCODER,0.5556506849315068,"(c) E = 4, α = 0.05."
+ENCODER,0.5565068493150684,Figure 13: Varying α for the dataset splits D|C|(α) of CIFAR-10.
+ENCODER,0.5573630136986302,"F.3
+VARYING LOCAL EPOCHS PER ROUND"
+ENCODER,0.5582191780821918,"Figures 16 and 17 adjust the number of local epochs per round, and observe that with more frequent
+rounds (lower E), the accuracy gaps between FedDrop and the other methods become greater."
+ENCODER,0.5590753424657534,Under review as a conference paper at ICLR 2022
+ENCODER,0.559931506849315,"1013
+1014
+20 40 60 80"
+ENCODER,0.5607876712328768,Number of FLOPs
+ENCODER,0.5616438356164384,Accuracy (%)
+ENCODER,0.5625,FedDrop
+ENCODER,0.5633561643835616,UniDrop
+ENCODER,0.5642123287671232,FedAvg
+ENCODER,0.565068493150685,FedProx
+ENCODER,0.5659246575342466,SCAFFOLD
+ENCODER,0.5667808219178082,Caldas et al.
+ENCODER,0.5676369863013698,"(a) E = 4, α = 5."
+ENCODER,0.5684931506849316,"1013
+1014
+20 40 60 80"
+ENCODER,0.5693493150684932,Number of FLOPs
+ENCODER,0.5702054794520548,Accuracy (%)
+ENCODER,0.5710616438356164,FedDrop
+ENCODER,0.571917808219178,UniDrop
+ENCODER,0.5727739726027398,FedAvg
+ENCODER,0.5736301369863014,FedProx
+ENCODER,0.574486301369863,SCAFFOLD
+ENCODER,0.5753424657534246,Caldas et al.
+ENCODER,0.5761986301369864,"(b) E = 4, α = 0.5."
+ENCODER,0.577054794520548,"1013
+1014
+20 40 60 80"
+ENCODER,0.5779109589041096,Number of FLOPs
+ENCODER,0.5787671232876712,Accuracy (%)
+ENCODER,0.5796232876712328,FedDrop
+ENCODER,0.5804794520547946,UniDrop
+ENCODER,0.5813356164383562,FedAvg
+ENCODER,0.5821917808219178,FedProx
+ENCODER,0.5830479452054794,SCAFFOLD
+ENCODER,0.583904109589041,Caldas et al.
+ENCODER,0.5847602739726028,"(c) E = 4, α = 0.05."
+ENCODER,0.5856164383561644,"1013
+1014
+20 40 60 80"
+ENCODER,0.586472602739726,Number of FLOPs
+ENCODER,0.5873287671232876,Accuracy (%)
+ENCODER,0.5881849315068494,FedDrop
+ENCODER,0.589041095890411,UniDrop
+ENCODER,0.5898972602739726,FedAvg
+ENCODER,0.5907534246575342,FedProx
+ENCODER,0.5916095890410958,SCAFFOLD
+ENCODER,0.5924657534246576,Caldas et al.
+ENCODER,0.5933219178082192,"(d) E = 8, α = 5."
+ENCODER,0.5941780821917808,"1013
+1014
+20 40 60 80"
+ENCODER,0.5950342465753424,Number of FLOPs
+ENCODER,0.5958904109589042,Accuracy (%)
+ENCODER,0.5967465753424658,FedDrop
+ENCODER,0.5976027397260274,UniDrop
+ENCODER,0.598458904109589,FedAvg
+ENCODER,0.5993150684931506,FedProx
+ENCODER,0.6001712328767124,SCAFFOLD
+ENCODER,0.601027397260274,Caldas et al.
+ENCODER,0.6018835616438356,"(e) E = 8, α = 0.5."
+ENCODER,0.6027397260273972,"1013
+1014
+20 40 60 80"
+ENCODER,0.603595890410959,Number of FLOPs
+ENCODER,0.6044520547945206,Accuracy (%)
+ENCODER,0.6053082191780822,FedDrop
+ENCODER,0.6061643835616438,UniDrop
+ENCODER,0.6070205479452054,FedAvg
+ENCODER,0.6078767123287672,FedProx
+ENCODER,0.6087328767123288,SCAFFOLD
+ENCODER,0.6095890410958904,Caldas et al.
+ENCODER,0.610445205479452,"(f) E = 8, α = 0.05."
+ENCODER,0.6113013698630136,Figure 14: Varying α for the dataset splits D|C|(α) of Fashion-MNIST. Log-scale is used for clarity.
+ENCODER,0.6121575342465754,"1013
+1014
+20 40 60 80"
+ENCODER,0.613013698630137,Number of FLOPs
+ENCODER,0.6138698630136986,Accuracy (%)
+ENCODER,0.6147260273972602,FedDrop
+ENCODER,0.615582191780822,UniDrop
+ENCODER,0.6164383561643836,FedAvg
+ENCODER,0.6172945205479452,FedProx
+ENCODER,0.6181506849315068,SCAFFOLD
+ENCODER,0.6190068493150684,Caldas et al.
+ENCODER,0.6198630136986302,"(a) E = 4, α = 5."
+ENCODER,0.6207191780821918,"1013
+1014
+20 40 60 80"
+ENCODER,0.6215753424657534,Number of FLOPs
+ENCODER,0.622431506849315,Accuracy (%)
+ENCODER,0.6232876712328768,FedDrop
+ENCODER,0.6241438356164384,UniDrop
+ENCODER,0.625,FedAvg
+ENCODER,0.6258561643835616,FedProx
+ENCODER,0.6267123287671232,SCAFFOLD
+ENCODER,0.627568493150685,Caldas et al.
+ENCODER,0.6284246575342466,"(b) E = 4, α = 0.5."
+ENCODER,0.6292808219178082,"1013
+1014
+20 40 60 80"
+ENCODER,0.6301369863013698,Number of FLOPs
+ENCODER,0.6309931506849316,Accuracy (%)
+ENCODER,0.6318493150684932,FedDrop
+ENCODER,0.6327054794520548,UniDrop
+ENCODER,0.6335616438356164,FedAvg
+ENCODER,0.634417808219178,FedProx
+ENCODER,0.6352739726027398,SCAFFOLD
+ENCODER,0.6361301369863014,Caldas et al.
+ENCODER,0.636986301369863,"(c) E = 4, α = 0.05."
+ENCODER,0.6378424657534246,"1013
+1014
+20 40 60 80"
+ENCODER,0.6386986301369864,Number of FLOPs
+ENCODER,0.639554794520548,Accuracy (%)
+ENCODER,0.6404109589041096,FedDrop
+ENCODER,0.6412671232876712,UniDrop
+ENCODER,0.6421232876712328,FedAvg
+ENCODER,0.6429794520547946,FedProx
+ENCODER,0.6438356164383562,SCAFFOLD
+ENCODER,0.6446917808219178,Caldas et al.
+ENCODER,0.6455479452054794,"(d) E = 8, α = 5."
+ENCODER,0.646404109589041,"1013
+1014
+20 40 60 80"
+ENCODER,0.6472602739726028,Number of FLOPs
+ENCODER,0.6481164383561644,Accuracy (%)
+ENCODER,0.648972602739726,FedDrop
+ENCODER,0.6498287671232876,UniDrop
+ENCODER,0.6506849315068494,FedAvg
+ENCODER,0.651541095890411,FedProx
+ENCODER,0.6523972602739726,SCAFFOLD
+ENCODER,0.6532534246575342,Caldas et al.
+ENCODER,0.6541095890410958,"(e) E = 8, α = 0.5."
+ENCODER,0.6549657534246576,"1013
+1014
+20 40 60 80"
+ENCODER,0.6558219178082192,Number of FLOPs
+ENCODER,0.6566780821917808,Accuracy (%)
+ENCODER,0.6575342465753424,FedDrop
+ENCODER,0.6583904109589042,UniDrop
+ENCODER,0.6592465753424658,FedAvg
+ENCODER,0.6601027397260274,FedProx
+ENCODER,0.660958904109589,SCAFFOLD
+ENCODER,0.6618150684931506,Caldas et al.
+ENCODER,0.6626712328767124,"(f) E = 8, α = 0.05."
+ENCODER,0.663527397260274,Figure 15: Varying α for the dataset splits D|C|(α) of SVHN. Log-scale is used for clarity.
+ENCODER,0.6643835616438356,"F.4
+VARYING FLOPS BUDGET RATIO"
+ENCODER,0.6652397260273972,"Figures 18 to 20 explore varying FLOPs budget ratios r ∈{0.75, 0.5, 0.333, 0.25}. We found that
+a higher sparsity (lower ratio) can improve the overall convergence rate w.r.t. FLOPs expended.
+However, the ﬁnal converged accuracy may degrade; this can be ﬁxed by simply adjusting the budget
+ratio to approach 1."
+ENCODER,0.666095890410959,Under review as a conference paper at ICLR 2022
+ENCODER,0.6669520547945206,"0.2
+0.4
+0.6
+0.8
+1 ·1014 70 75 80 85 90"
+ENCODER,0.6678082191780822,Number of FLOPs
+ENCODER,0.6686643835616438,Accuracy (%)
+ENCODER,0.6695205479452054,FedDrop
+ENCODER,0.6703767123287672,UniDrop
+ENCODER,0.6712328767123288,FedAvg
+ENCODER,0.6720890410958904,FedProx
+ENCODER,0.672945205479452,SCAFFOLD
+ENCODER,0.6738013698630136,Caldas et al.
+ENCODER,0.6746575342465754,(a) E = 4.
+ENCODER,0.675513698630137,"1
+2
+3
+4
+5 ·1013 70 75 80 85 90"
+ENCODER,0.6763698630136986,Number of FLOPs
+ENCODER,0.6772260273972602,Accuracy (%)
+ENCODER,0.678082191780822,FedDrop
+ENCODER,0.6789383561643836,UniDrop
+ENCODER,0.6797945205479452,FedAvg
+ENCODER,0.6806506849315068,FedProx
+ENCODER,0.6815068493150684,SCAFFOLD
+ENCODER,0.6823630136986302,Caldas et al.
+ENCODER,0.6832191780821918,(b) E = 2.
+ENCODER,0.6840753424657534,"0.5
+1
+1.5
+2
+2.5 ·1013 70 75 80 85 90"
+ENCODER,0.684931506849315,Number of FLOPs
+ENCODER,0.6857876712328768,Accuracy (%)
+ENCODER,0.6866438356164384,FedDrop
+ENCODER,0.6875,UniDrop
+ENCODER,0.6883561643835616,FedAvg
+ENCODER,0.6892123287671232,FedProx
+ENCODER,0.690068493150685,SCAFFOLD
+ENCODER,0.6909246575342466,Caldas et al.
+ENCODER,0.6917808219178082,(c) E = 1.
+ENCODER,0.6926369863013698,Figure 16: Comparing FL methods with the same local training epochs per round E used for SVHN.
+ENCODER,0.6934931506849316,"0.2 0.4 0.6 0.8
+1
+1.2 1.4 ·1014 70 75 80 85 90"
+ENCODER,0.6943493150684932,Number of FLOPs
+ENCODER,0.6952054794520548,Accuracy (%)
+ENCODER,0.6960616438356164,FedDrop
+ENCODER,0.696917808219178,UniDrop
+ENCODER,0.6977739726027398,FedAvg
+ENCODER,0.6986301369863014,FedProx
+ENCODER,0.699486301369863,SCAFFOLD
+ENCODER,0.7003424657534246,Caldas et al.
+ENCODER,0.7011986301369864,(a) E = 4.
+ENCODER,0.702054794520548,"1
+2
+3
+4
+5
+6
+7 ·1013 70 75 80 85"
+ENCODER,0.7029109589041096,Number of FLOPs
+ENCODER,0.7037671232876712,Accuracy (%)
+ENCODER,0.7046232876712328,FedDrop
+ENCODER,0.7054794520547946,UniDrop
+ENCODER,0.7063356164383562,FedAvg
+ENCODER,0.7071917808219178,FedProx
+ENCODER,0.7080479452054794,SCAFFOLD
+ENCODER,0.708904109589041,Caldas et al.
+ENCODER,0.7097602739726028,(b) E = 2.
+ENCODER,0.7106164383561644,"0.5
+1
+1.5
+2
+2.5
+3
+3.5 ·1013 70 75 80 85"
+ENCODER,0.711472602739726,Number of FLOPs
+ENCODER,0.7123287671232876,Accuracy (%)
+ENCODER,0.7131849315068494,FedDrop
+ENCODER,0.714041095890411,UniDrop
+ENCODER,0.7148972602739726,FedAvg
+ENCODER,0.7157534246575342,FedProx
+ENCODER,0.7166095890410958,SCAFFOLD
+ENCODER,0.7174657534246576,Caldas et al.
+ENCODER,0.7183219178082192,(c) E = 1.
+ENCODER,0.7191780821917808,"Figure 17: Comparing FL methods with the same local training epochs per round E used for
+Fashion-MNIST."
+ENCODER,0.7200342465753424,"F.5
+FRACTIONAL DEVICE PARTICIPATION"
+ENCODER,0.7208904109589042,"We increase the number of all devices to 1000, and reduced the fraction of participating devices per
+round to 1% for each of the datasets. All competing methods perform uniform device subsampling
+each round as this was commonly reported for their original experiments McMahan et al. (2017);
+Li et al. (2020); Karimireddy et al. (2020); Caldas et al. (2018a). For FedDrop to perform well, we
+uniformly sample devices every 2 rounds, to train with freshly updated probabilities. In Figure 21,
+Figure 22, Figure 23 and Figure 24, we compare FedDrop against all competing methods, and show
+that it can bring notable improvements in both communication and computation efﬁciencies."
+ENCODER,0.7217465753424658,"F.6
+ACTUAL TRAINING RUN TIME"
+ENCODER,0.7226027397260274,"In Table 10, we provide the average training times per image on an iPhone 12 Pro running the Fashion-
+MNIST model with a batch size of 4. Here, each result was obtained under optimal conditions where
+no frequency throttling occurred. The structure of the model can be found in Table 6 of Appendix E.
+Note that we were only able to report CPU run times, as Core ML (cor, 2021) currently only support
+training on CPUs. We implemented a custom convolutional layer to take advantage of the sparse
+input and output feature maps."
+ENCODER,0.723458904109589,Table 10: iPhone 12 Pro run time of training on CPUs.
+ENCODER,0.7243150684931506,"FLOPs
+Theoretical
+Average run time per image (µs)
+Average (µs)
+Actual
+ratio
+speed-up
+5 runs
+speed-up"
+ENCODER,0.7251712328767124,"1.0
+1×
+966.64
+867.34
+832.46
+1072.06
+1178.76
+983.45 ± 128.50
+1.00×
+0.5
+2×
+544.40
+551.54
+567.80
+568.44
+576.32
+561.70 ± 11.83
+1.75×
+0.25
+4×
+388.04
+372.54
+378.06
+380.22
+379.40
+379.65 ±
+4.98
+2.59×"
+ENCODER,0.726027397260274,Under review as a conference paper at ICLR 2022
+ENCODER,0.7268835616438356,"1013.8
+1014
+1014.2 1014.4
+20 40 60 80"
+ENCODER,0.7277397260273972,Number of FLOPs
+ENCODER,0.728595890410959,Accuracy (%) 0.75 0.5 0.333 0.25
+ENCODER,0.7294520547945206,(a) E = 2.
+ENCODER,0.7303082191780822,"1014
+1014.2 1014.4 1014.6 1014.8
+20 40 60 80"
+ENCODER,0.7311643835616438,Number of FLOPs
+ENCODER,0.7320205479452054,Accuracy (%) 0.75 0.5 0.333 0.25
+ENCODER,0.7328767123287672,(b) E = 4.
+ENCODER,0.7337328767123288,"1014.4 1014.6 1014.8
+1015
+20 40 60 80"
+ENCODER,0.7345890410958904,Number of FLOPs
+ENCODER,0.735445205479452,Accuracy (%) 0.75 0.5 0.333 0.25
+ENCODER,0.7363013698630136,(c) E = 8.
+ENCODER,0.7371575342465754,"0
+20
+40
+60
+80 20 40 60 80"
+ENCODER,0.738013698630137,Number of Communication Rounds
+ENCODER,0.7388698630136986,Accuracy (%)
+ENCODER,0.7397260273972602,FedAvg 0.75 0.5 0.333 0.25
+ENCODER,0.740582191780822,(d) E = 2.
+ENCODER,0.7414383561643836,"0
+20
+40
+60
+80 20 40 60 80"
+ENCODER,0.7422945205479452,Number of Communication Rounds
+ENCODER,0.7431506849315068,Accuracy (%)
+ENCODER,0.7440068493150684,FedAvg 0.75 0.5 0.333 0.25
+ENCODER,0.7448630136986302,(e) E = 4.
+ENCODER,0.7457191780821918,"0
+20
+40
+60
+80 20 40 60 80"
+ENCODER,0.7465753424657534,Number of Communication Rounds
+ENCODER,0.747431506849315,Accuracy (%)
+ENCODER,0.7482876712328768,FedAvg 0.75 0.5 0.333 0.25
+ENCODER,0.7491438356164384,(f) E = 8.
+ENCODER,0.75,Figure 18: Reducing the FLOPs budget ratio r for CIFAR-10.
+ENCODER,0.7508561643835616,"1012
+1013
+20 40 60 80"
+ENCODER,0.7517123287671232,Number of FLOPs
+ENCODER,0.752568493150685,Accuracy (%) 0.75 0.5 0.333 0.25
+ENCODER,0.7534246575342466,(a) E = 1.
+ENCODER,0.7542808219178082,"1012
+1013
+20 40 60 80"
+ENCODER,0.7551369863013698,Number of FLOPs
+ENCODER,0.7559931506849316,Accuracy (%) 0.75 0.5 0.333 0.25
+ENCODER,0.7568493150684932,(b) E = 2.
+ENCODER,0.7577054794520548,"1012.5
+1013
+1013.5
+20 40 60 80"
+ENCODER,0.7585616438356164,Number of FLOPs
+ENCODER,0.759417808219178,Accuracy (%) 0.75 0.5 0.333 0.25
+ENCODER,0.7602739726027398,(c) E = 4.
+ENCODER,0.7611301369863014,"10
+20
+30
+40
+20 40 60 80"
+ENCODER,0.761986301369863,Number of Communication Rounds
+ENCODER,0.7628424657534246,Accuracy (%) 0.75 0.5 0.333 0.25
+ENCODER,0.7636986301369864,(d) E = 1.
+ENCODER,0.764554794520548,"10
+20
+30
+40
+20 40 60 80"
+ENCODER,0.7654109589041096,Number of Communication Rounds
+ENCODER,0.7662671232876712,Accuracy (%) 0.75 0.5 0.333 0.25
+ENCODER,0.7671232876712328,(e) E = 2.
+ENCODER,0.7679794520547946,"10
+20
+30
+40
+20 40 60 80"
+ENCODER,0.7688356164383562,Number of Communication Rounds
+ENCODER,0.7696917808219178,Accuracy (%) 0.75 0.5 0.333 0.25
+ENCODER,0.7705479452054794,(f) E = 4.
+ENCODER,0.771404109589041,Figure 19: Reducing the FLOPs budget ratio r for Fashion-MNIST.
+ENCODER,0.7722602739726028,"For the FedAvg motivation example in Section 1, we assumed 20 clients, with 2500 examples per
+epoch on each client, and 4 training epochs per round, which is in line with our experiments with 20
+devices. We extrapolate the results to 100 epochs for a batch size of 4 to estimate the run time to be
+983.45 µs × 2500 × 4 × 100 = 16.39 min without frequency throttling. As each parameter is stored
+as a 32-bit ﬂoat, each client would upload and download a model of size 226 k × 4 B = 904 kB once
+per round; the overall transmission per client is thus evaluated to be 904 kB × 2 × 100 = 176.56 MB."
+ENCODER,0.7731164383561644,Under review as a conference paper at ICLR 2022
+ENCODER,0.773972602739726,"1012.4 1012.6 1012.8 1013 1013.2
+20 40 60 80"
+ENCODER,0.7748287671232876,Number of FLOPs
+ENCODER,0.7756849315068494,Accuracy (%) 0.75 0.5 0.333 0.25
+ENCODER,0.776541095890411,(a) E = 1.
+ENCODER,0.7773972602739726,"1012.41012.61012.8 1013 1013.2
+20 40 60 80"
+ENCODER,0.7782534246575342,Number of FLOPs
+ENCODER,0.7791095890410958,Accuracy (%) 0.75 0.5 0.333 0.25
+ENCODER,0.7799657534246576,(b) E = 2.
+ENCODER,0.7808219178082192,"1012.41012.61012.8 1013 1013.21013.4
+20 40 60 80"
+ENCODER,0.7816780821917808,Number of FLOPs
+ENCODER,0.7825342465753424,Accuracy (%) 0.75 0.5 0.333 0.25
+ENCODER,0.7833904109589042,(c) E = 4.
+ENCODER,0.7842465753424658,"5
+10
+15
+20
+25
+30
+35
+40
+20 40 60 80"
+ENCODER,0.7851027397260274,Number of Communication Rounds
+ENCODER,0.785958904109589,Accuracy (%) 0.75 0.5 0.333 0.25
+ENCODER,0.7868150684931506,(d) E = 1.
+ENCODER,0.7876712328767124,"10
+20
+30
+40
+20 40 60 80"
+ENCODER,0.788527397260274,Number of Communication Rounds
+ENCODER,0.7893835616438356,Accuracy (%) 0.75 0.5 0.333 0.25
+ENCODER,0.7902397260273972,(e) E = 2.
+ENCODER,0.791095890410959,"10
+20
+30
+40
+20 40 60 80"
+ENCODER,0.7919520547945206,Number of Communication Rounds
+ENCODER,0.7928082191780822,Accuracy (%) 0.75 0.5 0.333 0.25
+ENCODER,0.7936643835616438,(f) E = 4.
+ENCODER,0.7945205479452054,Figure 20: Reducing the FLOPs budget ratio r for SVHN.
+ENCODER,0.7953767123287672,"1014
+1014.2
+1014.4
+1014.6 105 105.5"
+ENCODER,0.7962328767123288,Number of FLOPs
+ENCODER,0.7970890410958904,Communications (GB)
+ENCODER,0.797945205479452,FedDrop
+ENCODER,0.7988013698630136,UniDrop
+ENCODER,0.7996575342465754,FedAvg
+ENCODER,0.800513698630137,FedProx
+ENCODER,0.8013698630136986,Caldas et al.
+ENCODER,0.8022260273972602,(a) 70% for CIFAR-10.
+ENCODER,0.803082191780822,"1014.2
+1014.4
+1014.6
+1014.8
+105 106"
+ENCODER,0.8039383561643836,Number of FLOPs
+ENCODER,0.8047945205479452,Communications (GB)
+ENCODER,0.8056506849315068,FedDrop
+ENCODER,0.8065068493150684,UniDrop
+ENCODER,0.8073630136986302,FedAvg
+ENCODER,0.8082191780821918,FedProx
+ENCODER,0.8090753424657534,Caldas et al.
+ENCODER,0.809931506849315,(b) 75% for CIFAR-10.
+ENCODER,0.8107876712328768,"Figure 21: Comparing the FLOPs vs. communication trade-off across different FL methods reaching
+a target accuracy for CIFAR-10. We highlight the Pareto optimal points with dotted lines."
+ENCODER,0.8116438356164384,"F.7
+ADDITIONAL RESULTS ON THE MOTIVATING EXAMPLE"
+ENCODER,0.8125,"For reference, in Figure 25 we included all parameter update magnitudes of the ﬁrst convolutional
+layer for the motivating example given in Figure 1 in Section 1."
+ENCODER,0.8133561643835616,"F.8
+RESULTS ON THE NLP TASK"
+ENCODER,0.8142123287671232,"We provide results on Shakespeare dataset for full client participation in Figure 26 to Figure 28 and
+fractional client participation in Figure 29 to Figure 31. The experiment conﬁgurations are introduced
+in detail in Appendix E."
+ENCODER,0.815068493150685,Under review as a conference paper at ICLR 2022
+ENCODER,0.8159246575342466,"1012
+1012.2
+1012.4
+1012.6
+103 104"
+ENCODER,0.8167808219178082,Number of FLOPs
+ENCODER,0.8176369863013698,Communications (GB)
+ENCODER,0.8184931506849316,FedDrop
+ENCODER,0.8193493150684932,UniDrop
+ENCODER,0.8202054794520548,FedAvg
+ENCODER,0.8210616438356164,FedProx
+ENCODER,0.821917808219178,Caldas et al.
+ENCODER,0.8227739726027398,(a) 80% for Fashion-MNIST.
+ENCODER,0.8236301369863014,"1012.4
+1012.6
+1012.8 103.5 104"
+ENCODER,0.824486301369863,Number of FLOPs
+ENCODER,0.8253424657534246,Communications (GB)
+ENCODER,0.8261986301369864,FedDrop
+ENCODER,0.827054794520548,UniDrop
+ENCODER,0.8279109589041096,FedAvg
+ENCODER,0.8287671232876712,FedProx
+ENCODER,0.8296232876712328,Caldas et al.
+ENCODER,0.8304794520547946,(b) 85% for Fashion-MNIST.
+ENCODER,0.8313356164383562,"Figure 22: Comparing the FLOPs vs. communication trade-off across different FL methods reaching
+a target accuracy for Fashion-MNIST. We highlight the Pareto optimal points with dotted lines."
+ENCODER,0.8321917808219178,1011.8 1011.9 1012 1012.1 1012.2 103 103.5
+ENCODER,0.8330479452054794,Number of FLOPs
+ENCODER,0.833904109589041,Communications (GB)
+ENCODER,0.8347602739726028,FedDrop
+ENCODER,0.8356164383561644,UniDrop
+ENCODER,0.836472602739726,FedAvg
+ENCODER,0.8373287671232876,FedProx
+ENCODER,0.8381849315068494,Caldas et al.
+ENCODER,0.839041095890411,(a) 80% for SVHN.
+ENCODER,0.8398972602739726,"1012
+1012.2
+1012.4 103 104"
+ENCODER,0.8407534246575342,Number of FLOPs
+ENCODER,0.8416095890410958,Communications (GB)
+ENCODER,0.8424657534246576,FedDrop
+ENCODER,0.8433219178082192,UniDrop
+ENCODER,0.8441780821917808,FedAvg
+ENCODER,0.8450342465753424,FedProx
+ENCODER,0.8458904109589042,Caldas et al.
+ENCODER,0.8467465753424658,(b) 85% for SVHN.
+ENCODER,0.8476027397260274,"Figure 23: Comparing the FLOPs vs. communication trade-off across different FL methods reaching
+a target accuracy for SVHN. We highlight the Pareto optimal points with dotted lines."
+ENCODER,0.848458904109589,"0
+1
+2
+3
+4 ·1014 20 40 60 80"
+ENCODER,0.8493150684931506,Number of FLOPs
+ENCODER,0.8501712328767124,Accuracy (%)
+ENCODER,0.851027397260274,FedDrop
+ENCODER,0.8518835616438356,UniDrop
+ENCODER,0.8527397260273972,FedAvg
+ENCODER,0.853595890410959,FedProx
+ENCODER,0.8544520547945206,SCAFFOLD
+ENCODER,0.8553082191780822,Caldas et al.
+ENCODER,0.8561643835616438,(a) CIFAR-10 with E = 4.
+ENCODER,0.8570205479452054,"1011
+1012
+1013
+20 40 60 80"
+ENCODER,0.8578767123287672,Number of FLOPs
+ENCODER,0.8587328767123288,Accuracy (%)
+ENCODER,0.8595890410958904,FedDrop
+ENCODER,0.860445205479452,UniDrop
+ENCODER,0.8613013698630136,FedAvg
+ENCODER,0.8621575342465754,FedProx
+ENCODER,0.863013698630137,SCAFFOLD
+ENCODER,0.8638698630136986,Caldas et al.
+ENCODER,0.8647260273972602,(b) Fashion-MNIST with E = 4.
+ENCODER,0.865582191780822,"1011
+1012
+1013
+20 40 60 80 100"
+ENCODER,0.8664383561643836,Number of FLOPs
+ENCODER,0.8672945205479452,Accuracy (%)
+ENCODER,0.8681506849315068,FedDrop
+ENCODER,0.8690068493150684,UniDrop
+ENCODER,0.8698630136986302,FedAvg
+ENCODER,0.8707191780821918,FedProx
+ENCODER,0.8715753424657534,SCAFFOLD
+ENCODER,0.872431506849315,Caldas et al.
+ENCODER,0.8732876712328768,(c) SVHN with E = 4.
+ENCODER,0.8741438356164384,Figure 24: Reducing device participation to 1%. Some plots use log-scale for clarity.
+ENCODER,0.875,Under review as a conference paper at ICLR 2022
+ENCODER,0.8758561643835616,"Figure 25: All parameter update magnitudes for each channel (row) in the ﬁrst convolutional layer for
+all clients (column) after 1 round of training. The pairs of clients with same colors (one lighter and
+one darker) signify that they shared the same image class. The length of each ray is the magnitude of
+the parameter update, and the parameters are ordered by the angles of the rays. The results are taken
+from the motivating example in Figure 1."
+ENCODER,0.8767123287671232,Under review as a conference paper at ICLR 2022
+ENCODER,0.877568493150685,"1015
+1015.2
+1015.4 104 104.5"
+ENCODER,0.8784246575342466,Number of FLOPs
+ENCODER,0.8792808219178082,Communications (GB)
+ENCODER,0.8801369863013698,FedDrop
+ENCODER,0.8809931506849316,UniDrop
+ENCODER,0.8818493150684932,FedAvg
+ENCODER,0.8827054794520548,FedProx
+ENCODER,0.8835616438356164,Caldas et al.
+ENCODER,0.884417808219178,"Figure 26: Comparing the FLOPs vs. communication trade-off across different FL methods reaching
+a 50% accuracy for the Shakespeare dataset. We highlight the Pareto optimal points with dotted lines."
+ENCODER,0.8852739726027398,"0
+1
+2
+3
+4
+5 ·1014 10 20 30 40 50 60"
+ENCODER,0.8861301369863014,Number of FLOPs
+ENCODER,0.886986301369863,Accuracy (%)
+ENCODER,0.8878424657534246,FedDrop
+ENCODER,0.8886986301369864,UniDrop
+ENCODER,0.889554794520548,FedAvg
+ENCODER,0.8904109589041096,FedProx
+ENCODER,0.8912671232876712,SCAFFOLD
+ENCODER,0.8921232876712328,Caldas et al.
+ENCODER,0.8929794520547946,"(a) α = 0.5, E = 1, r = 0.5."
+ENCODER,0.8938356164383562,"0
+2
+4
+6
+8 ·1014 10 20 30 40 50 60"
+ENCODER,0.8946917808219178,Number of FLOPs
+ENCODER,0.8955479452054794,Accuracy (%)
+ENCODER,0.896404109589041,FedDrop
+ENCODER,0.8972602739726028,UniDrop
+ENCODER,0.8981164383561644,FedAvg
+ENCODER,0.898972602739726,FedProx
+ENCODER,0.8998287671232876,SCAFFOLD
+ENCODER,0.9006849315068494,Caldas et al.
+ENCODER,0.901541095890411,"(b) α = 0.5, E = 2, r = 0.5."
+ENCODER,0.9023972602739726,"0
+0.5
+1
+1.5 ·1015 10 20 30 40 50 60"
+ENCODER,0.9032534246575342,Number of FLOPs
+ENCODER,0.9041095890410958,Accuracy (%)
+ENCODER,0.9049657534246576,FedDrop
+ENCODER,0.9058219178082192,UniDrop
+ENCODER,0.9066780821917808,FedAvg
+ENCODER,0.9075342465753424,FedProx
+ENCODER,0.9083904109589042,SCAFFOLD
+ENCODER,0.9092465753424658,Caldas et al.
+ENCODER,0.9101027397260274,"(c) α = 0.5, E = 4, r = 0.5."
+ENCODER,0.910958904109589,"Figure 27: Comparing FL methods with the same local training epochs per round E used for
+Shakespeare."
+ENCODER,0.9118150684931506,"0
+20
+40
+60
+80
+100
+10 20 30 40 50 60"
+ENCODER,0.9126712328767124,Number of Communication Rounds
+ENCODER,0.913527397260274,Accuracy (%)
+ENCODER,0.9143835616438356,FedDrop
+ENCODER,0.9152397260273972,UniDrop
+ENCODER,0.916095890410959,FedAvg
+ENCODER,0.9169520547945206,FedProx
+ENCODER,0.9178082191780822,SCAFFOLD
+ENCODER,0.9186643835616438,Caldas et al.
+ENCODER,0.9195205479452054,"(a) E = 1, r = 0.5."
+ENCODER,0.9203767123287672,"0
+20
+40
+60
+80
+100
+10 20 30 40 50 60"
+ENCODER,0.9212328767123288,Number of Communication Rounds
+ENCODER,0.9220890410958904,Accuracy (%)
+ENCODER,0.922945205479452,FedDrop
+ENCODER,0.9238013698630136,UniDrop
+ENCODER,0.9246575342465754,FedAvg
+ENCODER,0.925513698630137,FedProx
+ENCODER,0.9263698630136986,SCAFFOLD
+ENCODER,0.9272260273972602,Caldas et al.
+ENCODER,0.928082191780822,"(b) E = 2, r = 0.5."
+ENCODER,0.9289383561643836,"0
+20
+40
+60
+80
+100
+10 20 30 40 50 60"
+ENCODER,0.9297945205479452,Number of Communication Rounds
+ENCODER,0.9306506849315068,Accuracy (%)
+ENCODER,0.9315068493150684,FedDrop
+ENCODER,0.9323630136986302,UniDrop
+ENCODER,0.9332191780821918,FedAvg
+ENCODER,0.9340753424657534,FedProx
+ENCODER,0.934931506849315,SCAFFOLD
+ENCODER,0.9357876712328768,Caldas et al.
+ENCODER,0.9366438356164384,"(c) E = 4, r = 0.5."
+ENCODER,0.9375,"Figure 28: Comparing FL methods on the number of communication rounds vs. accuracy with the
+same local training epochs on Shakespeare."
+ENCODER,0.9383561643835616,Under review as a conference paper at ICLR 2022
+ENCODER,0.9392123287671232,1014 1014.2 1014.4 1014.6 1014.8 103 103.5
+ENCODER,0.940068493150685,Number of FLOPs
+ENCODER,0.9409246575342466,Communications (GB)
+ENCODER,0.9417808219178082,FedDrop
+ENCODER,0.9426369863013698,UniDrop
+ENCODER,0.9434931506849316,FedAvg
+ENCODER,0.9443493150684932,FedProx
+ENCODER,0.9452054794520548,Caldas et al.
+ENCODER,0.9460616438356164,"Figure 29: Comparing the FLOPs vs. communication trade-off across different FL methods reaching
+a target accuracy for a given dataset. We highlight the Pareto optimal points with dotted lines."
+ENCODER,0.946917808219178,"0
+0.2
+0.4
+0.6
+0.8
+1 ·1014 10 20 30 40 50 60"
+ENCODER,0.9477739726027398,Number of FLOPs
+ENCODER,0.9486301369863014,Accuracy (%)
+ENCODER,0.949486301369863,FedDrop
+ENCODER,0.9503424657534246,UniDrop
+ENCODER,0.9511986301369864,FedAvg
+ENCODER,0.952054794520548,FedProx
+ENCODER,0.9529109589041096,SCAFFOLD
+ENCODER,0.9537671232876712,Caldas et al.
+ENCODER,0.9546232876712328,"(a) α = 0.5, E = 1, r = 0.5."
+ENCODER,0.9554794520547946,"0
+0.2
+0.4
+0.6
+0.8
+1 ·1014 10 20 30 40 50 60"
+ENCODER,0.9563356164383562,Number of FLOPs
+ENCODER,0.9571917808219178,Accuracy (%)
+ENCODER,0.9580479452054794,FedDrop
+ENCODER,0.958904109589041,UniDrop
+ENCODER,0.9597602739726028,FedAvg
+ENCODER,0.9606164383561644,FedProx
+ENCODER,0.961472602739726,SCAFFOLD
+ENCODER,0.9623287671232876,Caldas et al.
+ENCODER,0.9631849315068494,"(b) α = 0.5, E = 2, r = 0.5."
+ENCODER,0.964041095890411,"0
+0.5
+1
+1.5
+2 ·1014 10 20 30 40 50 60"
+ENCODER,0.9648972602739726,Number of FLOPs
+ENCODER,0.9657534246575342,Accuracy (%)
+ENCODER,0.9666095890410958,FedDrop
+ENCODER,0.9674657534246576,UniDrop
+ENCODER,0.9683219178082192,FedAvg
+ENCODER,0.9691780821917808,FedProx
+ENCODER,0.9700342465753424,SCAFFOLD
+ENCODER,0.9708904109589042,Caldas et al.
+ENCODER,0.9717465753424658,"(c) α = 0.5, E = 4, r = 0.5."
+ENCODER,0.9726027397260274,"Figure 30: Comparing FL methods with the same local training epochs per round E used for
+Shakespeare."
+ENCODER,0.973458904109589,"0
+20
+40
+60
+80
+100
+10 20 30 40 50 60"
+ENCODER,0.9743150684931506,Number of Communication Rounds
+ENCODER,0.9751712328767124,Accuracy (%)
+ENCODER,0.976027397260274,FedDrop
+ENCODER,0.9768835616438356,UniDrop
+ENCODER,0.9777397260273972,FedAvg
+ENCODER,0.978595890410959,FedProx
+ENCODER,0.9794520547945206,SCAFFOLD
+ENCODER,0.9803082191780822,Caldas et al.
+ENCODER,0.9811643835616438,"(a) E = 1, r = 0.5"
+ENCODER,0.9820205479452054,"0
+20
+40
+60
+80
+100
+10 20 30 40 50 60"
+ENCODER,0.9828767123287672,Number of Communication Rounds
+ENCODER,0.9837328767123288,Accuracy (%)
+ENCODER,0.9845890410958904,FedDrop
+ENCODER,0.985445205479452,UniDrop
+ENCODER,0.9863013698630136,FedAvg
+ENCODER,0.9871575342465754,FedProx
+ENCODER,0.988013698630137,SCAFFOLD
+ENCODER,0.9888698630136986,Caldas et al.
+ENCODER,0.9897260273972602,"(b) E = 2, r = 0.5"
+ENCODER,0.990582191780822,"0
+20
+40
+60
+80
+100
+10 20 30 40 50 60"
+ENCODER,0.9914383561643836,Number of Communication Rounds
+ENCODER,0.9922945205479452,Accuracy (%)
+ENCODER,0.9931506849315068,FedDrop
+ENCODER,0.9940068493150684,UniDrop
+ENCODER,0.9948630136986302,FedAvg
+ENCODER,0.9957191780821918,FedProx
+ENCODER,0.9965753424657534,SCAFFOLD
+ENCODER,0.997431506849315,Caldas et al.
+ENCODER,0.9982876712328768,"(c) E = 4, r = 0.5"
+ENCODER,0.9991438356164384,"Figure 31: Comparing FL methods on the number of communication rounds vs. accuracy with the
+same local training epochs on Shakespeare."
