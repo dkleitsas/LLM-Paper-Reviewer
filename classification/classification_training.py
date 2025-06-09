@@ -1,7 +1,7 @@
 import os
 import glob
 import numpy as np
-from collections import Counter, defaultdict
+from collections import Counter
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
@@ -19,18 +19,16 @@ from transformers import (
 )
 
 import matplotlib.pyplot as plt
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+from sklearn.metrics import confusion_matrix
 import seaborn as sns
 
-# === CONFIGURATION ===
-csv_folder = "classification_csvs"  # Folder where all CSV files are located
-text_column = "Paragraph"   # Column name in your CSV
-label_column = "Label" # Column with binary labels
+csv_folder = "classification_csvs"          # Folder where all CSV files are located
+text_column = "Paragraph"                   # Column name in CSV
+label_column = "Label"                      # Column with labels
 model_name = "allenai/scibert_scivocab_uncased"
 max_length = 512
 output_dir = "classifier"
 
-# === DYNAMICALLY LOAD ALL CSV FILES ===
 csv_files = glob.glob(os.path.join(csv_folder, "**", "*.csv"), recursive=True)
 print(f"Found {len(csv_files)} CSV files.")
 
@@ -44,17 +42,11 @@ for i, file in enumerate(csv_files):
 
 combined_dataset = concatenate_datasets(datasets_list)
 
-# === LABEL ENCODING ===
 label_values = combined_dataset.unique(label_column)
 label_values.sort()
 
-# Adjust depending on your actual labels (0/1 or strings like 'positive'/'negative')
-if set(label_values) == {0, 1}:
-    label2id = {0: 0, 1: 1}
-    id2label = {0: 'accepted', 1: 'rejcted'}
-else:
-    label2id = {'rejected': 0, 'accepted': 1}
-    id2label = {0: 'rejected', 1: 'accepted'}
+label2id = {'rejected': 0, 'accepted': 1}
+id2label = {0: 'rejected', 1: 'accepted'}
 
 def encode_labels(example):
     example["label"] = label2id[example[label_column]]
@@ -62,7 +54,6 @@ def encode_labels(example):
 
 combined_dataset = combined_dataset.map(encode_labels)
 
-# === GROUPED TRAIN/TEST SPLIT BY PAPER ===
 all_paper_ids = list(set(combined_dataset['PaperID']))
 train_ids, test_ids = train_test_split(all_paper_ids, test_size=0.2, random_state=42)
 
@@ -74,7 +65,6 @@ dataset = {"train": train_dataset, "test": test_dataset}
 print(f"Train papers: {len(set(train_dataset['PaperID']))}")
 print(f"Test papers : {len(set(test_dataset['PaperID']))}")
 
-# === TOKENIZATION ===
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 
 def tokenize_function(examples):
@@ -88,7 +78,6 @@ def tokenize_function(examples):
 tokenized_train = dataset["train"].map(tokenize_function, batched=True)
 tokenized_test = dataset["test"].map(tokenize_function, batched=True)
 
-# === LOAD MODEL ===
 model = AutoModelForSequenceClassification.from_pretrained(
     model_name,
     num_labels=2,
@@ -96,7 +85,6 @@ model = AutoModelForSequenceClassification.from_pretrained(
     label2id=label2id
 )
 
-# === COMPUTE METRICS ===
 def compute_metrics(eval_pred):
     logits, labels = eval_pred
     preds = np.argmax(logits, axis=-1)
@@ -138,7 +126,8 @@ predictions = trainer.predict(tokenized_test)
 logits = predictions.predictions
 predicted_labels = np.argmax(logits, axis=-1)
 
-# === SECTION-LEVEL CONFUSION MATRIX ===
+
+# Section-level confusion matrix
 section_cm = confusion_matrix(predictions.label_ids, predicted_labels, normalize='true')
 plt.figure(figsize=(6, 5))
 sns.heatmap(section_cm, annot=True, fmt='.2f', cmap='Purples',
@@ -149,15 +138,13 @@ plt.tight_layout()
 plt.savefig("section_level_confusion_matrix.png")
 plt.close()
 
-# === PAPER-LEVEL AGGREGATION ===
+
+# Paper-level aggregation
 test_with_preds = tokenized_test.add_column("PredictedLabel", predicted_labels)
 df = pd.DataFrame(test_with_preds)
 df["TrueLabel"] = df["label"]
 
-# Optional: Save section-level results
-df.to_csv("section_level_predictions.csv", index=False)
 
-# Get softmax scores
 probs = softmax(logits, axis=1)
 
 # Attach predictions
@@ -246,7 +233,7 @@ for strategy in strategy_names:
     strategy_scores["Recall"].append(recall_score(y_true, y_pred))
     strategy_scores["F1"].append(f1_score(y_true, y_pred))
 
-# Convert to DataFrame
+
 scores_df = pd.DataFrame(strategy_scores)
 scores_df = scores_df.set_index("Strategy").reset_index().melt(id_vars="Strategy", var_name="Metric", value_name="Score")
 
@@ -261,7 +248,7 @@ plt.tight_layout()
 plt.savefig("paper_level_strategy_comparison.png")
 plt.close()
 
-# === SAVE FINAL MODEL ===
+# Save final model
 trainer.save_model(output_dir)
 tokenizer.save_pretrained(output_dir)
 
