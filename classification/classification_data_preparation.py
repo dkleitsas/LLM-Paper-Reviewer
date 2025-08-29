@@ -8,8 +8,8 @@ from tqdm import tqdm
 import os
 import re
 
-from segmentation_datasets import DocumentDataset
-from segmentation_models import ParagraphClassifier
+from segmentation.segmentation_datasets import DocumentDataset
+from segmentation.segmentation_models import ParagraphClassifier
 
 
 def filter_short_runs(labels, min_run_length=6):
