@@ -1,8 +1,7 @@
 # A LLM-based paper evaluation pipeline
 
 This repository contains the implementation of a modular, machine learning-based architecture for the automatic evaluation of scientific research papers, using Natural Language Processing (NLP) techniques and Large Language Models (LLMs). This work
-was done as part of my thesis, which I will link here when it is officially available to provide a more detailed overview of the pipeline.
-
+was done as part of my thesis, which is available in PDF form in this repository.
 
 The system performs:
 
